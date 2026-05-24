@@ -9,10 +9,15 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./web": {
+      "import": "./src/web/index.ts",
+      "types": "./src/web/index.ts"
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "src/web"
   ],
   "publishConfig": {
     "access": "public"
