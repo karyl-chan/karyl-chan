@@ -1,0 +1,28 @@
+# dependencies
+node_modules
+
+# build output
+build
+dist
+dist-test
+*.tsbuildinfo
+
+# env / secrets
+.env
+.env.local
+token
+
+# bind-mounted SQLite (host <-> docker share); keep the dir, ignore the
+# DB. `**/` so the pattern matches packages/bot/data/, not just a
+# (non-existent) repo-root data/ directory.
+**/data/database.sqlite
+**/data/database.sqlite-*
+**/data/*.bak
+
+# misc
+.vscode
+npm-debug.log
+yarn.lock
+package-lock.json
+
+.claude

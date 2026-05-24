@@ -1,0 +1,1382 @@
+{
+    "app": {
+        "brand": "Karyl Chan",
+        "nav": {
+            "dashboard": "儀表板",
+            "messages": "訊息",
+            "guilds": "伺服器",
+            "behaviors": "行為",
+            "plugins": "外掛",
+            "admin": "權限",
+            "profile": "個人資料",
+            "signOut": "登出",
+            "accountMenu": "帳號選單",
+            "systemSettings": "系統設定"
+        },
+        "mobile": {
+            "openMenu": "開啟選單",
+            "closeMenu": "關閉選單",
+            "back": "返回",
+            "showFeatures": "顯示頁面功能",
+            "showNav": "顯示導覽"
+        }
+    },
+    "common": {
+        "loading": "載入中…",
+        "none": "無。",
+        "cancel": "取消",
+        "close": "關閉",
+        "start": "開始",
+        "refresh": "重新整理",
+        "archived": "已封存",
+        "save": "儲存",
+        "saving": "儲存中…",
+        "add": "新增",
+        "delete": "刪除",
+        "remove": "移除",
+        "updated": "已於 {time} 更新",
+        "failedToLoad": "載入失敗:{error}",
+        "search": "搜尋…",
+        "noMatches": "沒有符合的項目。"
+    },
+    "home": {
+        "title": "Karyl Chan",
+        "lead": "未來將在此提供公開功能。"
+    },
+    "userCard": {
+        "id": "使用者 ID",
+        "roles": "身分組",
+        "sendDm": "傳送私訊"
+    },
+    "userMenu": {
+        "profile": "開啟個人資料",
+        "sendDm": "傳送私訊",
+        "copyMention": "複製提及",
+        "copyId": "複製使用者 ID",
+        "mute": "伺服器靜音",
+        "unmute": "解除伺服器靜音",
+        "deafen": "伺服器拒聽",
+        "undeafen": "解除伺服器拒聽",
+        "disconnect": "中斷語音連線",
+        "moveTo": "移動到 {name}",
+        "kick": "踢出伺服器",
+        "ban": "封鎖（停權）",
+        "timeout": "暫停發言",
+        "removeTimeout": "解除暫停",
+        "nickname": "變更暱稱",
+        "manageRoles": "管理身分組",
+        "actionFailed": "操作失敗"
+    },
+    "memberMgmt": {
+        "reasonLabel": "原因（選填）",
+        "reasonPlaceholder": "稽核日誌備註",
+        "kickConfirm": "確定踢出 {name}？",
+        "banTitle": "封鎖 {name}",
+        "banDeleteLabel": "同時刪除其訊息",
+        "banDeleteNone": "不刪除",
+        "banDeleteHour": "過去 1 小時",
+        "banDeleteSixHours": "過去 6 小時",
+        "banDeleteDay": "過去 24 小時",
+        "banDeleteThreeDays": "過去 3 天",
+        "banDeleteWeek": "過去 7 天",
+        "timeoutTitle": "暫停 {name} 發言",
+        "timeoutDuration": "時長",
+        "timeout60s": "60 秒",
+        "timeout5m": "5 分鐘",
+        "timeout10m": "10 分鐘",
+        "timeout1h": "1 小時",
+        "timeout1d": "1 天",
+        "timeout1w": "1 週",
+        "nicknameTitle": "{name} 的暱稱",
+        "nicknamePlaceholder": "留空以清除",
+        "rolesTitle": "管理 {name} 的身分組",
+        "rolesEmpty": "沒有可指派的身分組。",
+        "save": "儲存",
+        "confirm": "確認",
+        "kickAction": "踢出",
+        "banAction": "封鎖"
+    },
+    "threads": {
+        "browseTitle": "#{channel} 的討論串",
+        "active": "活躍",
+        "archived": "已封存",
+        "empty": "沒有討論串。",
+        "view": "檢視討論串",
+        "messageCount": "{count} 則訊息"
+    },
+    "systemMsg": {
+        "join": "{name} 加入了伺服器。",
+        "pin": "{name} 在此頻道釘選了一則訊息。",
+        "boost": "{name} 剛剛加成了伺服器。",
+        "boostTier": "{name} 剛剛加成了伺服器 — 已達第 {tier} 級！",
+        "channelFollowAdd": "{name} 追蹤了一個公告頻道。",
+        "threadCreated": "{name} 開啟了一個討論串。",
+        "stageStart": "{name} 開始了一個舞台。",
+        "stageEnd": "{name} 結束了舞台。",
+        "stageSpeaker": "{name} 成為發言人。",
+        "stageTopic": "{name} 更改了舞台主題。",
+        "automod": "AutoMod 阻擋了一則訊息。",
+        "fallback": "{name} 觸發了一個系統事件。",
+        "forwarded": "已轉發"
+    },
+    "messageMgmt": {
+        "pin": "釘選",
+        "unpin": "取消釘選",
+        "deleteAny": "刪除（管理）",
+        "bulkDelete": "批次刪除…",
+        "bulkTitle": "批次刪除訊息",
+        "bulkCountLabel": "要刪除最近幾則訊息（2..100）",
+        "bulkConfirm": "刪除 {count} 則",
+        "crosspost": "發布公告"
+    },
+    "channelMenu": {
+        "markAsRead": "標記為已讀",
+        "muteMentionsOnly": "靜音（僅提及）",
+        "muteAll": "完全靜音",
+        "unmute": "恢復通知",
+        "copyLink": "複製頻道連結",
+        "copyId": "複製頻道 ID",
+        "openProfile": "開啟使用者資料",
+        "copyUserId": "複製使用者 ID",
+        "createChannel": "建立頻道",
+        "editChannel": "編輯頻道",
+        "deleteChannel": "刪除頻道",
+        "archiveThread": "封存討論串",
+        "unarchiveThread": "解除封存",
+        "lockThread": "鎖定討論串",
+        "unlockThread": "解除鎖定"
+    },
+    "roleMgmt": {
+        "createTitle": "建立身分組",
+        "editTitle": "編輯 {'@'}{name}",
+        "fieldName": "名稱",
+        "fieldColor": "顏色",
+        "fieldHoist": "在成員列表中分開顯示（hoist）",
+        "fieldMentionable": "允許所有人 {'@'} 提及此身分組",
+        "fieldPermissions": "權限",
+        "fieldPermissionsAdvanced": "權限 bitfield（會與勾選同步）",
+        "permissionsBitfieldPlaceholder": "0",
+        "advancedHint": "輸入數字會反映到下方的勾選；勾選變更也會同步到此欄位。",
+        "selectedCount": "已選 {count} 項",
+        "create": "建立",
+        "save": "儲存",
+        "deleteConfirm": "確定刪除身分組 {'@'}{name}？",
+        "createButton": "建立身分組",
+        "edit": "編輯",
+        "delete": "刪除",
+        "permGroup": {
+            "general": "一般伺服器",
+            "membership": "成員",
+            "text": "文字頻道",
+            "voice": "語音頻道",
+            "stage": "舞台頻道",
+            "events": "活動",
+            "advanced": "進階"
+        },
+        "perm": {
+            "ViewChannel": "檢視頻道",
+            "ManageChannels": "管理頻道",
+            "ManageRoles": "管理身分組",
+            "ManageGuildExpressions": "管理表情與貼圖",
+            "CreateGuildExpressions": "建立表情與貼圖",
+            "ViewAuditLog": "檢視稽核紀錄",
+            "ViewGuildInsights": "檢視伺服器分析",
+            "ManageWebhooks": "管理 Webhook",
+            "ManageGuild": "管理伺服器",
+            "CreateInstantInvite": "建立邀請",
+            "ChangeNickname": "變更暱稱",
+            "ManageNicknames": "管理暱稱",
+            "KickMembers": "踢出成員",
+            "BanMembers": "封鎖成員",
+            "ModerateMembers": "禁言成員",
+            "SendMessages": "發送訊息",
+            "SendMessagesInThreads": "在討論串中發送訊息",
+            "CreatePublicThreads": "建立公開討論串",
+            "CreatePrivateThreads": "建立私人討論串",
+            "EmbedLinks": "嵌入連結",
+            "AttachFiles": "上傳檔案",
+            "AddReactions": "新增表情反應",
+            "UseExternalEmojis": "使用外部表情",
+            "UseExternalStickers": "使用外部貼圖",
+            "MentionEveryone": "提及 {'@'}everyone、{'@'}here、所有身分組",
+            "ManageMessages": "管理訊息",
+            "ManageThreads": "管理討論串",
+            "ReadMessageHistory": "閱讀訊息紀錄",
+            "SendTTSMessages": "發送 TTS 訊息",
+            "UseApplicationCommands": "使用應用程式指令",
+            "SendVoiceMessages": "發送語音訊息",
+            "SendPolls": "建立投票",
+            "Connect": "連線",
+            "Speak": "發言",
+            "Stream": "視訊／串流",
+            "UseEmbeddedActivities": "使用活動",
+            "UseSoundboard": "使用音效板",
+            "UseExternalSounds": "使用外部音效",
+            "UseVAD": "使用語音偵測",
+            "PrioritySpeaker": "優先發言",
+            "MuteMembers": "靜音成員",
+            "DeafenMembers": "拒聽成員",
+            "MoveMembers": "移動成員",
+            "RequestToSpeak": "請求發言",
+            "ManageEvents": "管理活動",
+            "CreateEvents": "建立活動",
+            "Administrator": "管理員（授予所有權限）",
+            "ViewCreatorMonetizationAnalytics": "檢視營利分析"
+        }
+    },
+    "inviteMgmt": {
+        "revokeConfirm": "確定撤銷邀請 {code}？",
+        "revoke": "撤銷"
+    },
+    "emojiMgmt": {
+        "title": "自訂表情符號",
+        "uploadButton": "+ 上傳表情",
+        "uploadTitle": "上傳自訂表情",
+        "fieldName": "名稱（a-z、0-9、_）",
+        "fieldFile": "圖片（PNG/GIF，≤256 KB）",
+        "rename": "重新命名",
+        "renameTitle": "重新命名表情",
+        "delete": "刪除",
+        "deleteConfirm": "確定刪除表情 {name}？",
+        "empty": "尚無自訂表情。"
+    },
+    "stickerMgmt": {
+        "title": "自訂貼圖",
+        "uploadButton": "+ 上傳貼圖",
+        "uploadTitle": "上傳自訂貼圖",
+        "fieldName": "名稱",
+        "fieldTags": "標籤（相關表情名稱）",
+        "fieldDescription": "說明",
+        "fieldFile": "圖片（PNG/APNG/Lottie，≤512 KB）",
+        "edit": "編輯",
+        "editTitle": "編輯貼圖",
+        "delete": "刪除",
+        "deleteConfirm": "確定刪除貼圖 {name}？",
+        "empty": "尚無自訂貼圖。"
+    },
+    "channelMgmt": {
+        "createTitle": "建立頻道",
+        "editTitle": "編輯頻道",
+        "fieldName": "名稱",
+        "fieldType": "類型",
+        "fieldParent": "類別",
+        "fieldParentNone": "（無類別）",
+        "fieldTopic": "主題",
+        "fieldSlowmode": "慢速模式（秒）",
+        "fieldNsfw": "年齡限制（NSFW）",
+        "fieldAutoArchive": "自動封存時間",
+        "autoArchive60": "1 小時",
+        "autoArchive1440": "1 天",
+        "autoArchive4320": "3 天",
+        "autoArchive10080": "1 週",
+        "typeText": "文字頻道",
+        "typeVoice": "語音頻道",
+        "typeCategory": "類別",
+        "typeAnnouncement": "公告頻道",
+        "typeForum": "論壇",
+        "deleteConfirm": "確定刪除頻道「{name}」？",
+        "create": "建立",
+        "save": "儲存"
+    },
+    "profile": {
+        "title": "個人資料",
+        "userId": "使用者 ID",
+        "username": "使用者名稱",
+        "role": "身分組",
+        "capabilities": "權限詞條",
+        "note": "備註",
+        "unavailable": "無法取得個人資料。",
+        "hint": "再次私訊機器人「login」可重新整理登入狀態。",
+        "settings": {
+            "title": "偏好設定",
+            "animatedEmoji": {
+                "label": "自動播放動畫表情",
+                "help": "關閉後動畫 emoji 顯示為靜止幀,可在行動網路節省流量。"
+            },
+            "desktopNotifications": {
+                "label": "桌面通知",
+                "help": "視窗未在前景時,新 DM 與伺服器中提及你的訊息會彈出系統通知。被靜音的對話不會推播。"
+            }
+        }
+    },
+    "auth": {
+        "title": "登入",
+        "exchanging": "正在交換登入權杖…",
+        "success": "已登入,正在轉導…",
+        "noTokenLead": "如要登入,請傳私訊給機器人:",
+        "noTokenHint": "機器人會回覆一次性登入連結,請在此瀏覽器開啟。",
+        "errorHint": "請再次傳 {login} 給機器人以取得新連結。"
+    },
+    "dashboard": {
+        "title": "儀表板",
+        "noPermission": "無權限查看此區塊。",
+        "hero": {
+            "ready": "就緒",
+            "connecting": "連線中",
+            "statusOffline": "離線",
+            "unavailable": "機器人不可用",
+            "guilds": "伺服器",
+            "uptime": "運行時間"
+        },
+        "guilds": {
+            "title": "伺服器",
+            "viewAll": "查看全部",
+            "empty": "機器人尚未加入任何伺服器。",
+            "members": "位成員",
+            "settings": "設定"
+        },
+        "adminLogin": {
+            "title": "管理員登入狀況",
+            "empty": "找不到任何管理員帳號。",
+            "owner": "擁有者",
+            "never": "從未",
+            "sessionActive": "有效 session",
+            "sessionNone": "無 session"
+        },
+        "botEvents": {
+            "title": "機器人事件日誌",
+            "empty": "尚無事件記錄。",
+            "emptyFiltered": "沒有 {level} 等級的事件。",
+            "filterAriaLabel": "依等級篩選",
+            "contextShow": "ctx",
+            "contextHide": "收起",
+            "level": {
+                "info": "資訊",
+                "warn": "警告",
+                "error": "錯誤"
+            },
+            "category": {
+                "bot": "機器人",
+                "auth": "驗證",
+                "feature": "功能",
+                "web": "網路",
+                "error": "錯誤"
+            }
+        },
+        "relTime": {
+            "today": "今天",
+            "yesterday": "昨天",
+            "daysAgo": "{n} 天前",
+            "monthsAgo": "{n} 個月前",
+            "yearsAgo": "{n} 年前",
+            "never": "從未",
+            "secsAgo": "{n} 秒前",
+            "minsAgo": "{n} 分鐘前",
+            "hoursAgo": "{n} 小時前"
+        },
+        "activity": {
+            "title": "最近管理操作",
+            "empty": "尚無管理操作記錄。",
+            "by": "由",
+            "action": {
+                "user": {
+                    "upsert": {
+                        "verb": "更新了",
+                        "noun": "使用者"
+                    },
+                    "delete": {
+                        "verb": "移除了",
+                        "noun": "使用者"
+                    }
+                },
+                "role": {
+                    "grant": {
+                        "verb": "授予了",
+                        "noun": "角色"
+                    },
+                    "revoke": {
+                        "verb": "撤銷了",
+                        "noun": "角色"
+                    },
+                    "upsert": {
+                        "verb": "更新了",
+                        "noun": "角色"
+                    },
+                    "delete": {
+                        "verb": "刪除了",
+                        "noun": "角色"
+                    }
+                },
+                "capability": {
+                    "grant": {
+                        "verb": "授予了",
+                        "noun": "權限"
+                    },
+                    "revoke": {
+                        "verb": "撤銷了",
+                        "noun": "權限"
+                    }
+                },
+                "feature": {
+                    "todo": {
+                        "upsert": {
+                            "verb": "更新了",
+                            "noun": "待辦頻道"
+                        },
+                        "delete": {
+                            "verb": "移除了",
+                            "noun": "待辦頻道"
+                        }
+                    },
+                    "picture": {
+                        "upsert": {
+                            "verb": "更新了",
+                            "noun": "純圖片頻道"
+                        },
+                        "delete": {
+                            "verb": "移除了",
+                            "noun": "純圖片頻道"
+                        }
+                    },
+                    "rcon": {
+                        "upsert": {
+                            "verb": "更新了",
+                            "noun": "RCON 轉發"
+                        },
+                        "delete": {
+                            "verb": "移除了",
+                            "noun": "RCON 轉發"
+                        }
+                    },
+                    "roleemoji": {
+                        "upsert": {
+                            "verb": "更新了",
+                            "noun": "身分組表情"
+                        },
+                        "delete": {
+                            "verb": "移除了",
+                            "noun": "身分組表情"
+                        }
+                    }
+                }
+            }
+        },
+        "dmChart": {
+            "title": "私訊活動",
+            "subtitle": "過去 7 天",
+            "empty": "沒有私訊活動資料。",
+            "ariaLabel": "顯示過去 7 天私訊活動的長條圖"
+        },
+        "attention": {
+            "title": "需要注意",
+            "dbDisconnected": "資料庫已斷線",
+            "dbDisconnectedDesc": "機器人無法儲存資料，請檢查資料庫連線。"
+        }
+    },
+    "guilds": {
+        "title": "伺服器",
+        "empty": "機器人尚未加入任何伺服器。",
+        "selectGuild": "請選擇一個伺服器。",
+        "memberCount": "{count} 位成員",
+        "joined": "加入於 {date}",
+        "tabs": {
+            "overview": "總覽",
+            "settings": "伺服器設定",
+            "people": "成員與管理",
+            "features": "Bot 功能"
+        },
+        "subtabs": {
+            "settings": {
+                "general": "一般",
+                "moderation": "審核",
+                "system": "系統與歡迎",
+                "roles": "身分組",
+                "invites": "邀請",
+                "emoji": "表情與貼圖"
+            },
+            "people": {
+                "members": "成員",
+                "bans": "封鎖名單",
+                "automod": "AutoMod",
+                "audit": "稽核紀錄"
+            },
+            "features": {
+                "todo": "待辦頻道",
+                "picture": "純圖片",
+                "rcon": "RCON 轉發",
+                "reactionRoles": "身分組反應",
+                "capability": "權限授予",
+                "voice": "語音播放"
+            }
+        },
+        "dashboard": {
+            "members": "成員",
+            "roles": "身分組",
+            "featureUsage": "功能使用狀況"
+        },
+        "settings": {
+            "general": "一般",
+            "moderation": "管理",
+            "system": "系統與歡迎",
+            "name": "伺服器名稱",
+            "description": "簡介",
+            "descriptionPlaceholder": "在伺服器探索頁顯示的簡短說明",
+            "verificationLevel": "驗證等級",
+            "verification": {
+                "0": "無 — 無任何要求",
+                "1": "低 — 需驗證 Email",
+                "2": "中 — 註冊超過 5 分鐘",
+                "3": "高 — 加入此伺服器超過 10 分鐘",
+                "4": "非常高 — 需驗證手機號碼"
+            },
+            "explicitContentFilter": "敏感內容過濾",
+            "explicitContentFilterOpt": {
+                "0": "不掃描",
+                "1": "掃描沒有身分組的成員",
+                "2": "掃描所有成員的訊息"
+            },
+            "defaultNotifications": "預設通知",
+            "defaultNotificationsOpt": {
+                "0": "所有訊息",
+                "1": "僅 {'@'} 提及"
+            },
+            "mfaLevel": "兩步驟驗證要求",
+            "mfaLevelOpt": {
+                "0": "關閉",
+                "1": "管理員必須啟用"
+            },
+            "mfaOwnerOnly": "僅伺服器擁有者可變更此設定。",
+            "systemChannel": "系統訊息頻道",
+            "systemChannelNone": "(停用)",
+            "systemFlags": "系統訊息類型",
+            "flagJoin": "成員加入訊息",
+            "flagPremium": "伺服器加成訊息",
+            "flagReminder": "設定提示提醒",
+            "flagJoinReply": "可以對加入訊息回應「打招呼」",
+            "afkChannel": "AFK 語音頻道",
+            "afkChannelNone": "(無)",
+            "afkTimeout": "AFK 逾時",
+            "afkTimeoutOpt": {
+                "60": "1 分鐘",
+                "300": "5 分鐘",
+                "900": "15 分鐘",
+                "1800": "30 分鐘",
+                "3600": "1 小時"
+            },
+            "rulesChannel": "規則頻道",
+            "publicUpdatesChannel": "公開更新頻道",
+            "communityOnly": "僅社群伺服器可用。",
+            "premiumProgressBar": "顯示伺服器加成進度條",
+            "save": "儲存變更",
+            "saved": "已儲存",
+            "saveFailed": "儲存失敗",
+            "discard": "捨棄",
+            "loading": "載入設定中⋯",
+            "premiumTier": "加成等級",
+            "premiumSubs": "加成數",
+            "ownerLabel": "擁有者"
+        },
+        "idLabel": "ID",
+        "todoChannels": "待辦頻道",
+        "pictureOnly": "純圖片頻道",
+        "rconForward": "Rcon 轉發",
+        "rconTarget": "→ {host}:{port} (指令 {cmd},觸發 {trigger})",
+        "roleEmoji": "身分組表情",
+        "roleReactions": "身分組反應訊息",
+        "roleReactionMessage": "· 訊息 {id}",
+        "capabilityGrants": "權限授予",
+        "rolesTitle": "身分組",
+        "roleMembers": "{count} 位成員",
+        "roleManaged": "整合",
+        "invites": {
+            "title": "邀請連結",
+            "create": "建立邀請",
+            "created": "已建立:",
+            "uses": "{uses}/{max} 已使用",
+            "expires": "{date} 失效",
+            "neverExpires": "永不失效",
+            "modalTitle": "建立邀請",
+            "fieldChannel": "頻道",
+            "fieldChannelHint": "邀請連結會帶入哪個頻道。預設為系統頻道。",
+            "fieldMaxAge": "失效時間",
+            "fieldMaxUses": "使用次數上限",
+            "fieldTemporary": "臨時成員資格",
+            "fieldTemporaryHint": "成員若未在斷線前被指派身分組,將會被踢出。",
+            "fieldUnique": "每次都建立新邀請碼",
+            "fieldUniqueHint": "若關閉,Discord 會在條件相同時重用現有邀請。",
+            "submit": "建立",
+            "expireOpt": {
+                "0": "永不失效",
+                "1800": "30 分鐘",
+                "3600": "1 小時",
+                "21600": "6 小時",
+                "43200": "12 小時",
+                "86400": "1 天",
+                "604800": "7 天"
+            },
+            "usesOpt": {
+                "0": "無限制",
+                "1": "1 次",
+                "5": "5 次",
+                "10": "10 次",
+                "25": "25 次",
+                "50": "50 次",
+                "100": "100 次"
+            }
+        },
+        "tabs2": {
+            "people": "成員與管理"
+        },
+        "members": {
+            "title": "成員",
+            "search": "依名稱搜尋…",
+            "empty": "未載入任何成員。",
+            "loadMore": "載入更多",
+            "joined": "{date} 加入",
+            "rolesCount": "{count} 個身分組",
+            "pending": "待審核",
+            "timeoutActive": "禁言至 {date}",
+            "actionKick": "踢出",
+            "actionBan": "封鎖",
+            "actionTimeout": "禁言",
+            "actionClearTimeout": "解除禁言",
+            "actionNickname": "設定暱稱",
+            "promptKick": "確定踢出 {name}? (可選原因)",
+            "promptBan": "確定封鎖 {name}? (可選原因)",
+            "promptTimeout": "禁言時長 (分鐘,1..40320 = 28 天):",
+            "promptNickname": "{name} 的新暱稱 (留空清除):",
+            "actionFailed": "操作失敗: {message}",
+            "botBadge": "機器人"
+        },
+        "bans": {
+            "title": "封鎖名單",
+            "empty": "目前沒有任何封鎖記錄。",
+            "reason": "原因:",
+            "noReason": "(未填寫原因)",
+            "unban": "解除封鎖",
+            "promptUnban": "確定要解除 {name} 的封鎖?"
+        },
+        "audit": {
+            "title": "稽核紀錄",
+            "empty": "尚無稽核紀錄。",
+            "loadMore": "載入較舊紀錄",
+            "filterAction": "動作",
+            "filterUser": "使用者 ID",
+            "actionAll": "全部動作",
+            "filterApply": "套用",
+            "filterReset": "重設",
+            "by": "由 {name}",
+            "noExecutor": "(未知執行者)",
+            "reason": "原因:",
+            "changes": "{count} 項變更",
+            "actionLoadFailed": "無法載入紀錄"
+        },
+        "feature": {
+            "addBtn": "新增",
+            "removeBtn": "移除",
+            "saveBtn": "儲存",
+            "cancelBtn": "取消",
+            "noEntries": "尚無項目。",
+            "pickChannel": "頻道",
+            "pickRole": "身分組",
+            "channelPlaceholder": "選擇文字頻道",
+            "rolePlaceholder": "選擇身分組",
+            "messageId": "訊息 ID",
+            "emoji": "表情",
+            "emojiHint": "Unicode (👍) 或自訂 <:name:id>",
+            "capability": "權限",
+            "capabilityPlaceholder": "todo.manage",
+            "host": "主機",
+            "port": "通訊埠",
+            "password": "密碼",
+            "commandPrefix": "指令前綴",
+            "triggerPrefix": "觸發前綴",
+            "actionFailed": "失敗:{message}",
+            "todoTitle": "待辦頻道",
+            "todoHint": "在這些頻道送出的訊息會被追蹤為待辦事項。",
+            "pictureTitle": "純圖片頻道",
+            "pictureHint": "非圖片訊息會被自動刪除。",
+            "rconTitle": "RCON 轉發",
+            "rconHint": "將訊息轉送到 Source 引擎的 RCON 伺服器。",
+            "roleEmojiGroupsTitle": "表情群組",
+            "roleEmojiGroupsHint": "存放表情→身分組對應的群組。被監看的訊息可指定要套用哪些群組,使同一個表情在不同訊息上能對應到不同身分組。",
+            "roleEmojiGroupNamePlaceholder": "新群組名稱",
+            "roleEmojiGroupPickerPlaceholder": "選擇群組",
+            "roleEmojiCreateGroupFirst": "請先在上方建立表情群組,再新增對應。",
+            "roleEmojiTitle": "表情 → 身分組對應",
+            "roleEmojiHint": "成員在被監看的訊息上以表情反應時,會獲得對應身分組。每筆對應都歸屬於一個群組。",
+            "mappingsCount": "{n} 筆對應",
+            "roleReceiveTitle": "被監看的訊息",
+            "roleReceiveHint": "監看這些訊息以接收身分組表情反應。每則被監看的訊息綁定一個表情群組,bot 收到反應時只會以該群組的對應來決定身分組。",
+            "roleReceiveGroupLabel": "套用群組：",
+            "capabilityTitle": "權限授予",
+            "capabilityHint": "授予某身分組一項伺服器內權限,該身分組成員即可使用對應的斜線指令。"
+        },
+        "automod": {
+            "title": "AutoMod 規則",
+            "empty": "尚未設定任何 AutoMod 規則。",
+            "create": "新增規則",
+            "enabled": "啟用",
+            "disabled": "停用",
+            "trigger": {
+                "1": "關鍵字過濾",
+                "3": "垃圾訊息偵測",
+                "4": "關鍵字預設",
+                "5": "提及洪水",
+                "6": "成員資料"
+            },
+            "preset": {
+                "1": "髒話",
+                "2": "性內容",
+                "3": "歧視語"
+            },
+            "action": {
+                "1": "封鎖訊息",
+                "2": "發送提醒",
+                "3": "禁言"
+            },
+            "actionsCount": "{count} 個動作",
+            "edit": "編輯",
+            "delete": "刪除",
+            "deleteConfirm": "確定刪除規則「{name}」?",
+            "modalNew": "新增 AutoMod 規則",
+            "modalEdit": "編輯規則",
+            "fieldName": "名稱",
+            "fieldTriggerType": "觸發類型",
+            "fieldTriggerImmutable": "觸發類型在建立後不可變更。",
+            "fieldKeywords": "關鍵字 (以逗號分隔)",
+            "fieldKeywordsHint": "最多 1,000 個項目;* 在字詞邊界匹配任意字元。",
+            "fieldRegex": "正規表達式 (每行一條)",
+            "fieldAllowList": "白名單 (以逗號分隔)",
+            "fieldPresets": "預設類別",
+            "fieldMentionLimit": "每則訊息最多獨立提及數",
+            "fieldMentionRaid": "啟用突襲防護",
+            "fieldActions": "動作",
+            "actionAdd": "新增動作",
+            "actionType": "類型",
+            "actionChannel": "提醒頻道",
+            "actionDuration": "禁言時長 (秒,≤2,419,200)",
+            "actionCustomMsg": "自訂訊息",
+            "fieldExemptRoles": "排除身分組 (以逗號分隔的 ID)",
+            "fieldExemptChannels": "排除頻道 (以逗號分隔的 ID)",
+            "save": "儲存規則",
+            "cancel": "取消",
+            "saving": "儲存中…",
+            "saveFailed": "儲存失敗",
+            "loadFailed": "無法載入 AutoMod 規則",
+            "needsName": "名稱必填",
+            "needsAction": "至少需要一個動作"
+        }
+    },
+    "quickSwitcher": {
+        "placeholder": "搜尋頻道與 DM…",
+        "empty": "找不到符合的對話。",
+        "directMessage": "私訊",
+        "navigate": "切換",
+        "open": "開啟",
+        "close": "關閉"
+    },
+    "messages": {
+        "modeDm": "私人訊息",
+        "modePickerTitle": "選擇訊息來源",
+        "selectChat": "請選擇一個對話以查看訊息。",
+        "noMessages": "目前沒有訊息。",
+        "loadingOlder": "載入較舊訊息…",
+        "beginningOfConversation": "對話起點",
+        "reply": "回覆",
+        "react": "反應",
+        "edit": "編輯",
+        "delete": "刪除",
+        "deleteNoConfirm": "刪除(不確認)",
+        "deleteShiftConfirm": "刪除(按 Shift 可跳過確認)",
+        "copyLink": "複製訊息連結",
+        "copyLinkDone": "已複製",
+        "copyText": "複製訊息內容",
+        "copyId": "複製訊息 ID",
+        "forward": "轉發",
+        "forwardTitle": "轉發訊息",
+        "forwardEmpty": "沒有可用頻道。",
+        "forwardFailed": "轉發失敗",
+        "forwardDestination": "目的地",
+        "forwardSearchPlaceholder": "搜尋頻道或使用者⋯",
+        "markUnread": "標記為未讀",
+        "viewSource": "檢視原始 Markdown",
+        "lightboxPrev": "上一張",
+        "lightboxNext": "下一張",
+        "mute": "靜音此對話",
+        "unmute": "解除靜音",
+        "muteCycleHintFromAll": "點擊以靜音(僅 {'@'} 我)",
+        "muteCycleHintFromMentions": "點擊以靜音(完全)",
+        "muteCycleHintFromNone": "點擊以恢復通知",
+        "pinnedMessages": "已釘選訊息",
+        "noPins": "尚無釘選訊息。",
+        "reactionAdd": "加入反應",
+        "reactionRemove": "移除反應",
+        "reactionCopyEmoji": "複製表情符號",
+        "reactionNoUsers": "沒有人對這個反應。",
+        "newMessages": "新訊息",
+        "typingOne": "{name} 正在輸入…",
+        "typingTwo": "{a} 與 {b} 正在輸入…",
+        "typingMany": "{name} 等 {count} 人正在輸入…",
+        "replying": "回覆中",
+        "dropFiles": "拖放檔案即可附加",
+        "noDms": "尚無私訊。在 Discord 傳訊給機器人,或從上方開始一則。",
+        "noTextChannels": "沒有文字頻道。",
+        "voiceChannels": "語音頻道",
+        "forumChannels": "論壇頻道",
+        "noForumPosts": "尚無貼文。",
+        "recipientId": "收件人使用者 ID",
+        "linkUnknown": "不明"
+    },
+    "composer": {
+        "placeholder": "訊息…",
+        "attach": "附加",
+        "uploadFile": "上傳檔案",
+        "picker": "表情與貼圖",
+        "send": "傳送",
+        "spoilerOn": "標記為劇透",
+        "spoilerOff": "取消劇透",
+        "replyPingOn": "停止 {'@'} 原作者",
+        "replyPingOff": "啟用 {'@'} 原作者",
+        "replyPingOnShort": "{'@'}",
+        "replyPingOffShort": "{'@'}?",
+        "removeAttachment": "移除附件",
+        "removeSticker": "移除貼圖"
+    },
+    "dmProactiveFeatures": {
+        "menuTitle": "Bot 主動功能",
+        "actionFailed": "執行 Bot 動作失敗",
+        "adminLogin": {
+            "label": "發送 admin 登入連結",
+            "description": "私訊發送一次性後台登入連結給此使用者。"
+        }
+    },
+    "admin": {
+        "title": "權限",
+        "accessDenied": {
+            "title": "無存取權限",
+            "body": "你的身分組沒有 admin 權限詞條,請向現有管理員申請授予。"
+        },
+        "tabs": {
+            "users": "使用者",
+            "roles": "身分組"
+        },
+        "users": {
+            "title": "已授權使用者",
+            "empty": "僅 bot owner 可存取。",
+            "ownerNote": "Bot owner 永遠具備所有權限,無需另外新增。",
+            "ownerBadge": "Bot Owner",
+            "unknownProfile": "未知使用者",
+            "unknownRole": "{name} (未知)",
+            "userIdLabel": "Discord 使用者 ID",
+            "roleLabel": "身分組",
+            "noteLabel": "備註 (選填)",
+            "notePlaceholder": "此授權的用途?",
+            "noPlaceholder": "—",
+            "add": "新增使用者",
+            "addSubmit": "授權",
+            "remove": "移除",
+            "removeConfirm": "要將 {user} 從允許清單中移除嗎?",
+            "changeRole": "變更身分組",
+            "searchPlaceholder": "搜尋名稱或 ID⋯",
+            "filterAll": "所有身分組",
+            "noMatches": "沒有符合條件的使用者。",
+            "matchCount": "{matched} / {total}"
+        },
+        "roles": {
+            "title": "身分組",
+            "empty": "尚未定義任何身分組。",
+            "nameLabel": "身分組名稱",
+            "descriptionLabel": "說明",
+            "descriptionPlaceholder": "簡短描述此身分組",
+            "capabilities": "權限詞條",
+            "capabilitiesGrantedCount": "已授予 {granted} / {total}",
+            "noCapabilities": "沒有任何權限詞條,此身分組的使用者將無法存取系統。",
+            "grantCapability": "新增權限詞條",
+            "selectCapability": "選擇權限詞條…",
+            "grant": "新增",
+            "revoke": "移除",
+            "add": "新增身分組",
+            "addSubmit": "建立",
+            "remove": "刪除身分組",
+            "removeConfirm": "要刪除身分組 {name} 嗎?",
+            "saveDescription": "儲存",
+            "saved": "已儲存",
+            "discardChanges": "捨棄",
+            "noDescription": "尚未設定說明。",
+            "ownerOnlyCapability": "admin",
+            "editCapabilities": "編輯權限",
+            "capabilityModalTitle": "權限 · {name}",
+            "capabilityTabs": {
+                "global": "全域",
+                "globalHint": "套用至 bot 所有伺服器與所有功能介面。",
+                "perGuild": "個別伺服器",
+                "perGuildHint": "將相同範圍限定到單一伺服器,與全域權限為相加關係,不會覆蓋。",
+                "perBehaviorTab": "個別行為分頁",
+                "perBehaviorTabHint": "授權該角色管理特定行為分頁下的行為(不可增刪分頁本身,需 behavior.manage 才能調整分頁清單)。",
+                "perPlugin": "外掛",
+                "perPluginHint": "各已啟用外掛為自身需求宣告的權限(例如 WebUI 存取)。外掛被刪除或重新註冊後不再宣告時會自動移除。"
+            },
+            "searchGuilds": "搜尋伺服器…",
+            "noGuilds": "沒有符合條件的伺服器。",
+            "noGlobalCaps": "尚未授予任何全域權限。",
+            "perGuildSummary": "已授予 {count} 個個別伺服器權限",
+            "pendingChanges": "已修改 {count} 項",
+            "confirmChanges": "確認變更",
+            "searchBehaviorTabs": "搜尋行為分頁…",
+            "noBehaviorTabs": "沒有符合條件的行為分頁。",
+            "perBehaviorTabSummary": "已授予 {count} 個行為分頁權限",
+            "legacyBehaviorHeader": "舊版行為對象授權(遷移前)",
+            "legacyBehaviorDesc": "舊版 token — 建議撤銷並改用上方的分頁授權。",
+            "legacyBehaviorSummary": "{count} 個舊版行為授權",
+            "searchPlugins": "搜尋外掛權限…",
+            "noPluginCapabilities": "沒有已啟用的外掛宣告權限。",
+            "noPluginCapabilitiesFiltered": "沒有符合條件的外掛權限。",
+            "orphanedPluginHeader": "孤立的外掛授權",
+            "orphanedPluginDesc": "外掛已停用或權限已移除 — 若不再需要請撤銷",
+            "pluginCapabilitySummary": "{count} 個外掛權限"
+        },
+        "capabilitiesCatalog": "可用權限詞條",
+        "capabilityDesc": {
+            "admin": "完整權限（可無視其他所有權限檢查）",
+            "dm.message": "讀寫 DM 對話列表、訊息、反應與未讀數",
+            "guild.message": "讀寫所有伺服器頻道的訊息與反應",
+            "guild.manage": "管理所有伺服器的成員、角色、設定與 bot 功能",
+            "system.read": "查看系統事件記錄與統計資訊",
+            "behavior.manage": "管理 webhook 行為模組的所有目標對象與行為設定",
+            "guildScoped": {
+                "message": "僅限於此伺服器讀寫頻道訊息與反應。",
+                "manage": "僅限於此伺服器管理成員、角色、設定與 bot 功能。"
+            }
+        },
+        "systemSettings": {
+            "title": "系統設定",
+            "subtitle": "Boot 時凍結的環境變數設定，僅供檢視。",
+            "retry": "重試",
+            "readiness": {
+                "allSet": "Production 必要環境變數：全部已設定",
+                "missing": "Production 必要環境變數：缺少 {count} 個",
+                "env": "目前環境：{env}"
+            },
+            "runtime": {
+                "title": "Runtime 可編輯設定",
+                "empty": "目前所有設定於 boot 時凍結，無法 runtime 修改"
+            },
+            "readonly": {
+                "title": "唯讀設定（按群組）"
+            },
+            "status": {
+                "configured": "已設定",
+                "unset": "未設定"
+            },
+            "badge": {
+                "sensitive": "機密",
+                "semisensitive": "半機密",
+                "public": "公開",
+                "envonly": "僅 ENV",
+                "runtimeCapable": "可改（未啟用）",
+                "runtimeEditable": "可改（已啟用）",
+                "prodRequired": "PROD 必要"
+            },
+            "group": {
+                "bot": "Bot 核心",
+                "web": "Web 伺服器",
+                "db": "資料庫",
+                "crypto": "加密",
+                "jwt": "JWT",
+                "plugin": "Plugin 系統",
+                "behavior": "行為模組",
+                "admin": "Admin",
+                "rcon": "RCON",
+                "botEvents": "Bot 事件",
+                "dm": "DM 系統"
+            },
+            "jwtKey": {
+                "title": "JWT 簽章金鑰",
+                "desc": "Bot 用來簽所有 JWT（admin 登入連結、plugin WebUI session token）的 Ed25519 金鑰。啟動時自動生成、加密存進資料庫；公鑰會發給 plugin 驗證。",
+                "algorithm": "演算法",
+                "fingerprint": "指紋",
+                "created": "建立時間",
+                "ephemeral": "目前使用臨時記憶體金鑰 —— 未設定 ENCRYPTION_KEY，金鑰無法持久化、也無法輪替；token 在 bot 重啟後即失效。",
+                "rotate": "輪替金鑰",
+                "rotating": "輪替中…",
+                "rotateConfirmTitle": "確定要輪替 JWT 簽章金鑰？",
+                "rotateConfirmMessage": "會生成新金鑰並立即作廢所有現存 token —— admin 登入連結與 plugin WebUI session。Plugin 約 30 秒內拿到新公鑰；受影響的使用者需重新登入。",
+                "rotateConfirm": "輪替",
+                "rotated": "已輪替 JWT 簽章金鑰"
+            }
+        },
+        "plugins": {
+            "title": "外掛",
+            "subtitle": "已註冊到 bot 的 sibling 服務。Plugin 會在啟動後主動向 bot 註冊,啟用後才會接收事件與被指派 behavior。",
+            "empty": "目前沒有 plugin 註冊到 bot。",
+            "emptyHint": "Plugin 啟動時會自動註冊。確認該 container 與 bot 在同個 docker network，並已設置 per-plugin secret — 可點擊上方的「新增 Plugin」按鈕快速完成，或手動執行 POST /api/plugins/setup-secret。",
+            "addPlugin": {
+                "button": "新增 Plugin",
+                "title": "新增 Plugin",
+                "body": "輸入 plugin 的 key（即其 manifest 中的 `id`）。Bot 會建立佔位記錄，並提供一次性的 setup secret，請在啟動 plugin 前寫入其 `.env`（`KARYL_PLUGIN_SETUP_SECRET`）。",
+                "keyLabel": "Plugin key",
+                "keyPlaceholder": "karyl-myplugin",
+                "keyInvalid": "必須符合 [a-z0-9][a-z0-9-]*",
+                "submit": "建立",
+                "alreadyExists": "此 key 已存在記錄 — 其 setup secret 已重新生成（舊的即刻失效）。"
+            },
+            "statusActive": "在線",
+            "statusInactive": "離線",
+            "toggleEnabled": "已啟用 (點擊停用)",
+            "toggleDisabled": "已停用 (點擊啟用)",
+            "url": "URL",
+            "lastHeartbeat": "上次心跳",
+            "neverHeartbeat": "尚未收到心跳",
+            "heartbeatJustNow": "剛剛",
+            "heartbeatMinutesAgo": "{n} 分鐘前",
+            "heartbeatHoursAgo": "{n} 小時前",
+            "rpcScopes": "RPC 權限",
+            "manifestRaw": "顯示完整 manifest",
+            "dmBehaviorsCount": "DM 行為 × {n}",
+            "guildFeaturesCount": "伺服器功能 × {n}",
+            "commandsCount": "Slash 指令 × {n}",
+            "scopes": {
+                "approved": "已批准的 RPC 權限",
+                "pending": "待批准的 RPC 權限",
+                "pendingCount": "{n} 個權限待審",
+                "pendingHint": "有 {n} 個新 RPC 權限請求待 admin 批准，點擊審查",
+                "approveButton": "批准",
+                "approveModalTitle": "審查 RPC 權限請求",
+                "approveConfirm": "以下 RPC 權限由「{name}」請求，批准後將立即生效："
+            },
+            "setupSecret": {
+                "button": "生成 Setup Secret",
+                "confirmTitle": "生成新的 Setup Secret",
+                "confirmBody": "將為「{name}」生成新的 setup secret。舊的 secret 會立即作廢，必須把新的值寫進該 plugin 的 .env 並重啟 plugin。要繼續嗎？",
+                "resultTitle": "Setup Secret",
+                "secretLabel": "Setup Secret",
+                "copyButton": "複製",
+                "copiedButton": "已複製",
+                "instruction": "請將以下值寫入 plugin 的 .env 並重啟 plugin：",
+                "envHint": "KARYL_PLUGIN_SETUP_SECRET={secret}",
+                "warning": "關閉此視窗後即無法再次顯示。如遺失需重新生成（會作廢當前的）。",
+                "checkboxLabel": "我已將 secret 寫入 plugin 的 .env",
+                "closeButton": "關閉",
+                "generating": "生成中…"
+            },
+            "online": "線上",
+            "offline": "離線",
+            "offlineCount": "離線 ({n})",
+            "menu": {
+                "delete": "刪除"
+            },
+            "deleteConfirmTitle": "刪除離線 Plugin",
+            "deleteConfirm": "確定刪除離線 plugin「{name}」？此動作會同時刪除其所有 KV / config / feature 設定，無法恢復。",
+            "deleteSuccess": "Plugin 已刪除",
+            "deleteFailed": "刪除失敗",
+            "cannotDeleteActive": "無法刪除仍在線的 plugin，請先停止 plugin 並等待 inactive 後再試",
+            "deleteAllOffline": "全部刪除",
+            "deleteAllConfirmTitle": "刪除全部離線 Plugin",
+            "deleteAllConfirm": "確定刪除全部 {n} 個離線 plugin？每個 plugin 的 KV / config / feature 設定都會一併刪除，無法恢復。",
+            "deleteAllProgress": "進度：{done} / {total}",
+            "viewDetail": "查看詳情",
+            "detail": {
+                "backLink": "返回外掛列表",
+                "tabOverview": "總覽",
+                "tabBehaviors": "Behaviors",
+                "tabCommands": "指令",
+                "tabFeatures": "Guild Features",
+                "tabScopes": "Scopes",
+                "tabSecurity": "安全設定",
+                "overviewMeta": {
+                    "pluginKey": "Plugin Key",
+                    "author": "作者",
+                    "homepage": "首頁"
+                },
+                "behaviors": {
+                    "intro": "以下是此 Plugin 宣告的 behaviors。可在此頁啟用或停用各個 behavior；停用後 reconciler 不會將其 slash 指令登記至 Discord。",
+                    "empty": "此 Plugin 未宣告任何 Behavior",
+                    "toggleOn": "啟用此 behavior",
+                    "toggleOff": "停用此 behavior",
+                    "toggleSuccess": "已更新 behavior 狀態",
+                    "toggleError": "更新失敗，請重試",
+                    "supportsContinuous": "支援連續對話",
+                    "axesReadonly": "三軸由 manifest 鎖定",
+                    "slashOptions": "{count} 個選項"
+                },
+                "commands": {
+                    "intro": "以下為此 Plugin 宣告的自訂 slash 指令。三軸由 Plugin manifest 寫死，admin 只能啟用或停用。",
+                    "empty": "此 Plugin 未宣告任何自訂指令",
+                    "toggleOn": "啟用此指令",
+                    "toggleOff": "停用此指令",
+                    "globalGroup": "全域指令",
+                    "featureGroup": "Feature 指令",
+                    "scopeGuild": "伺服器",
+                    "scopeGlobal": "全域"
+                },
+                "features": {
+                    "intro": "以下功能可在各伺服器的「Bot 功能」tab 中個別開關，此頁為唯讀展示。",
+                    "empty": "此 Plugin 未提供 Guild Feature"
+                },
+                "scopes": {
+                    "approved": "已授權 Scopes",
+                    "pending": "待審核 Scopes",
+                    "pendingHint": "有 {n} 個待審核 Scope",
+                    "pendingCount": "{n} 個待審核",
+                    "approveButton": "授權",
+                    "approveModalTitle": "授權 RPC Scopes",
+                    "approveConfirm": "確定授權「{name}」申請的以下 RPC Scopes？"
+                }
+            }
+        }
+    },
+    "picker": {
+        "searchPlaceholder": "搜尋表情與貼圖…",
+        "tabs": {
+            "recent": "最近",
+            "emoji": "表情",
+            "custom": "自訂",
+            "stickers": "貼圖"
+        },
+        "customEmoji": "自訂表情",
+        "stickers": "貼圖",
+        "emoji": "表情",
+        "noMatches": "沒有符合項目。",
+        "nothingRecent": "尚未使用過任何項目。",
+        "noCustomEmoji": "沒有可用的自訂表情。",
+        "noGuildStickers": "沒有可用的伺服器貼圖。"
+    },
+    "behaviors": {
+        "page": {
+            "pickTarget": "請從左側選擇一個目標對象。"
+        },
+        "sidebar": {
+            "title": "行為",
+            "addTabTooltip": "新增範圍分頁",
+            "globalAll": "全範圍",
+            "globalAllHint": "所有平台與情境皆適用",
+            "allDms": "所有私訊",
+            "allDmsHint": "所有私訊使用者皆適用",
+            "allBotDms": "所有與 Bot 的私訊",
+            "allBotDmsHint": "僅 Bot 私訊頻道",
+            "allGuilds": "全 Guild",
+            "allGuildsHint": "所有 Guild 皆適用",
+            "behaviorCount": "{count} 個行為",
+            "guildSection": "Guild",
+            "dmSection": "Bot 私訊",
+            "noGuildTabs": "尚無 Guild 專屬分頁",
+            "noDmTabs": "尚無使用者專屬分頁"
+        },
+        "addPlugin": {
+            "title": "新增 Plugin 行為",
+            "defaultTitle": "{plugin}: {behavior}",
+            "noEligible": "沒有可用的 plugin。請先在外掛頁啟用至少一個提供 dm_behavior 的 plugin。",
+            "pickPlugin": "選擇 plugin",
+            "pickPluginPlaceholder": "—",
+            "pickBehavior": "選擇行為",
+            "create": "建立"
+        },
+        "workspace": {
+            "kindGlobalAll": "全範圍",
+            "kindAllDms": "所有私訊",
+            "kindAllBotDms": "Bot 私訊",
+            "kindAllGuilds": "全 Guild",
+            "kindGuild": "指定 Guild",
+            "kindChannel": "指定頻道",
+            "kindUser": "個別使用者",
+            "kindGroup": "使用者組",
+            "addBehavior": "新增行為",
+            "deleteTabTooltip": "刪除此分頁",
+            "deleteTabTitle": "刪除分頁",
+            "deleteTabConfirm": "確定要刪除分頁「{label}」?其下所有行為將一併移除。",
+            "empty": "目前沒有設定行為。"
+        },
+        "card": {
+            "title": "標題",
+            "description": "說明",
+            "triggerType": "觸發類型",
+            "triggerStartsWith": "開頭符合",
+            "triggerEndsWith": "結尾符合",
+            "triggerRegex": "正則表達式",
+            "triggerPattern": "訊息 Pattern",
+            "triggerValue": "觸發內容",
+            "messagePatternKind": "Pattern 類型",
+            "messagePatternValue": "Pattern 值",
+            "slashCommandName": "Slash 指令名稱",
+            "slashCommandDescription": "Slash 指令說明",
+            "forwardType": "轉發類型",
+            "forwardOneTime": "一次性轉發",
+            "forwardContinuous": "持續轉發",
+            "targetId": "目標對象",
+            "triggerSection": "觸發設定",
+            "integrationTypes": "可安裝範圍",
+            "integrationTypesLocked": "（由範圍分頁決定）",
+            "integrationBoth": "伺服器 + 使用者皆可安裝",
+            "integrationGuildOnly": "僅伺服器可安裝",
+            "integrationUserOnly": "僅使用者可安裝",
+            "webhookUrl": "Webhook URL",
+            "webhookUrlRequired": "請輸入 Webhook URL。",
+            "webhookSecret": "Webhook Secret",
+            "webhookSecretHint": "（可選，設定後啟用驗證）",
+            "webhookSecretPlaceholder": "留空 = 不設定",
+            "webhookAuthMode": "驗證模式",
+            "stopOnMatch": "命中後阻止後續判定",
+            "tagContinuous": "持續轉發",
+            "tagContinuousShort": "持續",
+            "tagStop": "命中後阻止後續判定",
+            "tagStopShort": "停止後續",
+            "tagPlugin": "由 Plugin 提供",
+            "tagPluginShort": "Plugin",
+            "tagSystem": "系統內建",
+            "tagSystemShort": "系統",
+            "systemRowLocked": "此為系統行為,不可拖曳排序",
+            "pluginRowLocked": "此 behavior 由 Plugin 管理,不可拖曳排序",
+            "triggerSlashCommand": "Slash 指令",
+            "pluginPick": "選擇 Plugin",
+            "pluginNoneAvailable": "目前無可用 Plugin",
+            "pluginBehaviorKey": "選擇 behavior",
+            "pluginRequired": "請選擇 Plugin",
+            "pluginBehaviorKeyRequired": "請選擇 behavior",
+            "toggleEnabled": "已啟用（點擊停用）",
+            "toggleDisabled": "已停用（點擊啟用）",
+            "previewStartsWith": "開頭：{value}",
+            "previewEndsWith": "結尾：{value}",
+            "previewRegex": "regex：{value}",
+            "previewSlashCommand": "/{value}",
+            "titleRequired": "請輸入標題。",
+            "triggerValueRequired": "請輸入觸發內容。",
+            "regexInvalid": "正則表達式格式錯誤。",
+            "deleteConfirm": "確定要刪除行為「{title}」?",
+            "dragHint": "拖曳排序",
+            "moreActions": "更多操作",
+            "sourceCustom": "自訂",
+            "sourcePlugin": "Plugin",
+            "sourceSystem": "系統",
+            "sourceNoticPlugin": "此 behavior 由 Plugin「{name}」提供，部分欄位不可修改",
+            "sourceNoticPluginLink": "查看 Plugin 詳情",
+            "sourceNoticSystem": "系統內建 behavior，可修改觸發類型與內容（其餘欄位鎖定）",
+            "saveTrigger": "儲存觸發"
+        },
+        "addTab": {
+            "title": "新增範圍分頁",
+            "typeLabel": "分頁類型",
+            "type_specific_guild": "指定 Guild",
+            "type_specific_channel": "指定頻道",
+            "type_specific_user": "指定使用者",
+            "type_specific_group": "使用者組",
+            "labelField": "顯示名稱（選填）",
+            "labelPlaceholder": "留空則使用 ID 顯示",
+            "groupNameLabel": "組名稱",
+            "groupNamePlaceholder": "例：VIP",
+            "submit": "建立分頁"
+        },
+        "addModal": {
+            "title": "新增 Behavior",
+            "subtitle": "建立由管理員定義的 behavior：選擇觸發方式，再決定要轉發到哪裡。",
+            "create": "建立",
+            "triggerSlash": "Slash 指令",
+            "triggerPattern": "訊息 Pattern",
+            "nameLabel": "Behavior 名稱",
+            "namePlaceholder": "例：問答助手",
+            "forwardLabel": "轉發設定",
+            "forwardWebhook": "Webhook",
+            "forwardPlugin": "Plugin"
+        }
+    },
+    "config": {
+        "bot": {
+            "token": "Bot Token（Discord API 金鑰）",
+            "ownerId": "Bot 擁有者 Discord ID",
+            "clientId": "Bot 客戶端 ID",
+            "clientSecret": "Bot 客戶端密鑰",
+            "guildId": "預設伺服器 ID",
+            "logLevel": "日誌層級"
+        },
+        "web": {
+            "port": "HTTP 監聽埠",
+            "host": "HTTP 監聽位址",
+            "baseUrl": "對外 Base URL",
+            "corsOrigin": "CORS 允許來源"
+        },
+        "db": {
+            "url": "資料庫連線 URL",
+            "poolMin": "連線池最小數",
+            "poolMax": "連線池最大數"
+        },
+        "crypto": {
+            "encryptionKey": "靜態資料加密金鑰（AES-256）"
+        },
+        "jwt": {
+            "secret": "JWT 簽名密鑰",
+            "accessTtl": "Access Token 有效時間（秒）",
+            "refreshTtl": "Refresh Token 有效時間（秒）"
+        },
+        "plugin": {
+            "sharedSecret": "Plugin 共用驗證密鑰",
+            "heartbeatInterval": "心跳間隔（毫秒）",
+            "heartbeatTimeout": "心跳逾時（毫秒）"
+        },
+        "behavior": {
+            "enabled": "行為模組是否啟用",
+            "webhookTimeout": "Webhook 請求逾時（毫秒）",
+            "maxRetries": "Webhook 最大重試次數"
+        },
+        "admin": {
+            "sessionTtl": "Admin Session 有效時間（秒）",
+            "maxLoginAttempts": "最大登入嘗試次數"
+        },
+        "rcon": {
+            "enabled": "RCON 是否啟用",
+            "host": "RCON 主機位址",
+            "port": "RCON 埠號",
+            "password": "RCON 密碼"
+        },
+        "botEvents": {
+            "retentionDays": "事件保留天數",
+            "maxEvents": "最大事件筆數",
+            "enabled": "Bot 事件記錄是否啟用"
+        },
+        "dm": {
+            "enabled": "DM 功能是否啟用",
+            "rateLimit": "DM 速率限制（每分鐘）",
+            "maxHistory": "DM 歷史訊息快取筆數"
+        }
+    },
+    "allServers": {
+        "tabs": {
+            "overview": "總覽",
+            "botFeatures": "Bot 功能"
+        },
+        "overviewTitle": "所有伺服器 — 總覽",
+        "refresh": "重新整理",
+        "loading": "載入中…",
+        "metrics": {
+            "guilds": "伺服器",
+            "registeredPlugins": "已註冊 Plugin",
+            "builtinFeatures": "內建功能",
+            "builtinOverrides": "內建功能單伺服器覆寫",
+            "pluginFeatures": "Plugin Features",
+            "pluginOverrides": "Plugin Features 覆寫",
+            "defaultOn": "預設啟用"
+        },
+        "botFeaturesTitle": "所有伺服器 — Bot 功能預設",
+        "botFeaturesDesc": "設定每個 guild feature 的預設開關。沒在各伺服器頁面手動覆寫過的伺服器都跟隨這個預設 —— 在這裡改，所有未覆寫的伺服器立即生效（不用再多按一步）。有手動覆寫的伺服器會維持覆寫，直到你在該伺服器頁面清掉它。",
+        "builtinSection": "內建功能",
+        "noBuiltin": "沒有內建功能。",
+        "overriddenServers": "已覆寫的伺服器:{count}",
+        "originalDefault": "原預設:啟用",
+        "overriddenTo": "已被覆蓋為 {state}",
+        "defaultEnabled": "預設啟用",
+        "defaultDisabled": "預設停用",
+        "enabled": "啟用",
+        "disabled": "停用",
+        "pluginFeaturesSection": "Plugin Features",
+        "noPluginFeatures": "目前沒有 plugin 宣告任何 guild feature。",
+        "enabledGuilds": "已啟用 {count} guild",
+        "disabledGuilds": "已停用 {count} guild",
+        "manifestDefault": "Manifest 預設:{state}",
+        "overriddenToParens": "(覆蓋為 {state})",
+        "statusActive": "運行中",
+        "statusInactive": "未運行",
+        "statusDisabled": "已停用"
+    },
+    "voice": {
+        "title": "語音播放",
+        "description": "開啟後,公會成員可在語音頻道中使用 bot 的語音功能(如 /voice 指令或外部 plugin 的播放控制)。",
+        "builtinCommands": "內建指令:",
+        "cmdJoin": "讓 bot 加入你目前所在的語音頻道",
+        "cmdPlay": "播放音訊 URL(http/https)",
+        "cmdStop": "停止當前播放",
+        "cmdLeave": "離開語音頻道",
+        "cmdStatus": "查看 bot 語音狀態"
+    },
+    "pluginSecurity": {
+        "setupSecretDesc": "重新產生 Setup Secret 後，舊的 secret 立即失效。Plugin 必須使用新 secret 重新向 bot 登記。"
+    }
+}

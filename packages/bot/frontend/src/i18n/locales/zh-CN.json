@@ -1,0 +1,1382 @@
+{
+    "app": {
+        "brand": "Karyl Chan",
+        "nav": {
+            "dashboard": "仪表板",
+            "messages": "消息",
+            "guilds": "服务器",
+            "behaviors": "行为",
+            "plugins": "插件",
+            "admin": "权限",
+            "profile": "个人资料",
+            "signOut": "退出登录",
+            "accountMenu": "账号菜单",
+            "systemSettings": "系统设置"
+        },
+        "mobile": {
+            "openMenu": "打开菜单",
+            "closeMenu": "关闭菜单",
+            "back": "返回",
+            "showFeatures": "显示页面功能",
+            "showNav": "显示导航"
+        }
+    },
+    "common": {
+        "loading": "加载中…",
+        "none": "无。",
+        "cancel": "取消",
+        "close": "关闭",
+        "start": "开始",
+        "refresh": "刷新",
+        "archived": "已存档",
+        "save": "保存",
+        "saving": "保存中…",
+        "add": "新增",
+        "delete": "删除",
+        "remove": "移除",
+        "updated": "已于 {time} 更新",
+        "failedToLoad": "加载失败:{error}",
+        "search": "搜索…",
+        "noMatches": "没有匹配的项目。"
+    },
+    "home": {
+        "title": "Karyl Chan",
+        "lead": "未来将在此提供公开功能。"
+    },
+    "userCard": {
+        "id": "用户 ID",
+        "roles": "身份组",
+        "sendDm": "发送私信"
+    },
+    "userMenu": {
+        "profile": "打开个人资料",
+        "sendDm": "发送私信",
+        "copyMention": "复制提及",
+        "copyId": "复制用户 ID",
+        "mute": "服务器静音",
+        "unmute": "解除服务器静音",
+        "deafen": "服务器拒听",
+        "undeafen": "解除服务器拒听",
+        "disconnect": "断开语音连接",
+        "moveTo": "移动到 {name}",
+        "kick": "踢出服务器",
+        "ban": "封禁",
+        "timeout": "暂停发言",
+        "removeTimeout": "解除暂停",
+        "nickname": "更改昵称",
+        "manageRoles": "管理身份组",
+        "actionFailed": "操作失败"
+    },
+    "memberMgmt": {
+        "reasonLabel": "原因（可选）",
+        "reasonPlaceholder": "审计日志备注",
+        "kickConfirm": "确定踢出 {name}？",
+        "banTitle": "封禁 {name}",
+        "banDeleteLabel": "同时删除其消息",
+        "banDeleteNone": "不删除",
+        "banDeleteHour": "过去 1 小时",
+        "banDeleteSixHours": "过去 6 小时",
+        "banDeleteDay": "过去 24 小时",
+        "banDeleteThreeDays": "过去 3 天",
+        "banDeleteWeek": "过去 7 天",
+        "timeoutTitle": "暂停 {name} 发言",
+        "timeoutDuration": "时长",
+        "timeout60s": "60 秒",
+        "timeout5m": "5 分钟",
+        "timeout10m": "10 分钟",
+        "timeout1h": "1 小时",
+        "timeout1d": "1 天",
+        "timeout1w": "1 周",
+        "nicknameTitle": "{name} 的昵称",
+        "nicknamePlaceholder": "留空以清除",
+        "rolesTitle": "管理 {name} 的身份组",
+        "rolesEmpty": "没有可分配的身份组。",
+        "save": "保存",
+        "confirm": "确认",
+        "kickAction": "踢出",
+        "banAction": "封禁"
+    },
+    "threads": {
+        "browseTitle": "#{channel} 的讨论串",
+        "active": "活跃",
+        "archived": "已归档",
+        "empty": "没有讨论串。",
+        "view": "查看讨论串",
+        "messageCount": "{count} 条消息"
+    },
+    "systemMsg": {
+        "join": "{name} 加入了服务器。",
+        "pin": "{name} 在此频道置顶了一条消息。",
+        "boost": "{name} 刚刚加成了服务器。",
+        "boostTier": "{name} 刚刚加成了服务器 — 已达第 {tier} 级！",
+        "channelFollowAdd": "{name} 关注了一个公告频道。",
+        "threadCreated": "{name} 开启了一个讨论串。",
+        "stageStart": "{name} 开启了一个舞台。",
+        "stageEnd": "{name} 结束了舞台。",
+        "stageSpeaker": "{name} 成为发言人。",
+        "stageTopic": "{name} 更改了舞台主题。",
+        "automod": "AutoMod 拦截了一条消息。",
+        "fallback": "{name} 触发了一个系统事件。",
+        "forwarded": "已转发"
+    },
+    "messageMgmt": {
+        "pin": "置顶",
+        "unpin": "取消置顶",
+        "deleteAny": "删除（管理）",
+        "bulkDelete": "批量删除…",
+        "bulkTitle": "批量删除消息",
+        "bulkCountLabel": "要删除最近几条消息（2..100）",
+        "bulkConfirm": "删除 {count} 条",
+        "crosspost": "发布公告"
+    },
+    "channelMenu": {
+        "markAsRead": "标记为已读",
+        "muteMentionsOnly": "静音（仅提及）",
+        "muteAll": "完全静音",
+        "unmute": "恢复通知",
+        "copyLink": "复制频道链接",
+        "copyId": "复制频道 ID",
+        "openProfile": "打开用户资料",
+        "copyUserId": "复制用户 ID",
+        "createChannel": "创建频道",
+        "editChannel": "编辑频道",
+        "deleteChannel": "删除频道",
+        "archiveThread": "归档讨论串",
+        "unarchiveThread": "解除归档",
+        "lockThread": "锁定讨论串",
+        "unlockThread": "解锁"
+    },
+    "roleMgmt": {
+        "createTitle": "创建身份组",
+        "editTitle": "编辑 {'@'}{name}",
+        "fieldName": "名称",
+        "fieldColor": "颜色",
+        "fieldHoist": "在成员列表中分开显示（hoist）",
+        "fieldMentionable": "允许所有人 {'@'} 提及此身份组",
+        "fieldPermissions": "权限",
+        "fieldPermissionsAdvanced": "权限 bitfield（与勾选保持同步）",
+        "permissionsBitfieldPlaceholder": "0",
+        "advancedHint": "输入数字会反映到下方勾选；勾选变更也会同步到此栏。",
+        "selectedCount": "已选 {count} 项",
+        "create": "创建",
+        "save": "保存",
+        "deleteConfirm": "确定删除身份组 {'@'}{name}？",
+        "createButton": "创建身份组",
+        "edit": "编辑",
+        "delete": "删除",
+        "permGroup": {
+            "general": "常规服务器",
+            "membership": "成员",
+            "text": "文字频道",
+            "voice": "语音频道",
+            "stage": "舞台频道",
+            "events": "活动",
+            "advanced": "高级"
+        },
+        "perm": {
+            "ViewChannel": "查看频道",
+            "ManageChannels": "管理频道",
+            "ManageRoles": "管理身份组",
+            "ManageGuildExpressions": "管理表情与贴纸",
+            "CreateGuildExpressions": "创建表情与贴纸",
+            "ViewAuditLog": "查看审计日志",
+            "ViewGuildInsights": "查看服务器分析",
+            "ManageWebhooks": "管理 Webhook",
+            "ManageGuild": "管理服务器",
+            "CreateInstantInvite": "创建邀请",
+            "ChangeNickname": "修改昵称",
+            "ManageNicknames": "管理昵称",
+            "KickMembers": "踢出成员",
+            "BanMembers": "封禁成员",
+            "ModerateMembers": "禁言成员",
+            "SendMessages": "发送消息",
+            "SendMessagesInThreads": "在帖子中发送消息",
+            "CreatePublicThreads": "创建公开帖子",
+            "CreatePrivateThreads": "创建私密帖子",
+            "EmbedLinks": "嵌入链接",
+            "AttachFiles": "上传文件",
+            "AddReactions": "添加表情反应",
+            "UseExternalEmojis": "使用外部表情",
+            "UseExternalStickers": "使用外部贴纸",
+            "MentionEveryone": "提及 {'@'}everyone、{'@'}here、所有身份组",
+            "ManageMessages": "管理消息",
+            "ManageThreads": "管理帖子",
+            "ReadMessageHistory": "阅读消息记录",
+            "SendTTSMessages": "发送 TTS 消息",
+            "UseApplicationCommands": "使用应用命令",
+            "SendVoiceMessages": "发送语音消息",
+            "SendPolls": "创建投票",
+            "Connect": "连接",
+            "Speak": "发言",
+            "Stream": "视频/直播",
+            "UseEmbeddedActivities": "使用活动",
+            "UseSoundboard": "使用音效板",
+            "UseExternalSounds": "使用外部音效",
+            "UseVAD": "使用语音侦测",
+            "PrioritySpeaker": "优先发言",
+            "MuteMembers": "静音成员",
+            "DeafenMembers": "拒听成员",
+            "MoveMembers": "移动成员",
+            "RequestToSpeak": "请求发言",
+            "ManageEvents": "管理活动",
+            "CreateEvents": "创建活动",
+            "Administrator": "管理员（授予所有权限）",
+            "ViewCreatorMonetizationAnalytics": "查看营利分析"
+        }
+    },
+    "inviteMgmt": {
+        "revokeConfirm": "确定撤销邀请 {code}？",
+        "revoke": "撤销"
+    },
+    "emojiMgmt": {
+        "title": "自定义表情",
+        "uploadButton": "+ 上传表情",
+        "uploadTitle": "上传自定义表情",
+        "fieldName": "名称（a-z、0-9、_）",
+        "fieldFile": "图片（PNG/GIF，≤256 KB）",
+        "rename": "重命名",
+        "renameTitle": "重命名表情",
+        "delete": "删除",
+        "deleteConfirm": "确定删除表情 {name}？",
+        "empty": "尚无自定义表情。"
+    },
+    "stickerMgmt": {
+        "title": "自定义贴图",
+        "uploadButton": "+ 上传贴图",
+        "uploadTitle": "上传自定义贴图",
+        "fieldName": "名称",
+        "fieldTags": "标签（相关表情名称）",
+        "fieldDescription": "说明",
+        "fieldFile": "图片（PNG/APNG/Lottie，≤512 KB）",
+        "edit": "编辑",
+        "editTitle": "编辑贴图",
+        "delete": "删除",
+        "deleteConfirm": "确定删除贴图 {name}？",
+        "empty": "尚无自定义贴图。"
+    },
+    "channelMgmt": {
+        "createTitle": "创建频道",
+        "editTitle": "编辑频道",
+        "fieldName": "名称",
+        "fieldType": "类型",
+        "fieldParent": "类别",
+        "fieldParentNone": "（无类别）",
+        "fieldTopic": "主题",
+        "fieldSlowmode": "慢速模式（秒）",
+        "fieldNsfw": "年龄限制（NSFW）",
+        "fieldAutoArchive": "自动归档时间",
+        "autoArchive60": "1 小时",
+        "autoArchive1440": "1 天",
+        "autoArchive4320": "3 天",
+        "autoArchive10080": "1 周",
+        "typeText": "文字频道",
+        "typeVoice": "语音频道",
+        "typeCategory": "类别",
+        "typeAnnouncement": "公告频道",
+        "typeForum": "论坛",
+        "deleteConfirm": "确定删除频道「{name}」？",
+        "create": "创建",
+        "save": "保存"
+    },
+    "profile": {
+        "title": "个人资料",
+        "userId": "用户 ID",
+        "username": "用户名",
+        "role": "身份组",
+        "capabilities": "权限词条",
+        "note": "备注",
+        "unavailable": "无法获取个人资料。",
+        "hint": "再次私信机器人「login」可刷新登录状态。",
+        "settings": {
+            "title": "偏好设置",
+            "animatedEmoji": {
+                "label": "自动播放动画表情",
+                "help": "关闭后动画 emoji 显示为静止帧,可在移动网络节省流量。"
+            },
+            "desktopNotifications": {
+                "label": "桌面通知",
+                "help": "窗口未在前台时,新 DM 与服务器中提及你的消息会弹出系统通知。被静音的对话不会推送。"
+            }
+        }
+    },
+    "auth": {
+        "title": "登录",
+        "exchanging": "正在交换登录令牌…",
+        "success": "已登录,正在跳转…",
+        "noTokenLead": "如需登录,请向机器人发送私信:",
+        "noTokenHint": "机器人会回复一次性登录链接,请在此浏览器打开。",
+        "errorHint": "再次向机器人发送 {login} 以获取新链接。"
+    },
+    "dashboard": {
+        "title": "仪表板",
+        "noPermission": "无权限查看此区块。",
+        "hero": {
+            "ready": "就绪",
+            "connecting": "连接中",
+            "statusOffline": "离线",
+            "unavailable": "机器人不可用",
+            "guilds": "服务器",
+            "uptime": "运行时长"
+        },
+        "guilds": {
+            "title": "服务器",
+            "viewAll": "查看全部",
+            "empty": "机器人尚未加入任何服务器。",
+            "members": "位成员",
+            "settings": "设置"
+        },
+        "adminLogin": {
+            "title": "管理员登录状况",
+            "empty": "未找到任何管理员账号。",
+            "owner": "所有者",
+            "never": "从未",
+            "sessionActive": "有效 session",
+            "sessionNone": "无 session"
+        },
+        "botEvents": {
+            "title": "机器人事件日志",
+            "empty": "暂无事件记录。",
+            "emptyFiltered": "没有 {level} 级别的事件。",
+            "filterAriaLabel": "按级别筛选",
+            "contextShow": "ctx",
+            "contextHide": "收起",
+            "level": {
+                "info": "信息",
+                "warn": "警告",
+                "error": "错误"
+            },
+            "category": {
+                "bot": "机器人",
+                "auth": "验证",
+                "feature": "功能",
+                "web": "网络",
+                "error": "错误"
+            }
+        },
+        "relTime": {
+            "today": "今天",
+            "yesterday": "昨天",
+            "daysAgo": "{n} 天前",
+            "monthsAgo": "{n} 个月前",
+            "yearsAgo": "{n} 年前",
+            "never": "从未",
+            "secsAgo": "{n} 秒前",
+            "minsAgo": "{n} 分钟前",
+            "hoursAgo": "{n} 小时前"
+        },
+        "activity": {
+            "title": "近期管理操作",
+            "empty": "暂无管理操作记录。",
+            "by": "由",
+            "action": {
+                "user": {
+                    "upsert": {
+                        "verb": "更新了",
+                        "noun": "用户"
+                    },
+                    "delete": {
+                        "verb": "移除了",
+                        "noun": "用户"
+                    }
+                },
+                "role": {
+                    "grant": {
+                        "verb": "授予了",
+                        "noun": "角色"
+                    },
+                    "revoke": {
+                        "verb": "撤销了",
+                        "noun": "角色"
+                    },
+                    "upsert": {
+                        "verb": "更新了",
+                        "noun": "角色"
+                    },
+                    "delete": {
+                        "verb": "删除了",
+                        "noun": "角色"
+                    }
+                },
+                "capability": {
+                    "grant": {
+                        "verb": "授予了",
+                        "noun": "权限"
+                    },
+                    "revoke": {
+                        "verb": "撤销了",
+                        "noun": "权限"
+                    }
+                },
+                "feature": {
+                    "todo": {
+                        "upsert": {
+                            "verb": "更新了",
+                            "noun": "待办频道"
+                        },
+                        "delete": {
+                            "verb": "移除了",
+                            "noun": "待办频道"
+                        }
+                    },
+                    "picture": {
+                        "upsert": {
+                            "verb": "更新了",
+                            "noun": "纯图片频道"
+                        },
+                        "delete": {
+                            "verb": "移除了",
+                            "noun": "纯图片频道"
+                        }
+                    },
+                    "rcon": {
+                        "upsert": {
+                            "verb": "更新了",
+                            "noun": "RCON 转发"
+                        },
+                        "delete": {
+                            "verb": "移除了",
+                            "noun": "RCON 转发"
+                        }
+                    },
+                    "roleemoji": {
+                        "upsert": {
+                            "verb": "更新了",
+                            "noun": "身份组表情"
+                        },
+                        "delete": {
+                            "verb": "移除了",
+                            "noun": "身份组表情"
+                        }
+                    }
+                }
+            }
+        },
+        "dmChart": {
+            "title": "私信活动",
+            "subtitle": "过去 7 天",
+            "empty": "没有私信活动数据。",
+            "ariaLabel": "展示过去 7 天私信活动的柱状图"
+        },
+        "attention": {
+            "title": "需要关注",
+            "dbDisconnected": "数据库已断线",
+            "dbDisconnectedDesc": "机器人无法持久化数据，请检查数据库连接。"
+        }
+    },
+    "guilds": {
+        "title": "服务器",
+        "empty": "机器人尚未加入任何服务器。",
+        "selectGuild": "请选择一个服务器。",
+        "memberCount": "{count} 位成员",
+        "joined": "加入于 {date}",
+        "tabs": {
+            "overview": "概览",
+            "settings": "服务器设置",
+            "people": "成员与管理",
+            "features": "Bot 功能"
+        },
+        "subtabs": {
+            "settings": {
+                "general": "常规",
+                "moderation": "审核",
+                "system": "系统与欢迎",
+                "roles": "身份组",
+                "invites": "邀请",
+                "emoji": "表情与贴纸"
+            },
+            "people": {
+                "members": "成员",
+                "bans": "封禁名单",
+                "automod": "AutoMod",
+                "audit": "审计日志"
+            },
+            "features": {
+                "todo": "待办频道",
+                "picture": "仅图片",
+                "rcon": "RCON 转发",
+                "reactionRoles": "身份组反应",
+                "capability": "权限授予",
+                "voice": "语音播放"
+            }
+        },
+        "dashboard": {
+            "members": "成员",
+            "roles": "身份组",
+            "featureUsage": "功能使用状况"
+        },
+        "settings": {
+            "general": "常规",
+            "moderation": "管理",
+            "system": "系统与欢迎",
+            "name": "服务器名称",
+            "description": "简介",
+            "descriptionPlaceholder": "在服务器发现页显示的简短说明",
+            "verificationLevel": "验证等级",
+            "verification": {
+                "0": "无 — 无任何要求",
+                "1": "低 — 需验证 Email",
+                "2": "中 — 注册超过 5 分钟",
+                "3": "高 — 加入此服务器超过 10 分钟",
+                "4": "非常高 — 需验证手机号码"
+            },
+            "explicitContentFilter": "敏感内容过滤",
+            "explicitContentFilterOpt": {
+                "0": "不扫描",
+                "1": "扫描没有身份组的成员",
+                "2": "扫描所有成员的消息"
+            },
+            "defaultNotifications": "默认通知",
+            "defaultNotificationsOpt": {
+                "0": "所有消息",
+                "1": "仅 {'@'} 提及"
+            },
+            "mfaLevel": "两步验证要求",
+            "mfaLevelOpt": {
+                "0": "关闭",
+                "1": "管理员必须启用"
+            },
+            "mfaOwnerOnly": "仅服务器所有者可更改此设置。",
+            "systemChannel": "系统消息频道",
+            "systemChannelNone": "(停用)",
+            "systemFlags": "系统消息类型",
+            "flagJoin": "成员加入消息",
+            "flagPremium": "服务器加成消息",
+            "flagReminder": "设置提示提醒",
+            "flagJoinReply": "可对加入消息回应「打招呼」",
+            "afkChannel": "AFK 语音频道",
+            "afkChannelNone": "(无)",
+            "afkTimeout": "AFK 超时",
+            "afkTimeoutOpt": {
+                "60": "1 分钟",
+                "300": "5 分钟",
+                "900": "15 分钟",
+                "1800": "30 分钟",
+                "3600": "1 小时"
+            },
+            "rulesChannel": "规则频道",
+            "publicUpdatesChannel": "公开更新频道",
+            "communityOnly": "仅社群服务器可用。",
+            "premiumProgressBar": "显示服务器加成进度条",
+            "save": "保存更改",
+            "saved": "已保存",
+            "saveFailed": "保存失败",
+            "discard": "放弃",
+            "loading": "加载设置中…",
+            "premiumTier": "加成等级",
+            "premiumSubs": "加成数",
+            "ownerLabel": "所有者"
+        },
+        "idLabel": "ID",
+        "todoChannels": "待办频道",
+        "pictureOnly": "仅图片频道",
+        "rconForward": "Rcon 转发",
+        "rconTarget": "→ {host}:{port}(指令 {cmd},触发 {trigger})",
+        "roleEmoji": "身份组表情",
+        "roleReactions": "身份组反应消息",
+        "roleReactionMessage": "· 消息 {id}",
+        "capabilityGrants": "权限授予",
+        "rolesTitle": "身份组",
+        "roleMembers": "{count} 位成员",
+        "roleManaged": "集成",
+        "invites": {
+            "title": "邀请链接",
+            "create": "创建邀请",
+            "created": "已创建:",
+            "uses": "{uses}/{max} 已使用",
+            "expires": "{date} 失效",
+            "neverExpires": "永不过期",
+            "modalTitle": "创建邀请",
+            "fieldChannel": "频道",
+            "fieldChannelHint": "邀请链接落点。默认为系统频道。",
+            "fieldMaxAge": "过期时间",
+            "fieldMaxUses": "最大使用次数",
+            "fieldTemporary": "临时成员",
+            "fieldTemporaryHint": "成员断开前若未被分配身份组,将被自动踢出。",
+            "fieldUnique": "每次都生成新邀请码",
+            "fieldUniqueHint": "关闭后,Discord 会在条件相同时复用已有邀请。",
+            "submit": "创建",
+            "expireOpt": {
+                "0": "永不过期",
+                "1800": "30 分钟",
+                "3600": "1 小时",
+                "21600": "6 小时",
+                "43200": "12 小时",
+                "86400": "1 天",
+                "604800": "7 天"
+            },
+            "usesOpt": {
+                "0": "无限制",
+                "1": "1 次",
+                "5": "5 次",
+                "10": "10 次",
+                "25": "25 次",
+                "50": "50 次",
+                "100": "100 次"
+            }
+        },
+        "tabs2": {
+            "people": "成员与管理"
+        },
+        "members": {
+            "title": "成员",
+            "search": "按名称搜索…",
+            "empty": "未加载任何成员。",
+            "loadMore": "加载更多",
+            "joined": "{date} 加入",
+            "rolesCount": "{count} 个身份组",
+            "pending": "待审核",
+            "timeoutActive": "禁言至 {date}",
+            "actionKick": "踢出",
+            "actionBan": "封禁",
+            "actionTimeout": "禁言",
+            "actionClearTimeout": "解除禁言",
+            "actionNickname": "设置昵称",
+            "promptKick": "确定踢出 {name}?(可选原因)",
+            "promptBan": "确定封禁 {name}?(可选原因)",
+            "promptTimeout": "禁言时长(分钟,1..40320 = 28 天):",
+            "promptNickname": "{name} 的新昵称(留空清除):",
+            "actionFailed": "操作失败:{message}",
+            "botBadge": "机器人"
+        },
+        "bans": {
+            "title": "封禁名单",
+            "empty": "暂无任何封禁记录。",
+            "reason": "原因:",
+            "noReason": "(未填写原因)",
+            "unban": "解除封禁",
+            "promptUnban": "确定要解除 {name} 的封禁?"
+        },
+        "audit": {
+            "title": "审计日志",
+            "empty": "暂无审计日志。",
+            "loadMore": "加载较早记录",
+            "filterAction": "操作",
+            "filterUser": "用户 ID",
+            "actionAll": "全部操作",
+            "filterApply": "应用",
+            "filterReset": "重置",
+            "by": "由 {name}",
+            "noExecutor": "(未知执行者)",
+            "reason": "原因:",
+            "changes": "{count} 项变更",
+            "actionLoadFailed": "无法加载日志"
+        },
+        "feature": {
+            "addBtn": "新增",
+            "removeBtn": "移除",
+            "saveBtn": "保存",
+            "cancelBtn": "取消",
+            "noEntries": "暂无项目。",
+            "pickChannel": "频道",
+            "pickRole": "身份组",
+            "channelPlaceholder": "选择文字频道",
+            "rolePlaceholder": "选择身份组",
+            "messageId": "消息 ID",
+            "emoji": "表情",
+            "emojiHint": "Unicode(👍)或自定义 <:name:id>",
+            "capability": "权限",
+            "capabilityPlaceholder": "todo.manage",
+            "host": "主机",
+            "port": "端口",
+            "password": "密码",
+            "commandPrefix": "指令前缀",
+            "triggerPrefix": "触发前缀",
+            "actionFailed": "失败:{message}",
+            "todoTitle": "待办频道",
+            "todoHint": "在这些频道发送的消息会被记录为待办事项。",
+            "pictureTitle": "仅图片频道",
+            "pictureHint": "非图片消息会被自动删除。",
+            "rconTitle": "RCON 转发",
+            "rconHint": "将消息转发到 Source 引擎 RCON 服务器。",
+            "roleEmojiGroupsTitle": "表情分组",
+            "roleEmojiGroupsHint": "存放表情→身份组对应的分组。被监视的消息可指定要使用哪些分组,使同一个表情在不同消息上能对应不同身份组。",
+            "roleEmojiGroupNamePlaceholder": "新分组名称",
+            "roleEmojiGroupPickerPlaceholder": "选择分组",
+            "roleEmojiCreateGroupFirst": "请先在上方创建表情分组,再添加对应。",
+            "roleEmojiTitle": "表情 → 身份组对应",
+            "roleEmojiHint": "成员在被监视消息上用表情反应时,会获得对应身份组。每条对应都归属于一个分组。",
+            "mappingsCount": "{n} 条对应",
+            "roleReceiveTitle": "被监视的消息",
+            "roleReceiveHint": "监视这些消息以接收身份组表情反应。每条被监视的消息绑定一个表情分组,bot 收到反应时只会用该分组的对应来决定身份组。",
+            "roleReceiveGroupLabel": "使用分组：",
+            "capabilityTitle": "权限授予",
+            "capabilityHint": "授予某身份组一项服务器内权限,该身份组成员即可使用对应的斜杠指令。"
+        },
+        "automod": {
+            "title": "AutoMod 规则",
+            "empty": "尚未设置任何 AutoMod 规则。",
+            "create": "新建规则",
+            "enabled": "启用",
+            "disabled": "停用",
+            "trigger": {
+                "1": "关键字过滤",
+                "3": "垃圾消息检测",
+                "4": "关键字预设",
+                "5": "提及洪水",
+                "6": "成员资料"
+            },
+            "preset": {
+                "1": "脏话",
+                "2": "性内容",
+                "3": "歧视语"
+            },
+            "action": {
+                "1": "屏蔽消息",
+                "2": "发送提醒",
+                "3": "禁言"
+            },
+            "actionsCount": "{count} 个动作",
+            "edit": "编辑",
+            "delete": "删除",
+            "deleteConfirm": "确定删除规则「{name}」?",
+            "modalNew": "新建 AutoMod 规则",
+            "modalEdit": "编辑规则",
+            "fieldName": "名称",
+            "fieldTriggerType": "触发类型",
+            "fieldTriggerImmutable": "触发类型在创建后不可更改。",
+            "fieldKeywords": "关键字(逗号分隔)",
+            "fieldKeywordsHint": "最多 1,000 项;* 在词边界匹配任意字符。",
+            "fieldRegex": "正则表达式(每行一条)",
+            "fieldAllowList": "白名单(逗号分隔)",
+            "fieldPresets": "预设类别",
+            "fieldMentionLimit": "每条消息最多独立提及数",
+            "fieldMentionRaid": "启用突袭防护",
+            "fieldActions": "动作",
+            "actionAdd": "新增动作",
+            "actionType": "类型",
+            "actionChannel": "提醒频道",
+            "actionDuration": "禁言时长(秒,≤2,419,200)",
+            "actionCustomMsg": "自定义消息",
+            "fieldExemptRoles": "排除身份组(逗号分隔 ID)",
+            "fieldExemptChannels": "排除频道(逗号分隔 ID)",
+            "save": "保存规则",
+            "cancel": "取消",
+            "saving": "保存中…",
+            "saveFailed": "保存失败",
+            "loadFailed": "无法加载 AutoMod 规则",
+            "needsName": "名称必填",
+            "needsAction": "至少需要一个动作"
+        }
+    },
+    "quickSwitcher": {
+        "placeholder": "搜索频道与 DM…",
+        "empty": "没有匹配的对话。",
+        "directMessage": "私信",
+        "navigate": "切换",
+        "open": "打开",
+        "close": "关闭"
+    },
+    "messages": {
+        "modeDm": "私信",
+        "modePickerTitle": "选择消息来源",
+        "selectChat": "请选择一个对话以查看消息。",
+        "noMessages": "暂无消息。",
+        "loadingOlder": "加载更早的消息…",
+        "beginningOfConversation": "对话起点",
+        "reply": "回复",
+        "react": "反应",
+        "edit": "编辑",
+        "delete": "删除",
+        "deleteNoConfirm": "删除(不确认)",
+        "deleteShiftConfirm": "删除(按住 Shift 可跳过确认)",
+        "copyLink": "复制消息链接",
+        "copyLinkDone": "已复制",
+        "copyText": "复制消息内容",
+        "copyId": "复制消息 ID",
+        "forward": "转发",
+        "forwardTitle": "转发消息",
+        "forwardEmpty": "没有可用频道。",
+        "forwardFailed": "转发失败",
+        "forwardDestination": "目的地",
+        "forwardSearchPlaceholder": "搜索频道或用户…",
+        "markUnread": "标记为未读",
+        "viewSource": "查看原始 Markdown",
+        "lightboxPrev": "上一张",
+        "lightboxNext": "下一张",
+        "mute": "静音此对话",
+        "unmute": "解除静音",
+        "muteCycleHintFromAll": "点击以静音(仅 {'@'} 我)",
+        "muteCycleHintFromMentions": "点击以静音(完全)",
+        "muteCycleHintFromNone": "点击以恢复通知",
+        "pinnedMessages": "已置顶消息",
+        "noPins": "尚无置顶消息。",
+        "reactionAdd": "加入反应",
+        "reactionRemove": "移除反应",
+        "reactionCopyEmoji": "复制表情",
+        "reactionNoUsers": "没有人对这个反应。",
+        "newMessages": "新消息",
+        "typingOne": "{name} 正在输入…",
+        "typingTwo": "{a} 与 {b} 正在输入…",
+        "typingMany": "{name} 等 {count} 人正在输入…",
+        "replying": "回复中",
+        "dropFiles": "拖放文件即可附加",
+        "noDms": "还没有私信。在 Discord 向机器人发消息,或从上方发起一条。",
+        "noTextChannels": "没有文字频道。",
+        "voiceChannels": "语音频道",
+        "forumChannels": "论坛频道",
+        "noForumPosts": "尚无帖子。",
+        "recipientId": "接收者用户 ID",
+        "linkUnknown": "不明"
+    },
+    "composer": {
+        "placeholder": "消息…",
+        "attach": "附加",
+        "uploadFile": "上传文件",
+        "picker": "表情与贴纸",
+        "send": "发送",
+        "spoilerOn": "标记为剧透",
+        "spoilerOff": "取消剧透",
+        "replyPingOn": "停止 {'@'} 原作者",
+        "replyPingOff": "启用 {'@'} 原作者",
+        "replyPingOnShort": "{'@'}",
+        "replyPingOffShort": "{'@'}?",
+        "removeAttachment": "移除附件",
+        "removeSticker": "移除贴纸"
+    },
+    "dmProactiveFeatures": {
+        "menuTitle": "Bot 主动功能",
+        "actionFailed": "执行 Bot 动作失败",
+        "adminLogin": {
+            "label": "发送 admin 登录链接",
+            "description": "私信发送一次性后台登录链接给此用户。"
+        }
+    },
+    "admin": {
+        "title": "权限",
+        "accessDenied": {
+            "title": "无访问权限",
+            "body": "你的身份组没有 admin 权限词条,请向现有管理员申请授予。"
+        },
+        "tabs": {
+            "users": "用户",
+            "roles": "身份组"
+        },
+        "users": {
+            "title": "已授权用户",
+            "empty": "仅 bot owner 可访问。",
+            "ownerNote": "Bot owner 始终拥有所有权限,无需另外添加。",
+            "ownerBadge": "Bot Owner",
+            "unknownProfile": "未知用户",
+            "unknownRole": "{name}(未知)",
+            "userIdLabel": "Discord 用户 ID",
+            "roleLabel": "身份组",
+            "noteLabel": "备注(可选)",
+            "notePlaceholder": "此授权的用途?",
+            "noPlaceholder": "—",
+            "add": "添加用户",
+            "addSubmit": "授权",
+            "remove": "移除",
+            "removeConfirm": "要将 {user} 从允许列表中移除吗?",
+            "changeRole": "更改身份组",
+            "searchPlaceholder": "搜索名称或 ID…",
+            "filterAll": "所有身份组",
+            "noMatches": "没有符合条件的用户。",
+            "matchCount": "{matched} / {total}"
+        },
+        "roles": {
+            "title": "身份组",
+            "empty": "尚未定义任何身份组。",
+            "nameLabel": "身份组名称",
+            "descriptionLabel": "说明",
+            "descriptionPlaceholder": "简短描述此身份组",
+            "capabilities": "权限词条",
+            "capabilitiesGrantedCount": "已授予 {granted} / {total}",
+            "noCapabilities": "没有任何权限词条,此身份组的用户将无法访问系统。",
+            "grantCapability": "添加权限词条",
+            "selectCapability": "选择权限词条…",
+            "grant": "添加",
+            "revoke": "移除",
+            "add": "添加身份组",
+            "addSubmit": "创建",
+            "remove": "删除身份组",
+            "removeConfirm": "要删除身份组 {name} 吗?",
+            "saveDescription": "保存",
+            "saved": "已保存",
+            "discardChanges": "放弃",
+            "noDescription": "尚未设置说明。",
+            "ownerOnlyCapability": "admin",
+            "editCapabilities": "编辑权限",
+            "capabilityModalTitle": "权限 · {name}",
+            "capabilityTabs": {
+                "global": "全局",
+                "globalHint": "应用于 bot 所有服务器与所有功能界面。",
+                "perGuild": "单个服务器",
+                "perGuildHint": "将相同范围限定到单个服务器,与全局权限为相加关系,不会覆盖。",
+                "perBehaviorTab": "单个行为分页",
+                "perBehaviorTabHint": "授权该角色管理特定行为分页下的行为（不可增删分页本身，需 behavior.manage 才能调整分页列表）。",
+                "perPlugin": "插件",
+                "perPluginHint": "各已启用插件为自身需求声明的权限（例如 WebUI 存取）。插件被删除或重新注册后不再声明时会自动移除。"
+            },
+            "searchGuilds": "搜索服务器…",
+            "noGuilds": "没有符合条件的服务器。",
+            "noGlobalCaps": "尚未授予任何全局权限。",
+            "perGuildSummary": "已授予 {count} 个单服务器权限",
+            "pendingChanges": "已修改 {count} 项",
+            "confirmChanges": "确认变更",
+            "searchBehaviorTabs": "搜索行为分页…",
+            "noBehaviorTabs": "没有符合条件的行为分页。",
+            "perBehaviorTabSummary": "已授予 {count} 个行为分页权限",
+            "legacyBehaviorHeader": "旧版行为对象授权（迁移前）",
+            "legacyBehaviorDesc": "旧版 token — 建议撤销并改用上方的分页授权。",
+            "legacyBehaviorSummary": "{count} 个旧版行为授权",
+            "searchPlugins": "搜索插件权限…",
+            "noPluginCapabilities": "没有已启用的插件声明权限。",
+            "noPluginCapabilitiesFiltered": "没有符合条件的插件权限。",
+            "orphanedPluginHeader": "孤立的插件授权",
+            "orphanedPluginDesc": "插件已停用或权限已移除 — 若不再需要请撤销",
+            "pluginCapabilitySummary": "{count} 个插件权限"
+        },
+        "capabilitiesCatalog": "可用权限词条",
+        "capabilityDesc": {
+            "admin": "完整权限（可无视其他所有权限检查）",
+            "dm.message": "读写 DM 对话列表、消息、反应与未读数",
+            "guild.message": "读写所有服务器频道的消息与反应",
+            "guild.manage": "管理所有服务器的成员、角色、设置与 bot 功能",
+            "system.read": "查看系统事件记录与统计信息",
+            "behavior.manage": "管理 webhook 行为模块的所有目标对象与行为设置",
+            "guildScoped": {
+                "message": "仅限此服务器读写频道消息与反应。",
+                "manage": "仅限此服务器管理成员、角色、设置与 bot 功能。"
+            }
+        },
+        "systemSettings": {
+            "title": "系统设置",
+            "subtitle": "Boot 时冻结的环境变量配置，仅供查看。",
+            "retry": "重试",
+            "readiness": {
+                "allSet": "生产必要环境变量：全部已配置",
+                "missing": "生产必要环境变量：缺少 {count} 个",
+                "env": "当前环境：{env}"
+            },
+            "runtime": {
+                "title": "运行时可编辑设置",
+                "empty": "当前所有设置在 boot 时冻结，不支持运行时修改"
+            },
+            "readonly": {
+                "title": "只读设置（按分组）"
+            },
+            "status": {
+                "configured": "已配置",
+                "unset": "未配置"
+            },
+            "badge": {
+                "sensitive": "机密",
+                "semisensitive": "半机密",
+                "public": "公开",
+                "envonly": "仅 ENV",
+                "runtimeCapable": "可改（未启用）",
+                "runtimeEditable": "可改（已启用）",
+                "prodRequired": "生产必要"
+            },
+            "group": {
+                "bot": "Bot 核心",
+                "web": "Web 服务器",
+                "db": "数据库",
+                "crypto": "加密",
+                "jwt": "JWT",
+                "plugin": "插件系统",
+                "behavior": "行为模块",
+                "admin": "Admin",
+                "rcon": "RCON",
+                "botEvents": "Bot 事件",
+                "dm": "DM 系统"
+            },
+            "jwtKey": {
+                "title": "JWT 签名密钥",
+                "desc": "Bot 用来签所有 JWT（admin 登录链接、plugin WebUI session token）的 Ed25519 密钥。启动时自动生成、加密存进数据库；公钥会发给 plugin 验证。",
+                "algorithm": "算法",
+                "fingerprint": "指纹",
+                "created": "创建时间",
+                "ephemeral": "当前使用临时内存密钥 —— 未设置 ENCRYPTION_KEY，密钥无法持久化、也无法轮换；token 在 bot 重启后即失效。",
+                "rotate": "轮换密钥",
+                "rotating": "轮换中…",
+                "rotateConfirmTitle": "确定要轮换 JWT 签名密钥？",
+                "rotateConfirmMessage": "会生成新密钥并立即作废所有现存 token —— admin 登录链接与 plugin WebUI session。Plugin 约 30 秒内拿到新公钥；受影响的用户需重新登录。",
+                "rotateConfirm": "轮换",
+                "rotated": "已轮换 JWT 签名密钥"
+            }
+        },
+        "plugins": {
+            "title": "插件",
+            "subtitle": "已注册到 bot 的 sibling 服务。Plugin 启动后会主动向 bot 注册,启用后才会接收事件并被 behavior 引用。",
+            "empty": "目前没有 plugin 注册到 bot。",
+            "emptyHint": "Plugin 启动时会自动注册。确认该 container 与 bot 在同一 docker network，并已设置 per-plugin secret — 可点击上方的「新增插件」按钮快速完成，或手动执行 POST /api/plugins/setup-secret。",
+            "addPlugin": {
+                "button": "新增插件",
+                "title": "新增插件",
+                "body": "输入插件的 key（即其 manifest 中的 `id`）。Bot 会创建占位记录，并提供一次性 setup secret，请在启动插件前写入其 `.env`（`KARYL_PLUGIN_SETUP_SECRET`）。",
+                "keyLabel": "插件 key",
+                "keyPlaceholder": "karyl-myplugin",
+                "keyInvalid": "必须符合 [a-z0-9][a-z0-9-]*",
+                "submit": "创建",
+                "alreadyExists": "此 key 已存在记录 — 其 setup secret 已重新生成（旧的即刻失效）。"
+            },
+            "statusActive": "在线",
+            "statusInactive": "离线",
+            "toggleEnabled": "已启用 (点击停用)",
+            "toggleDisabled": "已停用 (点击启用)",
+            "url": "URL",
+            "lastHeartbeat": "上次心跳",
+            "neverHeartbeat": "尚未收到心跳",
+            "heartbeatJustNow": "刚刚",
+            "heartbeatMinutesAgo": "{n} 分钟前",
+            "heartbeatHoursAgo": "{n} 小时前",
+            "rpcScopes": "RPC 权限",
+            "manifestRaw": "显示完整 manifest",
+            "dmBehaviorsCount": "DM 行为 × {n}",
+            "guildFeaturesCount": "服务器功能 × {n}",
+            "commandsCount": "Slash 指令 × {n}",
+            "scopes": {
+                "approved": "已批准的 RPC 权限",
+                "pending": "待批准的 RPC 权限",
+                "pendingCount": "{n} 个权限待审",
+                "pendingHint": "有 {n} 个新 RPC 权限请求待 admin 批准，点击查看",
+                "approveButton": "批准",
+                "approveModalTitle": "审查 RPC 权限请求",
+                "approveConfirm": "以下 RPC 权限由「{name}」请求，批准后将立即生效："
+            },
+            "setupSecret": {
+                "button": "生成 Setup Secret",
+                "confirmTitle": "生成新的 Setup Secret",
+                "confirmBody": "将为「{name}」生成新的 setup secret。旧的 secret 会立即失效，必须将新的值写入该 plugin 的 .env 并重启 plugin。要继续吗？",
+                "resultTitle": "Setup Secret",
+                "secretLabel": "Setup Secret",
+                "copyButton": "复制",
+                "copiedButton": "已复制",
+                "instruction": "请将以下值写入 plugin 的 .env 并重启 plugin：",
+                "envHint": "KARYL_PLUGIN_SETUP_SECRET={secret}",
+                "warning": "关闭此窗口后将无法再次查看。如已丢失需重新生成（会作废当前的）。",
+                "checkboxLabel": "我已将 secret 写入 plugin 的 .env",
+                "closeButton": "关闭",
+                "generating": "生成中…"
+            },
+            "online": "在线",
+            "offline": "离线",
+            "offlineCount": "离线 ({n})",
+            "menu": {
+                "delete": "删除"
+            },
+            "deleteConfirmTitle": "删除离线 Plugin",
+            "deleteConfirm": "确定删除离线 plugin「{name}」？此操作会同时删除其所有 KV / config / feature 设置，无法恢复。",
+            "deleteSuccess": "Plugin 已删除",
+            "deleteFailed": "删除失败",
+            "cannotDeleteActive": "无法删除仍在线的 plugin，请先停止 plugin 并等待 inactive 后再试",
+            "deleteAllOffline": "全部删除",
+            "deleteAllConfirmTitle": "删除全部离线 Plugin",
+            "deleteAllConfirm": "确定删除全部 {n} 个离线 plugin？每个 plugin 的 KV / config / feature 设置都会一并删除，无法恢复。",
+            "deleteAllProgress": "进度：{done} / {total}",
+            "viewDetail": "查看详情",
+            "detail": {
+                "backLink": "返回插件列表",
+                "tabOverview": "总览",
+                "tabBehaviors": "Behaviors",
+                "tabCommands": "指令",
+                "tabFeatures": "Guild Features",
+                "tabScopes": "Scopes",
+                "tabSecurity": "安全设置",
+                "overviewMeta": {
+                    "pluginKey": "Plugin Key",
+                    "author": "作者",
+                    "homepage": "首页"
+                },
+                "behaviors": {
+                    "intro": "以下是此 Plugin 声明的 behaviors。可在此页启用或停用各个 behavior；停用后 reconciler 不会将其 slash 指令注册至 Discord。",
+                    "empty": "此 Plugin 未声明任何 Behavior",
+                    "toggleOn": "启用此 behavior",
+                    "toggleOff": "停用此 behavior",
+                    "toggleSuccess": "已更新 behavior 状态",
+                    "toggleError": "更新失败，请重试",
+                    "supportsContinuous": "支持连续对话",
+                    "axesReadonly": "三轴由 manifest 锁定",
+                    "slashOptions": "{count} 个选项"
+                },
+                "commands": {
+                    "intro": "以下为此 Plugin 声明的自定义 slash 指令。三轴由 Plugin manifest 写死，admin 只能启用或停用。",
+                    "empty": "此 Plugin 未声明任何自定义指令",
+                    "toggleOn": "启用此指令",
+                    "toggleOff": "停用此指令",
+                    "globalGroup": "全域指令",
+                    "featureGroup": "Feature 指令",
+                    "scopeGuild": "服务器",
+                    "scopeGlobal": "全域"
+                },
+                "features": {
+                    "intro": "以下功能可在各服务器的「Bot 功能」tab 中分别开关，此页为只读展示。",
+                    "empty": "此 Plugin 未提供 Guild Feature"
+                },
+                "scopes": {
+                    "approved": "已授权 Scopes",
+                    "pending": "待审核 Scopes",
+                    "pendingHint": "有 {n} 个待审核 Scope",
+                    "pendingCount": "{n} 个待审核",
+                    "approveButton": "授权",
+                    "approveModalTitle": "授权 RPC Scopes",
+                    "approveConfirm": "确定授权「{name}」申请的以下 RPC Scopes？"
+                }
+            }
+        }
+    },
+    "picker": {
+        "searchPlaceholder": "搜索表情与贴纸…",
+        "tabs": {
+            "recent": "最近",
+            "emoji": "表情",
+            "custom": "自定义",
+            "stickers": "贴纸"
+        },
+        "customEmoji": "自定义表情",
+        "stickers": "贴纸",
+        "emoji": "表情",
+        "noMatches": "没有匹配项。",
+        "nothingRecent": "尚未使用过任何项目。",
+        "noCustomEmoji": "没有可用的自定义表情。",
+        "noGuildStickers": "没有可用的服务器贴纸。"
+    },
+    "behaviors": {
+        "page": {
+            "pickTarget": "请从左侧选择一个目标对象。"
+        },
+        "sidebar": {
+            "title": "行为",
+            "addTabTooltip": "新增范围分页",
+            "globalAll": "全范围",
+            "globalAllHint": "所有平台与情境皆适用",
+            "allDms": "所有私信",
+            "allDmsHint": "所有私信用户皆适用",
+            "allBotDms": "所有与 Bot 的私信",
+            "allBotDmsHint": "仅 Bot 私信频道",
+            "allGuilds": "全 Guild",
+            "allGuildsHint": "所有 Guild 皆适用",
+            "behaviorCount": "{count} 个行为",
+            "guildSection": "Guild",
+            "dmSection": "Bot 私信",
+            "noGuildTabs": "尚无 Guild 专属分页",
+            "noDmTabs": "尚无用户专属分页"
+        },
+        "addPlugin": {
+            "title": "新增 Plugin 行为",
+            "defaultTitle": "{plugin}: {behavior}",
+            "noEligible": "没有可用的 plugin。请先在插件页启用至少一个提供 dm_behavior 的 plugin。",
+            "pickPlugin": "选择 plugin",
+            "pickPluginPlaceholder": "—",
+            "pickBehavior": "选择行为",
+            "create": "创建"
+        },
+        "workspace": {
+            "kindGlobalAll": "全范围",
+            "kindAllDms": "所有私信",
+            "kindAllBotDms": "Bot 私信",
+            "kindAllGuilds": "全 Guild",
+            "kindGuild": "指定 Guild",
+            "kindChannel": "指定频道",
+            "kindUser": "个别用户",
+            "kindGroup": "用户组",
+            "addBehavior": "新增行为",
+            "deleteTabTooltip": "删除此分页",
+            "deleteTabTitle": "删除分页",
+            "deleteTabConfirm": "确定要删除分页「{label}」？其下所有行为将一并移除。",
+            "empty": "目前没有设定行为。"
+        },
+        "card": {
+            "title": "标题",
+            "description": "说明",
+            "triggerType": "触发类型",
+            "triggerStartsWith": "开头符合",
+            "triggerEndsWith": "结尾符合",
+            "triggerRegex": "正则表达式",
+            "triggerPattern": "消息 Pattern",
+            "triggerValue": "触发内容",
+            "messagePatternKind": "Pattern 类型",
+            "messagePatternValue": "Pattern 值",
+            "slashCommandName": "Slash 指令名称",
+            "slashCommandDescription": "Slash 指令说明",
+            "forwardType": "转发类型",
+            "forwardOneTime": "一次性转发",
+            "forwardContinuous": "持续转发",
+            "targetId": "目标对象",
+            "triggerSection": "触发设定",
+            "integrationTypes": "可安装范围",
+            "integrationTypesLocked": "（由范围分页决定）",
+            "integrationBoth": "服务器 + 用户都可安装",
+            "integrationGuildOnly": "仅服务器可安装",
+            "integrationUserOnly": "仅用户可安装",
+            "webhookUrl": "Webhook URL",
+            "webhookUrlRequired": "请输入 Webhook URL。",
+            "webhookSecret": "Webhook Secret",
+            "webhookSecretHint": "（可选，设定后启用验证）",
+            "webhookSecretPlaceholder": "留空 = 不设定",
+            "webhookAuthMode": "验证模式",
+            "stopOnMatch": "命中后阻止后续判定",
+            "tagContinuous": "持续转发",
+            "tagContinuousShort": "持续",
+            "tagStop": "命中后阻止后续判定",
+            "tagStopShort": "停止后续",
+            "tagPlugin": "由 Plugin 提供",
+            "tagPluginShort": "Plugin",
+            "tagSystem": "系统内建",
+            "tagSystemShort": "系统",
+            "systemRowLocked": "此为系统行为，不可拖曳排序",
+            "pluginRowLocked": "此 behavior 由 Plugin 管理，不可拖曳排序",
+            "triggerSlashCommand": "Slash 指令",
+            "pluginPick": "选择 Plugin",
+            "pluginNoneAvailable": "目前无可用 Plugin",
+            "pluginBehaviorKey": "选择 behavior",
+            "pluginRequired": "请选择 Plugin",
+            "pluginBehaviorKeyRequired": "请选择 behavior",
+            "toggleEnabled": "已启用（点击停用）",
+            "toggleDisabled": "已停用（点击启用）",
+            "previewStartsWith": "开头：{value}",
+            "previewEndsWith": "结尾：{value}",
+            "previewRegex": "regex：{value}",
+            "previewSlashCommand": "/{value}",
+            "titleRequired": "请输入标题。",
+            "triggerValueRequired": "请输入触发内容。",
+            "regexInvalid": "正则表达式格式错误。",
+            "deleteConfirm": "确定要删除行为「{title}」？",
+            "dragHint": "拖曳排序",
+            "moreActions": "更多操作",
+            "sourceCustom": "自定义",
+            "sourcePlugin": "Plugin",
+            "sourceSystem": "系统",
+            "sourceNoticPlugin": "此 behavior 由 Plugin「{name}」提供，部分字段不可修改",
+            "sourceNoticPluginLink": "查看 Plugin 详情",
+            "sourceNoticSystem": "系统内建 behavior，可修改触发类型与内容（其余字段锁定）",
+            "saveTrigger": "保存触发"
+        },
+        "addTab": {
+            "title": "新增范围分页",
+            "typeLabel": "分页类型",
+            "type_specific_guild": "指定 Guild",
+            "type_specific_channel": "指定频道",
+            "type_specific_user": "指定用户",
+            "type_specific_group": "用户组",
+            "labelField": "显示名称（选填）",
+            "labelPlaceholder": "留空则使用 ID 显示",
+            "groupNameLabel": "组名称",
+            "groupNamePlaceholder": "例：VIP",
+            "submit": "创建分页"
+        },
+        "addModal": {
+            "title": "新增 Behavior",
+            "subtitle": "建立由管理员定义的 behavior：选择触发方式，再决定要转发到哪里。",
+            "create": "创建",
+            "triggerSlash": "Slash 指令",
+            "triggerPattern": "消息 Pattern",
+            "nameLabel": "Behavior 名称",
+            "namePlaceholder": "例：问答助手",
+            "forwardLabel": "转发设定",
+            "forwardWebhook": "Webhook",
+            "forwardPlugin": "Plugin"
+        }
+    },
+    "config": {
+        "bot": {
+            "token": "Bot Token（Discord API 密钥）",
+            "ownerId": "Bot 拥有者 Discord ID",
+            "clientId": "Bot 客户端 ID",
+            "clientSecret": "Bot 客户端密钥",
+            "guildId": "默认服务器 ID",
+            "logLevel": "日志级别"
+        },
+        "web": {
+            "port": "HTTP 监听端口",
+            "host": "HTTP 监听地址",
+            "baseUrl": "对外 Base URL",
+            "corsOrigin": "CORS 允许来源"
+        },
+        "db": {
+            "url": "数据库连接 URL",
+            "poolMin": "连接池最小数",
+            "poolMax": "连接池最大数"
+        },
+        "crypto": {
+            "encryptionKey": "静态数据加密密钥（AES-256）"
+        },
+        "jwt": {
+            "secret": "JWT 签名密钥",
+            "accessTtl": "Access Token 有效时间（秒）",
+            "refreshTtl": "Refresh Token 有效时间（秒）"
+        },
+        "plugin": {
+            "sharedSecret": "Plugin 共享验证密钥",
+            "heartbeatInterval": "心跳间隔（毫秒）",
+            "heartbeatTimeout": "心跳超时（毫秒）"
+        },
+        "behavior": {
+            "enabled": "行为模块是否启用",
+            "webhookTimeout": "Webhook 请求超时（毫秒）",
+            "maxRetries": "Webhook 最大重试次数"
+        },
+        "admin": {
+            "sessionTtl": "Admin Session 有效时间（秒）",
+            "maxLoginAttempts": "最大登录尝试次数"
+        },
+        "rcon": {
+            "enabled": "RCON 是否启用",
+            "host": "RCON 主机地址",
+            "port": "RCON 端口",
+            "password": "RCON 密码"
+        },
+        "botEvents": {
+            "retentionDays": "事件保留天数",
+            "maxEvents": "最大事件条数",
+            "enabled": "Bot 事件记录是否启用"
+        },
+        "dm": {
+            "enabled": "DM 功能是否启用",
+            "rateLimit": "DM 速率限制（每分钟）",
+            "maxHistory": "DM 历史消息缓存条数"
+        }
+    },
+    "allServers": {
+        "tabs": {
+            "overview": "总览",
+            "botFeatures": "Bot 功能"
+        },
+        "overviewTitle": "所有服务器 — 总览",
+        "refresh": "刷新",
+        "loading": "加载中…",
+        "metrics": {
+            "guilds": "服务器",
+            "registeredPlugins": "已注册 Plugin",
+            "builtinFeatures": "内建功能",
+            "builtinOverrides": "内建功能单服务器覆写",
+            "pluginFeatures": "Plugin Features",
+            "pluginOverrides": "Plugin Features 覆写",
+            "defaultOn": "默认启用"
+        },
+        "botFeaturesTitle": "所有服务器 — Bot 功能默认",
+        "botFeaturesDesc": "设置每个 guild feature 的默认开关。没在各服务器页面手动覆盖过的服务器都跟随这个默认 —— 在这里改，所有未覆盖的服务器立即生效（不用再多按一步）。有手动覆盖的服务器会维持覆盖，直到你在该服务器页面清掉它。",
+        "builtinSection": "内建功能",
+        "noBuiltin": "没有内建功能。",
+        "overriddenServers": "已覆写的服务器：{count}",
+        "originalDefault": "原默认：启用",
+        "overriddenTo": "已被覆盖为 {state}",
+        "defaultEnabled": "默认启用",
+        "defaultDisabled": "默认停用",
+        "enabled": "启用",
+        "disabled": "停用",
+        "pluginFeaturesSection": "Plugin Features",
+        "noPluginFeatures": "目前没有 plugin 声明任何 guild feature。",
+        "enabledGuilds": "已启用 {count} guild",
+        "disabledGuilds": "已停用 {count} guild",
+        "manifestDefault": "Manifest 默认：{state}",
+        "overriddenToParens": "(覆盖为 {state})",
+        "statusActive": "运行中",
+        "statusInactive": "未运行",
+        "statusDisabled": "已停用"
+    },
+    "voice": {
+        "title": "语音播放",
+        "description": "开启后，公会成员可在语音频道中使用 bot 的语音功能（如 /voice 指令或外部 plugin 的播放控制）。",
+        "builtinCommands": "内建指令：",
+        "cmdJoin": "让 bot 加入你当前所在的语音频道",
+        "cmdPlay": "播放音频 URL（http/https）",
+        "cmdStop": "停止当前播放",
+        "cmdLeave": "离开语音频道",
+        "cmdStatus": "查看 bot 语音状态"
+    },
+    "pluginSecurity": {
+        "setupSecretDesc": "重新生成 Setup Secret 后，旧的 secret 立即失效。Plugin 必须使用新 secret 重新向 bot 注册。"
+    }
+}

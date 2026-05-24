@@ -1,0 +1,1398 @@
+import type { Client } from "discord.js";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { config } from "../../config.js";
+import { ChannelType, Routes, MessageFlags } from "discord.js";
+import { RateLimiter } from "../../utils/rate-limiter.js";
+import { findPluginById } from "./models/plugin.model.js";
+import {
+  deleteKv,
+  getKv,
+  incrementKv,
+  listKvKeys,
+  setKv,
+  sumGuildBytes,
+  withGuildKvLock,
+} from "./models/plugin-kv.model.js";
+import {
+  deleteConfigKey,
+  findConfigByPlugin,
+  upsertConfigKey,
+} from "./models/plugin-config.model.js";
+import { decryptSecret } from "../../utils/crypto.js";
+import { botEventLog } from "../bot-events/bot-event-log.js";
+import { shouldRecord } from "../bot-events/bot-event-dedup.js";
+import { findEnabledFeaturesByPluginGuild } from "../feature-toggle/models/plugin-guild-feature.model.js";
+import type { PluginManifest } from "./plugin-registry.service.js";
+import { jwtService } from "../web-core/jwt.service.js";
+import { resolveUserCapabilities } from "../admin/authorized-user.service.js";
+import { makePluginCapabilityToken } from "../admin/admin-capabilities.js";
+import { discordErrorStatus } from "../web-core/discord-error.js";
+import { assertPluginTarget, HostPolicyError } from "../../utils/host-policy.js";
+
+/**
+ * Strip dangerous `parse` entries from a plugin-supplied
+ * `allowed_mentions` object so a `parse: ["everyone"]` field can't be
+ * smuggled into `channel.send`. Only the explicit allowlists (users /
+ * roles / repliedUser) survive — a plugin that wants to ping a role
+ * must opt in by ID via `roles: ["<id>"]`, not by bulk-parsing every
+ * `<@&id>` token in the content. Snowflake-shaped strings only on the
+ * id lists (defence in depth against `everyone` smuggled into `roles`).
+ */
+const SNOWFLAKE_RE = /^[0-9]{17,20}$/;
+function safeAllowedMentions(raw: unknown): Record<string, unknown> {
+  if (!raw || typeof raw !== "object") return { parse: [] };
+  const m = raw as Record<string, unknown>;
+  const out: Record<string, unknown> = { parse: [] };
+  if (Array.isArray(m.users)) {
+    out.users = m.users.filter(
+      (v): v is string => typeof v === "string" && SNOWFLAKE_RE.test(v),
+    );
+  }
+  if (Array.isArray(m.roles)) {
+    out.roles = m.roles.filter(
+      (v): v is string => typeof v === "string" && SNOWFLAKE_RE.test(v),
+    );
+  }
+  if (typeof m.repliedUser === "boolean") out.repliedUser = m.repliedUser;
+  return out;
+}
+
+/**
+ * Plugin RPC endpoints: the things plugins are allowed to ask the bot
+ * to do on their behalf. Auth (bearer plugin token → request.pluginAuth)
+ * is enforced by server.ts onRequest hook before any handler runs.
+ *
+ * Each handler additionally enforces:
+ *   - the manifest's `rpc_methods_used` allowlist (least privilege)
+ *   - the plugin must still be `enabled=true` and `status='active'`
+ *     in the DB at call time (the in-memory token cache outlives a
+ *     disable; we re-check on every call)
+ *
+ * Endpoints intentionally use a flat `/api/plugin/<verb>` shape
+ * rather than nested resources because RPC verbs map cleanly to
+ * Discord.js method calls and we want a 1:1 audit story.
+ */
+
+export interface PluginRpcOptions {
+  bot?: Client;
+  /** Injected for tests; production uses the module-level singleton. */
+  dmLimiter?: { isRateLimited(key: string): boolean };
+}
+
+/** Module-level singleton — one limiter shared across all requests. */
+const defaultDmLimiter = new RateLimiter({
+  max: config.plugin.dmRatePerSec,
+  windowMs: config.plugin.dmWindowMs,
+});
+
+const KV_KEY_MAX = 200;
+const KV_VALUE_MAX_BYTES = config.plugin.kvValueMaxBytes; // hard ceiling regardless of manifest quota
+const DEFAULT_KV_QUOTA_BYTES = 64 * 1024;
+
+function rejectForbidden(reply: FastifyReply, scope: string): void {
+  reply.code(403).send({ error: `plugin token missing scope '${scope}'` });
+}
+
+/** Max user ids resolvable in one members.get batch. */
+const MEMBERS_GET_MAX = 25;
+
+/** Max attachments per message, and per-file byte cap. */
+const MAX_ATTACHMENTS = 5;
+const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024; // Discord's non-boosted limit
+
+/**
+ * Resolve plugin-supplied attachment descriptors into Discord-ready
+ * file buffers.
+ *
+ * Plugins describe an attachment as `{ name, path }` where `path` is
+ * a path on the plugin's own HTTP surface (e.g. `/art/merlin.png`).
+ * The bot fetches `<plugin.url><path>` server-side and forwards the
+ * bytes to Discord as a real file. This lets a plugin embed images
+ * (`attachment://<name>`) without needing a Discord-reachable public
+ * URL — the fetch happens over the internal bot↔plugin network.
+ *
+ * SSRF is bounded: the fetch base is the plugin's own registered
+ * `url`, run through the same `assertPluginTarget` host policy used
+ * by the interaction dispatcher; `path` is forced to a leading-slash
+ * relative path so it can't swap the host.
+ *
+ * Throws on any malformed descriptor / disallowed host / oversize
+ * body so the caller can surface a 400.
+ */
+async function resolvePluginAttachments(
+  pluginId: number,
+  raw: unknown,
+): Promise<Array<{ name: string; data: Buffer }>> {
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw)) throw new Error("attachments must be an array");
+  if (raw.length === 0) return [];
+  if (raw.length > MAX_ATTACHMENTS) {
+    throw new Error(`at most ${MAX_ATTACHMENTS} attachments`);
+  }
+  const plugin = await findPluginById(pluginId);
+  if (!plugin) throw new Error("plugin not found");
+  const base = plugin.url.replace(/\/+$/, "");
+  const parsedBase = new URL(base);
+  const port = parsedBase.port
+    ? Number(parsedBase.port)
+    : parsedBase.protocol === "https:"
+      ? 443
+      : 80;
+  await assertPluginTarget(parsedBase.hostname, port);
+
+  const out: Array<{ name: string; data: Buffer }> = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") {
+      throw new Error("attachment entry must be an object");
+    }
+    const e = entry as { name?: unknown; path?: unknown };
+    if (typeof e.name !== "string" || e.name.length === 0) {
+      throw new Error("attachment.name required");
+    }
+    if (typeof e.path !== "string" || !e.path.startsWith("/")) {
+      throw new Error("attachment.path must be a leading-slash path");
+    }
+    const res = await fetch(`${base}${e.path}`);
+    if (!res.ok) {
+      throw new Error(`attachment fetch ${e.path} → ${res.status}`);
+    }
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.byteLength > MAX_ATTACHMENT_BYTES) {
+      throw new Error(`attachment ${e.name} exceeds size cap`);
+    }
+    out.push({ name: e.name, data: buf });
+  }
+  return out;
+}
+
+async function requireScope(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  scope: string,
+): Promise<{ pluginId: number; pluginKey: string } | null> {
+  const auth = request.pluginAuth;
+  if (!auth) {
+    reply.code(401).send({ error: "plugin auth missing" });
+    return null;
+  }
+  if (!auth.scopes.has(scope)) {
+    rejectForbidden(reply, scope);
+    return null;
+  }
+  // The token was minted with scopes baked in, but the plugin row may
+  // have been admin-disabled or expired since then. Re-check liveness.
+  const plugin = await findPluginById(auth.pluginId);
+  if (!plugin || !plugin.enabled || plugin.status !== "active") {
+    reply
+      .code(403)
+      .send({ error: "plugin is disabled or inactive on the bot" });
+    return null;
+  }
+  return { pluginId: auth.pluginId, pluginKey: auth.pluginKey };
+}
+
+function getManifest(manifestJson: string): PluginManifest | null {
+  try {
+    return JSON.parse(manifestJson) as PluginManifest;
+  } catch {
+    return null;
+  }
+}
+
+async function quotaForGuildKv(pluginId: number): Promise<number> {
+  // Read quota from the plugin's stored manifest. Falls back to a
+  // bot-wide default if the plugin didn't declare one.
+  const plugin = await findPluginById(pluginId);
+  if (!plugin) return DEFAULT_KV_QUOTA_BYTES;
+  const manifest = getManifest(plugin.manifestJson);
+  const declaredKb = manifest?.storage?.guild_kv_quota_kb;
+  if (typeof declaredKb === "number" && declaredKb > 0) {
+    return Math.min(declaredKb * 1024, KV_VALUE_MAX_BYTES * 16);
+  }
+  return DEFAULT_KV_QUOTA_BYTES;
+}
+
+export async function registerPluginRpcRoutes(
+  server: FastifyInstance,
+  options: PluginRpcOptions,
+): Promise<void> {
+  const bot = options.bot;
+  const dmLimiter = options.dmLimiter ?? defaultDmLimiter;
+
+  // ─── messages.send ────────────────────────────────────────────────
+  /**
+   * POST /api/plugin/messages.send
+   * Body: { channel_id: string, content?: string, embeds?: APIEmbed[],
+   *         allowed_mentions?: { parse?: ('users'|'roles'|'everyone')[] } }
+   * Returns: { id, channel_id }
+   *
+   * The plugin can target any text channel the bot has access to in
+   * any guild it's in, plus DM channels of any user. Phase 2 may
+   * narrow this to the plugin's own guild_features scope; Phase 1.5
+   * trusts the operator-installed plugins to behave.
+   */
+  server.post<{
+    Body: {
+      channel_id?: unknown;
+      content?: unknown;
+      embeds?: unknown;
+      components?: unknown;
+      allowed_mentions?: unknown;
+      attachments?: unknown;
+    };
+  }>("/api/plugin/messages.send", async (request, reply) => {
+    const ctx = await requireScope(request, reply, "messages.send");
+    if (!ctx) return;
+    if (!bot) {
+      reply.code(503).send({ error: "bot client unavailable" });
+      return;
+    }
+    const body = request.body ?? {};
+    if (typeof body.channel_id !== "string" || body.channel_id.length === 0) {
+      reply.code(400).send({ error: "channel_id required" });
+      return;
+    }
+    const content = typeof body.content === "string" ? body.content : undefined;
+    const embeds = Array.isArray(body.embeds) ? body.embeds : undefined;
+    const components = Array.isArray(body.components)
+      ? body.components
+      : undefined;
+    if (!content && !embeds) {
+      reply.code(400).send({ error: "content or embeds required" });
+      return;
+    }
+    let attachments: Array<{ name: string; data: Buffer }>;
+    try {
+      attachments = await resolvePluginAttachments(
+        ctx.pluginId,
+        body.attachments,
+      );
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      reply.code(400).send({ error: `attachment error: ${m}` });
+      return;
+    }
+    let channel;
+    try {
+      channel = await bot.channels.fetch(body.channel_id);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      reply.code(404).send({ error: `channel fetch failed: ${msg}` });
+      return;
+    }
+    if (!channel || !channel.isTextBased() || !("send" in channel)) {
+      reply.code(400).send({ error: "channel is not text-sendable" });
+      return;
+    }
+    // Per-guild feature gate: plugin must have at least one enabled
+    // feature in the target guild. DM and group-DM channels are exempt
+    // (no guildId). Threads inherit guildId from their parent and go
+    // through the gate, which is the intended behaviour.
+    const channelGuildId =
+      "guildId" in channel && typeof channel.guildId === "string"
+        ? channel.guildId
+        : null;
+    if (channelGuildId && !channel.isDMBased()) {
+      const enabledFeatures = await findEnabledFeaturesByPluginGuild(
+        ctx.pluginId,
+        channelGuildId,
+      );
+      if (enabledFeatures.length === 0) {
+        if (
+          shouldRecord(
+            `plugin-rpc-feature-block:${ctx.pluginId}:${channelGuildId}`,
+          )
+        ) {
+          botEventLog.record(
+            "warn",
+            "feature",
+            `plugin ${ctx.pluginKey} tried to send to guild ${channelGuildId} without enabled feature`,
+            { pluginId: ctx.pluginId, guildId: channelGuildId },
+          );
+        }
+        reply.code(403).send({ error: "plugin not enabled in this guild" });
+        return;
+      }
+    }
+    // Sanitize allowed_mentions — plugins must not be able to force
+    // mass-ping behaviour. We strip `parse` entirely (the field that
+    // toggles broad @everyone / @here / "every role mention in
+    // content" parsing) and only forward the explicit `users` /
+    // `roles` / `repliedUser` allowlists. A plugin wanting to ping
+    // role X must list `<@&X>` in the content AND `roles: ["X"]`
+    // explicitly — no bulk opt-in.
+    const allowedMentions = safeAllowedMentions(body.allowed_mentions);
+    try {
+      const sent = await channel.send({
+        content,
+        // discord.js v14 accepts raw embed objects; if it's malformed
+        // it'll throw, which we surface as a 400.
+        embeds: embeds as never,
+        // Discord component-v1 action rows passed through verbatim
+        // (e.g. link buttons + action buttons on a "now playing" card).
+        components: components as never,
+        allowedMentions: allowedMentions as never,
+        // Plugin-supplied files (bot fetched them from the plugin's
+        // own HTTP surface). An embed can reference one via
+        // `attachment://<name>`.
+        ...(attachments.length > 0
+          ? {
+              files: attachments.map((a) => ({
+                attachment: a.data,
+                name: a.name,
+              })),
+            }
+          : {}),
+      });
+      botEventLog.record(
+        "info",
+        "bot",
+        `plugin ${ctx.pluginKey} sent message in channel ${body.channel_id}`,
+        {
+          pluginId: ctx.pluginId,
+          channelId: body.channel_id,
+          messageId: sent.id,
+        },
+      );
+      return { id: sent.id, channel_id: sent.channelId };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      reply.code(discordErrorStatus(err)).send({ error: `send failed: ${msg}` });
+      return;
+    }
+  });
+
+  // ─── messages.send_dm ─────────────────────────────────────────────
+  /**
+   * POST /api/plugin/messages.send_dm
+   * Body: { user_id: string, content?: string, embeds?: APIEmbed[],
+   *         allowed_mentions?: { parse?: ('users'|'roles'|'everyone')[] } }
+   * Returns: { id, channel_id }
+   *
+   * Higher-level than messages.send: the plugin gives a Discord user
+   * id and we resolve / create the DM channel for them, then send.
+   * Without this, the plugin would need a way to discover the user's
+   * DM channel id (which Discord doesn't expose to bots), so DM
+   * relay-style plugins were impossible to implement at all.
+   *
+   * Subject to the same allowed_mentions default-deny as messages.send.
+   * 404 if the user_id doesn't resolve; 400 if the user has DMs
+   * disabled (Discord raises CANNOT_SEND_MESSAGES_TO_THIS_USER).
+   */
+  server.post<{
+    Body: {
+      user_id?: unknown;
+      content?: unknown;
+      embeds?: unknown;
+      allowed_mentions?: unknown;
+    };
+  }>("/api/plugin/messages.send_dm", async (request, reply) => {
+    const ctx = await requireScope(request, reply, "messages.send_dm");
+    if (!ctx) return;
+    if (!bot) {
+      reply.code(503).send({ error: "bot client unavailable" });
+      return;
+    }
+    const body = request.body ?? {};
+    if (typeof body.user_id !== "string" || body.user_id.length === 0) {
+      reply.code(400).send({ error: "user_id required" });
+      return;
+    }
+    const content = typeof body.content === "string" ? body.content : undefined;
+    const embeds = Array.isArray(body.embeds) ? body.embeds : undefined;
+    if (!content && !embeds) {
+      reply.code(400).send({ error: "content or embeds required" });
+      return;
+    }
+    // Per-plugin DM rate limit: enforced *before* bot.users.fetch() so
+    // attackers can't spam invalid user_ids to hammer Discord's REST
+    // (each fetch is a real GET /users/:id) without ever consuming the
+    // bucket. Cost: every well-formed call consumes one slot even if
+    // the user turns out not to exist — that's exactly what we want
+    // because Discord doesn't care whether the id resolves.
+    if (dmLimiter.isRateLimited(`plugin:${ctx.pluginId}:send_dm`)) {
+      if (shouldRecord(`plugin-rpc-dm-rate:${ctx.pluginId}`)) {
+        botEventLog.record(
+          "warn",
+          "bot",
+          `plugin ${ctx.pluginKey} exceeded DM rate limit`,
+          { pluginId: ctx.pluginId },
+        );
+      }
+      reply
+        .code(429)
+        .header("Retry-After", "1")
+        .send({ error: "rate limited" });
+      return;
+    }
+    let user;
+    try {
+      user = await bot.users.fetch(body.user_id);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      reply.code(404).send({ error: `user fetch failed: ${msg}` });
+      return;
+    }
+    const allowedMentions = safeAllowedMentions(body.allowed_mentions);
+    try {
+      const sent = await user.send({
+        content,
+        embeds: embeds as never,
+        allowedMentions: allowedMentions as never,
+      });
+      botEventLog.record(
+        "info",
+        "bot",
+        `plugin ${ctx.pluginKey} DM'd user ${body.user_id}`,
+        {
+          pluginId: ctx.pluginId,
+          userId: body.user_id,
+          messageId: sent.id,
+        },
+      );
+      return { id: sent.id, channel_id: sent.channelId };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      reply.code(discordErrorStatus(err)).send({ error: `send_dm failed: ${msg}` });
+      return;
+    }
+  });
+
+  // ─── messages.delete ──────────────────────────────────────────────
+  server.post<{
+    Body: { channel_id?: unknown; message_id?: unknown };
+  }>("/api/plugin/messages.delete", async (request, reply) => {
+    const ctx = await requireScope(request, reply, "messages.delete");
+    if (!ctx) return;
+    if (!bot) {
+      reply.code(503).send({ error: "bot client unavailable" });
+      return;
+    }
+    const body = request.body ?? {};
+    if (
+      typeof body.channel_id !== "string" ||
+      typeof body.message_id !== "string"
+    ) {
+      reply.code(400).send({ error: "channel_id + message_id required" });
+      return;
+    }
+    try {
+      const channel = await bot.channels.fetch(body.channel_id);
+      if (
+        !channel ||
+        !channel.isTextBased() ||
+        channel.type === ChannelType.GroupDM
+      ) {
+        reply.code(400).send({ error: "channel not text-based" });
+        return;
+      }
+      const msg = await channel.messages.fetch(body.message_id);
+      await msg.delete();
+      return { ok: true };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      reply.code(discordErrorStatus(err)).send({ error: `delete failed: ${msg}` });
+    }
+  });
+
+  // ─── messages.edit ────────────────────────────────────────────────
+  /**
+   * POST /api/plugin/messages.edit
+   * Body: { channel_id, message_id, content?, embeds?, components? }
+   * Returns: { id, channel_id }
+   *
+   * Edit a message the bot sent (typically one it sent via
+   * messages.send). `components: []` clears the buttons. Same per-guild
+   * feature gate as messages.send — a plugin with no enabled feature in
+   * the channel's guild can't edit messages there. Only fields that are
+   * present are touched; pass `content: ""` to clear the text.
+   */
+  server.post<{
+    Body: {
+      channel_id?: unknown;
+      message_id?: unknown;
+      content?: unknown;
+      embeds?: unknown;
+      components?: unknown;
+    };
+  }>("/api/plugin/messages.edit", async (request, reply) => {
+    const ctx = await requireScope(request, reply, "messages.edit");
+    if (!ctx) return;
+    if (!bot) {
+      reply.code(503).send({ error: "bot client unavailable" });
+      return;
+    }
+    const body = request.body ?? {};
+    if (
+      typeof body.channel_id !== "string" ||
+      typeof body.message_id !== "string"
+    ) {
+      reply.code(400).send({ error: "channel_id + message_id required" });
+      return;
+    }
+    let channel;
+    try {
+      channel = await bot.channels.fetch(body.channel_id);
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      reply.code(404).send({ error: `channel fetch failed: ${m}` });
+      return;
+    }
+    if (
+      !channel ||
+      !channel.isTextBased() ||
+      channel.type === ChannelType.GroupDM
+    ) {
+      reply.code(400).send({ error: "channel not text-based" });
+      return;
+    }
+    const channelGuildId =
+      "guildId" in channel && typeof channel.guildId === "string"
+        ? channel.guildId
+        : null;
+    if (channelGuildId && !channel.isDMBased()) {
+      const enabledFeatures = await findEnabledFeaturesByPluginGuild(
+        ctx.pluginId,
+        channelGuildId,
+      );
+      if (enabledFeatures.length === 0) {
+        reply.code(403).send({ error: "plugin not enabled in this guild" });
+        return;
+      }
+    }
+    const editPayload: Record<string, unknown> = {
+      allowed_mentions: { parse: [] },
+    };
+    if (typeof body.content === "string") editPayload.content = body.content;
+    if (Array.isArray(body.embeds)) editPayload.embeds = body.embeds;
+    if (Array.isArray(body.components)) editPayload.components = body.components;
+    try {
+      const msg = await channel.messages.fetch(body.message_id);
+      await msg.edit(editPayload as never);
+      return { id: msg.id, channel_id: msg.channelId };
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      reply.code(discordErrorStatus(err)).send({ error: `edit failed: ${m}` });
+    }
+  });
+
+  // ─── messages.add_reaction ────────────────────────────────────────
+  server.post<{
+    Body: { channel_id?: unknown; message_id?: unknown; emoji?: unknown };
+  }>("/api/plugin/messages.add_reaction", async (request, reply) => {
+    const ctx = await requireScope(request, reply, "messages.add_reaction");
+    if (!ctx) return;
+    if (!bot) {
+      reply.code(503).send({ error: "bot client unavailable" });
+      return;
+    }
+    const body = request.body ?? {};
+    if (
+      typeof body.channel_id !== "string" ||
+      typeof body.message_id !== "string" ||
+      typeof body.emoji !== "string"
+    ) {
+      reply
+        .code(400)
+        .send({ error: "channel_id + message_id + emoji required" });
+      return;
+    }
+    try {
+      const channel = await bot.channels.fetch(body.channel_id);
+      if (!channel || !channel.isTextBased()) {
+        reply.code(400).send({ error: "channel not text-based" });
+        return;
+      }
+      const msg = await channel.messages.fetch(body.message_id);
+      await msg.react(body.emoji);
+      return { ok: true };
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      reply.code(discordErrorStatus(err)).send({ error: `add_reaction failed: ${m}` });
+    }
+  });
+
+  // ─── config.get ────────────────────────────────────────────────────
+  /**
+   * POST /api/plugin/config.get
+   * Body: {} (no params; plugin only sees its own config)
+   * Returns:
+   *   { values: Record<string, string>, schema: ManifestConfigField[] }
+   *
+   * Surfaces the plugin's combined config map. Values for `secret`-
+   * typed admin fields are decrypted on the way out — the plugin
+   * needs the real value to act on it. Plugin-self KV (config.set
+   * source='plugin') is included alongside admin-edited fields so the
+   * plugin sees one flat map.
+   *
+   * Rate-limit-friendly: rebuilding the full map per call is fine
+   * (config rows are O(few-dozen) per plugin). Plugins that hot-loop
+   * config.get on every event should cache locally and rely on
+   * push-style update via re-poll on a known cadence.
+   */
+  server.post("/api/plugin/config.get", async (request, reply) => {
+    const ctx = await requireScope(request, reply, "config.get");
+    if (!ctx) return;
+    const plugin = await findPluginById(ctx.pluginId);
+    if (!plugin) {
+      reply.code(404).send({ error: "plugin row vanished" });
+      return;
+    }
+    const manifest = (() => {
+      try {
+        return JSON.parse(plugin.manifestJson) as PluginManifest;
+      } catch {
+        return null;
+      }
+    })();
+    const schemaByKey = new Map(
+      (manifest?.config_schema ?? []).map((f) => [f.key, f]),
+    );
+    const rows = await findConfigByPlugin(ctx.pluginId);
+    const values: Record<string, string> = {};
+    for (const row of rows) {
+      if (row.source === "admin") {
+        const field = schemaByKey.get(row.key);
+        if (field?.type === "secret" && row.value.length > 0) {
+          try {
+            values[row.key] = decryptSecret(row.value);
+          } catch (err) {
+            // A decrypt failure means the row was written with a
+            // different ENCRYPTION_KEY (rare; key rotation). Skip
+            // rather than crash the RPC; the plugin will see the
+            // missing key and can ask the operator to re-enter.
+            const msg = err instanceof Error ? err.message : String(err);
+            botEventLog.record(
+              "warn",
+              "bot",
+              `config.get: decrypt failed for ${plugin.pluginKey}/${row.key}: ${msg}`,
+              { pluginId: ctx.pluginId, key: row.key },
+            );
+          }
+        } else {
+          values[row.key] = row.value;
+        }
+      } else {
+        values[row.key] = row.value;
+      }
+    }
+    return { values, schema: manifest?.config_schema ?? [] };
+  });
+
+  // ─── config.set ────────────────────────────────────────────────────
+  /**
+   * POST /api/plugin/config.set
+   * Body: { key: string, value: string | null }
+   *
+   * Plugin-self KV write. Stored under source='plugin' so it never
+   * collides with admin-controlled config_schema rows. `null` deletes.
+   *
+   * For admin-controlled config_schema fields the plugin can READ
+   * via config.get but CANNOT set — the plugin's value would be
+   * silently overwritten by the next admin save and the source-
+   * isolation rule in upsertConfigKey rejects the write outright.
+   */
+  server.post<{ Body: { key?: unknown; value?: unknown } }>(
+    "/api/plugin/config.set",
+    async (request, reply) => {
+      const ctx = await requireScope(request, reply, "config.set");
+      if (!ctx) return;
+      const body = request.body ?? {};
+      if (typeof body.key !== "string" || body.key.length === 0) {
+        reply.code(400).send({ error: "key required" });
+        return;
+      }
+      if (body.key.length > 200) {
+        reply.code(400).send({ error: "key exceeds 200 chars" });
+        return;
+      }
+      if (
+        body.value !== null &&
+        body.value !== undefined &&
+        typeof body.value !== "string"
+      ) {
+        reply.code(400).send({ error: "value must be string or null" });
+        return;
+      }
+      try {
+        if (body.value === null || body.value === undefined) {
+          const removed = await deleteConfigKey(
+            ctx.pluginId,
+            body.key,
+            "plugin",
+          );
+          return { removed };
+        }
+        await upsertConfigKey(ctx.pluginId, body.key, body.value, "plugin");
+        return { ok: true };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("cannot overwrite") || msg.includes("cannot delete")) {
+          reply.code(409).send({ error: msg });
+          return;
+        }
+        reply.code(500).send({ error: `config.set failed: ${msg}` });
+      }
+    },
+  );
+
+  // ─── storage.kv_get ───────────────────────────────────────────────
+  server.post<{
+    Body: { guild_id?: unknown; key?: unknown };
+  }>("/api/plugin/storage.kv_get", async (request, reply) => {
+    const ctx = await requireScope(request, reply, "storage.kv_get");
+    if (!ctx) return;
+    const body = request.body ?? {};
+    if (typeof body.guild_id !== "string" || body.guild_id.length === 0) {
+      reply.code(400).send({ error: "guild_id required" });
+      return;
+    }
+    if (typeof body.key !== "string" || body.key.length === 0) {
+      reply.code(400).send({ error: "key required" });
+      return;
+    }
+    const row = await getKv(ctx.pluginId, body.guild_id, body.key);
+    if (!row) {
+      return { found: false, value: null };
+    }
+    return { found: true, value: row.value, bytes: row.bytes };
+  });
+
+  // ─── storage.kv_set ───────────────────────────────────────────────
+  server.post<{
+    Body: { guild_id?: unknown; key?: unknown; value?: unknown };
+  }>("/api/plugin/storage.kv_set", async (request, reply) => {
+    const ctx = await requireScope(request, reply, "storage.kv_set");
+    if (!ctx) return;
+    const body = request.body ?? {};
+    if (typeof body.guild_id !== "string" || body.guild_id.length === 0) {
+      reply.code(400).send({ error: "guild_id required" });
+      return;
+    }
+    if (
+      typeof body.key !== "string" ||
+      body.key.length === 0 ||
+      body.key.length > KV_KEY_MAX
+    ) {
+      reply.code(400).send({ error: `key required (max ${KV_KEY_MAX} chars)` });
+      return;
+    }
+    if (typeof body.value !== "string") {
+      reply.code(400).send({ error: "value must be a string" });
+      return;
+    }
+    const incomingBytes = Buffer.byteLength(body.value, "utf8");
+    if (incomingBytes > KV_VALUE_MAX_BYTES) {
+      reply.code(413).send({
+        error: `value exceeds per-row hard cap (${KV_VALUE_MAX_BYTES}B)`,
+      });
+      return;
+    }
+    // Quota check: sum existing bytes minus what this key already
+    // holds (we're overwriting, so subtract it from the budget).
+    // The read+write runs under a per-(plugin,guild) mutex so two
+    // concurrent sets to different keys can't both observe a stale
+    // total and slip past the quota — previously the lack of
+    // serialisation let a plugin double-write past its quota.
+    const guildId = body.guild_id;
+    const key = body.key;
+    const value = body.value;
+    const reply413 = (msg: string): void => {
+      reply.code(413).send({ error: msg });
+    };
+    const result = await withGuildKvLock<{
+      ok: boolean;
+      bytes?: number;
+      total_bytes?: number;
+      quota_bytes?: number;
+      error?: string;
+    }>(ctx.pluginId, guildId, async () => {
+      const quota = await quotaForGuildKv(ctx.pluginId);
+      const currentTotal = await sumGuildBytes(ctx.pluginId, guildId);
+      const existing = await getKv(ctx.pluginId, guildId, key);
+      const projected = currentTotal - (existing?.bytes ?? 0) + incomingBytes;
+      if (projected > quota) {
+        return {
+          ok: false,
+          error: `would exceed plugin guild_kv quota (${projected}B / ${quota}B)`,
+        };
+      }
+      const row = await setKv(ctx.pluginId, guildId, key, value);
+      return {
+        ok: true,
+        bytes: row.bytes,
+        total_bytes: currentTotal - (existing?.bytes ?? 0) + row.bytes,
+        quota_bytes: quota,
+      };
+    });
+    if (!result.ok) {
+      reply413(result.error!);
+      return;
+    }
+    return result;
+  });
+
+  // ─── storage.kv_increment ─────────────────────────────────────────
+  /**
+   * POST /api/plugin/storage.kv_increment
+   * Body: { guild_id: string, key: string, delta?: number = 1 }
+   * Returns: { value: <new number after increment>, bytes, total_bytes, quota_bytes }
+   *
+   * Atomic counter: read-modify-write inside a single SQLite transaction
+   * with row-level lock. Replaces the kv_get + kv_set sequence that
+   * lost increments under concurrent calls. Existing value must parse
+   * as a finite number; non-numeric existing values 422 (caller bug).
+   *
+   * Counts as a kv_set for quota purposes — the same per-guild byte
+   * cap applies to the post-increment serialised value.
+   */
+  server.post<{
+    Body: { guild_id?: unknown; key?: unknown; delta?: unknown };
+  }>("/api/plugin/storage.kv_increment", async (request, reply) => {
+    const ctx = await requireScope(request, reply, "storage.kv_increment");
+    if (!ctx) return;
+    const body = request.body ?? {};
+    if (typeof body.guild_id !== "string" || body.guild_id.length === 0) {
+      reply.code(400).send({ error: "guild_id required" });
+      return;
+    }
+    if (typeof body.key !== "string" || body.key.length === 0) {
+      reply.code(400).send({ error: "key required" });
+      return;
+    }
+    if (body.key.length > KV_KEY_MAX) {
+      reply.code(400).send({ error: `key exceeds ${KV_KEY_MAX} chars` });
+      return;
+    }
+    const deltaRaw = body.delta ?? 1;
+    if (typeof deltaRaw !== "number" || !Number.isFinite(deltaRaw)) {
+      reply.code(400).send({ error: "delta must be a finite number" });
+      return;
+    }
+    try {
+      const result = await incrementKv(
+        ctx.pluginId,
+        body.guild_id,
+        body.key,
+        deltaRaw,
+      );
+      const totalBytes = await sumGuildBytes(ctx.pluginId, body.guild_id);
+      const quotaBytes = await quotaForGuildKv(ctx.pluginId);
+      return {
+        value: result.value,
+        bytes: result.row.bytes,
+        total_bytes: totalBytes,
+        quota_bytes: quotaBytes,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Existing-value-not-numeric is the caller's bug, not the bot's
+      // — surface it as 422 so the plugin's logs blame the right side.
+      if (msg.includes("not a finite number")) {
+        reply.code(422).send({ error: msg });
+        return;
+      }
+      reply.code(500).send({ error: `kv_increment failed: ${msg}` });
+    }
+  });
+
+  // ─── storage.kv_delete ────────────────────────────────────────────
+  server.post<{
+    Body: { guild_id?: unknown; key?: unknown };
+  }>("/api/plugin/storage.kv_delete", async (request, reply) => {
+    const ctx = await requireScope(request, reply, "storage.kv_delete");
+    if (!ctx) return;
+    const body = request.body ?? {};
+    if (typeof body.guild_id !== "string" || typeof body.key !== "string") {
+      reply.code(400).send({ error: "guild_id + key required" });
+      return;
+    }
+    const removed = await deleteKv(ctx.pluginId, body.guild_id, body.key);
+    return { removed };
+  });
+
+  // ─── storage.kv_list ──────────────────────────────────────────────
+  server.post<{
+    Body: {
+      guild_id?: unknown;
+      prefix?: unknown;
+      limit?: unknown;
+      offset?: unknown;
+    };
+  }>("/api/plugin/storage.kv_list", async (request, reply) => {
+    const ctx = await requireScope(request, reply, "storage.kv_list");
+    if (!ctx) return;
+    const body = request.body ?? {};
+    if (typeof body.guild_id !== "string") {
+      reply.code(400).send({ error: "guild_id required" });
+      return;
+    }
+    const prefix = typeof body.prefix === "string" ? body.prefix : undefined;
+    const limit = typeof body.limit === "number" ? body.limit : 100;
+    const offset = typeof body.offset === "number" ? body.offset : 0;
+    const result = await listKvKeys(ctx.pluginId, body.guild_id, {
+      prefix,
+      limit,
+      offset,
+    });
+    return { keys: result.keys, total: result.total };
+  });
+
+  // ─── interactions.respond ─────────────────────────────────────────
+  /**
+   * POST /api/plugin/interactions.respond
+   * Body: { interaction_token, content?, embeds?, ephemeral? }
+   *
+   * Completes a deferred interaction reply. The bot defers immediately
+   * on receipt; the plugin processes the command, then calls this to
+   * fill in the placeholder reply within Discord's 15-minute window.
+   *
+   * `ephemeral` flips the message visible-to-others bit. If the
+   * plugin doesn't pass it, we keep whatever ephemeral state the
+   * defer already used (Discord won't let you change ephemerality
+   * after defer anyway — the flag here is informational for follow
+   * ups).
+   */
+  server.post<{
+    Body: {
+      interaction_token?: unknown;
+      content?: unknown;
+      embeds?: unknown;
+      components?: unknown;
+      ephemeral?: unknown;
+      attachments?: unknown;
+    };
+  }>("/api/plugin/interactions.respond", async (request, reply) => {
+    const ctx = await requireScope(request, reply, "interactions.respond");
+    if (!ctx) return;
+    if (!bot || !bot.application) {
+      reply.code(503).send({ error: "bot client unavailable" });
+      return;
+    }
+    const body = request.body ?? {};
+    if (
+      typeof body.interaction_token !== "string" ||
+      body.interaction_token.length === 0
+    ) {
+      reply.code(400).send({ error: "interaction_token required" });
+      return;
+    }
+    const content = typeof body.content === "string" ? body.content : undefined;
+    const embeds = Array.isArray(body.embeds) ? body.embeds : undefined;
+    const components = Array.isArray(body.components)
+      ? body.components
+      : undefined;
+    if (!content && !embeds && !components) {
+      reply.code(400).send({ error: "content, embeds or components required" });
+      return;
+    }
+    let attachments: Array<{ name: string; data: Buffer }>;
+    try {
+      attachments = await resolvePluginAttachments(
+        ctx.pluginId,
+        body.attachments,
+      );
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      reply.code(400).send({ error: `attachment error: ${m}` });
+      return;
+    }
+    const ephemeral = body.ephemeral === true;
+    try {
+      // Edit the original (deferred) interaction reply via Discord
+      // REST. Discord's webhook-message-edit endpoint accepts the
+      // same shape as initial response except flags is read-only;
+      // the ephemeral state was locked at defer time. `components` is
+      // forwarded verbatim (Discord component-v1 action rows) — used
+      // e.g. for link buttons that open a plugin WebUI.
+      await bot.rest.patch(
+        Routes.webhookMessage(
+          bot.application.id,
+          body.interaction_token,
+          "@original",
+        ),
+        {
+          body: {
+            content,
+            embeds,
+            components,
+            // Honor `ephemeral` only as a signal — if defer was
+            // public, Discord rejects this flag. Pass through and
+            // let Discord ignore on mismatch.
+            flags: ephemeral ? MessageFlags.Ephemeral : undefined,
+            allowed_mentions: { parse: [] },
+          },
+          ...(attachments.length > 0
+            ? {
+                files: attachments.map((a) => ({
+                  name: a.name,
+                  data: a.data,
+                })),
+              }
+            : {}),
+        },
+      );
+      return { ok: true };
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      reply.code(400).send({ error: `respond failed: ${m}` });
+    }
+  });
+
+  // ─── interactions.followup ────────────────────────────────────────
+  /**
+   * POST /api/plugin/interactions.followup
+   * Body: { interaction_token, content?, embeds?, ephemeral? }
+   *
+   * Append a follow-up message to an existing interaction. Plugins
+   * use this for streaming output / multi-message replies. Discord
+   * caps at 5 follow-ups per interaction.
+   */
+  server.post<{
+    Body: {
+      interaction_token?: unknown;
+      content?: unknown;
+      embeds?: unknown;
+      components?: unknown;
+      ephemeral?: unknown;
+      attachments?: unknown;
+    };
+  }>("/api/plugin/interactions.followup", async (request, reply) => {
+    const ctx = await requireScope(request, reply, "interactions.followup");
+    if (!ctx) return;
+    if (!bot || !bot.application) {
+      reply.code(503).send({ error: "bot client unavailable" });
+      return;
+    }
+    const body = request.body ?? {};
+    if (
+      typeof body.interaction_token !== "string" ||
+      body.interaction_token.length === 0
+    ) {
+      reply.code(400).send({ error: "interaction_token required" });
+      return;
+    }
+    const content = typeof body.content === "string" ? body.content : undefined;
+    const embeds = Array.isArray(body.embeds) ? body.embeds : undefined;
+    const components = Array.isArray(body.components)
+      ? body.components
+      : undefined;
+    if (!content && !embeds && !components) {
+      reply.code(400).send({ error: "content, embeds or components required" });
+      return;
+    }
+    let attachments: Array<{ name: string; data: Buffer }>;
+    try {
+      attachments = await resolvePluginAttachments(
+        ctx.pluginId,
+        body.attachments,
+      );
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      reply.code(400).send({ error: `attachment error: ${m}` });
+      return;
+    }
+    const ephemeral = body.ephemeral === true;
+    try {
+      const created = (await bot.rest.post(
+        Routes.webhook(bot.application.id, body.interaction_token),
+        {
+          body: {
+            content,
+            embeds,
+            components,
+            flags: ephemeral ? MessageFlags.Ephemeral : undefined,
+            allowed_mentions: { parse: [] },
+          },
+          ...(attachments.length > 0
+            ? {
+                files: attachments.map((a) => ({
+                  name: a.name,
+                  data: a.data,
+                })),
+              }
+            : {}),
+        },
+      )) as { id?: string };
+      return { ok: true, id: created.id ?? null };
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      reply.code(400).send({ error: `followup failed: ${m}` });
+    }
+  });
+
+  // ─── interactions.delete_followup ─────────────────────────────────
+  /**
+   * POST /api/plugin/interactions.delete_followup
+   * Body: { interaction_token, message_id }
+   *
+   * Delete a follow-up message (ephemeral or not) the plugin posted
+   * via interactions.followup. `messages.delete` doesn't work for
+   * ephemeral followups because they aren't fetchable through the
+   * normal channel.messages API — Discord routes their lifecycle
+   * through the interaction's webhook instead. Plugins use this to
+   * auto-dismiss short-lived toast nudges (e.g. "已記錄你的投票").
+   *
+   * Within Discord's 15-minute interaction-token window. After that
+   * the followup is unreachable and a delete returns 404.
+   */
+  server.post<{
+    Body: {
+      interaction_token?: unknown;
+      message_id?: unknown;
+    };
+  }>("/api/plugin/interactions.delete_followup", async (request, reply) => {
+    const ctx = await requireScope(
+      request,
+      reply,
+      "interactions.delete_followup",
+    );
+    if (!ctx) return;
+    if (!bot || !bot.application) {
+      reply.code(503).send({ error: "bot client unavailable" });
+      return;
+    }
+    const body = request.body ?? {};
+    if (
+      typeof body.interaction_token !== "string" ||
+      body.interaction_token.length === 0
+    ) {
+      reply.code(400).send({ error: "interaction_token required" });
+      return;
+    }
+    if (
+      typeof body.message_id !== "string" ||
+      body.message_id.length === 0
+    ) {
+      reply.code(400).send({ error: "message_id required" });
+      return;
+    }
+    try {
+      await bot.rest.delete(
+        Routes.webhookMessage(
+          bot.application.id,
+          body.interaction_token,
+          body.message_id,
+        ),
+      );
+      return { ok: true };
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      reply.code(400).send({ error: `delete followup failed: ${m}` });
+    }
+  });
+
+  // ─── auth.session ─────────────────────────────────────────────────
+  /**
+   * POST /api/plugin/auth.session
+   * Body: { user_id, kind?: 'manage' | 'session', guild_id?, ttl_ms? }
+   *
+   * Mint a `plugin-session` JWT for a Discord user so the plugin can
+   * hand them a WebUI link. The bot is the authority on the user's
+   * capabilities — the plugin must trust the bot's verdict:
+   *   - kind='manage': requires the user to hold `admin` OR
+   *     `plugin:<thisPluginKey>:manage`. Otherwise → { allowed:false }.
+   *     Short-lived (default 15 min) — re-mint as needed.
+   *   - kind='session': no capability gate (the slash command that
+   *     produced the link is itself permission-gated). Default 6 h.
+   *     `guild_id` is embedded in the token so the WebUI scopes to that
+   *     playback session.
+   *
+   * The token always carries the user's `admin` + `plugin:*` capability
+   * subset so the plugin can do its own offline authorization.
+   */
+  server.post<{
+    Body: {
+      user_id?: unknown;
+      kind?: unknown;
+      guild_id?: unknown;
+      ttl_ms?: unknown;
+    };
+  }>("/api/plugin/auth.session", async (request, reply) => {
+    const ctx = await requireScope(request, reply, "auth.session");
+    if (!ctx) return;
+    const body = request.body ?? {};
+    const userId =
+      typeof body.user_id === "string" && body.user_id.length > 0
+        ? body.user_id
+        : null;
+    if (!userId) {
+      reply.code(400).send({ error: "user_id required" });
+      return;
+    }
+    const kind = body.kind === "manage" ? "manage" : "session";
+    const guildId =
+      typeof body.guild_id === "string" && body.guild_id.length > 0
+        ? body.guild_id
+        : null;
+    const defaultTtl = kind === "manage" ? 15 * 60_000 : 6 * 60 * 60_000;
+    let ttlMs =
+      typeof body.ttl_ms === "number" && Number.isFinite(body.ttl_ms)
+        ? body.ttl_ms
+        : defaultTtl;
+    ttlMs = Math.max(60_000, Math.min(ttlMs, 7 * 24 * 60 * 60_000));
+
+    const allCaps = await resolveUserCapabilities(userId);
+    const requiredCap = makePluginCapabilityToken(
+      ctx.pluginKey,
+      "manage",
+    );
+    const privileged = allCaps.has("admin") || allCaps.has(requiredCap);
+    if (kind === "manage" && !privileged) {
+      return { allowed: false };
+    }
+    // Only `manage` tokens carry capabilities (and only `admin` + this
+    // plugin's own `plugin:<key>:*` — never another plugin's grants).
+    // `session` tokens are authorized purely by the embedded guildId, so
+    // they ship NO capabilities — they may end up in a link button the
+    // invoker copies/shares, and a leaked token must not confer admin.
+    const pluginCaps =
+      kind === "manage"
+        ? [...allCaps].filter(
+            (c) => c === "admin" || c.startsWith(`plugin:${ctx.pluginKey}:`),
+          )
+        : [];
+    const { token, expiresAt } = jwtService.sign(
+      { purpose: "plugin-session", userId, guildId, capabilities: pluginCaps },
+      { ttlMs },
+    );
+    return { allowed: true, token, expiresAt };
+  });
+
+  // ─── members.get ──────────────────────────────────────────────────
+  /**
+   * POST /api/plugin/members.get
+   * Body: { guild_id: string, user_ids: string[] }
+   * Returns: { members: Array<{ userId, displayName, avatarUrl }> }
+   *
+   * Resolve guild-member display names + avatar URLs for a batch of
+   * users — what a plugin WebUI needs to render a player list with the
+   * names/faces the guild actually sees (guild nickname + guild/user
+   * avatar), which the dispatch payload deliberately doesn't carry.
+   *
+   * Gated by the same per-guild feature check as messages.send: the
+   * plugin may only read members of a guild where it has an enabled
+   * feature. Users who have left the guild are simply omitted — the
+   * caller keeps whatever name it captured at interaction time.
+   */
+  server.post<{
+    Body: { guild_id?: unknown; user_ids?: unknown };
+  }>("/api/plugin/members.get", async (request, reply) => {
+    const ctx = await requireScope(request, reply, "members.get");
+    if (!ctx) return;
+    if (!bot) {
+      reply.code(503).send({ error: "bot client unavailable" });
+      return;
+    }
+    const body = request.body ?? {};
+    if (typeof body.guild_id !== "string" || body.guild_id.length === 0) {
+      reply.code(400).send({ error: "guild_id required" });
+      return;
+    }
+    const guildId = body.guild_id;
+    if (!Array.isArray(body.user_ids)) {
+      reply.code(400).send({ error: "user_ids must be an array" });
+      return;
+    }
+    // Snowflake-shaped strings only, de-duplicated. A malformed id
+    // can't poison the batch — it's dropped before the fetch.
+    const userIds = [
+      ...new Set(
+        body.user_ids.filter(
+          (v): v is string => typeof v === "string" && SNOWFLAKE_RE.test(v),
+        ),
+      ),
+    ];
+    if (userIds.length === 0) return { members: [] };
+    if (userIds.length > MEMBERS_GET_MAX) {
+      reply
+        .code(400)
+        .send({ error: `at most ${MEMBERS_GET_MAX} user_ids per call` });
+      return;
+    }
+    // Per-guild feature gate — identical to messages.send. The plugin
+    // must not be able to enumerate members of a guild it isn't
+    // enabled in.
+    const enabledFeatures = await findEnabledFeaturesByPluginGuild(
+      ctx.pluginId,
+      guildId,
+    );
+    if (enabledFeatures.length === 0) {
+      reply.code(403).send({ error: "plugin not enabled in this guild" });
+      return;
+    }
+    let guild;
+    try {
+      guild = await bot.guilds.fetch(guildId);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      reply.code(404).send({ error: `guild fetch failed: ${msg}` });
+      return;
+    }
+    try {
+      const fetched = await guild.members.fetch({ user: userIds });
+      const requested = new Set(userIds);
+      // Defensive: only ever return the members that were asked for,
+      // never anything else the member cache happens to hold.
+      const members = [...fetched.values()]
+        .filter((m) => requested.has(m.id))
+        .map((m) => {
+          // Force `.webp` (`forceStatic` stops discord.js swapping to
+          // `.gif`, whose CDN endpoint 415s for many assets) and, for
+          // an animated avatar, append `&animated=true` so the webp
+          // plays — same handling as the karyl-chan frontend.
+          const url = m.displayAvatarURL({
+            size: 128,
+            extension: "webp",
+            forceStatic: true,
+          });
+          const hash = m.avatar ?? m.user.avatar;
+          const animated =
+            typeof hash === "string" && hash.startsWith("a_");
+          return {
+            userId: m.id,
+            displayName: m.displayName,
+            avatarUrl: animated
+              ? `${url}${url.includes("?") ? "&" : "?"}animated=true`
+              : url,
+          };
+        });
+      return { members };
+    } catch (err) {
+      // A whole-batch fetch failure (gateway hiccup, every id stale)
+      // isn't fatal for the caller — it keeps its interaction-time
+      // fallback names. Surface an empty list rather than a 5xx.
+      const msg = err instanceof Error ? err.message : String(err);
+      request.log.warn({ err: msg, guildId }, "members.get fetch failed");
+      return { members: [] };
+    }
+  });
+
+  // ─── plugin self-info ─────────────────────────────────────────────
+  /**
+   * GET /api/plugin/me
+   * Returns the plugin's own row from the bot's perspective. Useful
+   * for plugins to confirm their effective scopes / id without
+   * needing a debug endpoint of their own.
+   */
+  server.get("/api/plugin/me", async (request, reply) => {
+    const auth = request.pluginAuth;
+    if (!auth) {
+      reply.code(401).send({ error: "plugin auth missing" });
+      return;
+    }
+    const plugin = await findPluginById(auth.pluginId);
+    if (!plugin) {
+      reply.code(404).send({ error: "plugin row not found" });
+      return;
+    }
+    return {
+      id: plugin.id,
+      pluginKey: plugin.pluginKey,
+      version: plugin.version,
+      enabled: plugin.enabled,
+      status: plugin.status,
+      scopes: Array.from(auth.scopes),
+    };
+  });
+}

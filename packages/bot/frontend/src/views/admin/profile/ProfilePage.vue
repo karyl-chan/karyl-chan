@@ -1,0 +1,240 @@
+<script setup lang="ts">
+import { computed, onMounted } from 'vue';
+import { Icon } from '@iconify/vue';
+import { useI18n } from 'vue-i18n';
+import { DashboardLayout } from '../../../layouts';
+import { useCurrentUserStore } from '../../../stores/currentUserStore';
+import { useSettingsStore } from '../../../stores/settingsStore';
+import { ensureNotificationPermission } from '../../../modules/discord-chat/notifications';
+
+const { t } = useI18n();
+const store = useCurrentUserStore();
+const settings = useSettingsStore();
+
+async function onToggleDesktopNotifications(event: Event) {
+    const checked = (event.target as HTMLInputElement).checked;
+    if (!checked) {
+        settings.desktopNotifications = false;
+        return;
+    }
+    // Request permission BEFORE flipping the bit so a denial leaves the
+    // toggle off — otherwise the user thinks notifications work but
+    // nothing ever fires.
+    const granted = await ensureNotificationPermission();
+    settings.desktopNotifications = granted;
+    if (!granted) {
+        // Reset the input visually since v-model would have flipped it
+        // optimistically.
+        (event.target as HTMLInputElement).checked = false;
+    }
+}
+
+onMounted(() => {
+    // Guard: if the cached user is missing (hard refresh, expired cache,
+    // etc.) fetch on demand. Otherwise keep what App.vue already pulled
+    // so the page renders immediately.
+    if (!store.user) store.refresh();
+});
+
+const user = computed(() => store.user);
+
+const displayName = computed(() =>
+    user.value?.profile?.globalName
+    ?? user.value?.profile?.username
+    ?? t('admin.users.unknownProfile')
+);
+
+const initial = computed(() => {
+    const name = user.value?.profile?.globalName ?? user.value?.profile?.username ?? user.value?.userId ?? '';
+    return name.trim().charAt(0).toUpperCase() || '?';
+});
+
+const roleLabel = computed(() => {
+    if (!user.value) return '';
+    if (user.value.isOwner) return t('admin.users.ownerBadge');
+    return user.value.role ?? '';
+});
+</script>
+
+<template>
+    <DashboardLayout :title="$t('profile.title')">
+        <p v-if="store.loading && !user" class="muted">{{ $t('common.loading') }}</p>
+        <article v-else-if="user" class="profile-card">
+            <img v-if="user.profile?.avatarUrl" :src="user.profile.avatarUrl" alt="" class="avatar" />
+            <div v-else class="avatar avatar-fallback">{{ initial }}</div>
+            <div class="meta">
+                <h2 class="name">
+                    {{ displayName }}
+                    <span v-if="user.isOwner" class="owner-pill">{{ $t('admin.users.ownerBadge') }}</span>
+                </h2>
+                <dl class="facts">
+                    <dt>{{ $t('profile.userId') }}</dt>
+                    <dd><code>{{ user.userId }}</code></dd>
+                    <template v-if="user.profile?.username && user.profile.username !== displayName">
+                        <dt>{{ $t('profile.username') }}</dt>
+                        <dd>{{ user.profile.username }}</dd>
+                    </template>
+                    <dt>{{ $t('profile.role') }}</dt>
+                    <dd>{{ roleLabel || '—' }}</dd>
+                    <dt>{{ $t('profile.capabilities') }}</dt>
+                    <dd class="caps">
+                        <span v-if="user.capabilities.length === 0" class="muted">—</span>
+                        <span v-for="cap in user.capabilities" :key="cap" class="cap-chip">
+                            <code>{{ cap }}</code>
+                        </span>
+                    </dd>
+                    <template v-if="user.note">
+                        <dt>{{ $t('profile.note') }}</dt>
+                        <dd>{{ user.note }}</dd>
+                    </template>
+                </dl>
+            </div>
+        </article>
+        <p v-else class="muted">{{ $t('profile.unavailable') }}</p>
+
+        <section v-if="user" class="settings-card">
+            <h3>{{ $t('profile.settings.title') }}</h3>
+            <label class="setting-row">
+                <span class="setting-label">
+                    <strong>{{ $t('profile.settings.animatedEmoji.label') }}</strong>
+                    <small class="muted">{{ $t('profile.settings.animatedEmoji.help') }}</small>
+                </span>
+                <input type="checkbox" v-model="settings.animatedEmojiAutoplay" />
+            </label>
+            <label class="setting-row">
+                <span class="setting-label">
+                    <strong>{{ $t('profile.settings.desktopNotifications.label') }}</strong>
+                    <small class="muted">{{ $t('profile.settings.desktopNotifications.help') }}</small>
+                </span>
+                <input
+                    type="checkbox"
+                    :checked="settings.desktopNotifications"
+                    @change="onToggleDesktopNotifications"
+                />
+            </label>
+        </section>
+    </DashboardLayout>
+</template>
+
+<style scoped>
+.profile-card {
+    display: flex;
+    gap: 1.25rem;
+    padding: 1.25rem;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    align-items: flex-start;
+}
+@media (max-width: 520px) {
+    .profile-card { flex-direction: column; align-items: stretch; }
+}
+.avatar {
+    width: 96px;
+    height: 96px;
+    border-radius: 50%;
+    object-fit: cover;
+    flex-shrink: 0;
+    background: var(--bg-surface-2);
+}
+.avatar-fallback {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--accent);
+    color: var(--text-on-accent);
+    font-weight: 600;
+    font-size: 2rem;
+}
+.meta {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+.name {
+    margin: 0;
+    font-size: 1.25rem;
+    color: var(--text-strong);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+.owner-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.1rem 0.6rem;
+    background: var(--accent);
+    color: var(--text-on-accent);
+    border-radius: var(--radius-pill);
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+}
+.facts {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.3rem 1rem;
+    margin: 0;
+}
+.facts dt {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    align-self: center;
+}
+.facts dd { margin: 0; font-size: 0.92rem; }
+.caps {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+}
+.cap-chip {
+    display: inline-flex;
+    padding: 0.15rem 0.5rem;
+    background: var(--accent-bg);
+    color: var(--accent-text-strong);
+    border-radius: var(--radius-pill);
+    font-size: 0.78rem;
+}
+.cap-chip code { background: transparent; padding: 0; }
+.login-hint {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.85rem;
+}
+.muted { color: var(--text-muted); }
+.settings-card {
+    margin-top: 1rem;
+    padding: 1rem 1.25rem;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+}
+.settings-card h3 {
+    margin: 0 0 0.75rem;
+    font-size: 1rem;
+    color: var(--text-strong);
+}
+.setting-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.4rem 0;
+}
+.setting-label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+}
+.setting-label small { font-size: 0.78rem; }
+.setting-row input[type="checkbox"] {
+    width: 1.1rem;
+    height: 1.1rem;
+    cursor: pointer;
+}
+</style>

@@ -1,0 +1,5 @@
+packages:
+  - 'packages/*'
+  # frontend is nested inside the bot package but is still a workspace
+  # member so a single `pnpm install` at the root resolves its deps too.
+  - 'packages/bot/frontend'

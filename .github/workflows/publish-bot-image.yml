@@ -1,0 +1,156 @@
+name: Publish bot image
+
+# Publishes the @karyl-chan/bot Docker image to GitHub Packages (ghcr.io).
+#   push to main          -> :edge                  (rolling CD tag for main HEAD)
+#   tag `bot-v<semver>`   -> :<semver> + :latest    (latest tracks the latest release)
+# release-please cuts the `bot-v*` tag when its release PR is merged;
+# `:latest` only moves on a real release, never on a main HEAD push.
+#
+# Multi-arch (linux/amd64 + linux/arm64) is built via a runner matrix
+# rather than QEMU emulation: the bot Dockerfile compiles sqlite3 and
+# @discordjs/opus from source, and an arm64 cross-build under QEMU on
+# an amd64 runner is painfully slow (15-30 min). Each arch builds
+# natively (ubuntu-latest / ubuntu-24.04-arm — free on public repos),
+# pushes a single-arch image by digest, and the `merge` job stitches
+# the digests into one multi-arch manifest under the real tags.
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'bot-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+  # cache-to gha (mode=max) needs `actions: write`; explicit
+  # `permissions:` zeroes everything not listed.
+  actions: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: karyl-chan-bot
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare identifiers
+        id: prep
+        run: |
+          # linux/amd64 -> linux-amd64 (safe for artifact name + cache scope).
+          PAIR="${{ matrix.platform }}"
+          echo "pair=${PAIR//\//-}" >> "$GITHUB_OUTPUT"
+          OWNER_LC=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "image=${{ env.REGISTRY }}/${OWNER_LC}/${{ env.IMAGE_NAME }}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          # Context is the monorepo root — the Dockerfile installs the
+          # whole pnpm workspace, not just packages/bot.
+          context: .
+          file: packages/bot/Dockerfile
+          platforms: ${{ matrix.platform }}
+          labels: |
+            org.opencontainers.image.title=Karyl Chan
+            org.opencontainers.image.description=Discord assistant bot
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            maintainer.volume.karyl-chan-data=/usr/src/app/data
+          # Push a single-arch image by digest only; the merge job
+          # below assembles the multi-arch manifest under the real
+          # tags. name-canonical keeps the registry name stable across
+          # arches so imagetools can stitch them by digest.
+          outputs: type=image,name=${{ steps.prep.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+          # push-by-digest + provenance attestations creates orphan
+          # attestation refs that the merge step can't resolve.
+          # Disable here; imagetools create doesn't generate them.
+          provenance: false
+          sbom: false
+          # Per-arch cache scope — amd64 and arm64 layers are different.
+          cache-from: type=gha,scope=bot-${{ steps.prep.outputs.pair }}
+          cache-to: type=gha,mode=max,scope=bot-${{ steps.prep.outputs.pair }}
+
+      - name: Export digest
+        run: |
+          mkdir -p "${{ runner.temp }}/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          # Filename = the digest hex (no sha256: prefix). The merge
+          # job globs these to rebuild the `image@sha256:<hex>` refs.
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ steps.prep.outputs.pair }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: Merge & push manifest
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tag args
+        id: tags
+        run: |
+          OWNER_LC=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          IMG="${{ env.REGISTRY }}/${OWNER_LC}/${{ env.IMAGE_NAME }}"
+          REF="${GITHUB_REF}"
+          if [[ "$REF" == refs/tags/bot-v* ]]; then
+            VERSION="${REF#refs/tags/bot-v}"
+            echo "image=$IMG" >> "$GITHUB_OUTPUT"
+            echo "tag_args=-t $IMG:$VERSION -t $IMG:latest" >> "$GITHUB_OUTPUT"
+            echo "inspect_tag=$IMG:$VERSION" >> "$GITHUB_OUTPUT"
+          else
+            # push to main (or manual dispatch from main) -> rolling :edge only
+            echo "image=$IMG" >> "$GITHUB_OUTPUT"
+            echo "tag_args=-t $IMG:edge" >> "$GITHUB_OUTPUT"
+            echo "inspect_tag=$IMG:edge" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create & push manifest
+        working-directory: digests
+        run: |
+          docker buildx imagetools create ${{ steps.tags.outputs.tag_args }} \
+            $(printf '${{ steps.tags.outputs.image }}@sha256:%s ' *)
+
+      - name: Inspect manifest
+        run: docker buildx imagetools inspect "${{ steps.tags.outputs.inspect_tag }}"

@@ -1,0 +1,51 @@
+{
+  "name": "@karyl-chan/bot",
+  "version": "1.0.1",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "main": "build/main.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "node --env-file=.env --loader ts-node/esm/transpile-only src/main.ts",
+    "serve": "node build/main.js",
+    "start": "nodemon --exec node --loader ts-node/esm/transpile-only src/main.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:typecheck": "tsc -p tsconfig.test.json --noEmit",
+    "frontend:build": "pnpm --filter karyl-chan-frontend build",
+    "frontend:test": "pnpm --filter karyl-chan-frontend test",
+    "preflight": "pnpm build && pnpm test:typecheck && pnpm test && pnpm frontend:build && pnpm frontend:test"
+  },
+  "dependencies": {
+    "@discordjs/opus": "^0.10.0",
+    "@discordjs/voice": "^0.19.2",
+    "@fastify/helmet": "^13.0.2",
+    "@fastify/multipart": "^10.0.0",
+    "@fastify/reply-from": "^12.6.2",
+    "@fastify/static": "^9.1.3",
+    "discord.js": "^14.26.3",
+    "fastify": "^5.8.5",
+    "libsodium-wrappers": "^0.8.4",
+    "opusscript": "^0.0.8",
+    "pino": "^10.3.1",
+    "prism-media": "^1.3.5",
+    "prom-client": "^15.1.3",
+    "rcon": "^1.1.0",
+    "sequelize": "^6.37.8",
+    "sqlite3": "^6.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.2",
+    "nodemon": "^3.1.14",
+    "pino-pretty": "^13.1.3",
+    "prettier": "^3.8.3",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.5"
+  },
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=10"
+  }
+}

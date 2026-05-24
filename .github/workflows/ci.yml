@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    name: Build & test (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [bot, plugin-sdk]
+    steps:
+      - uses: actions/checkout@v4
+
+      # action-setup reads the pinned pnpm version from package.json's
+      # packageManager field, so it stays in lockstep with local dev.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # .npmrc forces native modules (sqlite3, @discordjs/opus) to build
+      # from source; the ubuntu-latest runner ships the gcc/python3
+      # toolchain that needs, so no extra setup step is required.
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build & test plugin-sdk
+        if: matrix.target == 'plugin-sdk'
+        run: |
+          pnpm --filter @karyl-chan/plugin-sdk build
+          pnpm --filter @karyl-chan/plugin-sdk test
+
+      - name: Build & test bot
+        if: matrix.target == 'bot'
+        run: |
+          pnpm --filter @karyl-chan/bot build
+          pnpm --filter @karyl-chan/bot test:typecheck
+          pnpm --filter @karyl-chan/bot test
+          pnpm --filter karyl-chan-frontend build
+          pnpm --filter karyl-chan-frontend test
+
+  docker-smoke:
+    runs-on: ubuntu-latest
+    name: Docker smoke build
+    needs: build-and-test
+    # On PRs only — push to main is covered by publish-bot-image.yml,
+    # which builds the same image for real.
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build bot image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/bot/Dockerfile
+          push: false
+          tags: karyl-chan-bot:ci
+          cache-from: type=gha,scope=bot
+          cache-to: type=gha,mode=max,scope=bot

@@ -1,0 +1,41 @@
+{
+  "name": "@karyl-chan/plugin-sdk",
+  "version": "0.2.0",
+  "description": "Shared SDK for karyl-chan plugins — handles HMAC, server boilerplate, register/heartbeat lifecycle.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/karyl-chan/karyl-chan.git",
+    "directory": "packages/plugin-sdk"
+  },
+  "license": "MIT",
+  "scripts": {
+    "build": "rm -rf dist && tsc",
+    "test": "tsc -p tsconfig.test.json && node --test \"dist-test/**/*.test.js\"",
+    "clean": "rm -rf dist dist-test"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "fastify": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

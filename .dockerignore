@@ -1,0 +1,26 @@
+# Build context is the monorepo root (see packages/bot/Dockerfile).
+
+# dependencies & build output — reinstalled / recompiled inside the image
+**/node_modules
+**/build
+**/dist
+**/dist-test
+**/*.tsbuildinfo
+
+# secrets & local state — must never enter an image layer
+**/.env
+**/.env.local
+**/token
+**/data/database.sqlite*
+**/data/*.bak
+
+# vcs & repo meta
+.git
+.github
+.gitignore
+**/.claude
+
+# docs / planning — not needed at runtime
+**/docs
+MIGRATION-PLAN.md
+**/README.md

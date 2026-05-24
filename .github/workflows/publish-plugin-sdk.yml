@@ -1,0 +1,51 @@
+name: Publish plugin-sdk
+
+# Publishes @karyl-chan/plugin-sdk to the public npm registry.
+# Trigger by pushing a tag of the form `plugin-sdk-v<semver>`, e.g.
+#   git tag plugin-sdk-v0.1.0 && git push origin plugin-sdk-v0.1.0
+# release-please cuts this tag when its release PR for plugin-sdk is
+# merged. The tag prefix keeps SDK releases distinct from bot image
+# releases.
+#
+# Authenticates via npm Trusted Publishers (OIDC) — no NPM_TOKEN
+# secret needed. Configure the trusted publisher on npmjs.com:
+#   @karyl-chan org → Packages → @karyl-chan/plugin-sdk → Settings
+#   → Trusted Publishers → Add (GitHub Actions, karyl-chan/karyl-chan,
+#   workflow: publish-plugin-sdk.yml).
+on:
+  push:
+    tags:
+      - 'plugin-sdk-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # OIDC: lets the runner mint an ID token the npm registry can verify
+  # against the trusted-publisher configuration.
+  id-token: write
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm --filter @karyl-chan/plugin-sdk build
+
+      # --no-git-checks: the tag commit is checked out detached, which
+      # pnpm publish would otherwise reject.
+      # --provenance: attaches a SLSA build-provenance attestation
+      # (verified-publisher badge on npm); requires id-token: write.
+      - name: Publish
+        run: pnpm --filter @karyl-chan/plugin-sdk publish --no-git-checks --provenance

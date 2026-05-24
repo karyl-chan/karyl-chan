@@ -1,0 +1,17 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "node",
+  "include-component-in-tag": true,
+  "separate-pull-requests": true,
+  "pull-request-title-pattern": "chore${scope}: release ${component} ${version}",
+  "packages": {
+    "packages/bot": {
+      "component": "bot",
+      "package-name": "@karyl-chan/bot"
+    },
+    "packages/plugin-sdk": {
+      "component": "plugin-sdk",
+      "package-name": "@karyl-chan/plugin-sdk"
+    }
+  }
+}

@@ -1,0 +1,28 @@
+name: release-please
+
+# Runs on every push to main. release-please scans conventional commits
+# and maintains one "release PR" per package (bot, plugin-sdk). Merging
+# such a PR bumps the package.json version, updates CHANGELOG, then
+# tags `bot-v<x.y.z>` / `plugin-sdk-v<x.y.z>` and creates a GitHub
+# release. The existing publish-bot-image.yml / publish-plugin-sdk.yml
+# workflows trigger on those tags and push the actual artifacts.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-please-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        # config-file / manifest-file default to repo root, matching
+        # where we keep them.

@@ -1,0 +1,314 @@
+<script setup lang="ts">
+import { computed, nextTick, ref, toRef, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import GuildChannelSidebar from './GuildChannelSidebar.vue';
+import GuildForumPanel from './GuildForumPanel.vue';
+import GuildForwardPicker from './GuildForwardPicker.vue';
+import GuildBulkDeleteModal from './GuildBulkDeleteModal.vue';
+import GuildChannelMgmtModal from './GuildChannelMgmtModal.vue';
+import GuildChannelThreadsModal from './GuildChannelThreadsModal.vue';
+import UserContextMenu from '../../../modules/discord-chat/UserContextMenu.vue';
+import GuildMemberMgmtModal from '../../../modules/discord-chat/GuildMemberMgmtModal.vue';
+import { DiscordConversation, useDiscordGuildChannel } from '../../../modules/discord-chat';
+import {
+    bulkDeleteGuildMessages,
+    deleteGuildMessage,
+    forwardMessage,
+    getGuildPins,
+    pinGuildMessage,
+    unpinGuildMessage,
+    type GuildSummary
+} from '../../../api/guilds';
+import type { Message } from '../../../libs/messages/types';
+import { useAppShell } from '../../../composables/use-app-shell';
+import { useScrollToQuery } from '../../../composables/use-scroll-to-query';
+import { SidebarLayout } from '../../../layouts';
+import AccessDeniedView from '../../../components/AccessDeniedView.vue';
+import { useToastStore } from '../../../stores/toastStore';
+import { useConfirm } from '../../../composables/use-confirm';
+
+const props = defineProps<{
+    guilds: GuildSummary[];
+    mode: string;
+    guildId: string;
+    isMobile?: boolean;
+}>();
+
+const emit = defineEmits<{
+    (e: 'mode-change', mode: string): void;
+}>();
+
+const router = useRouter();
+const route = useRoute();
+const toast = useToastStore();
+const { confirm } = useConfirm();
+const guildIdRef = toRef(props, 'guildId');
+const { closeOverlay } = useAppShell();
+const { clearScrollToQuery } = useScrollToQuery();
+
+const conversationRef = ref<InstanceType<typeof DiscordConversation> | null>(null);
+const accessDenied = ref(false);
+
+const {
+    categories,
+    channels,
+    selectedChannelId,
+    selectedChannel,
+    loadingChannels,
+    channelsError,
+    botUserId,
+    chat,
+    send,
+    reactWithSelection,
+    selectChannel,
+    requestScroll,
+    registerAuxSelectableIds
+} = useDiscordGuildChannel(guildIdRef, {
+    onAuthError: () => router.replace({ name: 'auth' }),
+    onForbidden: () => { accessDenied.value = true; },
+    onScrollFinished: () => clearScrollToQuery(),
+    attemptScroll: (id) => conversationRef.value?.scrollToMessage(id) ?? false
+});
+
+function handleSelect(id: string) {
+    selectChannel(id);
+    if (props.isMobile) closeOverlay();
+}
+
+const pinFetcher = (channelId: string) => getGuildPins(props.guildId, channelId);
+
+function onJumpToMessage(messageId: string) {
+    if (!selectedChannelId.value) return;
+    router.replace({ query: { ...route.query, channel: selectedChannelId.value, scrollTo: messageId } });
+    requestScroll(messageId);
+}
+
+// URL → machine. `?channel=` seeds the selection, `?scrollTo=` seeds
+// the scroll target. The workspace machine owns the ordering so we
+// can dispatch these events in any order without tripping over each
+// other.
+function applyChannelQuery(value: unknown) {
+    if (typeof value !== 'string' || value.length === 0) return;
+    selectChannel(value);
+}
+function applyScrollQuery(value: unknown) {
+    if (typeof value !== 'string' || value.length === 0) return;
+    requestScroll(value);
+}
+applyChannelQuery(route.query.channel);
+applyScrollQuery(route.query.scrollTo);
+watch(() => route.query.channel, applyChannelQuery);
+watch(() => route.query.scrollTo, applyScrollQuery);
+
+// Machine → URL. Mirror the committed selection back into `?channel=`
+// once it lands in the live channel list.
+watch(selectedChannelId, (id) => {
+    if (!id) return;
+    if (!channels.value.some(c => c.id === id)) return;
+    if (route.query.channel === id) return;
+    router.replace({ query: { ...route.query, channel: id } });
+}, { immediate: true });
+
+const selectedGuild = ref(props.guilds.find(g => g.id === props.guildId) ?? null);
+watch(() => props.guildId, id => {
+    selectedGuild.value = props.guilds.find(g => g.id === id) ?? null;
+});
+
+// Channel kind drives the main-panel switch: forum channels swap in
+// the post browser instead of the chat surface. Voice + stage channels
+// reuse the chat surface because Discord embeds a text chat in each one.
+const isForum = computed(() => selectedChannel.value?.kind === 'forum');
+
+// Voice/stage channels in the current guild — fed to the user context
+// menu so its "Move to ..." submenu reflects this guild's voice tree.
+const voiceChannels = computed(() =>
+    categories.value.flatMap(c => c.channels).filter(c => c.kind === 'voice' || c.kind === 'stage')
+);
+
+function headerTitle() {
+    if (!selectedChannel.value) return null;
+    const ch = selectedChannel.value;
+    if (ch.kind === 'voice' || ch.kind === 'stage') return ch.name;
+    return `#${ch.name}`;
+}
+
+// Forward picker — DiscordConversation surfaces the request because it
+// owns the right-click menu, but it doesn't know the guild's channel
+// tree, so destination selection lives here.
+const forwardSource = ref<{ channelId: string; messageId: string } | null>(null);
+function onForwardRequested(message: Message) {
+    if (!selectedChannelId.value) return;
+    forwardSource.value = { channelId: selectedChannelId.value, messageId: message.id };
+}
+async function onForwardPick(targetChannelId: string) {
+    const src = forwardSource.value;
+    if (!src) return;
+    forwardSource.value = null;
+    try {
+        await forwardMessage(src.channelId, src.messageId, targetChannelId);
+    } catch (err) {
+        toast.show(err instanceof Error ? err.message : 'Forward failed');
+    }
+}
+
+// Mod actions on individual messages. The conversation emits these so
+// the workspace owns the network calls + any required modal flow.
+async function onPinMessage(message: Message) {
+    if (!selectedChannelId.value) return;
+    try { await pinGuildMessage(props.guildId, selectedChannelId.value, message.id); } catch (err) { toast.show(err instanceof Error ? err.message : 'Pin failed'); }
+}
+async function onUnpinMessage(message: Message) {
+    if (!selectedChannelId.value) return;
+    try { await unpinGuildMessage(props.guildId, selectedChannelId.value, message.id); } catch (err) { toast.show(err instanceof Error ? err.message : 'Unpin failed'); }
+}
+async function onModDeleteMessage(message: Message) {
+    if (!selectedChannelId.value) return;
+    if (!await confirm({ title: 'Delete message', message: 'Delete this message?', confirmLabel: 'Delete', confirmVariant: 'danger' })) return;
+    try { await deleteGuildMessage(props.guildId, selectedChannelId.value, message.id); } catch (err) { toast.show(err instanceof Error ? err.message : 'Delete failed'); }
+}
+
+// Browse threads — opens the per-channel modal listing active +
+// archived threads. Hidden when the current selection is itself a
+// thread (no nested threads to show).
+const browseThreadsOpen = ref(false);
+function onBrowseThreads() {
+    if (!selectedChannelId.value) return;
+    browseThreadsOpen.value = true;
+}
+async function onBrowseThreadsPick(threadId: string) {
+    // Register the picked thread so the workspace machine's selection
+    // guard accepts it (archived threads aren't in the active-threads
+    // store and wouldn't otherwise pass). nextTick lets the
+    // availableChannelIds watch fire and propagate the new id into the
+    // machine's CHANNELS_UPDATED event before the SELECT_CHANNEL.
+    registerAuxSelectableIds('thread-pick', [threadId]);
+    await nextTick();
+    handleSelect(threadId);
+}
+// `selectedChannel` is `null` when the selected id isn't in the
+// categorised channel tree (i.e. the user is on a thread). We also
+// hide the button for forum channels since their browser already
+// surfaces posts as the main panel.
+const canBrowseThreads = computed(() =>
+    selectedChannel.value !== null
+    && selectedChannel.value.kind !== 'forum'
+);
+
+const bulkDeleteAnchor = ref<Message | null>(null);
+function onBulkDeleteRequested(anchor: Message) {
+    bulkDeleteAnchor.value = anchor;
+}
+async function onBulkDeleteConfirm(count: number) {
+    const anchor = bulkDeleteAnchor.value;
+    bulkDeleteAnchor.value = null;
+    if (!anchor || !selectedChannelId.value) return;
+    // Take the `count` newest messages at-or-before the anchor in the
+    // currently-loaded list. The backend rejects messages older than
+    // 14 days via filterOld; we trust that filter rather than checking
+    // timestamps client-side.
+    const idx = chat.messages.value.findIndex(m => m.id === anchor.id);
+    if (idx < 0) return;
+    const start = Math.max(0, idx - count + 1);
+    const ids = chat.messages.value.slice(start, idx + 1).map(m => m.id);
+    if (ids.length < 2) return;
+    try {
+        await bulkDeleteGuildMessages(props.guildId, selectedChannelId.value, ids);
+    } catch {
+        /* ignore */
+    }
+}
+
+watch(() => conversationRef.value?.messagesContainer, (container) => {
+    if (!container) return;
+    chat.bindContainers({
+        messagesContainer: container,
+        messagesEnd: conversationRef.value?.messagesEnd ?? null
+    });
+});
+</script>
+
+<template>
+    <SidebarLayout>
+        <template #sidebar>
+            <GuildChannelSidebar
+                :guilds="props.guilds"
+                :mode="props.mode"
+                :categories="categories"
+                :selected-id="selectedChannelId"
+                :loading="loadingChannels"
+                :guild-id="props.guildId"
+                @mode-change="emit('mode-change', $event)"
+                @select="handleSelect"
+            />
+        </template>
+        <AccessDeniedView v-if="accessDenied" />
+        <GuildForumPanel
+            v-else-if="isForum && selectedChannel"
+            :guild-id="props.guildId"
+            :forum-id="selectedChannel.id"
+            :forum-name="selectedChannel.name"
+            :header-subtitle="selectedGuild?.name ?? null"
+            @posts-loaded="(ids: string[]) => registerAuxSelectableIds('forum-posts', ids)"
+            @select-post="handleSelect"
+        />
+        <DiscordConversation
+            v-else
+            ref="conversationRef"
+            :channel-id="selectedChannelId"
+            :header-title="headerTitle()"
+            :header-subtitle="selectedGuild?.name ?? null"
+            :messages="chat.messages.value"
+            :bot-user-id="botUserId"
+            :has-more="chat.hasMore.value"
+            :loading-messages="chat.loadingMessages.value"
+            :loading-older="chat.loadingOlder.value"
+            :sending="chat.sending.value"
+            :error="chat.error.value ?? channelsError"
+            :editing-message-id="chat.editingMessageId.value"
+            :reply-to="chat.replyTo.value"
+            :pin-fetcher="pinFetcher"
+            :can-forward="true"
+            :can-moderate="true"
+            :can-browse-threads="canBrowseThreads"
+            @send="send"
+            @reply="chat.reply"
+            @cancel-reply="chat.cancelReply"
+            @request-edit="chat.startEdit"
+            @submit-edit="chat.submitEdit"
+            @cancel-edit="chat.cancelEdit"
+            @delete="chat.confirmDelete"
+            @load-older="chat.loadOlder"
+            @react="reactWithSelection"
+            @jump-to-message="onJumpToMessage"
+            @forward="onForwardRequested"
+            @pin="onPinMessage"
+            @unpin="onUnpinMessage"
+            @mod-delete="onModDeleteMessage"
+            @bulk-delete="onBulkDeleteRequested"
+            @browse-threads="onBrowseThreads"
+        />
+        <GuildForwardPicker
+            :visible="forwardSource !== null"
+            :guilds="props.guilds"
+            :current-guild-id="props.guildId"
+            @pick="onForwardPick"
+            @close="forwardSource = null"
+        />
+        <GuildBulkDeleteModal
+            :visible="bulkDeleteAnchor !== null"
+            @confirm="onBulkDeleteConfirm"
+            @close="bulkDeleteAnchor = null"
+        />
+        <GuildChannelThreadsModal
+            :visible="browseThreadsOpen"
+            :guild-id="props.guildId"
+            :channel-id="selectedChannelId"
+            :channel-name="selectedChannel?.name ?? null"
+            @close="browseThreadsOpen = false"
+            @pick="onBrowseThreadsPick"
+        />
+        <UserContextMenu :voice-channels="voiceChannels" />
+        <GuildMemberMgmtModal />
+        <GuildChannelMgmtModal :categories="categories" />
+    </SidebarLayout>
+</template>

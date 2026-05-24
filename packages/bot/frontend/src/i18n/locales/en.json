@@ -1,0 +1,1382 @@
+{
+    "app": {
+        "brand": "Karyl Chan",
+        "nav": {
+            "dashboard": "Dashboard",
+            "messages": "Messages",
+            "guilds": "Servers",
+            "behaviors": "Behaviors",
+            "plugins": "Plugins",
+            "admin": "Permissions",
+            "profile": "Profile",
+            "signOut": "Sign out",
+            "accountMenu": "Account menu",
+            "systemSettings": "System settings"
+        },
+        "mobile": {
+            "openMenu": "Open menu",
+            "closeMenu": "Close menu",
+            "back": "Back",
+            "showFeatures": "Show page features",
+            "showNav": "Show navigation"
+        }
+    },
+    "common": {
+        "loading": "Loading…",
+        "none": "None.",
+        "cancel": "Cancel",
+        "close": "Close",
+        "start": "Start",
+        "refresh": "Refresh",
+        "archived": "Archived",
+        "save": "Save",
+        "saving": "Saving…",
+        "add": "Add",
+        "delete": "Delete",
+        "remove": "Remove",
+        "updated": "Updated {time}",
+        "failedToLoad": "Failed to load: {error}",
+        "search": "Search…",
+        "noMatches": "No matches."
+    },
+    "home": {
+        "title": "Karyl Chan",
+        "lead": "Public surfaces will live here in the future."
+    },
+    "userCard": {
+        "id": "User id",
+        "roles": "Roles",
+        "sendDm": "Send DM"
+    },
+    "userMenu": {
+        "profile": "Open profile",
+        "sendDm": "Send DM",
+        "copyMention": "Copy mention",
+        "copyId": "Copy user ID",
+        "mute": "Server mute",
+        "unmute": "Server unmute",
+        "deafen": "Server deafen",
+        "undeafen": "Server undeafen",
+        "disconnect": "Disconnect from voice",
+        "moveTo": "Move to {name}",
+        "kick": "Kick from server",
+        "ban": "Ban from server",
+        "timeout": "Timeout",
+        "removeTimeout": "Remove timeout",
+        "nickname": "Change nickname",
+        "manageRoles": "Manage roles",
+        "actionFailed": "Action failed"
+    },
+    "memberMgmt": {
+        "reasonLabel": "Reason (optional)",
+        "reasonPlaceholder": "Audit log reason",
+        "kickConfirm": "Kick {name}?",
+        "banTitle": "Ban {name}",
+        "banDeleteLabel": "Also delete messages",
+        "banDeleteNone": "Don't delete",
+        "banDeleteHour": "Past hour",
+        "banDeleteSixHours": "Past 6 hours",
+        "banDeleteDay": "Past 24 hours",
+        "banDeleteThreeDays": "Past 3 days",
+        "banDeleteWeek": "Past 7 days",
+        "timeoutTitle": "Timeout {name}",
+        "timeoutDuration": "Duration",
+        "timeout60s": "60 seconds",
+        "timeout5m": "5 minutes",
+        "timeout10m": "10 minutes",
+        "timeout1h": "1 hour",
+        "timeout1d": "1 day",
+        "timeout1w": "1 week",
+        "nicknameTitle": "Nickname for {name}",
+        "nicknamePlaceholder": "Leave blank to clear",
+        "rolesTitle": "Manage roles for {name}",
+        "rolesEmpty": "No assignable roles.",
+        "save": "Save",
+        "confirm": "Confirm",
+        "kickAction": "Kick",
+        "banAction": "Ban"
+    },
+    "threads": {
+        "browseTitle": "Threads in #{channel}",
+        "active": "Active",
+        "archived": "Archived",
+        "empty": "No threads.",
+        "view": "View thread",
+        "messageCount": "{count} messages"
+    },
+    "systemMsg": {
+        "join": "{name} joined the server.",
+        "pin": "{name} pinned a message to this channel.",
+        "boost": "{name} just boosted the server.",
+        "boostTier": "{name} just boosted the server — it's now Tier {tier}!",
+        "channelFollowAdd": "{name} added an announcement channel follow.",
+        "threadCreated": "{name} started a thread.",
+        "stageStart": "{name} started a stage.",
+        "stageEnd": "{name} ended the stage.",
+        "stageSpeaker": "{name} is now a speaker.",
+        "stageTopic": "{name} changed the stage topic.",
+        "automod": "AutoMod blocked a message.",
+        "fallback": "{name} sent a system event.",
+        "forwarded": "Forwarded"
+    },
+    "messageMgmt": {
+        "pin": "Pin",
+        "unpin": "Unpin",
+        "deleteAny": "Delete (mod)",
+        "bulkDelete": "Bulk delete…",
+        "bulkTitle": "Bulk delete messages",
+        "bulkCountLabel": "Number of recent messages to delete (2..100)",
+        "bulkConfirm": "Delete {count}",
+        "crosspost": "Publish announcement"
+    },
+    "channelMenu": {
+        "markAsRead": "Mark as read",
+        "muteMentionsOnly": "Mute (mentions only)",
+        "muteAll": "Mute completely",
+        "unmute": "Restore notifications",
+        "copyLink": "Copy channel link",
+        "copyId": "Copy channel ID",
+        "openProfile": "Open user profile",
+        "copyUserId": "Copy user ID",
+        "createChannel": "Create channel",
+        "editChannel": "Edit channel",
+        "deleteChannel": "Delete channel",
+        "archiveThread": "Archive thread",
+        "unarchiveThread": "Unarchive thread",
+        "lockThread": "Lock thread",
+        "unlockThread": "Unlock thread"
+    },
+    "roleMgmt": {
+        "createTitle": "Create role",
+        "editTitle": "Edit {'@'}{name}",
+        "fieldName": "Name",
+        "fieldColor": "Color",
+        "fieldHoist": "Display members separately (hoist)",
+        "fieldMentionable": "Allow anyone to {'@'}-mention this role",
+        "fieldPermissions": "Permissions",
+        "fieldPermissionsAdvanced": "Permission bitfield (kept in sync with the checkboxes)",
+        "permissionsBitfieldPlaceholder": "0",
+        "advancedHint": "Pasting a number flips the checkboxes; ticking checkboxes updates the number.",
+        "selectedCount": "{count} selected",
+        "create": "Create",
+        "save": "Save",
+        "deleteConfirm": "Delete role {'@'}{name}?",
+        "createButton": "Create role",
+        "edit": "Edit",
+        "delete": "Delete",
+        "permGroup": {
+            "general": "General server",
+            "membership": "Membership",
+            "text": "Text channels",
+            "voice": "Voice channels",
+            "stage": "Stage channels",
+            "events": "Events",
+            "advanced": "Advanced"
+        },
+        "perm": {
+            "ViewChannel": "View channels",
+            "ManageChannels": "Manage channels",
+            "ManageRoles": "Manage roles",
+            "ManageGuildExpressions": "Manage emoji & stickers",
+            "CreateGuildExpressions": "Create emoji & stickers",
+            "ViewAuditLog": "View audit log",
+            "ViewGuildInsights": "View server insights",
+            "ManageWebhooks": "Manage webhooks",
+            "ManageGuild": "Manage server",
+            "CreateInstantInvite": "Create invite",
+            "ChangeNickname": "Change nickname",
+            "ManageNicknames": "Manage nicknames",
+            "KickMembers": "Kick members",
+            "BanMembers": "Ban members",
+            "ModerateMembers": "Timeout members",
+            "SendMessages": "Send messages",
+            "SendMessagesInThreads": "Send messages in threads",
+            "CreatePublicThreads": "Create public threads",
+            "CreatePrivateThreads": "Create private threads",
+            "EmbedLinks": "Embed links",
+            "AttachFiles": "Attach files",
+            "AddReactions": "Add reactions",
+            "UseExternalEmojis": "Use external emoji",
+            "UseExternalStickers": "Use external stickers",
+            "MentionEveryone": "Mention {'@'}everyone, {'@'}here, all roles",
+            "ManageMessages": "Manage messages",
+            "ManageThreads": "Manage threads",
+            "ReadMessageHistory": "Read message history",
+            "SendTTSMessages": "Send TTS messages",
+            "UseApplicationCommands": "Use application commands",
+            "SendVoiceMessages": "Send voice messages",
+            "SendPolls": "Create polls",
+            "Connect": "Connect",
+            "Speak": "Speak",
+            "Stream": "Video / stream",
+            "UseEmbeddedActivities": "Use activities",
+            "UseSoundboard": "Use soundboard",
+            "UseExternalSounds": "Use external sounds",
+            "UseVAD": "Use voice activity",
+            "PrioritySpeaker": "Priority speaker",
+            "MuteMembers": "Mute members",
+            "DeafenMembers": "Deafen members",
+            "MoveMembers": "Move members",
+            "RequestToSpeak": "Request to speak",
+            "ManageEvents": "Manage events",
+            "CreateEvents": "Create events",
+            "Administrator": "Administrator (grants all)",
+            "ViewCreatorMonetizationAnalytics": "View monetization analytics"
+        }
+    },
+    "inviteMgmt": {
+        "revokeConfirm": "Revoke invite {code}?",
+        "revoke": "Revoke"
+    },
+    "emojiMgmt": {
+        "title": "Custom emoji",
+        "uploadButton": "+ Upload emoji",
+        "uploadTitle": "Upload custom emoji",
+        "fieldName": "Name (a-z, 0-9, _)",
+        "fieldFile": "Image (PNG/GIF, ≤256 KB)",
+        "rename": "Rename",
+        "renameTitle": "Rename emoji",
+        "delete": "Delete",
+        "deleteConfirm": "Delete emoji {name}?",
+        "empty": "No custom emoji."
+    },
+    "stickerMgmt": {
+        "title": "Custom stickers",
+        "uploadButton": "+ Upload sticker",
+        "uploadTitle": "Upload custom sticker",
+        "fieldName": "Name",
+        "fieldTags": "Tags (related emoji name)",
+        "fieldDescription": "Description",
+        "fieldFile": "Image (PNG/APNG/Lottie, ≤512 KB)",
+        "edit": "Edit",
+        "editTitle": "Edit sticker",
+        "delete": "Delete",
+        "deleteConfirm": "Delete sticker {name}?",
+        "empty": "No custom stickers."
+    },
+    "channelMgmt": {
+        "createTitle": "Create channel",
+        "editTitle": "Edit channel",
+        "fieldName": "Name",
+        "fieldType": "Type",
+        "fieldParent": "Category",
+        "fieldParentNone": "(no category)",
+        "fieldTopic": "Topic",
+        "fieldSlowmode": "Slowmode (seconds)",
+        "fieldNsfw": "Age-restricted (NSFW)",
+        "fieldAutoArchive": "Auto-archive after",
+        "autoArchive60": "1 hour",
+        "autoArchive1440": "1 day",
+        "autoArchive4320": "3 days",
+        "autoArchive10080": "1 week",
+        "typeText": "Text channel",
+        "typeVoice": "Voice channel",
+        "typeCategory": "Category",
+        "typeAnnouncement": "Announcement",
+        "typeForum": "Forum",
+        "deleteConfirm": "Delete channel \"{name}\"?",
+        "create": "Create",
+        "save": "Save"
+    },
+    "profile": {
+        "title": "Profile",
+        "userId": "User id",
+        "username": "Username",
+        "role": "Role",
+        "capabilities": "Capabilities",
+        "note": "Note",
+        "unavailable": "Profile is not available.",
+        "hint": "DM the bot with \"login\" again to refresh your session.",
+        "settings": {
+            "title": "Preferences",
+            "animatedEmoji": {
+                "label": "Autoplay animated emoji",
+                "help": "Off shows a static frame for animated emoji — useful on mobile data."
+            },
+            "desktopNotifications": {
+                "label": "Desktop notifications",
+                "help": "Pop a system notification for new DMs and server {'@'}mentions when this window isn't focused. Muted channels don't notify."
+            }
+        }
+    },
+    "auth": {
+        "title": "Sign in",
+        "exchanging": "Exchanging login token…",
+        "success": "Signed in. Redirecting…",
+        "noTokenLead": "To sign in, send a direct message to the bot:",
+        "noTokenHint": "The bot will reply with a single-use login link. Open the link in this browser.",
+        "errorHint": "Request a new link by sending {login} to the bot."
+    },
+    "dashboard": {
+        "title": "Dashboard",
+        "noPermission": "No permission to view this section.",
+        "hero": {
+            "ready": "Ready",
+            "connecting": "Connecting",
+            "statusOffline": "Offline",
+            "unavailable": "Bot unavailable",
+            "guilds": "Servers",
+            "uptime": "Uptime"
+        },
+        "guilds": {
+            "title": "Servers",
+            "viewAll": "View all",
+            "empty": "Bot isn't in any server.",
+            "members": "members",
+            "settings": "Settings"
+        },
+        "adminLogin": {
+            "title": "Admin sessions",
+            "empty": "No admin accounts found.",
+            "owner": "owner",
+            "never": "Never",
+            "sessionActive": "Active session",
+            "sessionNone": "No active session"
+        },
+        "botEvents": {
+            "title": "Bot event log",
+            "empty": "No events recorded yet.",
+            "emptyFiltered": "No {level} events.",
+            "filterAriaLabel": "Filter by level",
+            "contextShow": "ctx",
+            "contextHide": "hide",
+            "level": {
+                "info": "info",
+                "warn": "warn",
+                "error": "error"
+            },
+            "category": {
+                "bot": "bot",
+                "auth": "auth",
+                "feature": "feature",
+                "web": "web",
+                "error": "error"
+            }
+        },
+        "relTime": {
+            "today": "today",
+            "yesterday": "yesterday",
+            "daysAgo": "{n}d ago",
+            "monthsAgo": "{n}mo ago",
+            "yearsAgo": "{n}y ago",
+            "never": "Never",
+            "secsAgo": "{n}s ago",
+            "minsAgo": "{n}m ago",
+            "hoursAgo": "{n}h ago"
+        },
+        "activity": {
+            "title": "Recent admin activity",
+            "empty": "No admin activity recorded yet.",
+            "by": "by",
+            "action": {
+                "user": {
+                    "upsert": {
+                        "verb": "Updated",
+                        "noun": "user"
+                    },
+                    "delete": {
+                        "verb": "Removed",
+                        "noun": "user"
+                    }
+                },
+                "role": {
+                    "grant": {
+                        "verb": "Granted",
+                        "noun": "role"
+                    },
+                    "revoke": {
+                        "verb": "Revoked",
+                        "noun": "role"
+                    },
+                    "upsert": {
+                        "verb": "Updated",
+                        "noun": "role"
+                    },
+                    "delete": {
+                        "verb": "Deleted",
+                        "noun": "role"
+                    }
+                },
+                "capability": {
+                    "grant": {
+                        "verb": "Granted",
+                        "noun": "capability"
+                    },
+                    "revoke": {
+                        "verb": "Revoked",
+                        "noun": "capability"
+                    }
+                },
+                "feature": {
+                    "todo": {
+                        "upsert": {
+                            "verb": "Updated",
+                            "noun": "todo channel"
+                        },
+                        "delete": {
+                            "verb": "Removed",
+                            "noun": "todo channel"
+                        }
+                    },
+                    "picture": {
+                        "upsert": {
+                            "verb": "Updated",
+                            "noun": "picture-only"
+                        },
+                        "delete": {
+                            "verb": "Removed",
+                            "noun": "picture-only"
+                        }
+                    },
+                    "rcon": {
+                        "upsert": {
+                            "verb": "Updated",
+                            "noun": "RCON forward"
+                        },
+                        "delete": {
+                            "verb": "Removed",
+                            "noun": "RCON forward"
+                        }
+                    },
+                    "roleemoji": {
+                        "upsert": {
+                            "verb": "Updated",
+                            "noun": "role emoji"
+                        },
+                        "delete": {
+                            "verb": "Removed",
+                            "noun": "role emoji"
+                        }
+                    }
+                }
+            }
+        },
+        "dmChart": {
+            "title": "DM activity",
+            "subtitle": "past 7 days",
+            "empty": "No DM activity data.",
+            "ariaLabel": "Bar chart showing DM activity over the past 7 days"
+        },
+        "attention": {
+            "title": "Needs attention",
+            "dbDisconnected": "Database disconnected",
+            "dbDisconnectedDesc": "The bot cannot persist data. Check your database connection."
+        }
+    },
+    "guilds": {
+        "title": "Servers",
+        "empty": "Bot isn't in any server.",
+        "selectGuild": "Select a server.",
+        "memberCount": "{count} members",
+        "joined": "joined {date}",
+        "tabs": {
+            "overview": "Overview",
+            "settings": "Server settings",
+            "people": "Members & moderation",
+            "features": "Bot features"
+        },
+        "subtabs": {
+            "settings": {
+                "general": "General",
+                "moderation": "Moderation",
+                "system": "System & welcome",
+                "roles": "Roles",
+                "invites": "Invites",
+                "emoji": "Emoji & stickers"
+            },
+            "people": {
+                "members": "Members",
+                "bans": "Bans",
+                "automod": "AutoMod",
+                "audit": "Audit log"
+            },
+            "features": {
+                "todo": "Todo channels",
+                "picture": "Picture-only",
+                "rcon": "RCON forward",
+                "reactionRoles": "Reaction roles",
+                "capability": "Capability grants",
+                "voice": "Voice playback"
+            }
+        },
+        "dashboard": {
+            "members": "Members",
+            "roles": "Roles",
+            "featureUsage": "Feature usage"
+        },
+        "settings": {
+            "general": "General",
+            "moderation": "Moderation",
+            "system": "System & welcome",
+            "name": "Server name",
+            "description": "Description",
+            "descriptionPlaceholder": "Short tagline shown to discoverers",
+            "verificationLevel": "Verification level",
+            "verification": {
+                "0": "None — no requirements",
+                "1": "Low — verified email",
+                "2": "Medium — registered for >5 minutes",
+                "3": "High — member of this server for >10 minutes",
+                "4": "Very high — verified phone number"
+            },
+            "explicitContentFilter": "Explicit content filter",
+            "explicitContentFilterOpt": {
+                "0": "Don't scan",
+                "1": "Scan members without a role",
+                "2": "Scan messages from all members"
+            },
+            "defaultNotifications": "Default notifications",
+            "defaultNotificationsOpt": {
+                "0": "All messages",
+                "1": "Only {'@'}mentions"
+            },
+            "mfaLevel": "Two-factor requirement",
+            "mfaLevelOpt": {
+                "0": "Off",
+                "1": "Required for moderators"
+            },
+            "mfaOwnerOnly": "Only the server owner can change this.",
+            "systemChannel": "System messages channel",
+            "systemChannelNone": "(disabled)",
+            "systemFlags": "System message types",
+            "flagJoin": "Member join messages",
+            "flagPremium": "Server boost messages",
+            "flagReminder": "Setup-tip reminders",
+            "flagJoinReply": "Wave-to-greet replies on joins",
+            "afkChannel": "AFK voice channel",
+            "afkChannelNone": "(none)",
+            "afkTimeout": "AFK timeout",
+            "afkTimeoutOpt": {
+                "60": "1 minute",
+                "300": "5 minutes",
+                "900": "15 minutes",
+                "1800": "30 minutes",
+                "3600": "1 hour"
+            },
+            "rulesChannel": "Rules channel",
+            "publicUpdatesChannel": "Public updates channel",
+            "communityOnly": "Community servers only.",
+            "premiumProgressBar": "Show server boost progress bar",
+            "save": "Save changes",
+            "saved": "Saved",
+            "saveFailed": "Save failed",
+            "discard": "Discard",
+            "loading": "Loading settings…",
+            "premiumTier": "Premium tier",
+            "premiumSubs": "Boosts",
+            "ownerLabel": "Owner"
+        },
+        "idLabel": "id",
+        "todoChannels": "Todo channels",
+        "pictureOnly": "Picture-only channels",
+        "rconForward": "Rcon forward",
+        "rconTarget": "→ {host}:{port} (cmd {cmd}, trigger {trigger})",
+        "roleEmoji": "Role emoji",
+        "roleReactions": "Role reaction messages",
+        "roleReactionMessage": "· message {id}",
+        "capabilityGrants": "Capability grants",
+        "rolesTitle": "Roles",
+        "roleMembers": "{count} members",
+        "roleManaged": "managed",
+        "invites": {
+            "title": "Invite links",
+            "create": "Create invite",
+            "created": "Created:",
+            "uses": "{uses}/{max} used",
+            "expires": "expires {date}",
+            "neverExpires": "never expires",
+            "modalTitle": "Create invite",
+            "fieldChannel": "Channel",
+            "fieldChannelHint": "Where the invite drops people in. Defaults to the system channel.",
+            "fieldMaxAge": "Expire after",
+            "fieldMaxUses": "Max uses",
+            "fieldTemporary": "Temporary membership",
+            "fieldTemporaryHint": "Members get kicked when they disconnect unless they're assigned a role first.",
+            "fieldUnique": "Always create a fresh code",
+            "fieldUniqueHint": "When off, Discord reuses an equivalent existing invite if one exists.",
+            "submit": "Create",
+            "expireOpt": {
+                "0": "Never",
+                "1800": "30 minutes",
+                "3600": "1 hour",
+                "21600": "6 hours",
+                "43200": "12 hours",
+                "86400": "1 day",
+                "604800": "7 days"
+            },
+            "usesOpt": {
+                "0": "No limit",
+                "1": "1 use",
+                "5": "5 uses",
+                "10": "10 uses",
+                "25": "25 uses",
+                "50": "50 uses",
+                "100": "100 uses"
+            }
+        },
+        "tabs2": {
+            "people": "Members & moderation"
+        },
+        "members": {
+            "title": "Members",
+            "search": "Search by name…",
+            "empty": "No members loaded.",
+            "loadMore": "Load more",
+            "joined": "joined {date}",
+            "rolesCount": "{count} roles",
+            "pending": "pending",
+            "timeoutActive": "timeout until {date}",
+            "actionKick": "Kick",
+            "actionBan": "Ban",
+            "actionTimeout": "Timeout",
+            "actionClearTimeout": "Clear timeout",
+            "actionNickname": "Set nickname",
+            "promptKick": "Kick {name}? (optional reason)",
+            "promptBan": "Ban {name}? (optional reason)",
+            "promptTimeout": "Timeout duration in minutes (1..40320 = 28 days):",
+            "promptNickname": "New nickname for {name} (blank to clear):",
+            "actionFailed": "Action failed: {message}",
+            "botBadge": "BOT"
+        },
+        "bans": {
+            "title": "Bans",
+            "empty": "No bans recorded.",
+            "reason": "Reason:",
+            "noReason": "(no reason provided)",
+            "unban": "Unban",
+            "promptUnban": "Unban {name}?"
+        },
+        "audit": {
+            "title": "Audit log",
+            "empty": "No audit-log entries.",
+            "loadMore": "Load older",
+            "filterAction": "Action",
+            "filterUser": "User ID",
+            "actionAll": "All actions",
+            "filterApply": "Apply",
+            "filterReset": "Reset",
+            "by": "by {name}",
+            "noExecutor": "(unknown executor)",
+            "reason": "Reason:",
+            "changes": "{count} changes",
+            "actionLoadFailed": "Failed to load entries"
+        },
+        "feature": {
+            "addBtn": "Add",
+            "removeBtn": "Remove",
+            "saveBtn": "Save",
+            "cancelBtn": "Cancel",
+            "noEntries": "No entries.",
+            "pickChannel": "Channel",
+            "pickRole": "Role",
+            "channelPlaceholder": "Pick a text channel",
+            "rolePlaceholder": "Pick a role",
+            "messageId": "Message ID",
+            "emoji": "Emoji",
+            "emojiHint": "Unicode (👍) or custom format <:name:id>",
+            "capability": "Capability",
+            "capabilityPlaceholder": "todo.manage",
+            "host": "Host",
+            "port": "Port",
+            "password": "Password",
+            "commandPrefix": "Command prefix",
+            "triggerPrefix": "Trigger prefix",
+            "actionFailed": "Failed: {message}",
+            "todoTitle": "Todo channels",
+            "todoHint": "Messages in these channels become tracked todo items.",
+            "pictureTitle": "Picture-only channels",
+            "pictureHint": "Non-image messages get auto-deleted.",
+            "rconTitle": "RCON forward",
+            "rconHint": "Forward messages to a Source-engine RCON server.",
+            "roleEmojiGroupsTitle": "Emoji groups",
+            "roleEmojiGroupsHint": "Buckets of emoji→role mappings. A watched message can pin specific groups, so the same emoji can grant different roles depending on the message.",
+            "roleEmojiGroupNamePlaceholder": "New group name",
+            "roleEmojiGroupPickerPlaceholder": "Pick a group",
+            "roleEmojiCreateGroupFirst": "Create an emoji group above before adding mappings.",
+            "roleEmojiTitle": "Emoji → role mappings",
+            "roleEmojiHint": "When a member reacts with the emoji on a watched message, they receive the role. Each mapping lives inside one group.",
+            "mappingsCount": "{n} mapping(s)",
+            "roleReceiveTitle": "Watched messages",
+            "roleReceiveHint": "Watch these messages for role-emoji reactions. Each watched message is bound to one emoji group; reactions only resolve to a role when the emoji belongs to that group.",
+            "roleReceiveGroupLabel": "Group:",
+            "capabilityTitle": "Capability grants",
+            "capabilityHint": "Grant a per-server capability to a role, so members of that role can use a slash command."
+        },
+        "automod": {
+            "title": "AutoMod rules",
+            "empty": "No AutoMod rules configured.",
+            "create": "New rule",
+            "enabled": "Enabled",
+            "disabled": "Disabled",
+            "trigger": {
+                "1": "Keyword filter",
+                "3": "Spam detection",
+                "4": "Keyword preset",
+                "5": "Mention spam",
+                "6": "Member profile"
+            },
+            "preset": {
+                "1": "Profanity",
+                "2": "Sexual content",
+                "3": "Slurs"
+            },
+            "action": {
+                "1": "Block message",
+                "2": "Send alert",
+                "3": "Timeout"
+            },
+            "actionsCount": "{count} actions",
+            "edit": "Edit",
+            "delete": "Delete",
+            "deleteConfirm": "Delete rule \"{name}\"?",
+            "modalNew": "New AutoMod rule",
+            "modalEdit": "Edit rule",
+            "fieldName": "Name",
+            "fieldTriggerType": "Trigger type",
+            "fieldTriggerImmutable": "Trigger type can't be changed after creation.",
+            "fieldKeywords": "Keywords (comma-separated)",
+            "fieldKeywordsHint": "Up to 1,000 entries; * matches any chars at word boundaries.",
+            "fieldRegex": "Regex patterns (one per line)",
+            "fieldAllowList": "Allow-list (comma-separated)",
+            "fieldPresets": "Preset categories",
+            "fieldMentionLimit": "Max unique mentions per message",
+            "fieldMentionRaid": "Enable raid-protection",
+            "fieldActions": "Actions",
+            "actionAdd": "Add action",
+            "actionType": "Type",
+            "actionChannel": "Alert channel",
+            "actionDuration": "Timeout duration (seconds, ≤2,419,200)",
+            "actionCustomMsg": "Custom message",
+            "fieldExemptRoles": "Exempt roles (comma-separated IDs)",
+            "fieldExemptChannels": "Exempt channels (comma-separated IDs)",
+            "save": "Save rule",
+            "cancel": "Cancel",
+            "saving": "Saving…",
+            "saveFailed": "Save failed",
+            "loadFailed": "Failed to load AutoMod rules",
+            "needsName": "Name is required",
+            "needsAction": "At least one action is required"
+        }
+    },
+    "quickSwitcher": {
+        "placeholder": "Search channels and DMs…",
+        "empty": "No matches.",
+        "directMessage": "Direct message",
+        "navigate": "navigate",
+        "open": "open",
+        "close": "close"
+    },
+    "messages": {
+        "modeDm": "Direct messages",
+        "modePickerTitle": "Pick a conversation source",
+        "selectChat": "Select a chat to view messages.",
+        "noMessages": "No messages yet.",
+        "loadingOlder": "Loading older…",
+        "beginningOfConversation": "Beginning of conversation",
+        "reply": "Reply",
+        "react": "React",
+        "edit": "Edit",
+        "delete": "Delete",
+        "deleteNoConfirm": "Delete (no confirm)",
+        "deleteShiftConfirm": "Delete (shift to skip confirm)",
+        "copyLink": "Copy message link",
+        "copyLinkDone": "Copied",
+        "copyText": "Copy message text",
+        "copyId": "Copy message ID",
+        "forward": "Forward",
+        "forwardTitle": "Forward message",
+        "forwardEmpty": "No channels available.",
+        "forwardFailed": "Failed to forward",
+        "forwardDestination": "Destination",
+        "forwardSearchPlaceholder": "Search channel or user…",
+        "markUnread": "Mark unread",
+        "viewSource": "View source markdown",
+        "lightboxPrev": "Previous",
+        "lightboxNext": "Next",
+        "mute": "Mute this channel",
+        "unmute": "Unmute",
+        "muteCycleHintFromAll": "Mute (mentions only)",
+        "muteCycleHintFromMentions": "Mute completely",
+        "muteCycleHintFromNone": "Restore notifications",
+        "pinnedMessages": "Pinned messages",
+        "noPins": "No pinned messages yet.",
+        "reactionAdd": "Add my reaction",
+        "reactionRemove": "Remove my reaction",
+        "reactionCopyEmoji": "Copy emoji",
+        "reactionNoUsers": "Nobody reacted with this.",
+        "newMessages": "New messages",
+        "typingOne": "{name} is typing…",
+        "typingTwo": "{a} and {b} are typing…",
+        "typingMany": "{name} and {count} others are typing…",
+        "replying": "Replying",
+        "dropFiles": "Drop files to attach",
+        "noDms": "No DMs yet. Send the bot a message in Discord, or start one above.",
+        "noTextChannels": "No text channels.",
+        "voiceChannels": "Voice channels",
+        "forumChannels": "Forum channels",
+        "noForumPosts": "No active posts.",
+        "recipientId": "Recipient user id",
+        "linkUnknown": "unknown"
+    },
+    "composer": {
+        "placeholder": "Message…",
+        "attach": "Attach",
+        "uploadFile": "Upload files",
+        "picker": "Emoji & stickers",
+        "send": "Send",
+        "spoilerOn": "Mark as spoiler",
+        "spoilerOff": "Unmark spoiler",
+        "replyPingOn": "Stop pinging the original author",
+        "replyPingOff": "Ping the original author",
+        "replyPingOnShort": "{'@'}",
+        "replyPingOffShort": "{'@'}?",
+        "removeAttachment": "Remove attachment",
+        "removeSticker": "Remove sticker"
+    },
+    "dmProactiveFeatures": {
+        "menuTitle": "Bot proactive actions",
+        "actionFailed": "Failed to run bot action",
+        "adminLogin": {
+            "label": "Send admin login link",
+            "description": "DM the recipient a one-time admin login URL."
+        }
+    },
+    "admin": {
+        "title": "Permissions",
+        "accessDenied": {
+            "title": "Access denied",
+            "body": "Your role doesn't carry the admin capability. Ask an existing admin to grant it."
+        },
+        "tabs": {
+            "users": "Users",
+            "roles": "Roles"
+        },
+        "users": {
+            "title": "Authorized users",
+            "empty": "Only the bot owner is authorized.",
+            "ownerNote": "The bot owner is always authorized with every capability — no entry needed.",
+            "ownerBadge": "Bot Owner",
+            "unknownProfile": "Unknown user",
+            "unknownRole": "{name} (unknown)",
+            "userIdLabel": "Discord user id",
+            "roleLabel": "Role",
+            "noteLabel": "Note (optional)",
+            "notePlaceholder": "What is this access for?",
+            "noPlaceholder": "—",
+            "add": "Add user",
+            "addSubmit": "Authorize",
+            "remove": "Remove",
+            "removeConfirm": "Remove {user} from the allow list?",
+            "changeRole": "Change role",
+            "searchPlaceholder": "Search by name or id…",
+            "filterAll": "All roles",
+            "noMatches": "No users match the current filters.",
+            "matchCount": "{matched} of {total}"
+        },
+        "roles": {
+            "title": "Roles",
+            "empty": "No roles defined.",
+            "nameLabel": "Role name",
+            "descriptionLabel": "Description",
+            "descriptionPlaceholder": "Short label describing the role",
+            "capabilities": "Capabilities",
+            "capabilitiesGrantedCount": "{granted} of {total} granted",
+            "noCapabilities": "No capabilities — users with this role will be unauthorized.",
+            "grantCapability": "Grant capability",
+            "selectCapability": "Pick a capability…",
+            "grant": "Grant",
+            "revoke": "Revoke",
+            "add": "Add role",
+            "addSubmit": "Create",
+            "remove": "Delete role",
+            "removeConfirm": "Delete role {name}?",
+            "saveDescription": "Save",
+            "saved": "Saved",
+            "discardChanges": "Discard",
+            "noDescription": "No description set.",
+            "ownerOnlyCapability": "admin",
+            "editCapabilities": "Edit capabilities",
+            "capabilityModalTitle": "Capabilities · {name}",
+            "capabilityTabs": {
+                "global": "Global",
+                "globalHint": "Apply to every server and surface the bot reaches.",
+                "perGuild": "Per-server",
+                "perGuildHint": "Restrict the same scopes to a single server — these add to global tokens, they don't replace them.",
+                "perBehaviorTab": "Per-behavior-tab",
+                "perBehaviorTabHint": "Grant the role CRUD over behaviors within specific scope tabs only. Adding/removing tabs themselves still requires behavior.manage.",
+                "perPlugin": "Per-plugin",
+                "perPluginHint": "Capabilities each enabled plugin declared for its own use (e.g. WebUI access). These are removed automatically when a plugin is deleted or re-registered without them."
+            },
+            "searchGuilds": "Search servers…",
+            "noGuilds": "No servers match this filter.",
+            "noGlobalCaps": "No global capabilities granted.",
+            "perGuildSummary": "{count} per-server grant(s)",
+            "pendingChanges": "{count} change(s) pending",
+            "confirmChanges": "Confirm",
+            "searchBehaviorTabs": "Search scope tabs…",
+            "noBehaviorTabs": "No behavior scope tabs match this filter.",
+            "perBehaviorTabSummary": "{count} per-tab grant(s)",
+            "legacyBehaviorHeader": "Legacy audience grants (pre-migration)",
+            "legacyBehaviorDesc": "Legacy token — revoke and replace with a per-tab grant above.",
+            "legacyBehaviorSummary": "{count} legacy behavior grant(s)",
+            "searchPlugins": "Search plugin capabilities…",
+            "noPluginCapabilities": "No enabled plugin declares any capabilities.",
+            "noPluginCapabilitiesFiltered": "No plugin capabilities match this filter.",
+            "orphanedPluginHeader": "Orphaned plugin grants",
+            "orphanedPluginDesc": "plugin disabled or capability removed — revoke if no longer needed",
+            "pluginCapabilitySummary": "{count} plugin grant(s)"
+        },
+        "capabilitiesCatalog": "Known capability tokens",
+        "capabilityDesc": {
+            "admin": "Full access — bypasses every other capability check",
+            "dm.message": "Read + write DM channels, messages, reactions, and unread counts",
+            "guild.message": "Read + write messages and reactions in every server's channels",
+            "guild.manage": "Manage members, roles, settings, and bot features in every server",
+            "system.read": "View system event log and runtime stats",
+            "behavior.manage": "Manage all targets and rules of the webhook behavior module",
+            "guildScoped": {
+                "message": "Read + write messages and reactions in this server only.",
+                "manage": "Manage members, roles, settings, and bot features in this server only."
+            }
+        },
+        "systemSettings": {
+            "title": "System settings",
+            "subtitle": "Environment-variable configuration frozen at boot — read-only.",
+            "retry": "Retry",
+            "readiness": {
+                "allSet": "Production-required env vars: all set",
+                "missing": "Production-required env vars: {count} missing",
+                "env": "current env: {env}"
+            },
+            "runtime": {
+                "title": "Runtime-editable settings",
+                "empty": "All settings are frozen at boot — no runtime modifications available"
+            },
+            "readonly": {
+                "title": "Read-only settings (by group)"
+            },
+            "status": {
+                "configured": "configured",
+                "unset": "unset"
+            },
+            "badge": {
+                "sensitive": "sensitive",
+                "semisensitive": "semi-sensitive",
+                "public": "public",
+                "envonly": "env-only",
+                "runtimeCapable": "rt-capable",
+                "runtimeEditable": "rt-editable",
+                "prodRequired": "prod-required"
+            },
+            "group": {
+                "bot": "Bot core",
+                "web": "Web server",
+                "db": "Database",
+                "crypto": "Crypto",
+                "jwt": "JWT",
+                "plugin": "Plugin system",
+                "behavior": "Behavior module",
+                "admin": "Admin",
+                "rcon": "RCON",
+                "botEvents": "Bot events",
+                "dm": "DM system"
+            },
+            "jwtKey": {
+                "title": "JWT signing key",
+                "desc": "The Ed25519 key the bot signs every JWT with (admin login links, plugin WebUI session tokens). Generated at runtime, stored encrypted in the database; the public key is published to plugins.",
+                "algorithm": "Algorithm",
+                "fingerprint": "Fingerprint",
+                "created": "Created",
+                "ephemeral": "Running on an ephemeral in-memory key — ENCRYPTION_KEY isn't set, so the key can't be persisted and rotation is unavailable. Tokens won't survive a bot restart.",
+                "rotate": "Rotate key",
+                "rotating": "Rotating…",
+                "rotateConfirmTitle": "Rotate the JWT signing key?",
+                "rotateConfirmMessage": "Generates a fresh key and immediately invalidates every outstanding token — admin login links and plugin WebUI sessions. Plugins pick up the new public key within ~30 s; affected users will need to re-authenticate.",
+                "rotateConfirm": "Rotate",
+                "rotated": "JWT signing key rotated"
+            }
+        },
+        "plugins": {
+            "title": "Plugins",
+            "subtitle": "Sibling services registered with the bot. A plugin self-registers on startup; once enabled it can receive events and be referenced by behaviors.",
+            "empty": "No plugins are registered yet.",
+            "emptyHint": "Plugins auto-register at startup. Make sure the container is on the same docker network and the per-plugin secret is provisioned — use the Add plugin button above for an easy start, or run POST /api/plugins/setup-secret manually.",
+            "addPlugin": {
+                "button": "Add plugin",
+                "title": "Add a plugin",
+                "body": "Enter the plugin's key (its manifest `id`). The bot creates a placeholder entry and gives you a one-time setup secret to put in the plugin's `.env` (`KARYL_PLUGIN_SETUP_SECRET`) before you start it.",
+                "keyLabel": "Plugin key",
+                "keyPlaceholder": "karyl-myplugin",
+                "keyInvalid": "Must match [a-z0-9][a-z0-9-]*",
+                "submit": "Create",
+                "alreadyExists": "This key already had an entry — its setup secret was regenerated (the old one is now invalid)."
+            },
+            "statusActive": "online",
+            "statusInactive": "offline",
+            "toggleEnabled": "Enabled (click to disable)",
+            "toggleDisabled": "Disabled (click to enable)",
+            "url": "URL",
+            "lastHeartbeat": "Last heartbeat",
+            "neverHeartbeat": "never",
+            "heartbeatJustNow": "just now",
+            "heartbeatMinutesAgo": "{n} min ago",
+            "heartbeatHoursAgo": "{n} h ago",
+            "rpcScopes": "RPC scopes",
+            "manifestRaw": "Show raw manifest",
+            "dmBehaviorsCount": "{n} DM behavior(s)",
+            "guildFeaturesCount": "{n} guild feature(s)",
+            "commandsCount": "{n} slash command(s)",
+            "scopes": {
+                "approved": "Approved RPC scopes",
+                "pending": "Pending RPC scopes",
+                "pendingCount": "{n} scope(s) pending",
+                "pendingHint": "{n} new RPC scope(s) awaiting admin approval — click to review",
+                "approveButton": "Approve",
+                "approveModalTitle": "Review RPC scope request",
+                "approveConfirm": "The following RPC scopes are requested by \"{name}\". Once approved they take effect immediately:"
+            },
+            "setupSecret": {
+                "button": "Generate Setup Secret",
+                "confirmTitle": "Generate New Setup Secret",
+                "confirmBody": "A new setup secret will be generated for \"{name}\". The old secret will be invalidated immediately — you must write the new value into this plugin's .env and restart it. Continue?",
+                "resultTitle": "Setup Secret",
+                "secretLabel": "Setup Secret",
+                "copyButton": "Copy",
+                "copiedButton": "Copied",
+                "instruction": "Copy the value below into your plugin .env and restart the plugin:",
+                "envHint": "KARYL_PLUGIN_SETUP_SECRET={secret}",
+                "warning": "This value will not be shown again. If lost, you must regenerate (which invalidates the current one).",
+                "checkboxLabel": "I have saved this secret to the plugin .env",
+                "closeButton": "Close",
+                "generating": "Generating…"
+            },
+            "online": "Online",
+            "offline": "Offline",
+            "offlineCount": "Offline ({n})",
+            "menu": {
+                "delete": "Delete"
+            },
+            "deleteConfirmTitle": "Delete Offline Plugin",
+            "deleteConfirm": "Delete offline plugin \"{name}\"? This will also remove all its KV data, config, and feature settings and cannot be undone.",
+            "deleteSuccess": "Plugin deleted",
+            "deleteFailed": "Delete failed",
+            "cannotDeleteActive": "Cannot delete an active plugin — stop the plugin and wait for it to go inactive first",
+            "deleteAllOffline": "Delete all",
+            "deleteAllConfirmTitle": "Delete all offline plugins",
+            "deleteAllConfirm": "Delete all {n} offline plugins? Each plugin's KV, config, and feature settings will be removed and cannot be recovered.",
+            "deleteAllProgress": "Progress: {done} / {total}",
+            "viewDetail": "View details",
+            "detail": {
+                "backLink": "Back to plugins",
+                "tabOverview": "Overview",
+                "tabBehaviors": "Behaviors",
+                "tabCommands": "Commands",
+                "tabFeatures": "Guild Features",
+                "tabScopes": "Scopes",
+                "tabSecurity": "Security",
+                "overviewMeta": {
+                    "pluginKey": "Plugin Key",
+                    "author": "Author",
+                    "homepage": "Homepage"
+                },
+                "behaviors": {
+                    "intro": "The behaviors below are declared by this plugin. You can enable or disable each behavior here; disabled behaviors will not be registered as Discord slash commands by the reconciler.",
+                    "empty": "This plugin declares no behaviors",
+                    "toggleOn": "Enable this behavior",
+                    "toggleOff": "Disable this behavior",
+                    "toggleSuccess": "Behavior status updated",
+                    "toggleError": "Update failed, please try again",
+                    "supportsContinuous": "Supports continuous conversation",
+                    "axesReadonly": "Axes locked by manifest",
+                    "slashOptions": "{count} option(s)"
+                },
+                "commands": {
+                    "intro": "The slash commands below are declared by this plugin. Axes are locked by the plugin manifest — admin can only enable or disable individual commands.",
+                    "empty": "This plugin declares no custom commands",
+                    "toggleOn": "Enable this command",
+                    "toggleOff": "Disable this command",
+                    "globalGroup": "Global commands",
+                    "featureGroup": "Feature commands",
+                    "scopeGuild": "Guild",
+                    "scopeGlobal": "Global"
+                },
+                "features": {
+                    "intro": "The features below can be toggled per-server on the Bot Functions tab of each guild page. This tab is read-only.",
+                    "empty": "This plugin provides no guild features"
+                },
+                "scopes": {
+                    "approved": "Approved scopes",
+                    "pending": "Pending scopes",
+                    "pendingHint": "{n} scope(s) pending",
+                    "pendingCount": "{n} pending",
+                    "approveButton": "Approve",
+                    "approveModalTitle": "Approve RPC scopes",
+                    "approveConfirm": "Approve the following RPC scopes requested by \"{name}\"?"
+                }
+            }
+        }
+    },
+    "picker": {
+        "searchPlaceholder": "Search emoji & stickers…",
+        "tabs": {
+            "recent": "Recent",
+            "emoji": "Emoji",
+            "custom": "Custom",
+            "stickers": "Stickers"
+        },
+        "customEmoji": "Custom emoji",
+        "stickers": "Stickers",
+        "emoji": "Emoji",
+        "noMatches": "No matches.",
+        "nothingRecent": "Nothing recent yet.",
+        "noCustomEmoji": "No custom emoji available.",
+        "noGuildStickers": "No server stickers available."
+    },
+    "behaviors": {
+        "page": {
+            "pickTarget": "Pick a target from the sidebar."
+        },
+        "sidebar": {
+            "title": "Behaviors",
+            "addTabTooltip": "Add scope tab",
+            "globalAll": "All Scope",
+            "globalAllHint": "Applies to all platforms and contexts",
+            "allDms": "All DMs",
+            "allDmsHint": "Applies to every DM sender",
+            "allBotDms": "All Bot DMs",
+            "allBotDmsHint": "Bot DM channels only",
+            "allGuilds": "All Guilds",
+            "allGuildsHint": "Applies to every guild",
+            "behaviorCount": "{count} behaviors",
+            "guildSection": "Guild",
+            "dmSection": "Bot DMs",
+            "noGuildTabs": "No guild-specific tabs yet",
+            "noDmTabs": "No user-specific tabs yet"
+        },
+        "addPlugin": {
+            "title": "Add plugin behavior",
+            "defaultTitle": "{plugin}: {behavior}",
+            "noEligible": "No eligible plugins. Enable a plugin that exposes a dm_behavior on the Plugins page first.",
+            "pickPlugin": "Pick plugin",
+            "pickPluginPlaceholder": "—",
+            "pickBehavior": "Pick behavior",
+            "create": "Create"
+        },
+        "workspace": {
+            "kindGlobalAll": "All Scope",
+            "kindAllDms": "All DMs",
+            "kindAllBotDms": "Bot DMs",
+            "kindAllGuilds": "All Guilds",
+            "kindGuild": "Specific Guild",
+            "kindChannel": "Specific Channel",
+            "kindUser": "Individual user",
+            "kindGroup": "User group",
+            "addBehavior": "Add behavior",
+            "deleteTabTooltip": "Delete this tab",
+            "deleteTabTitle": "Delete tab",
+            "deleteTabConfirm": "Delete tab \"{label}\"? All behaviors in this tab will also be removed.",
+            "empty": "No behaviors configured yet."
+        },
+        "card": {
+            "title": "Title",
+            "description": "Description",
+            "triggerType": "Trigger type",
+            "triggerStartsWith": "Starts with",
+            "triggerEndsWith": "Ends with",
+            "triggerRegex": "Regular expression",
+            "triggerPattern": "Message pattern",
+            "triggerValue": "Trigger value",
+            "messagePatternKind": "Pattern kind",
+            "messagePatternValue": "Pattern value",
+            "slashCommandName": "Slash command name",
+            "slashCommandDescription": "Slash command description",
+            "forwardType": "Forward type",
+            "forwardOneTime": "One-time",
+            "forwardContinuous": "Continuous",
+            "targetId": "Target",
+            "triggerSection": "Trigger",
+            "integrationTypes": "Where can be installed",
+            "integrationTypesLocked": "(set by scope tab)",
+            "integrationBoth": "Both guild and user install",
+            "integrationGuildOnly": "Guild install only",
+            "integrationUserOnly": "User install only",
+            "webhookUrl": "Webhook URL",
+            "webhookUrlRequired": "Webhook URL is required.",
+            "webhookSecret": "Webhook secret",
+            "webhookSecretHint": "(optional, enables auth)",
+            "webhookSecretPlaceholder": "Leave blank to disable",
+            "webhookAuthMode": "Auth mode",
+            "stopOnMatch": "Stop on match",
+            "tagContinuous": "Continuous forward",
+            "tagContinuousShort": "Continuous",
+            "tagPlugin": "Provided by Plugin",
+            "tagPluginShort": "Plugin",
+            "tagSystem": "System built-in",
+            "tagSystemShort": "System",
+            "systemRowLocked": "System behavior, cannot be reordered",
+            "pluginRowLocked": "Plugin behavior, cannot be reordered",
+            "triggerSlashCommand": "Slash command",
+            "pluginPick": "Pick plugin",
+            "pluginNoneAvailable": "No active plugins available",
+            "pluginBehaviorKey": "Pick behavior",
+            "pluginRequired": "Pick a plugin",
+            "pluginBehaviorKeyRequired": "Pick a behavior",
+            "tagStop": "Stop on match",
+            "tagStopShort": "Stop",
+            "toggleEnabled": "Enabled (click to disable)",
+            "toggleDisabled": "Disabled (click to enable)",
+            "previewStartsWith": "starts: {value}",
+            "previewEndsWith": "ends: {value}",
+            "previewRegex": "regex: {value}",
+            "previewSlashCommand": "/{value}",
+            "titleRequired": "Title is required.",
+            "triggerValueRequired": "Trigger value is required.",
+            "regexInvalid": "Trigger value is not a valid regex.",
+            "deleteConfirm": "Delete behavior \"{title}\"?",
+            "dragHint": "Drag to reorder",
+            "moreActions": "More actions",
+            "sourceCustom": "Custom",
+            "sourcePlugin": "Plugin",
+            "sourceSystem": "System",
+            "sourceNoticPlugin": "This behavior is provided by Plugin \"{name}\". Some fields are read-only.",
+            "sourceNoticPluginLink": "View Plugin details",
+            "sourceNoticSystem": "System built-in behavior. The trigger type and its values can be edited; other fields are locked.",
+            "saveTrigger": "Save trigger"
+        },
+        "addTab": {
+            "title": "Add Scope Tab",
+            "typeLabel": "Tab type",
+            "type_specific_guild": "Specific Guild",
+            "type_specific_channel": "Specific Channel",
+            "type_specific_user": "Specific User",
+            "type_specific_group": "User Group",
+            "labelField": "Display name (optional)",
+            "labelPlaceholder": "Leave blank to show ID",
+            "groupNameLabel": "Group name",
+            "groupNamePlaceholder": "e.g. VIP",
+            "submit": "Create tab"
+        },
+        "addModal": {
+            "title": "Add Behavior",
+            "subtitle": "Create an operator-defined behavior: pick a trigger, then choose where it's forwarded.",
+            "create": "Create",
+            "triggerSlash": "Slash command",
+            "triggerPattern": "Message pattern",
+            "nameLabel": "Behavior name",
+            "namePlaceholder": "e.g. Q&A assistant",
+            "forwardLabel": "Forward",
+            "forwardWebhook": "Webhook",
+            "forwardPlugin": "Plugin"
+        }
+    },
+    "config": {
+        "bot": {
+            "token": "Bot token (Discord API key)",
+            "ownerId": "Bot owner Discord ID",
+            "clientId": "Bot client ID",
+            "clientSecret": "Bot client secret",
+            "guildId": "Default guild ID",
+            "logLevel": "Log level"
+        },
+        "web": {
+            "port": "HTTP listen port",
+            "host": "HTTP listen host",
+            "baseUrl": "Public base URL",
+            "corsOrigin": "CORS allowed origins"
+        },
+        "db": {
+            "url": "Database connection URL",
+            "poolMin": "Connection pool minimum",
+            "poolMax": "Connection pool maximum"
+        },
+        "crypto": {
+            "encryptionKey": "At-rest encryption key (AES-256)"
+        },
+        "jwt": {
+            "secret": "JWT signing secret",
+            "accessTtl": "Access token TTL (seconds)",
+            "refreshTtl": "Refresh token TTL (seconds)"
+        },
+        "plugin": {
+            "sharedSecret": "Plugin shared auth secret",
+            "heartbeatInterval": "Heartbeat interval (ms)",
+            "heartbeatTimeout": "Heartbeat timeout (ms)"
+        },
+        "behavior": {
+            "enabled": "Behavior module enabled",
+            "webhookTimeout": "Webhook request timeout (ms)",
+            "maxRetries": "Webhook max retries"
+        },
+        "admin": {
+            "sessionTtl": "Admin session TTL (seconds)",
+            "maxLoginAttempts": "Max login attempts"
+        },
+        "rcon": {
+            "enabled": "RCON enabled",
+            "host": "RCON host",
+            "port": "RCON port",
+            "password": "RCON password"
+        },
+        "botEvents": {
+            "retentionDays": "Event retention (days)",
+            "maxEvents": "Max stored events",
+            "enabled": "Bot event log enabled"
+        },
+        "dm": {
+            "enabled": "DM feature enabled",
+            "rateLimit": "DM rate limit (per minute)",
+            "maxHistory": "DM history cache size"
+        }
+    },
+    "allServers": {
+        "tabs": {
+            "overview": "Overview",
+            "botFeatures": "Bot Features"
+        },
+        "overviewTitle": "All Servers — Overview",
+        "refresh": "Refresh",
+        "loading": "Loading…",
+        "metrics": {
+            "guilds": "Servers",
+            "registeredPlugins": "Registered Plugins",
+            "builtinFeatures": "Built-in Features",
+            "builtinOverrides": "Built-in per-server overrides",
+            "pluginFeatures": "Plugin Features",
+            "pluginOverrides": "Plugin Features overrides",
+            "defaultOn": "default on"
+        },
+        "botFeaturesTitle": "All Servers — Bot Feature Defaults",
+        "botFeaturesDesc": "Set each guild feature's default on/off state. The default applies to every server that hasn't been given an explicit override on its own page — change it here and it takes effect everywhere immediately (no extra step). A server with an override keeps that override until you clear it on the server page.",
+        "builtinSection": "Built-in Features",
+        "noBuiltin": "No built-in features.",
+        "overriddenServers": "Overridden servers: {count}",
+        "originalDefault": "Original default: enabled",
+        "overriddenTo": "Overridden to {state}",
+        "defaultEnabled": "Default on",
+        "defaultDisabled": "Default off",
+        "enabled": "enabled",
+        "disabled": "disabled",
+        "pluginFeaturesSection": "Plugin Features",
+        "noPluginFeatures": "No plugins have declared any guild features.",
+        "enabledGuilds": "{count} guild enabled",
+        "disabledGuilds": "{count} guild disabled",
+        "manifestDefault": "Manifest default: {state}",
+        "overriddenToParens": "(overridden to {state})",
+        "statusActive": "active",
+        "statusInactive": "inactive",
+        "statusDisabled": "disabled"
+    },
+    "voice": {
+        "title": "Voice Playback",
+        "description": "When enabled, guild members can use the bot's voice features in voice channels (e.g. /voice commands or plugin playback controls).",
+        "builtinCommands": "Built-in commands:",
+        "cmdJoin": "Make the bot join your current voice channel",
+        "cmdPlay": "Play an audio URL (http/https)",
+        "cmdStop": "Stop current playback",
+        "cmdLeave": "Leave the voice channel",
+        "cmdStatus": "View bot voice status"
+    },
+    "pluginSecurity": {
+        "setupSecretDesc": "Regenerating the Setup Secret immediately invalidates the old one. The plugin must re-register with the bot using the new secret."
+    }
+}
