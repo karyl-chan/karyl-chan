@@ -37,11 +37,10 @@ const modalOpen = ref(false);
 const inlineConfirmOpen = ref(false);
 const inlineLoading = ref(false);
 
-// Menu demo
-const menuTrigger = ref<HTMLElement | null>(null);
-
-// Popover demo
-const popoverTrigger = ref<HTMLElement | null>(null);
+// Popover demo — slot-driven, with explicit v-model:open so the caller
+// owns visibility (AppPopover deliberately doesn't bake in
+// hover/click trigger detection — the slot's click handler does).
+const popoverOpen = ref(false);
 
 // Select demo
 const selectOpen = ref(false);
@@ -166,9 +165,14 @@ function onInlineClose() {
 
     <section>
       <h2>AppMenu &amp; AppMenuItem</h2>
-      <p class="hint">Anchored menu — viewport-aware (mobile = drawer).</p>
-      <button ref="menuTrigger" type="button" class="anchor">Open menu</button>
-      <AppMenu v-if="menuTrigger" :reference="menuTrigger" drawer-title="Menu">
+      <p class="hint">
+        Anchored menu — viewport-aware (mobile = drawer). The <code>#trigger</code>
+        slot owns its own click; clicking any AppMenuItem closes the menu.
+      </p>
+      <AppMenu drawer-title="Menu">
+        <template #trigger>
+          <button type="button" class="anchor">Open menu</button>
+        </template>
         <AppMenuItem icon="material-symbols:bolt-rounded" @click="toast.show('Run', 'info')">
           Run task
         </AppMenuItem>
@@ -183,11 +187,20 @@ function onInlineClose() {
 
     <section>
       <h2>AppPopover</h2>
-      <p class="hint">Lower-level anchored bubble — for hover hints, mini-pickers, etc.</p>
-      <button ref="popoverTrigger" type="button" class="anchor">Hover me</button>
-      <AppPopover v-if="popoverTrigger" :reference="popoverTrigger" trigger="hover">
+      <p class="hint">
+        Lower-level anchored bubble. Caller controls visibility via
+        <code>v-model:open</code>; AppPopover itself doesn't bake in
+        click/hover detection (deliberate — different surfaces want
+        different triggers).
+      </p>
+      <AppPopover v-model:open="popoverOpen">
+        <template #trigger>
+          <button type="button" class="anchor" @click="popoverOpen = !popoverOpen">
+            {{ popoverOpen ? 'Close popover' : 'Open popover' }}
+          </button>
+        </template>
         <div class="pop-body">
-          Popovers are the same primitive AppMenu uses.<br />
+          Popovers are the same primitive AppMenu builds on.<br />
           They flip + reposition automatically.
         </div>
       </AppPopover>

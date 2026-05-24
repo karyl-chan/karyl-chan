@@ -37,8 +37,8 @@ async function generate() {
 // ── Concurrent overlays ──────────────────────────────────────────────
 const modalA = ref(false);
 const modalB = ref(false);
-const popTriggerA = ref<HTMLElement | null>(null);
-const popTriggerB = ref<HTMLElement | null>(null);
+const popOpenA = ref(false);
+const popOpenB = ref(false);
 
 // ── Draggable ────────────────────────────────────────────────────────
 const dragBoundsRef = ref<HTMLElement | null>(null);
@@ -84,8 +84,22 @@ const renderSummary = computed(() =>
       <div class="row">
         <AppButton @click="modalA = true">Open modal A</AppButton>
         <AppButton @click="modalB = true">Open modal B</AppButton>
-        <button ref="popTriggerA" type="button" class="anchor">Popover A</button>
-        <button ref="popTriggerB" type="button" class="anchor">Popover B</button>
+        <AppPopover v-model:open="popOpenA">
+          <template #trigger>
+            <button type="button" class="anchor" @click="popOpenA = !popOpenA">
+              {{ popOpenA ? 'Close popover A' : 'Open popover A' }}
+            </button>
+          </template>
+          <div class="pop-body">Popover A — click outside or Escape to close.</div>
+        </AppPopover>
+        <AppPopover v-model:open="popOpenB">
+          <template #trigger>
+            <button type="button" class="anchor" @click="popOpenB = !popOpenB">
+              {{ popOpenB ? 'Close popover B' : 'Open popover B' }}
+            </button>
+          </template>
+          <div class="pop-body">Popover B.</div>
+        </AppPopover>
       </div>
       <AppModal :visible="modalA" title="Modal A" @close="modalA = false">
         <div class="modal-body">
@@ -99,12 +113,6 @@ const renderSummary = computed(() =>
           <AppButton variant="ghost" @click="modalB = false">Close B</AppButton>
         </div>
       </AppModal>
-      <AppPopover v-if="popTriggerA" :reference="popTriggerA" trigger="click">
-        <div class="pop-body">Popover A — click outside to close.</div>
-      </AppPopover>
-      <AppPopover v-if="popTriggerB" :reference="popTriggerB" trigger="click">
-        <div class="pop-body">Popover B.</div>
-      </AppPopover>
     </section>
 
     <section>
