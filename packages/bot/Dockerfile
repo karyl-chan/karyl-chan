@@ -25,10 +25,14 @@ COPY pnpm-workspace.yaml pnpm-lock.yaml package.json .npmrc ./
 COPY packages/bot/package.json packages/bot/
 COPY packages/bot/frontend/package.json packages/bot/frontend/
 COPY packages/plugin-sdk/package.json packages/plugin-sdk/
+COPY packages/ui/package.json packages/ui/
 
 
 FROM base AS frontend-build
-RUN pnpm install --frozen-lockfile --filter karyl-chan-frontend
+# --filter ...^ resolves workspace deps transitively (karyl-chan-frontend
+# now depends on @karyl-chan/ui via workspace:*).
+RUN pnpm install --frozen-lockfile --filter karyl-chan-frontend...
+COPY packages/ui packages/ui
 COPY packages/bot/frontend packages/bot/frontend
 RUN pnpm --filter karyl-chan-frontend build
 
