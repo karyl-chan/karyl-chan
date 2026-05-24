@@ -2,8 +2,8 @@
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@iconify/vue';
-import AppModal from '../../../components/AppModal.vue';
-import AppSelect from '../../../components/AppSelect.vue';
+import { AppModal } from '@karyl-chan/ui';
+import { AppSelect } from '@karyl-chan/ui';
 import {
     listGuildTextChannels,
     type GuildChannelCategory,

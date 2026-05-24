@@ -1,8 +1,8 @@
 import { computed, inject, onBeforeUnmount, provide, ref, type InjectionKey, type Ref } from 'vue';
 
-type OverlayView = 'nav' | 'extras';
+export type OverlayView = 'nav' | 'extras';
 
-interface AppShellContext {
+export interface AppShellContext {
     overlayOpen: Ref<boolean>;
     openOverlay(): void;
     closeOverlay(): void;

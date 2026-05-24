@@ -15,6 +15,7 @@
     "@discordjs/formatters": "^0.6.2",
     "@emoji-mart/data": "^1.2.1",
     "@iconify/vue": "^5.0.0",
+    "@karyl-chan/ui": "workspace:*",
     "@popperjs/core": "^2.11.8",
     "@twemoji/parser": "^17.0.1",
     "@types/sortablejs": "^1.15.9",

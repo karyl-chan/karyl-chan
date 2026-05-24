@@ -20,12 +20,12 @@ import {
     type GuildSummary
 } from '../../../api/guilds';
 import type { Message } from '../../../libs/messages/types';
-import { useAppShell } from '../../../composables/use-app-shell';
+import { useAppShell } from '@karyl-chan/ui';
 import { useScrollToQuery } from '../../../composables/use-scroll-to-query';
 import { SidebarLayout } from '../../../layouts';
 import AccessDeniedView from '../../../components/AccessDeniedView.vue';
-import { useToastStore } from '../../../stores/toastStore';
-import { useConfirm } from '../../../composables/use-confirm';
+import { useToastStore } from '@karyl-chan/ui';
+import { useConfirm } from '@karyl-chan/ui';
 
 const props = defineProps<{
     guilds: GuildSummary[];

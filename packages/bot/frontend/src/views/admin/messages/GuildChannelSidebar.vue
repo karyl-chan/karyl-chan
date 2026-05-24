@@ -12,10 +12,10 @@ import { useUnreadStore } from '../../../modules/discord-chat/stores/unreadStore
 import { useMuteStore } from '../../../modules/discord-chat/stores/muteStore';
 import { useUserContextMenuStore } from '../../../modules/discord-chat/stores/userContextMenuStore';
 import { useChannelMgmtStore } from '../../../modules/discord-chat/stores/channelMgmtStore';
-import { useLongPress } from '../../../composables/use-long-press';
-import { useConfirm } from '../../../composables/use-confirm';
+import { useLongPress } from '@karyl-chan/ui';
+import { useConfirm } from '@karyl-chan/ui';
 import { deleteGuildChannel, editGuildChannel, type VoiceChannelMember } from '../../../api/guilds';
-import UnreadPill from '../../../components/UnreadPill.vue';
+import { UnreadPill } from '@karyl-chan/ui';
 import ModeSelect from './ModeSelect.vue';
 import MessageContextMenu, { type ContextMenuAction } from '../../../libs/messages/MessageContextMenu.vue';
 import { Icon } from '@iconify/vue';

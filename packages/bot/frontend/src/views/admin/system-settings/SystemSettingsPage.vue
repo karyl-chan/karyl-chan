@@ -9,9 +9,9 @@ import {
     type SystemSettingsResponse,
     type JwtSigningKeyInfo,
 } from '../../../api/systemSettings';
-import { useToastStore } from '../../../stores/toastStore';
-import AppButton from '../../../components/AppButton.vue';
-import AppConfirmDialog from '../../../components/AppConfirmDialog.vue';
+import { useToastStore } from '@karyl-chan/ui';
+import { AppButton } from '@karyl-chan/ui';
+import { AppConfirmDialog } from '@karyl-chan/ui';
 import GroupSection from './GroupSection.vue';
 
 const { t } = useI18n();

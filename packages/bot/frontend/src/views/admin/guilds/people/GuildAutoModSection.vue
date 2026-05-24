@@ -9,7 +9,7 @@ import {
     type AutoModRulePayload
 } from '../../../../api/guilds';
 import { useApiError } from '../../../../composables/use-api-error';
-import { useConfirm } from '../../../../composables/use-confirm';
+import { useConfirm } from '@karyl-chan/ui';
 import { useI18n } from 'vue-i18n';
 import GuildAutoModEditModal from './GuildAutoModEditModal.vue';
 

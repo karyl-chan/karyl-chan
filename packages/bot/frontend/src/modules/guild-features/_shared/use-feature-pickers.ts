@@ -6,7 +6,7 @@ import {
     type GuildChannelCategory,
     type GuildRoleSummary
 } from '../../../api/guilds';
-import type { SelectOption } from '../../../components/AppSelectField.vue';
+import type { SelectOption } from '@karyl-chan/ui';
 
 export function useChannelPicker(guildId: string) {
     const { t } = useI18n();

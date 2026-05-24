@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue';
-import { useBreakpoint } from '../../../composables/use-breakpoint';
-import AppPopover from '../../../components/AppPopover.vue';
+import { useBreakpoint } from '@karyl-chan/ui';
+import { AppPopover } from '@karyl-chan/ui';
 import MediaPicker, { type MediaSelection } from './MediaPicker.vue';
-import type { Placement } from '../../../composables/use-popover';
+import type { Placement } from '@karyl-chan/ui';
 
 type MediaPickerInstance = InstanceType<typeof MediaPicker>;
 

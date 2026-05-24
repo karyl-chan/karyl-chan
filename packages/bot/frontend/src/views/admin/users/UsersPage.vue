@@ -14,7 +14,7 @@ import {
 import { useCurrentUserStore } from '../../../stores/currentUserStore';
 import { useApiError } from '../../../composables/use-api-error';
 import AccessDeniedView from '../../../components/AccessDeniedView.vue';
-import AppTabs from '../../../components/AppTabs.vue';
+import { AppTabs } from '@karyl-chan/ui';
 import UsersPanel from './UsersPanel.vue';
 import RolesPanel from './RolesPanel.vue';
 

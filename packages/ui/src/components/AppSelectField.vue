@@ -1,6 +1,5 @@
 <script setup lang="ts" generic="V extends string | number | null">
 import { computed, nextTick, ref, watch } from 'vue';
-import { useI18n } from 'vue-i18n';
 import AppSelect from './AppSelect.vue';
 import type { Placement } from '../composables/use-popover';
 import type { DrawerPlacement } from '../composables/use-drawer';
@@ -8,8 +7,7 @@ import type { DrawerPlacement } from '../composables/use-drawer';
 /**
  * Drop-in replacement for native `<select>` built on AppSelect, so the
  * picker honours the same viewport-aware popover/drawer split the rest
- * of the admin surface uses. Unlike a raw AppSelect, this component
- * owns:
+ * of the admin surface uses. Owns:
  * - A value-model (`v-model`).
  * - A trigger button styled to match form inputs.
  * - The flat / grouped option list rendering.
@@ -18,6 +16,9 @@ import type { DrawerPlacement } from '../composables/use-drawer';
  * `options` accepts either `{ value, label }[]` (flat) or items with a
  * `group` field (header pulled from the unique non-null group strings,
  * preserving first-seen order).
+ *
+ * Labels are passed in as props with English defaults — this component
+ * does not depend on vue-i18n.
  */
 export interface SelectOption<V> {
     value: V;
@@ -35,8 +36,10 @@ const props = withDefaults(defineProps<{
     drawerTitle?: string;
     /** Show a search box at the top of the dropdown. Default: false. */
     filter?: boolean;
-    /** Custom placeholder for the filter input. Falls back to `common.search`. */
+    /** Placeholder for the filter input. */
     filterPlaceholder?: string;
+    /** Text shown when filter yields no matches. */
+    noMatchesLabel?: string;
 }>(), {
     placeholder: '',
     disabled: false,
@@ -44,14 +47,13 @@ const props = withDefaults(defineProps<{
     drawerPlacement: 'bottom',
     drawerTitle: '',
     filter: false,
-    filterPlaceholder: ''
+    filterPlaceholder: 'Search',
+    noMatchesLabel: 'No matches'
 });
 
 const emit = defineEmits<{
     (e: 'update:modelValue', value: V): void;
 }>();
-
-const { t } = useI18n();
 
 const isOpen = ref(false);
 const filterText = ref('');
@@ -94,7 +96,6 @@ const groups = computed<Group[]>(() => {
 
 const hasGroups = computed(() => groups.value.some(g => g.label !== null));
 const noMatches = computed(() => props.filter && filteredOptions.value.length === 0);
-const effectiveFilterPlaceholder = computed(() => props.filterPlaceholder || t('common.search'));
 
 // Reset filter on close so the next open starts fresh; auto-focus the
 // filter input on open so the user can type immediately.
@@ -135,12 +136,12 @@ function pick(value: V) {
                 v-model="filterText"
                 type="text"
                 class="filter-input"
-                :placeholder="effectiveFilterPlaceholder"
+                :placeholder="filterPlaceholder"
             />
         </div>
         <ul class="select-list">
             <template v-if="noMatches">
-                <li class="empty">{{ $t('common.noMatches') }}</li>
+                <li class="empty">{{ noMatchesLabel }}</li>
             </template>
             <template v-else-if="hasGroups">
                 <template v-for="(g, gi) in groups" :key="gi">

@@ -10,10 +10,10 @@ import {
     type AuthorizedUser
 } from '../../../api/admin';
 import { ApiError } from '../../../api/client';
-import AppModal from '../../../components/AppModal.vue';
-import AppSelectField, { type SelectOption } from '../../../components/AppSelectField.vue';
-import AppButton from '../../../components/AppButton.vue';
-import { useConfirm } from '../../../composables/use-confirm';
+import { AppModal } from '@karyl-chan/ui';
+import AppSelectField, { type SelectOption } from '@karyl-chan/ui';
+import { AppButton } from '@karyl-chan/ui';
+import { useConfirm } from '@karyl-chan/ui';
 
 const props = defineProps<{
     data: AdminUserList;

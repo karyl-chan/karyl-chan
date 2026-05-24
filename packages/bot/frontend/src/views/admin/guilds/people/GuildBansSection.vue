@@ -2,7 +2,7 @@
 import { onMounted, ref, watch } from 'vue';
 import { listGuildBans, unbanGuildUser, type GuildBanEntry } from '../../../../api/guilds';
 import { useApiError } from '../../../../composables/use-api-error';
-import { useConfirm } from '../../../../composables/use-confirm';
+import { useConfirm } from '@karyl-chan/ui';
 
 const props = defineProps<{
     guildId: string;

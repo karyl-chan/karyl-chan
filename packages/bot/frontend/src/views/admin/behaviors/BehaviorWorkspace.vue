@@ -4,8 +4,8 @@ import { useI18n } from 'vue-i18n';
 import { Icon } from '@iconify/vue';
 import Sortable from 'sortablejs';
 import BehaviorCard from './BehaviorCard.vue';
-import AppConfirmDialog from '../../../components/AppConfirmDialog.vue';
-import AppButton from '../../../components/AppButton.vue';
+import { AppConfirmDialog } from '@karyl-chan/ui';
+import { AppButton } from '@karyl-chan/ui';
 import {
     listBehaviors,
     reorderBehaviors,

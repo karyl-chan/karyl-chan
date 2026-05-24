@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { useBreakpoint } from '../composables/use-breakpoint';
-import { useFlushMain, useOverlayExtras } from '../composables/use-app-shell';
+import { useBreakpoint } from '@karyl-chan/ui';
+import { useFlushMain, useOverlayExtras } from '@karyl-chan/ui';
 
 const props = withDefaults(defineProps<{
     /** Desktop sidebar width. Default: 280px. */

@@ -2,9 +2,9 @@
 import { ref, computed, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@iconify/vue';
-import AppModal from '../../../components/AppModal.vue';
-import AppSelectField from '../../../components/AppSelectField.vue';
-import AppButton from '../../../components/AppButton.vue';
+import { AppModal } from '@karyl-chan/ui';
+import { AppSelectField } from '@karyl-chan/ui';
+import { AppButton } from '@karyl-chan/ui';
 import {
     createBehavior,
     type BehaviorRow,

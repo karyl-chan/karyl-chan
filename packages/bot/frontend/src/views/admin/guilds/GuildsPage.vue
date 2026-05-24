@@ -14,14 +14,14 @@ import {
     type GuildSummary
 } from '../../../api/guilds';
 import { SidebarLayout } from '../../../layouts';
-import { useAppShell } from '../../../composables/use-app-shell';
-import { useBreakpoint } from '../../../composables/use-breakpoint';
+import { useAppShell } from '@karyl-chan/ui';
+import { useBreakpoint } from '@karyl-chan/ui';
 import { useApiError } from '../../../composables/use-api-error';
-import { useConfirm } from '../../../composables/use-confirm';
+import { useConfirm } from '@karyl-chan/ui';
 import { useGuildListStore } from '../../../stores/guildListStore';
 import { useI18n } from 'vue-i18n';
 import AccessDeniedView from '../../../components/AccessDeniedView.vue';
-import AppTabs from '../../../components/AppTabs.vue';
+import { AppTabs } from '@karyl-chan/ui';
 import AllServersDashboard from './AllServersDashboard.vue';
 import GuildBotFeaturesPanel from './GuildBotFeaturesPanel.vue';
 import GuildOverviewSection from './overview/GuildOverviewSection.vue';

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import AppModal from '../../../components/AppModal.vue';
+import { AppModal } from '@karyl-chan/ui';
 
 const props = defineProps<{
     visible: boolean;

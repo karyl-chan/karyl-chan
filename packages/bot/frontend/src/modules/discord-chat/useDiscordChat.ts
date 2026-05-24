@@ -7,7 +7,7 @@ import type {
 } from "../../libs/messages";
 import type { MediaSelection } from "../../libs/messages/picker/MediaPicker.vue";
 import { useMessageCacheStore } from "./stores/messageCacheStore";
-import { useConfirm } from "../../composables/use-confirm";
+import { useConfirm } from "@karyl-chan/ui";
 
 export type { ChannelMessageEvent } from "./stores/messageCacheStore";
 

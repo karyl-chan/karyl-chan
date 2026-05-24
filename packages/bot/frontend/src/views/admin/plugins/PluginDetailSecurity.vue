@@ -2,8 +2,8 @@
 import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@iconify/vue';
-import AppModal from '../../../components/AppModal.vue';
-import AppConfirmDialog from '../../../components/AppConfirmDialog.vue';
+import { AppModal } from '@karyl-chan/ui';
+import { AppConfirmDialog } from '@karyl-chan/ui';
 import { generatePluginSetupSecret, type PluginDetailRecord } from '../../../api/plugins';
 
 const props = defineProps<{

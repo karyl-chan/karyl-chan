@@ -5,8 +5,8 @@ import { animatedAvatarUrl, isAnimatedAvatar } from '../../../modules/discord-ch
 import { useUnreadStore } from '../../../modules/discord-chat/stores/unreadStore';
 import { useMuteStore } from '../../../modules/discord-chat/stores/muteStore';
 import { useUserProfileStore } from '../../../modules/discord-chat/stores/userProfileStore';
-import { useLongPress } from '../../../composables/use-long-press';
-import UnreadPill from '../../../components/UnreadPill.vue';
+import { useLongPress } from '@karyl-chan/ui';
+import { UnreadPill } from '@karyl-chan/ui';
 import type { DmChannelSummary } from '../../../api/dm';
 import type { GuildSummary } from '../../../api/guilds';
 import ModeSelect from './ModeSelect.vue';

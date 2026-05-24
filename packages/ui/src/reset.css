@@ -1,0 +1,53 @@
+/* @karyl-chan/ui — minimal reset + base typography.
+ * Import once from your app entry: `import "@karyl-chan/ui/reset.css"`.
+ * Pairs with tokens.css (provides --text / --bg-page / --link).
+ */
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    overflow: hidden;
+}
+
+body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans TC", sans-serif;
+    color: var(--text);
+    background: var(--bg-page);
+    font-size: 15px;
+    line-height: 1.5;
+    overflow: hidden;
+    overscroll-behavior: none;
+}
+
+h1, h2, h3, h4 {
+    margin-top: 0;
+    color: var(--text-strong);
+}
+
+a {
+    color: var(--link);
+}
+
+/* Ghost (outlined, transparent bg) button base — covers the 80% that
+   is identical across every usage site. Padding, font-size, and
+   border-radius are NOT set here because they differ per context;
+   each call site provides its own scoped override. */
+.btn-ghost {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text);
+    cursor: pointer;
+    font: inherit;
+}
+.btn-ghost:hover:not(:disabled) { background: var(--bg-surface-hover); }
+.btn-ghost:disabled { opacity: 0.5; cursor: default; }
+.btn-ghost.danger { color: var(--danger); border-color: rgba(239, 68, 68, 0.45); }
+.btn-ghost.danger:hover { background: rgba(239, 68, 68, 0.1); }

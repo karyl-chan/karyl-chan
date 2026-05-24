@@ -5,7 +5,7 @@ import DmWorkspace from './DmWorkspace.vue';
 import GuildWorkspace from './GuildWorkspace.vue';
 import type { GuildSummary } from '../../../api/guilds';
 import { useGuildListStore } from '../../../stores/guildListStore';
-import { useBreakpoint } from '../../../composables/use-breakpoint';
+import { useBreakpoint } from '@karyl-chan/ui';
 import { loadLastSurface } from '../../../modules/discord-chat/last-channel';
 
 const route = useRoute();

@@ -2,8 +2,8 @@
 import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { SidebarLayout } from '../../../layouts';
-import { useBreakpoint } from '../../../composables/use-breakpoint';
-import { useAppShell } from '../../../composables/use-app-shell';
+import { useBreakpoint } from '@karyl-chan/ui';
+import { useAppShell } from '@karyl-chan/ui';
 import { useCurrentUserStore } from '../../../stores/currentUserStore';
 import { hasAdminCapability } from '../../../libs/admin-capabilities';
 import BehaviorSidebar from './BehaviorSidebar.vue';

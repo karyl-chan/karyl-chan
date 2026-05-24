@@ -14,8 +14,8 @@ import {
     type GuildTextChannel
 } from '../../api/guilds';
 import { useI18n } from 'vue-i18n';
-import { useToastStore } from '../../stores/toastStore';
-import { useConfirm } from '../../composables/use-confirm';
+import { useToastStore } from '@karyl-chan/ui';
+import { useConfirm } from '@karyl-chan/ui';
 
 const { t: $t } = useI18n();
 const toast = useToastStore();

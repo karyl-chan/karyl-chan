@@ -9,7 +9,7 @@ import {
     type GuildSystemChannelFlagsPayload,
     type GuildVoiceCategory
 } from '../../../../api/guilds';
-import AppSelectField, { type SelectOption } from '../../../../components/AppSelectField.vue';
+import AppSelectField, { type SelectOption } from '@karyl-chan/ui';
 import { useI18n } from 'vue-i18n';
 
 const props = defineProps<{ guildId: string }>();

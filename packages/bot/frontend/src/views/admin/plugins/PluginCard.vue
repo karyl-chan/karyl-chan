@@ -3,8 +3,8 @@ import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@iconify/vue';
 import { RouterLink } from 'vue-router';
-import AppConfirmDialog from '../../../components/AppConfirmDialog.vue';
-import AppButton from '../../../components/AppButton.vue';
+import { AppConfirmDialog } from '@karyl-chan/ui';
+import { AppButton } from '@karyl-chan/ui';
 import {
     deletePlugin,
     getPluginConfig,

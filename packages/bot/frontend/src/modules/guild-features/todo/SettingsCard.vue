@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { addTodoChannel, removeTodoChannel, type GuildDetail } from '../../../api/guilds';
-import AppSelectField from '../../../components/AppSelectField.vue';
+import { AppSelectField } from '@karyl-chan/ui';
 import { useBotFeatureCard } from '../_shared/use-bot-feature-card';
 import { useChannelPicker } from '../_shared/use-feature-pickers';
 

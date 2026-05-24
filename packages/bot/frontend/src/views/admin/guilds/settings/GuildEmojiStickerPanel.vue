@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useConfirm } from '../../../../composables/use-confirm';
-import AppModal from '../../../../components/AppModal.vue';
+import { useConfirm } from '@karyl-chan/ui';
+import { AppModal } from '@karyl-chan/ui';
 import {
     createGuildEmoji,
     createGuildSticker,

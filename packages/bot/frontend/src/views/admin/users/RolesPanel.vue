@@ -13,9 +13,9 @@ import {
 } from '../../../api/admin';
 import { ApiError } from '../../../api/client';
 import { GLOBAL_CAPABILITY_KEYS, isBehaviorScopeToken, isPluginCapabilityToken } from '../../../libs/admin-capabilities';
-import AppModal from '../../../components/AppModal.vue';
+import { AppModal } from '@karyl-chan/ui';
 import RoleCapabilityModal from './RoleCapabilityModal.vue';
-import { useConfirm } from '../../../composables/use-confirm';
+import { useConfirm } from '@karyl-chan/ui';
 
 const props = defineProps<{
     roles: AdminRole[];

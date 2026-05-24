@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { Icon } from '@iconify/vue';
 import { useI18n } from 'vue-i18n';
-import AppTabs from '../../../components/AppTabs.vue';
+import { AppTabs } from '@karyl-chan/ui';
 import type { GuildSummary } from '../../../api/guilds';
 import { useGuildListStore } from '../../../stores/guildListStore';
 import {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount } from 'vue';
-import AppPopover from '../../components/AppPopover.vue';
+import { AppPopover } from '@karyl-chan/ui';
 import DiscordUserCard from './DiscordUserCard.vue';
 import { useUserProfileStore } from './stores/userProfileStore';
 

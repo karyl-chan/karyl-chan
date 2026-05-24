@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, shallowRef, watch } from 'vue';
 import { Icon } from '@iconify/vue';
-import AppPopover from '../../components/AppPopover.vue';
+import { AppPopover } from '@karyl-chan/ui';
 import MediaPickerPopover from './picker/MediaPickerPopover.vue';
 import type { MediaSelection } from './picker/MediaPicker.vue';
 import type { StickerRecent } from './picker/recents';

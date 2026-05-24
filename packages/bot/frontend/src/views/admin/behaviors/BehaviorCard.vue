@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useConfirm } from '../../../composables/use-confirm';
+import { useConfirm } from '@karyl-chan/ui';
 import { Icon } from '@iconify/vue';
-import AppMenu from '../../../components/AppMenu.vue';
-import AppMenuItem from '../../../components/AppMenuItem.vue';
-import AppSelectField from '../../../components/AppSelectField.vue';
+import { AppMenu } from '@karyl-chan/ui';
+import { AppMenuItem } from '@karyl-chan/ui';
+import { AppSelectField } from '@karyl-chan/ui';
 import BehaviorSourceNotice from './BehaviorSourceNotice.vue';
 import {
     type BehaviorRow,

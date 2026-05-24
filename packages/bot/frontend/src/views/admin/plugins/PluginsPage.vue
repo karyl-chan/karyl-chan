@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { Icon } from '@iconify/vue';
 import { deletePlugin, listPlugins, type PluginRecord } from '../../../api/plugins';
 import PluginCard from './PluginCard.vue';
-import AppConfirmDialog from '../../../components/AppConfirmDialog.vue';
+import { AppConfirmDialog } from '@karyl-chan/ui';
 import AddPluginModal from './AddPluginModal.vue';
 
 const { t } = useI18n();

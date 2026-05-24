@@ -20,8 +20,8 @@ export interface ContextMenuAction {
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, toRef, watch } from 'vue';
 import { Icon } from '@iconify/vue';
-import { useBreakpoint } from '../../composables/use-breakpoint';
-import { useDrawer } from '../../composables/use-drawer';
+import { useBreakpoint } from '@karyl-chan/ui';
+import { useDrawer } from '@karyl-chan/ui';
 
 const props = defineProps<{
     visible: boolean;

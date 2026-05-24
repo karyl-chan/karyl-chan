@@ -1,27 +1,18 @@
 <script setup lang="ts">
 /**
- * AppConfirmDialog — App-level generic confirmation dialog.
+ * AppConfirmDialog — generic confirmation dialog wrapping AppModal.
  *
- * Wraps AppModal and provides a consistent confirm/cancel UI pattern:
- *   - Desktop: centered card modal with `AppModal`'s default body padding
- *     (0.9rem 1rem 0.75rem). Content layout (flex-column, gap) is handled
- *     internally so callers only need to pass props.
- *   - Mobile: AppModal's bottom-drawer branch with the same default body
- *     padding. No separate logic needed — AppModal handles the breakpoint.
+ * `closeOnBackdrop` / `closeOnEscape` are automatically disabled when
+ * `loading` is true to prevent accidental dismissal during async work.
  *
- * `closeOnBackdrop` and `closeOnEscape` are automatically disabled when
- * `loading` is true to prevent accidental dismissal during async operations.
- *
- * Emits:
- *   - `close`   — user pressed Cancel or the backdrop/Escape
- *   - `confirm` — user pressed the primary action button
+ * Labels (`confirmLabel`, `cancelLabel`, `loadingLabel`) are passed in
+ * as props with English defaults — this component does not depend on
+ * vue-i18n. Consumers that need translation pass localized strings.
  */
-import { computed } from 'vue';
-import { useI18n } from 'vue-i18n';
 import { Icon } from '@iconify/vue';
 import AppModal from './AppModal.vue';
 
-const props = withDefaults(defineProps<{
+withDefaults(defineProps<{
     visible: boolean;
     title: string;
     message: string;
@@ -33,26 +24,23 @@ const props = withDefaults(defineProps<{
     error?: string;
     /** Extra status line, e.g. "Progress: 3 / 10" for batch operations. */
     progress?: string;
-    /** Override the cancel button label (defaults to common.cancel). */
+    /** Cancel button label. */
     cancelLabel?: string;
+    /** Label shown on the primary button while `loading`. */
+    loadingLabel?: string;
 }>(), {
     confirmVariant: 'primary',
     loading: false,
     error: undefined,
     progress: undefined,
-    cancelLabel: undefined,
+    cancelLabel: 'Cancel',
+    loadingLabel: 'Loading…',
 });
 
 const emit = defineEmits<{
     (e: 'close'): void;
     (e: 'confirm'): void;
 }>();
-
-const { t } = useI18n();
-
-const resolvedCancelLabel = computed(() =>
-    props.cancelLabel ?? t('common.cancel')
-);
 </script>
 
 <template>
@@ -74,7 +62,7 @@ const resolvedCancelLabel = computed(() =>
                     :disabled="loading"
                     @click="emit('close')"
                 >
-                    {{ resolvedCancelLabel }}
+                    {{ cancelLabel }}
                 </button>
                 <button
                     type="button"
@@ -89,7 +77,7 @@ const resolvedCancelLabel = computed(() =>
                         height="14"
                         class="acd-spin"
                     />
-                    {{ loading ? t('common.loading') : confirmLabel }}
+                    {{ loading ? loadingLabel : confirmLabel }}
                 </button>
             </div>
         </div>
@@ -98,8 +86,8 @@ const resolvedCancelLabel = computed(() =>
 
 <style scoped>
 /* Inner wrapper: provides padding + flex-column layout + gap.
-   AppModal's .app-modal-body/.app-modal-drawer-body are structural-only
-   (no padding), so each leaf component is responsible for its own spacing. */
+   AppModal's body slots are structural-only (no padding), so each leaf
+   component is responsible for its own spacing. */
 .acd-body {
     padding: 0.9rem 1rem 0.75rem;
     display: flex;
@@ -133,7 +121,6 @@ const resolvedCancelLabel = computed(() =>
     overflow: auto;
 }
 
-/* ── Actions footer ─────────────────────────────────────────────── */
 .acd-actions {
     display: flex;
     justify-content: flex-end;
@@ -142,7 +129,6 @@ const resolvedCancelLabel = computed(() =>
     border-top: 1px solid var(--border);
 }
 
-/* ── Buttons ────────────────────────────────────────────────────── */
 .acd-btn {
     display: inline-flex;
     align-items: center;

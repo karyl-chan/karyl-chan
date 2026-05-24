@@ -3,8 +3,8 @@ import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { GuildSummary } from '../../../api/guilds';
 import { useUnreadStore } from '../../../modules/discord-chat/stores/unreadStore';
-import AppSelect from '../../../components/AppSelect.vue';
-import UnreadPill from '../../../components/UnreadPill.vue';
+import { AppSelect } from '@karyl-chan/ui';
+import { UnreadPill } from '@karyl-chan/ui';
 import { Icon } from '@iconify/vue';
 
 const props = defineProps<{

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import AppModal from '../../../components/AppModal.vue';
-import AppButton from '../../../components/AppButton.vue';
-import AppSelectField from '../../../components/AppSelectField.vue';
+import { AppModal } from '@karyl-chan/ui';
+import { AppButton } from '@karyl-chan/ui';
+import { AppSelectField } from '@karyl-chan/ui';
 import { createScopeTab, type ScopeTabRow, type ScopeTabType } from '../../../api/behavior';
 
 const { t } = useI18n();
