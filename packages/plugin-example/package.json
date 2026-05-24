@@ -1,0 +1,48 @@
+{
+  "name": "@karyl-chan/plugin-example",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Reference karyl-chan plugin demonstrating manage UI, user-bound stateful webui session, and @karyl-chan/ui component showcase.",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite build && tsx watch src/index.ts",
+    "build": "rm -rf dist && vite build && tsc",
+    "build:ui": "vite build",
+    "build:server": "tsc",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit && vue-tsc --noEmit -p web/tsconfig.json"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@karyl-chan/plugin-sdk": "workspace:*",
+    "better-sqlite3": "^12.10.0",
+    "fastify": "^5.0.0"
+  },
+  "devDependencies": {
+    "@karyl-chan/ui": "workspace:*",
+    "@iconify/vue": "^5.0.0",
+    "@popperjs/core": "^2.11.8",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.0.0",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "@vue/tsconfig": "^0.7.0",
+    "nanoid": "^3.3.11",
+    "pinia": "^3.0.4",
+    "tsx": "^4.0.0",
+    "typescript": "^5.9.3",
+    "vite": "^6.0.7",
+    "vite-plugin-singlefile": "^2.0.3",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0",
+    "vue-tsc": "^2.2.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild"
+    ]
+  }
+}
