@@ -24,13 +24,7 @@ import { useRoute, useRouter, RouterLink, type LocationQueryRaw } from 'vue-rout
 import { Icon } from '@iconify/vue';
 import { useBreakpoint } from '../composables/use-breakpoint';
 import AppSelectField, { type SelectOption } from './AppSelectField.vue';
-
-export interface TabDef {
-    key: string;
-    label: string;
-    icon?: string;
-    disabled?: boolean;
-}
+import type { TabDef } from './tab-types';
 
 const props = withDefaults(defineProps<{
     modelValue: string;

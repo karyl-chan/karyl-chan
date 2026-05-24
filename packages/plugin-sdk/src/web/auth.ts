@@ -44,6 +44,7 @@ export interface AuthState {
    * Try to rotate a stale manage access token using its refresh half.
    * Mutates state on success. Returns true if the pair was refreshed —
    * callers (the api wrapper) should retry the original request once.
+   * Concurrent calls share a single in-flight `/refresh` round-trip.
    */
   tryRefresh(apiBase: string): Promise<boolean>;
   /** Drop both stores. */
@@ -52,8 +53,18 @@ export interface AuthState {
   loadStored(): AuthMode;
   /** Register a callback fired when the server returns 401/403. */
   onAccessDenied(handler: (message: string) => void): void;
-  /** Internal: fire the denied handler. */
-  _emitDenied(message: string): void;
+}
+
+/**
+ * The factory's return value: a public `state` (the API surface the SPA
+ * consumes) plus a package-internal `emitDenied` the api wrapper uses
+ * to fan denial signals into whatever subscribers the SPA registered
+ * via `state.onAccessDenied(...)`. Keeping `emitDenied` off `AuthState`
+ * means consumers can't accidentally fire it from view code.
+ */
+export interface AuthStateBundle {
+  state: AuthState;
+  emitDenied: (message: string) => void;
 }
 
 /**
@@ -66,7 +77,7 @@ export interface AuthState {
  * Pick a prefix unique per plugin (e.g. `karyl-radio` or `karyl-example`)
  * so two plugins sharing an origin don't trample each other.
  */
-export function createAuthState(storageKeyPrefix: string): AuthState {
+export function createAuthState(storageKeyPrefix: string): AuthStateBundle {
   const sessionKey = `${storageKeyPrefix}:session`;
   const manageKey = `${storageKeyPrefix}:manage`;
 
@@ -74,6 +85,10 @@ export function createAuthState(storageKeyPrefix: string): AuthState {
   let sessionToken: string | null = null;
   let manage: ManageTokens | null = null;
   let deniedHandler: ((message: string) => void) | null = null;
+  // De-duplicates concurrent 401-retry refreshes — two API calls that
+  // both 401 will share one /refresh round-trip instead of racing.
+  // Cleared as soon as the in-flight promise settles.
+  let refreshInFlight: Promise<boolean> | null = null;
 
   function bearerToken(): string | null {
     if (mode === "session") return sessionToken;
@@ -101,19 +116,26 @@ export function createAuthState(storageKeyPrefix: string): AuthState {
   async function tryRefresh(apiBase: string): Promise<boolean> {
     if (mode !== "manage" || !manage) return false;
     if (manage.refreshExpiresAt <= Date.now()) return false;
-    try {
-      const res = await fetch(`${apiBase}/api/manage/refresh`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refreshToken: manage.refreshToken }),
-      });
-      if (!res.ok) return false;
-      const next = (await res.json()) as ManageTokens;
-      setManageTokens(next);
-      return true;
-    } catch {
-      return false;
-    }
+    if (refreshInFlight) return refreshInFlight;
+    const refreshToken = manage.refreshToken;
+    refreshInFlight = (async () => {
+      try {
+        const res = await fetch(`${apiBase}/api/manage/refresh`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refreshToken }),
+        });
+        if (!res.ok) return false;
+        const next = (await res.json()) as ManageTokens;
+        setManageTokens(next);
+        return true;
+      } catch {
+        return false;
+      } finally {
+        refreshInFlight = null;
+      }
+    })();
+    return refreshInFlight;
   }
 
   function clear(): void {
@@ -155,7 +177,7 @@ export function createAuthState(storageKeyPrefix: string): AuthState {
     return "none";
   }
 
-  return {
+  const state: AuthState = {
     getMode: () => mode,
     bearerToken,
     setSessionToken,
@@ -168,7 +190,10 @@ export function createAuthState(storageKeyPrefix: string): AuthState {
     onAccessDenied(handler) {
       deniedHandler = handler;
     },
-    _emitDenied(message) {
+  };
+  return {
+    state,
+    emitDenied(message) {
       deniedHandler?.(message);
     },
   };

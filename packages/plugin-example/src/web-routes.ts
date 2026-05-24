@@ -268,7 +268,19 @@ export async function registerWebRoutes(
         authorName,
         content,
       };
-      publish(channelId, event);
+      // Discord already received the message — if the local fan-out
+      // throws (corrupted history state, etc.) we still want the SPA
+      // to see a 2xx so its optimistic echo stays put. The downstream
+      // MESSAGE_CREATE relay from the bot will rehydrate the channel
+      // history on next reconnect.
+      try {
+        publish(channelId, event);
+      } catch (err) {
+        request.log.error(
+          { err, channelId },
+          "chat publish failed after Discord send",
+        );
+      }
       return { ok: true, event };
     },
   );

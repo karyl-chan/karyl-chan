@@ -27,13 +27,17 @@ export interface PluginApi {
 export interface PluginApiOptions {
   /** Plugin's HTTP origin + base path (see `./plugin-base` `API_BASE`). */
   apiBase: string;
-  /** Backing auth state (created by `createAuthState`). */
+  /** Backing auth state (the `state` half of `createAuthState`'s return). */
   auth: AuthState;
+  /** Fires whenever the server returns 401/403 — the `emitDenied` half
+   *  of `createAuthState`'s return. */
+  emitDenied: (message: string) => void;
 }
 
 async function handleResponse<T>(
   res: Response,
   auth: AuthState,
+  emitDenied: (message: string) => void,
 ): Promise<T> {
   if (res.status === 401 || res.status === 403) {
     const body = await res.json().catch(() => ({ error: "Access denied" }));
@@ -42,7 +46,7 @@ async function handleResponse<T>(
         ? body.error
         : null) ?? "Access denied";
     auth.clear();
-    auth._emitDenied(msg);
+    emitDenied(msg);
     throw new Error(msg);
   }
   if (!res.ok) {
@@ -58,7 +62,7 @@ async function handleResponse<T>(
 }
 
 export function createPluginApi(opts: PluginApiOptions): PluginApi {
-  const { apiBase, auth } = opts;
+  const { apiBase, auth, emitDenied } = opts;
 
   function buildInit(method: string, body: unknown | undefined): RequestInit {
     const headers: Record<string, string> = {
@@ -85,7 +89,7 @@ export function createPluginApi(opts: PluginApiOptions): PluginApi {
     ) {
       res = await fetch(apiBase + path, buildInit(method, body));
     }
-    return handleResponse<T>(res, auth);
+    return handleResponse<T>(res, auth, emitDenied);
   }
 
   async function upload<T>(
@@ -111,7 +115,7 @@ export function createPluginApi(opts: PluginApiOptions): PluginApi {
     ) {
       res = await send();
     }
-    return handleResponse<T>(res, auth);
+    return handleResponse<T>(res, auth, emitDenied);
   }
 
   return { request, upload };

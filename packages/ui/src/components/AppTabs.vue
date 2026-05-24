@@ -3,6 +3,9 @@ import { computed } from 'vue';
 import { Icon } from '@iconify/vue';
 import { useBreakpoint } from '../composables/use-breakpoint';
 import AppSelectField, { type SelectOption } from './AppSelectField.vue';
+import type { TabDef } from './tab-types';
+
+export type { TabDef };
 
 /**
  * AppTabs — two-level tab strip with viewport-aware fallback. NO
@@ -22,14 +25,6 @@ import AppSelectField, { type SelectOption } from './AppSelectField.vue';
  * `AppTabsRouted` from this package (a thin wrapper that adds
  * `vue-router` integration on top).
  */
-export interface TabDef {
-    key: string;
-    label: string;
-    /** Optional iconify icon name shown next to the label. */
-    icon?: string;
-    disabled?: boolean;
-}
-
 const props = withDefaults(defineProps<{
     modelValue: string;
     tabs: TabDef[];

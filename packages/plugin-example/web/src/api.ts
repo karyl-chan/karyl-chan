@@ -13,8 +13,13 @@ import {
   type SseChannel,
 } from "@karyl-chan/plugin-sdk/web";
 
-export const auth: AuthState = createAuthState("karyl-example");
-const api: PluginApi = createPluginApi({ apiBase: API_BASE, auth });
+const bundle = createAuthState("karyl-example");
+export const auth: AuthState = bundle.state;
+const api: PluginApi = createPluginApi({
+  apiBase: API_BASE,
+  auth,
+  emitDenied: bundle.emitDenied,
+});
 
 // Re-export the API base so views can build asset URLs directly when
 // needed (none currently, but it's a stable hook for future use).

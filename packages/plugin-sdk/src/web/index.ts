@@ -16,7 +16,12 @@ export {
   createAuthState,
   exchangeManageJwt,
 } from "./auth";
-export type { AuthMode, AuthState, ManageTokens } from "./auth";
+export type {
+  AuthMode,
+  AuthState,
+  AuthStateBundle,
+  ManageTokens,
+} from "./auth";
 export { createPluginApi } from "./api";
 export type { PluginApi, PluginApiOptions } from "./api";
 export { openSseChannel } from "./sse";

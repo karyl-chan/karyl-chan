@@ -113,6 +113,21 @@ export function openSseChannel<T = unknown>(
     void tick();
   }
 
+  function scheduleReconnect(): void {
+    if (disposed) return;
+    errors += 1;
+    if (errors >= giveUpAfterErrors) {
+      onGiveUp?.();
+      if (poll) void startPolling();
+      else onDenied?.();
+      return;
+    }
+    retryTimer = window.setTimeout(() => {
+      retryTimer = null;
+      void connect();
+    }, retryBackoffMs);
+  }
+
   async function connect(): Promise<void> {
     if (disposed) return;
     let ticket: string | null;
@@ -123,7 +138,15 @@ export function openSseChannel<T = unknown>(
     }
     if (disposed) return;
     if (!ticket) {
-      onDenied?.();
+      // Could be a transient network failure (the bot's plugin-proxy
+      // recreate window is a known ECONNREFUSED gap) or an auth
+      // rejection — `createPluginApi`'s 401/403 handler already cleared
+      // auth and fired the SPA's denied path before throwing here. We
+      // treat both the same: retry up to `giveUpAfterErrors`, then call
+      // `onGiveUp` (or `onDenied` as a last resort). Firing `onDenied`
+      // immediately would permanently bounce SPAs into a denied state
+      // on the first reconnect during a 30 s plugin restart.
+      scheduleReconnect();
       return;
     }
     const sep = url.includes("?") ? "&" : "?";
@@ -142,22 +165,21 @@ export function openSseChannel<T = unknown>(
     });
 
     es.onopen = () => {
+      // A healthy connection counts as recovery — without this, a quiet
+      // channel that reconnects every 30s (bot reverse-proxy timeout)
+      // but receives no data-bearing frames between reconnects burns
+      // through `giveUpAfterErrors` and falls to polling. The named
+      // `eventName` listener doesn't fire on `: ping` keepalive
+      // comments, so the previous reset path was unreachable on idle
+      // channels.
+      errors = 0;
       onOpen?.();
     };
 
     es.onerror = () => {
       if (disposed) return;
       closeEs();
-      errors += 1;
-      if (errors >= giveUpAfterErrors) {
-        onGiveUp?.();
-        if (poll) void startPolling();
-        return;
-      }
-      retryTimer = window.setTimeout(() => {
-        retryTimer = null;
-        void connect();
-      }, retryBackoffMs);
+      scheduleReconnect();
     };
   }
 
