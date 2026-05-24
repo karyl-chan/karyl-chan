@@ -223,7 +223,16 @@ export const plugin = definePlugin({
   description:
     "Reference plugin demonstrating manage UI, user-bound chat, sticky notes, and component showcase.",
 
-  rpcMethodsUsed: ["auth.session", "messages.send", "members.get"],
+  rpcMethodsUsed: [
+    // Required by every command handler that returns a reply — the SDK
+    // POSTs the reply back through this endpoint to edit Discord's
+    // deferred ack. Without the scope the bot returns 403 and the
+    // Discord interaction stays stuck on "thinking…".
+    "interactions.respond",
+    "auth.session",
+    "messages.send",
+    "members.get",
+  ],
 
   capabilities: [
     definePluginCapability({
