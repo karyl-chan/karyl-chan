@@ -589,7 +589,24 @@ async function run() {
     });
     log.info({ port: webPort, host: webHost }, "web server listening");
 
-    await bot.login(config.bot.token);
+    // Local-only escape hatch — when set, start the web server + plugin
+    // lifecycle but skip the Discord gateway. The intended use is
+    // driving the admin webui locally against a shared dev DB without
+    // fighting a running prod bot for the gateway session (two clients
+    // on the same BOT_TOKEN bump each other off). Hard-gated on
+    // non-production so a stray prod env can never silently disable
+    // Discord — `config.env === "production"` already requires the
+    // explicit NODE_ENV=production set by the deploy pipeline.
+    const skipDiscord =
+      config.env !== "production" &&
+      process.env.BOT_SKIP_DISCORD === "true";
+    if (skipDiscord) {
+      log.warn(
+        "BOT_SKIP_DISCORD=true — skipping Discord gateway login (dev only)",
+      );
+    } else {
+      await bot.login(config.bot.token);
+    }
   } catch (ex) {
     log.error({ err: ex }, "startup failed");
     const errorType = ex instanceof Error ? ex.constructor.name : "unknown";
