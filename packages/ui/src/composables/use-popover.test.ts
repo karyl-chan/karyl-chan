@@ -171,7 +171,7 @@ describe('createPopover — updateReference no longer leaks transitionend listen
         inst.updateReference(ref2);
 
         const transitionendCalls = addSpy.mock.calls.filter(
-            (args) => args[0] === 'transitionend',
+            (args: unknown[]) => args[0] === 'transitionend',
         );
         expect(transitionendCalls).toHaveLength(0);
 

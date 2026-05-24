@@ -30,7 +30,12 @@ export { default as GlobalConfirmDialog } from "./components/GlobalConfirmDialog
 export { default as UnreadPill } from "./components/UnreadPill.vue";
 
 // ── Composables ──────────────────────────────────────────────────────────
-export { useAppShell, provideAppShell } from "./composables/use-app-shell";
+export {
+  useAppShell,
+  provideAppShell,
+  useFlushMain,
+  useOverlayExtras,
+} from "./composables/use-app-shell";
 export type { AppShellContext, OverlayView } from "./composables/use-app-shell";
 export { useBreakpoint } from "./composables/use-breakpoint";
 export { useClickOutsideStack } from "./composables/use-click-outside-stack";

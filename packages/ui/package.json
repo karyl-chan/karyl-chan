@@ -24,18 +24,25 @@
     "@popperjs/core": ">=2",
     "nanoid": ">=3",
     "pinia": ">=3",
-    "vue": ">=3.5"
+    "vue": ">=3.5",
+    "vue-router": ">=4"
   },
   "peerDependenciesMeta": {
-    "@iconify/vue": { "optional": false },
-    "@popperjs/core": { "optional": false },
-    "nanoid": { "optional": false },
-    "pinia": { "optional": false },
-    "vue": { "optional": false }
+    "vue-router": { "optional": true }
   },
   "devDependencies": {
+    "@iconify/vue": "^5.0.0",
+    "@popperjs/core": "^2.11.8",
+    "@vue/test-utils": "^2.4.8",
     "@vue/tsconfig": "^0.7.0",
+    "jsdom": "^29.0.2",
+    "nanoid": "^3.3.11",
+    "pinia": "^3.0.4",
     "typescript": "^5.9.3",
+    "vite": "^6.0.7",
+    "vitest": "^4.1.5",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0",
     "vue-tsc": "^2.2.0"
   }
 }

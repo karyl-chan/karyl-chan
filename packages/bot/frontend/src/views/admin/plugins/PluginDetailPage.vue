@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue';
 import { useRoute, RouterLink } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@iconify/vue';
-import AppTabs, { type TabDef } from '@karyl-chan/ui';
+import { AppTabs, type TabDef } from '@karyl-chan/ui';
 import PluginDetailOverview from './PluginDetailOverview.vue';
 import PluginDetailCommands from './PluginDetailCommands.vue';
 import PluginDetailFeatures from './PluginDetailFeatures.vue';

@@ -6,7 +6,8 @@
     "moduleResolution": "Bundler",
     "strict": true,
     "noEmit": true,
-    "jsx": "preserve"
+    "jsx": "preserve",
+    "types": ["vite/client"]
   },
   "include": ["src/**/*.ts", "src/**/*.vue"]
 }

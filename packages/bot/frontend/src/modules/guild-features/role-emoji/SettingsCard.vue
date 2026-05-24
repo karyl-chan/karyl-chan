@@ -10,7 +10,7 @@ import {
     setRoleReceiveMessageGroup,
     type GuildDetail
 } from '../../../api/guilds';
-import AppSelectField, { type SelectOption } from '@karyl-chan/ui';
+import { AppSelectField, type SelectOption } from '@karyl-chan/ui';
 import { useBotFeatureCard } from '../_shared/use-bot-feature-card';
 import { useChannelPicker, useRolePicker } from '../_shared/use-feature-pickers';
 

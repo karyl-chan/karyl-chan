@@ -2,7 +2,7 @@
 import { computed, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { AppModal } from '@karyl-chan/ui';
-import AppSelectField, { type SelectOption } from '@karyl-chan/ui';
+import { AppSelectField, type SelectOption } from '@karyl-chan/ui';
 import type { AutoModRule, AutoModRulePayload } from '../../../../api/guilds';
 
 const props = defineProps<{

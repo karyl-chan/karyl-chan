@@ -60,13 +60,8 @@ const fieldValue = ref<string>("");
 const tab = ref("first");
 const subTab = ref("a");
 
-// Draggable demo
-const items = ref([
-  { id: 1, label: "First" },
-  { id: 2, label: "Second" },
-  { id: 3, label: "Third" },
-  { id: 4, label: "Fourth" },
-]);
+// Draggable demo — single draggable element constrained to its parent.
+const dragBoundsRef = ref<HTMLElement | null>(null);
 
 function triggerGlobalConfirm() {
   confirm({
@@ -249,13 +244,16 @@ function onInlineClose() {
 
     <section>
       <h2>Draggable</h2>
-      <p class="hint">Reorderable list with pointer / touch / keyboard support.</p>
-      <Draggable v-model:items="items">
-        <template #default="{ item }">
-          <div class="drag-row">{{ item.label }}</div>
-        </template>
-      </Draggable>
-      <p class="result">Order: {{ items.map(i => i.id).join(", ") }}</p>
+      <p class="hint">
+        Makes a single element user-draggable within a bounding box.
+        The bot frontend uses it for the mobile FAB. Try dragging
+        the chip around inside the dotted box below.
+      </p>
+      <div ref="dragBoundsRef" class="drag-bounds">
+        <Draggable :bounds="dragBoundsRef" :boundary-padding="6">
+          <div class="drag-chip">Drag me</div>
+        </Draggable>
+      </div>
     </section>
 
     <section>
@@ -362,11 +360,23 @@ section h2 {
   padding: 0.7rem 0;
   color: var(--text);
 }
-.drag-row {
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
+.drag-bounds {
+  position: relative;
+  height: 220px;
+  border: 1px dashed var(--border-strong);
   border-radius: var(--radius-base);
-  padding: 0.5rem 0.75rem;
-  margin: 0.25rem 0;
+  background: var(--bg-surface-2);
 }
+.drag-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.4rem 0.8rem;
+  background: var(--accent);
+  color: var(--text-on-accent);
+  border-radius: var(--radius-pill);
+  font-size: 0.85rem;
+  cursor: grab;
+  user-select: none;
+}
+.drag-chip:active { cursor: grabbing; }
 </style>

@@ -3,7 +3,7 @@ import { computed, reactive, ref, watch } from 'vue';
 import { useGuildSettings } from './use-guild-settings';
 import { setGuildMfaLevel, type GuildSettings } from '../../../../api/guilds';
 import { useApiError } from '../../../../composables/use-api-error';
-import AppSelectField, { type SelectOption } from '@karyl-chan/ui';
+import { AppSelectField, type SelectOption } from '@karyl-chan/ui';
 import { useI18n } from 'vue-i18n';
 
 const props = defineProps<{ guildId: string }>();

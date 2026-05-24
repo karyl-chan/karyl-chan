@@ -11,7 +11,7 @@ import {
 } from '../../../api/admin';
 import { ApiError } from '../../../api/client';
 import { AppModal } from '@karyl-chan/ui';
-import AppSelectField, { type SelectOption } from '@karyl-chan/ui';
+import { AppSelectField, type SelectOption } from '@karyl-chan/ui';
 import { AppButton } from '@karyl-chan/ui';
 import { useConfirm } from '@karyl-chan/ui';
 

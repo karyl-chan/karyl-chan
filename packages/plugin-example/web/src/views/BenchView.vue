@@ -41,9 +41,8 @@ const popTriggerA = ref<HTMLElement | null>(null);
 const popTriggerB = ref<HTMLElement | null>(null);
 
 // ── Draggable ────────────────────────────────────────────────────────
-const dragItems = ref(
-  Array.from({ length: 50 }, (_, i) => ({ id: i + 1, label: `Item #${i + 1}` })),
-);
+const dragBoundsRef = ref<HTMLElement | null>(null);
+const dragChips = ref(Array.from({ length: 12 }, (_, i) => i + 1));
 
 const renderSummary = computed(() =>
   renderMs.value === null ? "—" : `${rows.value.length} rows in ${renderMs.value.toFixed(1)} ms`,
@@ -109,16 +108,26 @@ const renderSummary = computed(() =>
     </section>
 
     <section>
-      <h2>Large Draggable (50 items)</h2>
-      <Draggable v-model:items="dragItems">
-        <template #default="{ item }">
-          <div class="drag-row">{{ item.label }}</div>
-        </template>
-      </Draggable>
+      <h2>Concurrent Draggables (12 chips)</h2>
+      <p class="hint">
+        Twelve independent Draggable elements sharing one bounds element.
+        Pointer-capture / boundary clamping should not interfere across
+        instances.
+      </p>
+      <div ref="dragBoundsRef" class="drag-bounds">
+        <Draggable
+          v-for="n in dragChips"
+          :key="n"
+          :bounds="dragBoundsRef"
+          :boundary-padding="4"
+          class="bench-chip-wrap"
+        >
+          <div class="bench-chip">{{ n }}</div>
+        </Draggable>
+      </div>
       <p class="result">
-        After dragging:
-        <AppButton size="sm" variant="ghost" @click="toast.show(dragItems.map(i => i.id).join(' '), 'info')">
-          Toast current order
+        <AppButton size="sm" variant="ghost" @click="toast.show('All chips intact', 'info')">
+          Toast
         </AppButton>
       </p>
     </section>
@@ -215,12 +224,28 @@ section h2 {
   font-size: 0.85rem;
   color: var(--text);
 }
-.drag-row {
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
+.drag-bounds {
+  position: relative;
+  height: 280px;
+  border: 1px dashed var(--border-strong);
   border-radius: var(--radius-base);
-  padding: 0.4rem 0.7rem;
-  margin: 0.2rem 0;
-  font-size: 0.9rem;
+  background: var(--bg-surface-2);
+  overflow: hidden;
 }
+.bench-chip-wrap { position: absolute; }
+.bench-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  background: var(--accent);
+  color: var(--text-on-accent);
+  border-radius: var(--radius-pill);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: grab;
+  user-select: none;
+}
+.bench-chip:active { cursor: grabbing; }
 </style>
