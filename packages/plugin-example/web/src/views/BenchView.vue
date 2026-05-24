@@ -86,7 +86,7 @@ const renderSummary = computed(() =>
         <AppButton @click="modalB = true">Open modal B</AppButton>
         <AppPopover v-model:open="popOpenA">
           <template #trigger>
-            <button type="button" class="anchor" @click="popOpenA = !popOpenA">
+            <button type="button" class="anchor">
               {{ popOpenA ? 'Close popover A' : 'Open popover A' }}
             </button>
           </template>
@@ -94,7 +94,7 @@ const renderSummary = computed(() =>
         </AppPopover>
         <AppPopover v-model:open="popOpenB">
           <template #trigger>
-            <button type="button" class="anchor" @click="popOpenB = !popOpenB">
+            <button type="button" class="anchor">
               {{ popOpenB ? 'Close popover B' : 'Open popover B' }}
             </button>
           </template>

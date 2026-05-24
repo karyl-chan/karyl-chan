@@ -195,7 +195,10 @@ function onInlineClose() {
       </p>
       <AppPopover v-model:open="popoverOpen">
         <template #trigger>
-          <button type="button" class="anchor" @click="popoverOpen = !popoverOpen">
+          <!-- The trigger slot's wrapper handles click → toggle internally.
+               Don't add another click handler here or it'll double-toggle
+               (open → bubble → close on the same click). -->
+          <button type="button" class="anchor">
             {{ popoverOpen ? 'Close popover' : 'Open popover' }}
           </button>
         </template>
