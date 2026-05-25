@@ -23,6 +23,9 @@ import {
   AppTabs,
   Draggable,
   UnreadPill,
+  UserAvatar,
+  UserCard,
+  UserItem,
   useConfirm,
   useToastStore,
 } from "@karyl-chan/ui";
@@ -61,6 +64,24 @@ const subTab = ref("a");
 
 // Draggable demo — single draggable element constrained to its parent.
 const dragBoundsRef = ref<HTMLElement | null>(null);
+
+// User-component demo data. The catalog visuals use a real still
+// Discord avatar so the circles aren't broken images. Animation
+// itself only fires when (a) the URL hash starts with `a_` (Discord
+// Nitro marker) and (b) the consumer set `animate` to hover/always —
+// at which point UserAvatar appends `&animated=true` and the Discord
+// CDN returns the animated frame. We can't fake that in a static
+// catalog, so wire against `/api/plugin/members.get` data to see it
+// live. The hover-mode URL swap is still observable in DevTools' network panel.
+const demoAvatarStill =
+  "https://cdn.discordapp.com/embed/avatars/1.png";
+// Synthetic `a_` URL — exercises the isAnimatedAvatar regex so you can
+// see the `&animated=true` swap in DevTools, even though this fake
+// hash itself 404s (UserAvatar falls back to the letter initial).
+const demoAvatarAnimated =
+  "https://cdn.discordapp.com/avatars/1036284805492523149/a_synthetic_demo_hash.webp?size=128";
+const demoBannerAnimated =
+  "https://cdn.discordapp.com/banners/1036284805492523149/a_synthetic_demo_banner.webp?size=512";
 
 function triggerGlobalConfirm() {
   confirm({
@@ -273,6 +294,133 @@ function onInlineClose() {
     </section>
 
     <section>
+      <h2>UserAvatar</h2>
+      <p class="hint">
+        Circular avatar with letter-initial fallback. The animate prop
+        picks when to swap the Discord CDN URL to its animated variant
+        (auto-detected via the <code>a_</code> hash prefix).
+      </p>
+      <div class="row" style="align-items:center;">
+        <UserAvatar :src="demoAvatarStill" name="Karyl" :size="40" animate="never" />
+        <UserAvatar :src="demoAvatarAnimated" name="Karyl" :size="40" animate="hover" />
+        <UserAvatar :src="demoAvatarAnimated" name="Karyl" :size="56" animate="always" />
+        <UserAvatar :src="null" name="Miles" :size="40" />
+        <UserAvatar :src="null" name="無名" :size="56" />
+      </div>
+      <p class="result">
+        Hover the second avatar to swap to its animated frame. The third
+        is always-animated. The last two are letter fallbacks (ASCII +
+        CJK first-grapheme).
+      </p>
+    </section>
+
+    <section>
+      <h2>UserItem</h2>
+      <p class="hint">
+        Compact row with avatar, primary + secondary text, and a
+        <code>#trailing</code> slot for timestamps / unread counts /
+        actions. Avatar defaults to hover-animation.
+      </p>
+      <div class="userlist">
+        <UserItem
+          name="Karyl"
+          subtitle="@karyl_bot · last seen 5m ago"
+          :avatar-url="demoAvatarAnimated"
+          is-bot
+          interactive
+          @click="toast.show('Selected Karyl', 'info')"
+        >
+          <template #trailing>
+            <UnreadPill :count="12" />
+          </template>
+        </UserItem>
+        <UserItem
+          name="Miles"
+          subtitle="online"
+          :avatar-url="null"
+          interactive
+          active
+          @click="toast.show('Already active', 'info')"
+        >
+          <template #trailing>
+            <span>2m</span>
+          </template>
+        </UserItem>
+        <UserItem
+          name="Disabled User"
+          subtitle="banned · cannot DM"
+          :avatar-url="null"
+          interactive
+          disabled
+        />
+      </div>
+    </section>
+
+    <section>
+      <h2>UserCard</h2>
+      <p class="hint">
+        Profile card with banner, animated avatar, and slot-driven
+        facts / actions. Pure presentation — caller supplies all data.
+      </p>
+      <div class="row" style="flex-wrap:wrap;">
+        <UserCard
+          name="Karyl"
+          nickname="Bot Operator"
+          username="karyl_bot"
+          discriminator="0001"
+          :avatar-url="demoAvatarAnimated"
+          :banner-url="demoBannerAnimated"
+          is-bot
+        >
+          <template #facts>
+            <dl class="facts">
+              <dt>ID</dt>
+              <dd><code>1036284805492523149</code></dd>
+              <dt>Roles</dt>
+              <dd class="roles">
+                <span class="role-chip">
+                  <span class="role-dot" style="background:#5865f2;"></span>
+                  Admin
+                </span>
+                <span class="role-chip">
+                  <span class="role-dot" style="background:#23a559;"></span>
+                  Moderator
+                </span>
+              </dd>
+            </dl>
+          </template>
+          <template #actions>
+            <AppButton variant="primary" size="sm" @click="toast.show('Sent DM', 'info')">
+              Send DM
+            </AppButton>
+            <AppButton variant="ghost" size="sm" @click="toast.show('Copied id', 'info')">
+              Copy ID
+            </AppButton>
+          </template>
+        </UserCard>
+
+        <UserCard
+          name="No Banner"
+          username="some_user"
+          :avatar-url="null"
+          :accent-color="0x73a936"
+        >
+          <template #facts>
+            <dl class="facts">
+              <dt>Joined</dt>
+              <dd>2026-04-01</dd>
+            </dl>
+          </template>
+        </UserCard>
+
+        <UserCard
+          name="Loading…"
+          loading
+        />
+      </div>
+    </section>
+
+    <section>
       <h2>UnreadPill</h2>
       <p class="hint">Tiny count badge.</p>
       <div class="row" style="align-items:center;">
@@ -376,6 +524,62 @@ section h2 {
   padding: 0.7rem 0;
   color: var(--text);
 }
+.userlist {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  max-width: 360px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-base);
+  padding: 0.3rem;
+  background: var(--bg-surface);
+}
+.facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 0.6rem;
+  margin: 0;
+  font-size: 0.82rem;
+}
+.facts dt {
+  color: var(--text-muted);
+  align-self: baseline;
+}
+.facts dd {
+  margin: 0;
+  min-width: 0;
+}
+.facts code {
+  font-size: 0.78rem;
+  word-break: break-all;
+  background: var(--code-bg);
+  padding: 0 0.3rem;
+  border-radius: 3px;
+}
+.roles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+.role-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.1rem 0.5rem 0.1rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  font-size: 0.72rem;
+  color: var(--text);
+  background: var(--bg-surface-2);
+}
+.role-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
 .drag-bounds {
   position: relative;
   height: 220px;

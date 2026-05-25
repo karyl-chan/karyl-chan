@@ -28,6 +28,16 @@ export { default as AppToast } from "./components/AppToast.vue";
 export { default as Draggable } from "./components/Draggable.vue";
 export { default as GlobalConfirmDialog } from "./components/GlobalConfirmDialog.vue";
 export { default as UnreadPill } from "./components/UnreadPill.vue";
+export { default as UserAvatar } from "./components/UserAvatar.vue";
+export { default as UserCard } from "./components/UserCard.vue";
+export { default as UserItem } from "./components/UserItem.vue";
+
+// ── Lib helpers ──────────────────────────────────────────────────────────
+export {
+  isAnimatedAvatar,
+  isAnimatedBanner,
+  animatedAvatarUrl,
+} from "./lib/avatar";
 
 // ── Composables ──────────────────────────────────────────────────────────
 export {
