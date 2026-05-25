@@ -267,8 +267,23 @@ function normalizeModalReply(reply: ModalReply): {
 }
 
 export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
-  const commandMap = new Map<string, PluginCommandDefinition["handler"]>(
-    (opts.pluginCommands ?? []).map((cmd) => [cmd.name, cmd.handler]),
+  // Map carries both the handler and responseKind so the dispatcher
+  // can detect "modal-declared command returned without calling
+  // sendModal" — that scenario is silent-fail today (Discord's 3-s
+  // window expires and the user sees "interaction failed" with no
+  // bot-side trace). We surface it as a warn-level log so operators
+  // can spot the misconfiguration.
+  const commandMap = new Map<
+    string,
+    {
+      handler: PluginCommandDefinition["handler"];
+      responseKind: "deferred" | "modal";
+    }
+  >(
+    (opts.pluginCommands ?? []).map((cmd) => [
+      cmd.name,
+      { handler: cmd.handler, responseKind: cmd.responseKind ?? "deferred" },
+    ]),
   );
 
   // componentId → handler
@@ -339,8 +354,8 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
       if (!token) return reply.code(200).send({ ok: true });
       reply.code(204).send();
 
-      const handler = commandMap.get(payload.command_name);
-      if (!handler) {
+      const entry = commandMap.get(payload.command_name);
+      if (!entry) {
         await respondToInteraction(
           server.log,
           opts.botUrl,
@@ -352,6 +367,7 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
         );
         return;
       }
+      const { handler, responseKind: commandResponseKind } = entry;
 
       const capabilities = Array.isArray(payload.member?.capabilities)
         ? payload.member!.capabilities!.filter(
@@ -428,6 +444,18 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
           }
           return;
         }
+        if (commandResponseKind === "modal") {
+          // Handler returned without opening a modal even though the
+          // manifest declared `response_kind: "modal"`. The bot did
+          // NOT defer (Discord rejects modal-after-defer), so calling
+          // interactions.respond below would 404. Surface the misuse
+          // as a warning rather than letting Discord just time out.
+          server.log.warn(
+            { commandName: payload.command_name },
+            "command declares response_kind='modal' but handler returned without calling ctx.sendModal — interaction will expire",
+          );
+          return;
+        }
         const { content, ephemeral, embeds, components, attachments, flags } =
           normalizeReply(rawReply);
         await respondToInteraction(
@@ -444,7 +472,11 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
         );
       } catch (err) {
         server.log.error({ err }, "command handler threw");
-        if (!modalSent) {
+        // Skip the post-throw error reply when:
+        //  - the modal was already sent (no editable deferred reply)
+        //  - the command declared response_kind:"modal" so the bot
+        //    didn't defer; respond would 404 against the dead token
+        if (!modalSent && commandResponseKind !== "modal") {
           await respondToInteraction(
             server.log,
             opts.botUrl,

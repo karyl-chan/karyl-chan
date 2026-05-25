@@ -2,7 +2,6 @@ import { config } from "../../config.js";
 import type {
   ButtonInteraction,
   AnySelectMenuInteraction,
-  GuildMember,
 } from "discord.js";
 import { findPluginByKey, type PluginRow } from "./models/plugin.model.js";
 import type { PluginManifest } from "./plugin-registry.service.js";
@@ -221,8 +220,16 @@ export async function dispatchComponentToPlugin(
       ? {
           permissions:
             interaction.memberPermissions?.bitfield.toString() ?? null,
+          // Duck-typed cast — `interaction.member` is `GuildMember | APIInteractionGuildMember`;
+          // only the cached `GuildMember` branch has `.voice`. The API
+          // shape has no voice info at all, so the `?.` keeps it null
+          // when the interaction's member came from the uncached path.
           voice_channel_id:
-            (interaction.member as GuildMember).voice?.channelId ?? null,
+            (
+              interaction.member as unknown as {
+                voice?: { channelId?: string | null };
+              }
+            ).voice?.channelId ?? null,
           capabilities: pluginCaps,
         }
       : null,

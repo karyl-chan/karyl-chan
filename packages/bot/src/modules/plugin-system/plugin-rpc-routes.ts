@@ -1235,6 +1235,9 @@ export async function registerPluginRpcRoutes(
     const components = Array.isArray(body.components)
       ? body.components
       : undefined;
+    // safeAllowedMentions always returns a non-null object — `{parse:[]}`
+    // when the caller passed nothing or something invalid. So this is
+    // unconditional rather than the dead ternary the first draft had.
     const allowedMentions = safeAllowedMentions(body.allowed_mentions);
     try {
       await bot.rest.patch(
@@ -1248,9 +1251,7 @@ export async function registerPluginRpcRoutes(
             ...(content !== undefined ? { content } : {}),
             ...(embeds !== undefined ? { embeds } : {}),
             ...(components !== undefined ? { components } : {}),
-            ...(allowedMentions
-              ? { allowed_mentions: allowedMentions }
-              : { allowed_mentions: { parse: [] } }),
+            allowed_mentions: allowedMentions,
           },
         },
       );
