@@ -13,6 +13,23 @@ import type {
 } from "./plugin.js";
 
 /**
+ * True iff any of the plugin's commands (top-level or guild-feature) declares
+ * an `autocomplete` handler. Used to decide whether to emit
+ * `endpoints.plugin_autocomplete` in the manifest.
+ */
+function hasAutocompleteHandler(cfg: PluginConfig): boolean {
+  if ((cfg.pluginCommands ?? []).some((c) => typeof c.autocomplete === "function")) {
+    return true;
+  }
+  for (const f of cfg.guildFeatures ?? []) {
+    if ((f.commands ?? []).some((c) => typeof c.autocomplete === "function")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * 將 PluginConfig + pluginUrl 轉成 PluginManifest，提供給 startPluginClient
  * 註冊用。Plugin 作者不需要手動呼叫此函式（definePlugin.start() 內部會叫）。
  */
@@ -39,6 +56,7 @@ export function buildManifest(
       ...(cmd.requiredCapability
         ? { required_capability: cmd.requiredCapability }
         : {}),
+      ...(cmd.responseKind ? { response_kind: cmd.responseKind } : {}),
     }),
   );
 
@@ -95,6 +113,9 @@ export function buildManifest(
                 ...(cmd.requiredCapability
                   ? { required_capability: cmd.requiredCapability }
                   : {}),
+                ...(cmd.responseKind
+                  ? { response_kind: cmd.responseKind }
+                  : {}),
               }),
             ),
           }
@@ -134,6 +155,17 @@ export function buildManifest(
       plugin_command: "/commands/{command_name}",
       ...((cfg.components ?? []).length > 0
         ? { plugin_component: "/components" }
+        : {}),
+      ...((cfg.modals ?? []).length > 0
+        ? { plugin_modal: "/modals/{modal_id}" }
+        : {}),
+      // Emit autocomplete endpoint when at least one command declares
+      // an autocomplete handler. We use the SDK builder-side
+      // `autocomplete` field as the signal, not the per-option
+      // `autocomplete: true` flag — the bot only routes if there's
+      // a handler waiting.
+      ...(hasAutocompleteHandler(cfg)
+        ? { plugin_autocomplete: "/commands/{command_name}/autocomplete" }
         : {}),
     },
   };

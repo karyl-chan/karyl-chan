@@ -1182,6 +1182,156 @@ export async function registerPluginRpcRoutes(
     }
   });
 
+  // ─── interactions.edit_followup ───────────────────────────────────
+  /**
+   * POST /api/plugin/interactions.edit_followup
+   * Body: { interaction_token, message_id, content?, embeds?,
+   *         components?, allowed_mentions? }
+   *
+   * PATCH an earlier followup message the plugin posted via
+   * `interactions.followup`. Useful for progress indicators or
+   * editable status messages — avoids the delete + re-post flicker.
+   * Within Discord's 15-minute interaction-token window; after that
+   * the followup is unreachable and the patch 404s.
+   */
+  server.post<{
+    Body: {
+      interaction_token?: unknown;
+      message_id?: unknown;
+      content?: unknown;
+      embeds?: unknown;
+      components?: unknown;
+      allowed_mentions?: unknown;
+    };
+  }>("/api/plugin/interactions.edit_followup", async (request, reply) => {
+    const ctx = await requireScope(
+      request,
+      reply,
+      "interactions.edit_followup",
+    );
+    if (!ctx) return;
+    if (!bot || !bot.application) {
+      reply.code(503).send({ error: "bot client unavailable" });
+      return;
+    }
+    const body = request.body ?? {};
+    if (
+      typeof body.interaction_token !== "string" ||
+      body.interaction_token.length === 0
+    ) {
+      reply.code(400).send({ error: "interaction_token required" });
+      return;
+    }
+    if (
+      typeof body.message_id !== "string" ||
+      body.message_id.length === 0
+    ) {
+      reply.code(400).send({ error: "message_id required" });
+      return;
+    }
+    const content =
+      typeof body.content === "string" ? body.content : undefined;
+    const embeds = Array.isArray(body.embeds) ? body.embeds : undefined;
+    const components = Array.isArray(body.components)
+      ? body.components
+      : undefined;
+    const allowedMentions = safeAllowedMentions(body.allowed_mentions);
+    try {
+      await bot.rest.patch(
+        Routes.webhookMessage(
+          bot.application.id,
+          body.interaction_token,
+          body.message_id,
+        ),
+        {
+          body: {
+            ...(content !== undefined ? { content } : {}),
+            ...(embeds !== undefined ? { embeds } : {}),
+            ...(components !== undefined ? { components } : {}),
+            ...(allowedMentions
+              ? { allowed_mentions: allowedMentions }
+              : { allowed_mentions: { parse: [] } }),
+          },
+        },
+      );
+      return { ok: true };
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      reply.code(400).send({ error: `edit followup failed: ${m}` });
+    }
+  });
+
+  // ─── interactions.send_modal ──────────────────────────────────────
+  /**
+   * POST /api/plugin/interactions.send_modal
+   * Body: { interaction_id, interaction_token, modal }
+   *
+   * Open a Discord modal as the initial response to a plugin command.
+   * The command's manifest entry MUST declare `response_kind: "modal"`
+   * so the bot skips its own `deferReply` (Discord rejects modals
+   * after an ack of any kind). Must be called within Discord's 3 s
+   * window from the command dispatch — otherwise the interaction
+   * expires and the user sees "interaction failed".
+   *
+   * `modal` is a discord-api-types `APIModalInteractionResponseCallbackData`
+   * shape: `{ custom_id, title, components: [{ type: 1, components:
+   * [{ type: 4, custom_id, label, style, ... }] }] }`. We forward it
+   * to Discord verbatim — Discord rejects malformed shapes with a
+   * helpful error message.
+   *
+   * `application_id` is taken from the dispatch payload too, but the
+   * bot also has `bot.application.id` available; using the bot's own
+   * value is the safe path (a plugin can't spoof another bot's id).
+   */
+  server.post<{
+    Body: {
+      interaction_id?: unknown;
+      interaction_token?: unknown;
+      modal?: unknown;
+    };
+  }>("/api/plugin/interactions.send_modal", async (request, reply) => {
+    const ctx = await requireScope(request, reply, "interactions.send_modal");
+    if (!ctx) return;
+    if (!bot || !bot.application) {
+      reply.code(503).send({ error: "bot client unavailable" });
+      return;
+    }
+    const body = request.body ?? {};
+    if (
+      typeof body.interaction_id !== "string" ||
+      body.interaction_id.length === 0
+    ) {
+      reply.code(400).send({ error: "interaction_id required" });
+      return;
+    }
+    if (
+      typeof body.interaction_token !== "string" ||
+      body.interaction_token.length === 0
+    ) {
+      reply.code(400).send({ error: "interaction_token required" });
+      return;
+    }
+    if (!body.modal || typeof body.modal !== "object") {
+      reply.code(400).send({ error: "modal required" });
+      return;
+    }
+    try {
+      // InteractionResponseType.Modal = 9. Discord's REST endpoint is
+      // /interactions/<id>/<token>/callback. Bypass discord.js's
+      // interaction.showModal because the original Interaction object
+      // doesn't exist here — we only have the id+token forwarded by
+      // the plugin.
+      await bot.rest.post(
+        Routes.interactionCallback(body.interaction_id, body.interaction_token),
+        { body: { type: 9, data: body.modal } },
+      );
+      return { ok: true };
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      reply.code(400).send({ error: `send_modal failed: ${m}` });
+    }
+  });
+
   // ─── auth.session ─────────────────────────────────────────────────
   /**
    * POST /api/plugin/auth.session

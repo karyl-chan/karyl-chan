@@ -4,7 +4,9 @@ export {
   defineGuildFeature,
   definePluginCapability,
   definePluginComponent,
+  definePluginModal,
   componentCustomId,
+  modalCustomId,
 } from "./plugin.js";
 export type {
   PluginConfig,
@@ -12,6 +14,7 @@ export type {
   GuildFeatureDefinition,
   PluginCapabilityDefinition,
   PluginComponentDefinition,
+  PluginModalDefinition,
   PluginInstance,
   StartedPlugin,
   StartOptions,
@@ -24,18 +27,33 @@ export type {
   ManifestGuildFeature,
   ManifestConfigField,
   ManifestCommandOption,
+  ManifestCommand,
 } from "./manifest.js";
 
 export type {
+  AutocompleteContext,
   CommandContext,
   CommandReply,
   CommandOption,
-  InteractionContext,
-  Logger,
-  MessageAttachment,
-  WebhookPayload,
   ComponentContext,
   ComponentReply,
+  InteractionContext,
+  Logger,
+  MessageActionRow,
+  MessageAttachment,
+  ModalActionRow,
+  ModalContext,
+  ModalData,
+  ModalReply,
+  WebhookPayload,
+  // discord-api-types primitives re-exported for plugin authors
+  APIApplicationCommandOptionChoice,
+  APIEmbed,
+  APIActionRowComponent,
+  APIComponentInMessageActionRow,
+  APIComponentInModalActionRow,
+  APIModalInteractionResponseCallbackData,
+  MessageFlags,
 } from "./types.js";
 
 export { verifyWebhookToken } from "./webhook-token.js";
@@ -48,9 +66,10 @@ export type { PluginSessionClaims } from "./verify-plugin-session.js";
 
 // HMAC primitives — used by plugins that mount their own dispatch-style
 // routes (e.g. `/events` for `guild.message_create`). The SDK already
-// verifies its built-in `/commands` + `/components`; anything else the
-// plugin opens up against bot-dispatched POSTs must verify these headers
-// itself. `dispatchHmacKey` comes from `StartedPlugin.getDispatchHmacKey()`.
+// verifies its built-in `/commands` + `/components` + `/modals` +
+// `/commands/:name/autocomplete`; anything else the plugin opens up
+// against bot-dispatched POSTs must verify these headers itself.
+// `dispatchHmacKey` comes from `StartedPlugin.getDispatchHmacKey()`.
 export {
   SIGNATURE_HEADER,
   TIMESTAMP_HEADER,

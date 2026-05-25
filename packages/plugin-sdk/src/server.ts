@@ -12,12 +12,22 @@ import {
 import type {
   PluginCommandDefinition,
   PluginComponentDefinition,
+  PluginModalDefinition,
 } from "./plugin.js";
 import type {
+  APIApplicationCommandOptionChoice,
+  AutocompleteContext,
   CommandContext,
   CommandReply,
   ComponentContext,
   ComponentReply,
+  MessageActionRow,
+  MessageAttachment,
+  MessageFlags,
+  ModalContext,
+  ModalData,
+  ModalReply,
+  APIEmbed,
 } from "./types.js";
 
 export interface PluginServerOptions {
@@ -25,8 +35,10 @@ export interface PluginServerOptions {
   botUrl: string;
   /** Plugin 自訂指令（軌三）。 */
   pluginCommands?: PluginCommandDefinition[];
-  /** Plugin 元件（按鈕）handler。掛在 `/components`。 */
+  /** Plugin 元件（按鈕 + select menu）handler。掛在 `/components`。 */
   components?: PluginComponentDefinition[];
+  /** Plugin modal handler。掛在 `/modals/:modalId`。 */
+  modals?: PluginModalDefinition[];
   getToken: () => string | null;
   getDispatchHmacKey?: () => string | null;
   getPublicBaseUrl?: () => string | undefined;
@@ -35,6 +47,8 @@ export interface PluginServerOptions {
 interface InteractionPayload {
   interaction_id: string;
   interaction_token: string;
+  /** Bot application id — needed for `interactions.send_modal` REST call. */
+  application_id: string;
   command_name: string;
   sub_command_name: string | null;
   options: Array<{ name: string; type: number; value?: unknown }>;
@@ -48,11 +62,18 @@ interface InteractionPayload {
   member?: { capabilities?: string[] };
 }
 
-/** Body the bot POSTs to `/components` on a button click. */
+/** Body the bot POSTs to `/components` on a button click / select submit. */
 interface ComponentPayload {
   interaction_id: string;
   interaction_token: string;
   custom_id: string;
+  /** Numeric `ComponentType` of the interacted component (Button=2, *Select=3/5-8). */
+  component_type?: number;
+  /**
+   * Selected values for select-menu interactions. Empty / absent for buttons.
+   * For user/role/mentionable/channel selects, these are the chosen snowflakes.
+   */
+  selected_values?: string[];
   guild_id: string | null;
   channel_id: string | null;
   message_id: string;
@@ -61,6 +82,30 @@ interface ComponentPayload {
     voice_channel_id?: string | null;
     capabilities?: string[];
   } | null;
+}
+
+/** Body the bot POSTs to `/commands/:name/autocomplete`. */
+interface AutocompletePayload {
+  interaction_id: string;
+  command_name: string;
+  sub_command_name: string | null;
+  options: Array<{ name: string; type: number; value?: unknown }>;
+  focused: { name: string; value: string; type: number };
+  guild_id: string | null;
+  user: { id: string; username?: string; global_name?: string | null };
+}
+
+/** Body the bot POSTs to `/modals/:modalId` on MODAL_SUBMIT. */
+interface ModalPayload {
+  interaction_id: string;
+  interaction_token: string;
+  custom_id: string;
+  guild_id: string | null;
+  channel_id: string | null;
+  user: { id: string; username?: string; global_name?: string | null };
+  member?: { capabilities?: string[] } | null;
+  /** Submitted text-input values, keyed by each text input's custom_id. */
+  components: Array<{ custom_id: string; value: string }>;
 }
 
 function verifyDispatchAuth(
@@ -141,9 +186,10 @@ async function respondToInteraction(
   interactionToken: string,
   content: string | undefined,
   ephemeral: boolean,
-  embeds?: unknown[],
-  components?: unknown[],
-  attachments?: unknown[],
+  embeds?: APIEmbed[],
+  components?: MessageActionRow[],
+  attachments?: MessageAttachment[],
+  flags?: MessageFlags,
 ): Promise<void> {
   await callBotRpc(log, botUrl, token, "/api/plugin/interactions.respond", {
     interaction_token: interactionToken,
@@ -151,6 +197,7 @@ async function respondToInteraction(
     ...(embeds !== undefined ? { embeds } : {}),
     ...(components !== undefined ? { components } : {}),
     ...(attachments !== undefined ? { attachments } : {}),
+    ...(flags !== undefined ? { flags } : {}),
     ephemeral,
   });
 }
@@ -163,13 +210,14 @@ function readOpts(payload: InteractionPayload): Record<string, unknown> {
   return out;
 }
 
-/** Normalize a CommandReply to { content, ephemeral, embeds, components, attachments }. */
+/** Normalize a CommandReply to its full field set. */
 function normalizeReply(reply: CommandReply): {
   content: string | undefined;
   ephemeral: boolean;
-  embeds: unknown[] | undefined;
-  components: unknown[] | undefined;
-  attachments: unknown[] | undefined;
+  embeds: APIEmbed[] | undefined;
+  components: MessageActionRow[] | undefined;
+  attachments: MessageAttachment[] | undefined;
+  flags: MessageFlags | undefined;
 } {
   if (typeof reply === "string") {
     return {
@@ -178,6 +226,7 @@ function normalizeReply(reply: CommandReply): {
       embeds: undefined,
       components: undefined,
       attachments: undefined,
+      flags: undefined,
     };
   }
   return {
@@ -186,6 +235,34 @@ function normalizeReply(reply: CommandReply): {
     embeds: reply.embeds,
     components: reply.components,
     attachments: reply.attachments,
+    flags: reply.flags,
+  };
+}
+
+/** Modal replies normalize to a strict ephemeral subset of CommandReply. */
+function normalizeModalReply(reply: ModalReply): {
+  content: string | undefined;
+  ephemeral: boolean;
+  embeds: APIEmbed[] | undefined;
+  components: MessageActionRow[] | undefined;
+  flags: MessageFlags | undefined;
+} | null {
+  if (reply === undefined || reply === null) return null;
+  if (typeof reply === "string") {
+    return {
+      content: reply,
+      ephemeral: true,
+      embeds: undefined,
+      components: undefined,
+      flags: undefined,
+    };
+  }
+  return {
+    content: reply.content,
+    ephemeral: reply.ephemeral ?? true,
+    embeds: reply.embeds,
+    components: reply.components,
+    flags: reply.flags,
   };
 }
 
@@ -194,9 +271,28 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
     (opts.pluginCommands ?? []).map((cmd) => [cmd.name, cmd.handler]),
   );
 
-  // v2 component map：componentId → handler
+  // componentId → handler
   const componentMap = new Map<string, PluginComponentDefinition["handler"]>(
     (opts.components ?? []).map((c) => [c.id, c.handler]),
+  );
+
+  // modalId → handler
+  const modalMap = new Map<string, PluginModalDefinition["handler"]>(
+    (opts.modals ?? []).map((m) => [m.id, m.handler]),
+  );
+
+  // command_name → autocomplete handler (only commands that opted in)
+  const autocompleteMap = new Map<
+    string,
+    NonNullable<PluginCommandDefinition["autocomplete"]>
+  >(
+    (opts.pluginCommands ?? [])
+      .filter(
+        (cmd): cmd is PluginCommandDefinition & {
+          autocomplete: NonNullable<PluginCommandDefinition["autocomplete"]>;
+        } => typeof cmd.autocomplete === "function",
+      )
+      .map((cmd) => [cmd.name, cmd.autocomplete]),
   );
 
   const server = Fastify({ logger: true });
@@ -262,6 +358,12 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
             (c): c is string => typeof c === "string",
           )
         : [];
+
+      // Tracks whether the handler called ctx.sendModal — if so, the
+      // SDK skips the regular respondToInteraction call (Discord
+      // doesn't accept a follow-up reply after a modal response).
+      let modalSent = false;
+
       const ctx: CommandContext = {
         pluginKey: opts.pluginKey,
         commandName: payload.command_name,
@@ -277,6 +379,8 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
           capabilities.includes("admin") ||
           capabilities.includes(`plugin:${opts.pluginKey}:${capKey}`),
         publicBaseUrl: opts.getPublicBaseUrl?.(),
+        interactionId: payload.interaction_id,
+        interactionToken: payload.interaction_token,
         log: {
           info: (msg, meta) => server.log.info(meta ?? {}, msg),
           warn: (msg, meta) => server.log.warn(meta ?? {}, msg),
@@ -284,11 +388,47 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
         },
         botRpc: (path: string, body?: unknown) =>
           callBotRpc(server.log, opts.botUrl, token, path, body),
+        async sendModal(modal: ModalData): Promise<boolean> {
+          // The command must have declared response_kind: "modal" in
+          // its manifest so the bot skipped its defer. If it did
+          // defer, this call will 4xx — Discord rejects modal-after-
+          // ack — and we surface that as `false`.
+          const res = await callBotRpc(
+            server.log,
+            opts.botUrl,
+            token,
+            "/api/plugin/interactions.send_modal",
+            {
+              interaction_id: payload.interaction_id,
+              interaction_token: payload.interaction_token,
+              application_id: payload.application_id,
+              modal,
+            },
+          );
+          if (res !== null) {
+            modalSent = true;
+            return true;
+          }
+          return false;
+        },
       };
 
       try {
         const rawReply = await handler(ctx);
-        const { content, ephemeral, embeds, components, attachments } =
+        if (modalSent) {
+          // Modal already opened — there's no editable deferred
+          // reply, and any non-empty handler return here would
+          // silently drop. Warn if the handler returned anything
+          // unusual so the bug is visible.
+          if (rawReply !== undefined && rawReply !== null && rawReply !== "") {
+            server.log.warn(
+              { commandName: payload.command_name },
+              "command handler returned a reply AFTER calling sendModal — value ignored",
+            );
+          }
+          return;
+        }
+        const { content, ephemeral, embeds, components, attachments, flags } =
           normalizeReply(rawReply);
         await respondToInteraction(
           server.log,
@@ -300,18 +440,21 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
           embeds,
           components,
           attachments,
+          flags,
         );
       } catch (err) {
         server.log.error({ err }, "command handler threw");
-        await respondToInteraction(
-          server.log,
-          opts.botUrl,
-          token,
-          payload.interaction_token,
-          "⚠ Internal error while handling command",
-          false,
-          undefined,
-        );
+        if (!modalSent) {
+          await respondToInteraction(
+            server.log,
+            opts.botUrl,
+            token,
+            payload.interaction_token,
+            "⚠ Internal error while handling command",
+            false,
+            undefined,
+          );
+        }
       }
     },
   );
@@ -400,6 +543,11 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
         channelId: payload.channel_id,
         messageId: payload.message_id,
         interactionToken: payload.interaction_token,
+        selectedValues: Array.isArray(payload.selected_values)
+          ? payload.selected_values.filter(
+              (v): v is string => typeof v === "string",
+            )
+          : [],
         userId: payload.user.id,
         userDisplayName:
           payload.user.global_name || payload.user.username || payload.user.id,
@@ -424,7 +572,8 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
           rawReply &&
           (rawReply.content !== undefined ||
             rawReply.embeds !== undefined ||
-            rawReply.components !== undefined)
+            rawReply.components !== undefined ||
+            rawReply.flags !== undefined)
         ) {
           await respondToInteraction(
             server.log,
@@ -435,11 +584,211 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
             false,
             rawReply.embeds,
             rawReply.components,
+            undefined,
+            rawReply.flags,
           );
         }
       } catch (err) {
         server.log.error({ err }, "component handler threw");
-        await followup("⚠ Internal error while handling the button");
+        await followup("⚠ Internal error while handling the component");
+      }
+    },
+  );
+
+  // ── Plugin autocomplete dispatch（HMAC 驗證）────────────────────────────
+  // Bot POSTs to /commands/{command_name}/autocomplete when the user
+  // is typing into an option declared with `autocomplete: true`. The
+  // handler returns up to 25 choices SYNCHRONOUSLY (bot times out at
+  // ~1.5 s). The HTTP response body IS the reply — no botRpc round-
+  // trip needed.
+  server.post<{ Params: { commandName: string } }>(
+    "/commands/:commandName/autocomplete",
+    async (request, reply) => {
+      const signingKey = opts.getDispatchHmacKey?.() ?? null;
+      if (!signingKey) {
+        return reply.code(503).send({
+          error: "dispatch HMAC key not available; plugin must re-register",
+        });
+      }
+      const rawBody = typeof request.body === "string" ? request.body : "";
+      const auth = verifyDispatchAuth(request, rawBody, signingKey);
+      if (!auth.ok) return reply.code(401).send({ error: auth.reason });
+
+      let payload: AutocompletePayload;
+      try {
+        payload = JSON.parse(rawBody) as AutocompletePayload;
+      } catch {
+        return reply.code(400).send({ error: "invalid JSON" });
+      }
+      if (request.params.commandName !== payload.command_name) {
+        return reply.code(400).send({ error: "command_name mismatch" });
+      }
+
+      const handler = autocompleteMap.get(payload.command_name);
+      if (!handler) {
+        // Command exists but no autocomplete handler — return empty
+        // (commands without autocomplete shouldn't even be hit, but
+        // be lenient).
+        return reply.send({ choices: [] });
+      }
+
+      const opts2: Record<string, unknown> = {};
+      for (const o of payload.options ?? []) {
+        if (typeof o.name === "string") opts2[o.name] = o.value;
+      }
+      const ctx: AutocompleteContext = {
+        pluginKey: opts.pluginKey,
+        commandName: payload.command_name,
+        subCommandName: payload.sub_command_name,
+        guildId: payload.guild_id,
+        userId: payload.user.id,
+        focused: payload.focused,
+        options: opts2,
+        log: {
+          info: (msg, meta) => server.log.info(meta ?? {}, msg),
+          warn: (msg, meta) => server.log.warn(meta ?? {}, msg),
+          error: (msg, meta) => server.log.error(meta ?? {}, msg),
+        },
+      };
+
+      try {
+        const choices: APIApplicationCommandOptionChoice[] = await handler(ctx);
+        // Discord caps autocomplete responses at 25 choices.
+        return reply.send({ choices: choices.slice(0, 25) });
+      } catch (err) {
+        server.log.error(
+          { err, commandName: payload.command_name },
+          "autocomplete handler threw",
+        );
+        return reply.send({ choices: [] });
+      }
+    },
+  );
+
+  // ── Plugin modal-submit dispatch（HMAC 驗證）───────────────────────────
+  // Bot POSTs to /modals/{modal_id} when a user submits a modal whose
+  // custom_id is `kc:<thisPluginKey>:<modalId>[:<tail>]`. Bot has
+  // already deferReply'd ephemerally; handler returns a reply to edit
+  // the deferred message (default ephemeral=true).
+  server.post<{ Params: { modalId: string } }>(
+    "/modals/:modalId",
+    async (request, reply) => {
+      const signingKey = opts.getDispatchHmacKey?.() ?? null;
+      if (!signingKey) {
+        return reply.code(503).send({
+          error: "dispatch HMAC key not available; plugin must re-register",
+        });
+      }
+      const rawBody = typeof request.body === "string" ? request.body : "";
+      const auth = verifyDispatchAuth(request, rawBody, signingKey);
+      if (!auth.ok) return reply.code(401).send({ error: auth.reason });
+
+      let payload: ModalPayload;
+      try {
+        payload = JSON.parse(rawBody) as ModalPayload;
+      } catch {
+        return reply.code(400).send({ error: "invalid JSON" });
+      }
+      if (!payload.user || typeof payload.user.id !== "string") {
+        return reply.code(400).send({ error: "missing user.id" });
+      }
+      if (typeof payload.custom_id !== "string") {
+        return reply.code(400).send({ error: "missing custom_id" });
+      }
+
+      const token = opts.getToken();
+      if (!token) return reply.code(200).send({ ok: true });
+      reply.code(204).send();
+
+      const prefix = `kc:${opts.pluginKey}:`;
+      if (!payload.custom_id.startsWith(prefix)) {
+        server.log.warn(
+          { customId: payload.custom_id },
+          "modal custom_id doesn't match this plugin",
+        );
+        return;
+      }
+      const after = payload.custom_id.slice(prefix.length);
+      const sep = after.indexOf(":");
+      const modalId = sep === -1 ? after : after.slice(0, sep);
+      const tail = sep === -1 ? "" : after.slice(sep + 1);
+
+      const handler = modalMap.get(modalId);
+      if (!handler) {
+        await respondToInteraction(
+          server.log,
+          opts.botUrl,
+          token,
+          payload.interaction_token,
+          `⚠ Unknown modal \`${modalId}\``,
+          true,
+        );
+        return;
+      }
+
+      const capabilities = Array.isArray(payload.member?.capabilities)
+        ? payload.member!.capabilities!.filter(
+            (c): c is string => typeof c === "string",
+          )
+        : [];
+      const fields: Record<string, string> = {};
+      for (const c of payload.components ?? []) {
+        if (typeof c.custom_id === "string" && typeof c.value === "string") {
+          fields[c.custom_id] = c.value;
+        }
+      }
+      const ctx: ModalContext = {
+        pluginKey: opts.pluginKey,
+        customId: payload.custom_id,
+        modalId,
+        tail,
+        fields,
+        guildId: payload.guild_id,
+        channelId: payload.channel_id,
+        interactionToken: payload.interaction_token,
+        userId: payload.user.id,
+        userDisplayName:
+          payload.user.global_name || payload.user.username || payload.user.id,
+        capabilities,
+        hasCapability: (capKey: string): boolean =>
+          capabilities.includes("admin") ||
+          capabilities.includes(`plugin:${opts.pluginKey}:${capKey}`),
+        publicBaseUrl: opts.getPublicBaseUrl?.(),
+        log: {
+          info: (msg, meta) => server.log.info(meta ?? {}, msg),
+          warn: (msg, meta) => server.log.warn(meta ?? {}, msg),
+          error: (msg, meta) => server.log.error(meta ?? {}, msg),
+        },
+        botRpc: (path: string, body?: unknown) =>
+          callBotRpc(server.log, opts.botUrl, token, path, body),
+      };
+
+      try {
+        const rawReply = await handler(ctx);
+        const normalized = normalizeModalReply(rawReply);
+        if (!normalized) return;
+        await respondToInteraction(
+          server.log,
+          opts.botUrl,
+          token,
+          payload.interaction_token,
+          normalized.content,
+          normalized.ephemeral,
+          normalized.embeds,
+          normalized.components,
+          undefined,
+          normalized.flags,
+        );
+      } catch (err) {
+        server.log.error({ err, modalId }, "modal handler threw");
+        await respondToInteraction(
+          server.log,
+          opts.botUrl,
+          token,
+          payload.interaction_token,
+          "⚠ Internal error while handling the modal",
+          true,
+        );
       }
     },
   );

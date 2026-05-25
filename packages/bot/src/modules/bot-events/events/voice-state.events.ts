@@ -12,6 +12,7 @@ import {
   avatarUrlFor,
   guildAvatarUrlFor,
 } from "../../web-core/message-mapper.js";
+import { dispatchEventToPlugins } from "../../plugin-system/plugin-event-bridge.service.js";
 import { moduleLogger } from "../../../logger.js";
 
 const log = moduleLogger("voice-state");
@@ -73,6 +74,27 @@ export function registerVoiceStateEvents(client: Client): void {
       });
     } catch (err) {
       log.error({ err }, "voice-state publish failed");
+    }
+
+    // Fan out to plugins that subscribed to `guild.voice_state_update`.
+    // Payload is intentionally minimal — plugins can call voice.status
+    // / users.get for richer data on demand. `in_voice` is convenient
+    // so a plugin doesn't have to reason about the null channel ids.
+    const memberUser = newState.member?.user;
+    try {
+      dispatchEventToPlugins("guild.voice_state_update", {
+        guild_id: guildId,
+        user: {
+          id: newState.member?.id ?? newState.id,
+          username: memberUser?.username ?? null,
+          global_name: memberUser?.globalName ?? null,
+        },
+        old_channel_id: oldState.channelId ?? null,
+        new_channel_id: newState.channelId ?? null,
+        in_voice: newState.channelId !== null,
+      });
+    } catch (err) {
+      log.error({ err }, "voice-state plugin fan-out failed");
     }
   });
 }

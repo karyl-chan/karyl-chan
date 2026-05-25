@@ -20,6 +20,14 @@ export interface ManifestCommandOption {
   channel_types?: string[];
   options?: ManifestCommandOption[];
   choices?: Array<{ name: string; value: string | number }>;
+  /** String / integer / number options can declare autocomplete=true; routed via /commands/{name}/autocomplete. */
+  autocomplete?: boolean;
+  /** Numeric range (integer / number options). */
+  min_value?: number;
+  max_value?: number;
+  /** String length range (string options). */
+  min_length?: number;
+  max_length?: number;
 }
 
 export interface ManifestCommand {
@@ -47,6 +55,15 @@ export interface ManifestCommand {
    */
   integration_types?: ("guild_install" | "user_install")[];
   options?: ManifestCommandOption[];
+  /**
+   * What kind of initial response Discord expects:
+   *  - `"deferred"` (default): bot defers the reply; plugin completes
+   *    via `interactions.respond`.
+   *  - `"modal"`: bot SKIPS defer; plugin must call
+   *    `interactions.send_modal` within Discord's 3 s window. The
+   *    modal IS the response.
+   */
+  response_kind?: "deferred" | "modal";
 }
 
 export interface ManifestConfigField {
@@ -113,6 +130,8 @@ export interface ManifestPluginCommand {
   default_member_permissions?: string;
   default_ephemeral?: boolean;
   required_capability?: string;
+  /** Same shape as ManifestCommand.response_kind. */
+  response_kind?: "deferred" | "modal";
 }
 
 /**
@@ -157,8 +176,18 @@ export interface PluginManifest {
   endpoints?: {
     events?: string;
     plugin_command?: string;
-    /** Plugin 元件（按鈕）互動派送端點，預設 `/components`。 */
+    /** Plugin 元件（按鈕 + select menu）互動派送端點，預設 `/components`。 */
     plugin_component?: string;
+    /**
+     * Plugin autocomplete 派送端點 — 預設 `/commands/{command_name}/autocomplete`。
+     * 只有 plugin 有 command 帶 autocomplete handler 時才會出現。
+     */
+    plugin_autocomplete?: string;
+    /**
+     * Plugin modal submit 派送端點 — 預設 `/modals/{modal_id}`。
+     * 只有 plugin 宣告 modals 時才會出現。
+     */
+    plugin_modal?: string;
     guild_feature_action?: string;
   };
 }

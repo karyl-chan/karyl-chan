@@ -104,6 +104,7 @@ export interface DispatchOutcome {
     | "behavior_custom"
     | "plugin_command"
     | "plugin_component"
+    | "plugin_modal"
     | "in_process";
   /** 若 claimed=false，提供 fallback 訊息供 log */
   reason?: "unknown_command" | "disabled_plugin" | "no_handler";

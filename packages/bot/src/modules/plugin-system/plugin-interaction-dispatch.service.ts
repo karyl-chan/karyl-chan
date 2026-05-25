@@ -128,23 +128,44 @@ async function dispatchChatInputCommand(
     });
     return;
   }
-  // Defer immediately. The plugin gets ~15 minutes to respond via
-  // /api/plugin/interactions.respond. Default to ephemeral=true so
-  // a plugin that crashes doesn't leave a public "thinking…" message
-  // in everyone's faces; plugins that want public output can use
-  // followup messages or include flags in their respond call.
-  try {
-    await interaction.deferReply({ ephemeral: true });
-  } catch (err) {
-    // Already acknowledged or token expired — nothing else we can do.
-    botEventLog.record(
-      "warn",
-      "bot",
-      `plugin-interaction: defer failed for ${plugin.pluginKey}/${interaction.commandName}: ${err instanceof Error ? err.message : String(err)}`,
-      { pluginId: plugin.id },
-    );
-    return;
+  // Look up the command's manifest entry to decide:
+  //  (a) response_kind: "modal" → skip defer entirely (Discord rejects
+  //      modal-after-defer); plugin will send_modal via RPC within 3 s.
+  //  (b) default_ephemeral: false → defer non-ephemeral so the
+  //      "thinking…" + final reply are publicly visible. Otherwise
+  //      default to ephemeral so a crashing plugin doesn't leave a
+  //      stuck public message.
+  const cmdName = interaction.commandName;
+  const allCmds = [
+    ...(manifest.plugin_commands ?? []),
+    ...(manifest.guild_features ?? []).flatMap((f) => f.commands ?? []),
+  ];
+  const cmdDef = allCmds.find((c) => c.name === cmdName);
+  const responseKind = cmdDef?.response_kind ?? "deferred";
+  const ephemeralDefault = cmdDef?.default_ephemeral !== false;
+
+  if (responseKind !== "modal") {
+    try {
+      await interaction.deferReply({ ephemeral: ephemeralDefault });
+    } catch (err) {
+      // Already acknowledged or token expired — nothing else we can do.
+      botEventLog.record(
+        "warn",
+        "bot",
+        `plugin-interaction: defer failed for ${plugin.pluginKey}/${interaction.commandName}: ${err instanceof Error ? err.message : String(err)}`,
+        { pluginId: plugin.id },
+      );
+      return;
+    }
   }
+
+  // Modal commands skipped defer, so error messaging here must use
+  // `reply` (no deferred state to edit); all other commands use
+  // `editReply`. Wrap once so the rest of the function stays linear.
+  const replyError = (content: string): Promise<unknown> =>
+    responseKind === "modal"
+      ? interaction.reply({ content, ephemeral: true }).catch(() => {})
+      : interaction.editReply({ content }).catch(() => {});
 
   const url = resolveUrl(
     plugin,
@@ -153,9 +174,7 @@ async function dispatchChatInputCommand(
     { command_name: interaction.commandName },
   );
   if (!url) {
-    await interaction.editReply({
-      content: "⚠ 無法解析 plugin 的指令端點。",
-    });
+    await replyError("⚠ 無法解析 plugin 的指令端點。");
     return;
   }
 
@@ -175,9 +194,7 @@ async function dispatchChatInputCommand(
       `plugin-interaction: pre-flight host-policy 拒絕 ${plugin.pluginKey}/${interaction.commandName}: ${err.message}`,
       { pluginId: plugin.id },
     );
-    await interaction
-      .editReply({ content: `⚠ Plugin 端點不被允許: ${err.message}` })
-      .catch(() => {});
+    await replyError(`⚠ Plugin 端點不被允許: ${err.message}`);
     return;
   }
 
@@ -245,9 +262,7 @@ async function dispatchChatInputCommand(
         `plugin-interaction: ${plugin.pluginKey}/${interaction.commandName} POST returned ${res.status}: ${text.slice(0, 200)}`,
         { pluginId: plugin.id },
       );
-      await interaction
-        .editReply({ content: `⚠ Plugin 拒絕了此指令 (HTTP ${res.status})` })
-        .catch(() => {});
+      await replyError(`⚠ Plugin 拒絕了此指令 (HTTP ${res.status})`);
     }
     // We do NOT consume res body. Plugin completes the deferred
     // reply via RPC interactions.respond. Synchronous body action
@@ -260,9 +275,7 @@ async function dispatchChatInputCommand(
       `plugin-interaction: ${plugin.pluginKey}/${interaction.commandName} POST failed: ${msg}`,
       { pluginId: plugin.id },
     );
-    await interaction
-      .editReply({ content: `⚠ 無法連接 plugin: ${msg}` })
-      .catch(() => {});
+    await replyError(`⚠ 無法連接 plugin: ${msg}`);
   } finally {
     clearTimeout(timer);
   }

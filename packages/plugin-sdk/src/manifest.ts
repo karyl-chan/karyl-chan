@@ -27,7 +27,9 @@ export interface ManifestConfigField {
 
 /**
  * Slash command option 定義。兩軌共用（軌一 guild_features.commands 與軌三
- * plugin_commands 皆使用）。
+ * plugin_commands 皆使用）。Plugin 端 `CommandOption` 已含 `autocomplete /
+ * min_value / max_value / min_length / max_length`；manifest 直接透傳，
+ * bot 在 reconcile 給 Discord 時再轉成 numeric `ApplicationCommandOptionType`。
  */
 export type ManifestCommandOption = CommandOption;
 
@@ -61,6 +63,14 @@ export interface ManifestCommand {
   contexts?: ("Guild" | "BotDM" | "PrivateChannel")[];
   integration_types?: ("guild_install" | "user_install")[];
   options?: ManifestCommandOption[];
+  /**
+   * What kind of initial response Discord expects: `"deferred"` (bot
+   * `interaction.deferReply()`s and plugin completes via
+   * `interactions.respond`) or `"modal"` (bot skips defer, plugin must
+   * call `interactions.send_modal` within Discord's 3 s window).
+   * Defaults to `"deferred"` when omitted.
+   */
+  response_kind?: "deferred" | "modal";
 }
 
 /**
@@ -85,6 +95,8 @@ export interface ManifestPluginCommand {
   default_member_permissions?: string;
   default_ephemeral?: boolean;
   required_capability?: string;
+  /** 同 ManifestCommand.response_kind — `"deferred"` (預設) 或 `"modal"`。 */
+  response_kind?: "deferred" | "modal";
 }
 
 /** Plugin 宣告的一個 RBAC capability 詞條（manifest 形式）。 */
@@ -140,8 +152,18 @@ export interface PluginManifest {
   endpoints?: {
     events?: string;
     plugin_command?: string;
-    /** plugin 元件（按鈕）互動派送端點；只有宣告 components 時才出現，預設 `/components`。 */
+    /** plugin 元件（按鈕 + select menu）互動派送端點；只有宣告 components 時才出現，預設 `/components`。 */
     plugin_component?: string;
+    /**
+     * Plugin autocomplete 派送端點；只有宣告了至少一個帶 `autocomplete` handler
+     * 的 command 時才出現。預設 `/commands/{command_name}/autocomplete`。
+     */
+    plugin_autocomplete?: string;
+    /**
+     * Plugin modal-submit 派送端點；只有宣告了 modals 時才出現。
+     * 預設 `/modals/{modal_id}`。
+     */
+    plugin_modal?: string;
     guild_feature_action?: string;
   };
 }

@@ -32,6 +32,7 @@ import {
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { dispatchInteractionToPlugin } from "../plugin-system/plugin-interaction-dispatch.service.js";
 import { dispatchComponentToPlugin } from "../plugin-system/plugin-component-dispatch.service.js";
+import { dispatchModalToPlugin } from "../plugin-system/plugin-modal-dispatch.service.js";
 import { dispatchInProcessInteraction } from "../builtin-features/in-process-command-registry.service.js";
 import { issueLoginLinkForInteraction } from "../admin/admin-login.service.js";
 import { endSession } from "../behavior/models/behavior-session.model.js";
@@ -120,8 +121,8 @@ export class InteractionDispatcher {
       // layer 2 失敗不短路，繼續嘗試 layer 2.5 / 3
     }
 
-    // ─ Layer 2.5：plugin 元件（按鈕）── custom_id 為 `kc:<pluginKey>:…`
-    if (interaction.isButton()) {
+    // ─ Layer 2.5：plugin 元件（按鈕 + select menu）── custom_id 為 `kc:<pluginKey>:…`
+    if (interaction.isButton() || interaction.isAnySelectMenu()) {
       try {
         const claimed = await dispatchComponentToPlugin(interaction);
         if (claimed) {
@@ -135,6 +136,24 @@ export class InteractionDispatcher {
           { customId: interaction.customId },
         );
         // 失敗不短路，繼續嘗試 layer 3（in-process 可能有同 prefix 的 handler）
+      }
+    }
+
+    // ─ Layer 2.6：plugin modal submit ── custom_id 為 `kc:<pluginKey>:…`
+    if (interaction.isModalSubmit()) {
+      try {
+        const claimed = await dispatchModalToPlugin(interaction);
+        if (claimed) {
+          return { claimed: true, claimedBy: "plugin_modal" };
+        }
+      } catch (err) {
+        botEventLog.record(
+          "error",
+          "bot",
+          `interaction-dispatcher: plugin_modal layer 拋出例外：${err instanceof Error ? err.message : String(err)}`,
+          { customId: interaction.customId },
+        );
+        // 失敗不短路，繼續嘗試 layer 3
       }
     }
 

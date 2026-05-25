@@ -1,11 +1,15 @@
 import type { FastifyInstance } from "fastify";
 import type {
+  APIApplicationCommandOptionChoice,
+  AutocompleteContext,
   CommandContext,
   CommandOption,
   CommandReply,
   ComponentContext,
   ComponentReply,
   InteractionContext,
+  ModalContext,
+  ModalReply,
 } from "./types.js";
 import type { ManifestConfigField } from "./manifest.js";
 
@@ -87,7 +91,31 @@ export interface PluginCommandDefinition {
   defaultMemberPermissions?: string;
   defaultEphemeral?: boolean;
   requiredCapability?: string;
+  /**
+   * What kind of immediate response Discord expects from this command:
+   *  - `"deferred"` (default): bot defers the reply; the handler's
+   *    return becomes the edited reply
+   *  - `"modal"`: bot does NOT defer; the handler MUST call
+   *    `ctx.sendModal(modal)` within ~2.5 s, otherwise the
+   *    interaction expires and the user sees "interaction failed".
+   *    The modal IS the response — return value from the handler
+   *    after sendModal is ignored. Wire the submit flow with
+   *    `definePluginModal({ id, handler })`.
+   *
+   * Set this at the manifest level so the bot can decide BEFORE
+   * dispatching whether to defer (Discord rejects modal-after-defer).
+   */
+  responseKind?: "deferred" | "modal";
   handler: (ctx: CommandContext) => CommandReply | Promise<CommandReply>;
+  /**
+   * Optional autocomplete handler — called when the user is typing into
+   * an option marked `autocomplete: true`. Return up to 25 choices
+   * synchronously (the bot times out at ~1.5 s). When omitted, options
+   * with `autocomplete: true` still work but return an empty list.
+   */
+  autocomplete?: (
+    ctx: AutocompleteContext,
+  ) => Promise<APIApplicationCommandOptionChoice[]> | APIApplicationCommandOptionChoice[];
 }
 
 /**
@@ -107,7 +135,34 @@ export interface PluginComponentDefinition {
    * ≤ 100 字（Discord 上限），所以 id + tail 加起來別太長。
    */
   id: string;
+  /**
+   * Optional narrowing of which Discord component type this handler
+   * accepts (numeric `ComponentType` from discord-api-types):
+   *   2  = Button
+   *   3  = StringSelect
+   *   5  = UserSelect
+   *   6  = RoleSelect
+   *   7  = MentionableSelect
+   *   8  = ChannelSelect
+   * When omitted, the handler matches any component type sharing this
+   * id — buttons and any select menu. Most handlers should set this so
+   * accidental shape mismatches surface early.
+   */
+  componentType?: number;
   handler: (ctx: ComponentContext) => ComponentReply | Promise<ComponentReply>;
+}
+
+/**
+ * Plugin 自訂 Modal（彈窗表單）handler 定義。
+ *
+ * Plugin 透過 `ctx.sendModal(modal)` 從 command handler 開 modal；使用者
+ * 送出後 bot 收到 `MODAL_SUBMIT` interaction，依 `custom_id` 派送到此
+ * 對應 id 的 handler。Modal `custom_id` 形如 `kc:<pluginKey>:<id>[:<tail>]`。
+ */
+export interface PluginModalDefinition {
+  /** Modal id（plugin 內唯一），同 component id 規則。 */
+  id: string;
+  handler: (ctx: ModalContext) => ModalReply | Promise<ModalReply>;
 }
 
 /**
@@ -201,11 +256,19 @@ export interface PluginConfig {
   guildFeatures?: GuildFeatureDefinition[];
 
   /**
-   * Plugin 元件（按鈕）handler。宣告任一條時，manifest 會帶
+   * Plugin 元件（按鈕 + select menu）handler。宣告任一條時，manifest 會帶
    * `endpoints.plugin_component = "/components"`，SDK 掛上對應路由，bot
-   * 才會把 `kc:<thisKey>:…` 的按鈕點擊派送過來。
+   * 才會把 `kc:<thisKey>:…` 的元件互動派送過來。
    */
   components?: PluginComponentDefinition[];
+
+  /**
+   * Plugin modal (彈窗) handler。宣告任一條時，manifest 會帶
+   * `endpoints.plugin_modal = "/modals/{modal_id}"`，SDK 掛上對應路由，bot
+   * 才會把 `kc:<thisKey>:…` 的 modal submit 派送過來。
+   * Modal 由 command handler 透過 `ctx.sendModal(modal)` 開啟。
+   */
+  modals?: PluginModalDefinition[];
 
   /**
    * 此 plugin 需要的 RBAC capability 詞條。bot 端在 register 時持久化，
@@ -271,11 +334,12 @@ export function definePluginComponent(
 }
 
 /**
- * Build the Discord `custom_id` for one of this plugin's button
- * components: `kc:<pluginKey>:<id>` (+ `:<tail>` when args are passed).
- * The result must be ≤ 100 chars (Discord's limit) — keep ids short and
- * tails small. The matching `definePluginComponent({ id })` handler is
- * invoked when the button is clicked.
+ * Build the Discord `custom_id` for one of this plugin's button or
+ * select-menu components: `kc:<pluginKey>:<id>` (+ `:<tail>` when args
+ * are passed). The result must be ≤ 100 chars (Discord's limit) — keep
+ * ids short and tails small. The matching
+ * `definePluginComponent({ id })` handler is invoked when the user
+ * interacts with the component.
  */
 export function componentCustomId(
   pluginKey: string,
@@ -289,6 +353,43 @@ export function componentCustomId(
     );
   }
   return cid;
+}
+
+/**
+ * 定義一個 plugin modal handler。回傳定義物件不變（類型化建構子）。
+ */
+export function definePluginModal(
+  def: PluginModalDefinition,
+): PluginModalDefinition {
+  if (typeof def.id !== "string" || !COMPONENT_ID_RE.test(def.id)) {
+    throw new Error(
+      `definePluginModal: id "${String(def.id)}" must match [a-z0-9][a-z0-9._-]*`,
+    );
+  }
+  if (typeof def.handler !== "function") {
+    throw new Error(`definePluginModal: '${def.id}'.handler must be a function`);
+  }
+  return def;
+}
+
+/**
+ * Build the `custom_id` for one of this plugin's modals.
+ * Same shape as `componentCustomId` — uses `kc:` prefix so the bot
+ * routes the MODAL_SUBMIT to the right plugin via the same `kc:`
+ * dispatch path.
+ */
+export function modalCustomId(
+  pluginKey: string,
+  id: string,
+  tail?: string,
+): string {
+  const mid = `kc:${pluginKey}:${id}${tail !== undefined && tail !== "" ? `:${tail}` : ""}`;
+  if (mid.length > 100) {
+    throw new Error(
+      `modalCustomId: "${mid}" exceeds Discord's 100-char custom_id limit`,
+    );
+  }
+  return mid;
 }
 
 /**
@@ -369,6 +470,13 @@ export function definePlugin(config: PluginConfig): PluginInstance {
     }
     seenComponents.add(c.id);
   }
+  const seenModals = new Set<string>();
+  for (const m of config.modals ?? []) {
+    if (seenModals.has(m.id)) {
+      throw new Error(`definePlugin: duplicate modal id "${m.id}"`);
+    }
+    seenModals.add(m.id);
+  }
   return {
     config,
     async start(opts?: StartOptions): Promise<StartedPlugin> {
@@ -408,6 +516,7 @@ export function definePlugin(config: PluginConfig): PluginInstance {
           ...(config.guildFeatures ?? []).flatMap((f) => f.commands ?? []),
         ],
         components: config.components ?? [],
+        modals: config.modals ?? [],
         getToken: () => client?.token() ?? null,
         getDispatchHmacKey: () => client?.getDispatchHmacKey() ?? null,
         getPublicBaseUrl: () => client?.getPublicBaseUrl(),

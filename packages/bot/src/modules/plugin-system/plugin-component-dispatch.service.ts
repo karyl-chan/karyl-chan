@@ -1,5 +1,9 @@
 import { config } from "../../config.js";
-import type { ButtonInteraction } from "discord.js";
+import type {
+  ButtonInteraction,
+  AnySelectMenuInteraction,
+  GuildMember,
+} from "discord.js";
 import { findPluginByKey, type PluginRow } from "./models/plugin.model.js";
 import type { PluginManifest } from "./plugin-registry.service.js";
 import { resolveUserCapabilities } from "../admin/authorized-user.service.js";
@@ -85,7 +89,7 @@ function parsePluginComponentId(customId: string): { pluginKey: string } | null 
 }
 
 export async function dispatchComponentToPlugin(
-  interaction: ButtonInteraction,
+  interaction: ButtonInteraction | AnySelectMenuInteraction,
 ): Promise<boolean> {
   const parsed = parsePluginComponentId(interaction.customId);
   if (!parsed) return false;
@@ -190,11 +194,21 @@ export async function dispatchComponentToPlugin(
   const pluginCaps = [...allCaps].filter(
     (c) => c === "admin" || c.startsWith(`plugin:${plugin.pluginKey}:`),
   );
+  // For any select menu interaction, capture the selected snowflakes /
+  // values so the plugin handler can read them as ctx.selectedValues.
+  // Buttons have no `values` and so the field is undefined → empty in
+  // the SDK.
+  const selectedValues = interaction.isAnySelectMenu()
+    ? interaction.values
+    : undefined;
+  const componentType = interaction.componentType;
   const payload = {
     interaction_id: interaction.id,
     interaction_token: interaction.token,
     application_id: interaction.applicationId,
     custom_id: interaction.customId,
+    component_type: componentType,
+    selected_values: selectedValues,
     guild_id: interaction.guildId,
     channel_id: interaction.channelId,
     message_id: interaction.message.id,
@@ -208,11 +222,7 @@ export async function dispatchComponentToPlugin(
           permissions:
             interaction.memberPermissions?.bitfield.toString() ?? null,
           voice_channel_id:
-            (
-              interaction.member as unknown as {
-                voice?: { channelId?: string | null };
-              }
-            ).voice?.channelId ?? null,
+            (interaction.member as GuildMember).voice?.channelId ?? null,
           capabilities: pluginCaps,
         }
       : null,
