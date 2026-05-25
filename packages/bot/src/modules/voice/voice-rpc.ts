@@ -304,13 +304,20 @@ export async function registerVoiceRpcRoutes(
             bot.channels.cache.get(status.channelId) ??
             (await bot.channels.fetch(status.channelId).catch(() => null));
           if (ch && ch.isVoiceBased()) {
+            // Extract once so listeners count + ids stay consistent.
+            // `listenerIds` lets a plugin (e.g. a DJ controller) render
+            // which users are in voice without a separate members.get
+            // round-trip — both the count and the ids come from the same
+            // membership snapshot.
+            const nonBot = ch.members.filter((m) => !m.user.bot);
             return {
               ...status,
-              listeners: ch.members.filter((m) => !m.user.bot).size,
+              listeners: nonBot.size,
+              listenerIds: [...nonBot.keys()],
             };
           }
         } catch {
-          /* leave listeners undefined */
+          /* leave listeners / listenerIds undefined */
         }
       }
       return status;

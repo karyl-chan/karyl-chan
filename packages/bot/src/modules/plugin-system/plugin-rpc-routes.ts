@@ -21,7 +21,10 @@ import {
 import { decryptSecret } from "../../utils/crypto.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { shouldRecord } from "../bot-events/bot-event-dedup.js";
-import { findEnabledFeaturesByPluginGuild } from "../feature-toggle/models/plugin-guild-feature.model.js";
+import {
+  findEnabledFeaturesByPluginGuild,
+  findFeatureRowsByPlugin,
+} from "../feature-toggle/models/plugin-guild-feature.model.js";
 import type { PluginManifest } from "./plugin-registry.service.js";
 import { jwtService } from "../web-core/jwt.service.js";
 import { resolveUserCapabilities } from "../admin/authorized-user.service.js";
@@ -1625,6 +1628,627 @@ export async function registerPluginRpcRoutes(
         }),
       );
       return { users: out.filter((u): u is NonNullable<typeof u> => u !== null) };
+    },
+  );
+
+  // ─── channels.get ─────────────────────────────────────────────────
+  /**
+   * POST /api/plugin/channels.get
+   * Body:    { guild_id: string, channel_id: string }
+   * Returns: APIChannel (discord-api-types/v10 discriminated union)
+   *
+   * Fetch a single channel's metadata: type / parent / topic / NSFW
+   * / slow_mode / position / permission overwrites. Returns the raw
+   * Discord REST shape rather than a mapped subset because callers
+   * legitimately want different fields (config UI needs type+name,
+   * an audit display wants topic+NSFW, etc.).
+   */
+  server.post<{ Body: { guild_id?: unknown; channel_id?: unknown } }>(
+    "/api/plugin/channels.get",
+    async (request, reply) => {
+      const ctx = await requireScope(request, reply, "channels.get");
+      if (!ctx) return;
+      if (!bot) {
+        reply.code(503).send({ error: "bot client unavailable" });
+        return;
+      }
+      const body = request.body ?? {};
+      if (typeof body.guild_id !== "string" || !SNOWFLAKE_RE.test(body.guild_id)) {
+        reply.code(400).send({ error: "guild_id required" });
+        return;
+      }
+      if (
+        typeof body.channel_id !== "string" ||
+        !SNOWFLAKE_RE.test(body.channel_id)
+      ) {
+        reply.code(400).send({ error: "channel_id required" });
+        return;
+      }
+      const enabledFeatures = await findEnabledFeaturesByPluginGuild(
+        ctx.pluginId,
+        body.guild_id,
+      );
+      if (enabledFeatures.length === 0) {
+        reply.code(403).send({ error: "plugin not enabled in this guild" });
+        return;
+      }
+      try {
+        const channel = await bot.rest.get(Routes.channel(body.channel_id));
+        return { channel };
+      } catch (err) {
+        const m = err instanceof Error ? err.message : String(err);
+        reply.code(discordErrorStatus(err)).send({
+          error: `channels.get failed: ${m}`,
+        });
+      }
+    },
+  );
+
+  // ─── channels.list ────────────────────────────────────────────────
+  /**
+   * POST /api/plugin/channels.list
+   * Body:    { guild_id: string, types?: number[] }
+   * Returns: { channels: APIChannel[] }
+   *
+   * List all channels in a guild, optionally filtered by Discord's
+   * numeric `ChannelType` (e.g. [0,5] for GuildText + GuildAnnouncement).
+   * Capped at 500 entries as a defensive ceiling; real-world guilds
+   * don't exceed this. Discord doesn't paginate channel lists, so
+   * there is no cursor parameter.
+   */
+  server.post<{ Body: { guild_id?: unknown; types?: unknown } }>(
+    "/api/plugin/channels.list",
+    async (request, reply) => {
+      const ctx = await requireScope(request, reply, "channels.list");
+      if (!ctx) return;
+      if (!bot) {
+        reply.code(503).send({ error: "bot client unavailable" });
+        return;
+      }
+      const body = request.body ?? {};
+      if (typeof body.guild_id !== "string" || !SNOWFLAKE_RE.test(body.guild_id)) {
+        reply.code(400).send({ error: "guild_id required" });
+        return;
+      }
+      const enabledFeatures = await findEnabledFeaturesByPluginGuild(
+        ctx.pluginId,
+        body.guild_id,
+      );
+      if (enabledFeatures.length === 0) {
+        reply.code(403).send({ error: "plugin not enabled in this guild" });
+        return;
+      }
+      const typeFilter =
+        Array.isArray(body.types) && body.types.length > 0
+          ? new Set(body.types.filter((v): v is number => typeof v === "number"))
+          : null;
+      try {
+        const all = (await bot.rest.get(
+          Routes.guildChannels(body.guild_id),
+        )) as Array<{ type: number }>;
+        let channels = typeFilter
+          ? all.filter((c) => typeFilter.has(c.type))
+          : all;
+        if (channels.length > 500) channels = channels.slice(0, 500);
+        return { channels };
+      } catch (err) {
+        const m = err instanceof Error ? err.message : String(err);
+        reply.code(discordErrorStatus(err)).send({
+          error: `channels.list failed: ${m}`,
+        });
+      }
+    },
+  );
+
+  // ─── roles.list ───────────────────────────────────────────────────
+  /**
+   * POST /api/plugin/roles.list
+   * Body:    { guild_id: string }
+   * Returns: { roles: APIRole[] }
+   */
+  server.post<{ Body: { guild_id?: unknown } }>(
+    "/api/plugin/roles.list",
+    async (request, reply) => {
+      const ctx = await requireScope(request, reply, "roles.list");
+      if (!ctx) return;
+      if (!bot) {
+        reply.code(503).send({ error: "bot client unavailable" });
+        return;
+      }
+      const body = request.body ?? {};
+      if (typeof body.guild_id !== "string" || !SNOWFLAKE_RE.test(body.guild_id)) {
+        reply.code(400).send({ error: "guild_id required" });
+        return;
+      }
+      const enabledFeatures = await findEnabledFeaturesByPluginGuild(
+        ctx.pluginId,
+        body.guild_id,
+      );
+      if (enabledFeatures.length === 0) {
+        reply.code(403).send({ error: "plugin not enabled in this guild" });
+        return;
+      }
+      try {
+        const roles = await bot.rest.get(Routes.guildRoles(body.guild_id));
+        return { roles };
+      } catch (err) {
+        const m = err instanceof Error ? err.message : String(err);
+        reply.code(discordErrorStatus(err)).send({
+          error: `roles.list failed: ${m}`,
+        });
+      }
+    },
+  );
+
+  // ─── roles.get ────────────────────────────────────────────────────
+  /**
+   * POST /api/plugin/roles.get
+   * Body:    { guild_id: string, role_id: string }
+   * Returns: { role: APIRole }
+   *
+   * Discord has no single-role endpoint — under the hood this fetches
+   * the full role list (cached by the bot) and picks the entry.
+   */
+  server.post<{ Body: { guild_id?: unknown; role_id?: unknown } }>(
+    "/api/plugin/roles.get",
+    async (request, reply) => {
+      const ctx = await requireScope(request, reply, "roles.get");
+      if (!ctx) return;
+      if (!bot) {
+        reply.code(503).send({ error: "bot client unavailable" });
+        return;
+      }
+      const body = request.body ?? {};
+      if (typeof body.guild_id !== "string" || !SNOWFLAKE_RE.test(body.guild_id)) {
+        reply.code(400).send({ error: "guild_id required" });
+        return;
+      }
+      if (typeof body.role_id !== "string" || !SNOWFLAKE_RE.test(body.role_id)) {
+        reply.code(400).send({ error: "role_id required" });
+        return;
+      }
+      const enabledFeatures = await findEnabledFeaturesByPluginGuild(
+        ctx.pluginId,
+        body.guild_id,
+      );
+      if (enabledFeatures.length === 0) {
+        reply.code(403).send({ error: "plugin not enabled in this guild" });
+        return;
+      }
+      try {
+        const roles = (await bot.rest.get(
+          Routes.guildRoles(body.guild_id),
+        )) as Array<{ id: string }>;
+        const role = roles.find((r) => r.id === body.role_id);
+        if (!role) {
+          reply.code(404).send({ error: "role not found in this guild" });
+          return;
+        }
+        return { role };
+      } catch (err) {
+        const m = err instanceof Error ? err.message : String(err);
+        reply.code(discordErrorStatus(err)).send({
+          error: `roles.get failed: ${m}`,
+        });
+      }
+    },
+  );
+
+  // ─── members.add_role ─────────────────────────────────────────────
+  /**
+   * POST /api/plugin/members.add_role
+   * Body:    { guild_id, user_id, role_id }
+   * Returns: { ok: true }
+   *
+   * Bot needs `MANAGE_ROLES` AND must hold a role positioned above
+   * the target role. Discord returns code 50013 in both cases —
+   * indistinguishable from the error alone. We surface the raw
+   * Discord message via discordErrorStatus(err) so the plugin author
+   * sees the actionable hint ("Missing Permissions").
+   */
+  server.post<{
+    Body: { guild_id?: unknown; user_id?: unknown; role_id?: unknown };
+  }>("/api/plugin/members.add_role", async (request, reply) => {
+    const ctx = await requireScope(request, reply, "members.add_role");
+    if (!ctx) return;
+    if (!bot) {
+      reply.code(503).send({ error: "bot client unavailable" });
+      return;
+    }
+    const body = request.body ?? {};
+    if (typeof body.guild_id !== "string" || !SNOWFLAKE_RE.test(body.guild_id)) {
+      reply.code(400).send({ error: "guild_id required" });
+      return;
+    }
+    if (typeof body.user_id !== "string" || !SNOWFLAKE_RE.test(body.user_id)) {
+      reply.code(400).send({ error: "user_id required" });
+      return;
+    }
+    if (typeof body.role_id !== "string" || !SNOWFLAKE_RE.test(body.role_id)) {
+      reply.code(400).send({ error: "role_id required" });
+      return;
+    }
+    const enabledFeatures = await findEnabledFeaturesByPluginGuild(
+      ctx.pluginId,
+      body.guild_id,
+    );
+    if (enabledFeatures.length === 0) {
+      reply.code(403).send({ error: "plugin not enabled in this guild" });
+      return;
+    }
+    try {
+      await bot.rest.put(
+        Routes.guildMemberRole(body.guild_id, body.user_id, body.role_id),
+      );
+      return { ok: true };
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      reply.code(discordErrorStatus(err)).send({
+        error: `add_role failed: ${m}`,
+      });
+    }
+  });
+
+  // ─── members.remove_role ──────────────────────────────────────────
+  server.post<{
+    Body: { guild_id?: unknown; user_id?: unknown; role_id?: unknown };
+  }>("/api/plugin/members.remove_role", async (request, reply) => {
+    const ctx = await requireScope(request, reply, "members.remove_role");
+    if (!ctx) return;
+    if (!bot) {
+      reply.code(503).send({ error: "bot client unavailable" });
+      return;
+    }
+    const body = request.body ?? {};
+    if (typeof body.guild_id !== "string" || !SNOWFLAKE_RE.test(body.guild_id)) {
+      reply.code(400).send({ error: "guild_id required" });
+      return;
+    }
+    if (typeof body.user_id !== "string" || !SNOWFLAKE_RE.test(body.user_id)) {
+      reply.code(400).send({ error: "user_id required" });
+      return;
+    }
+    if (typeof body.role_id !== "string" || !SNOWFLAKE_RE.test(body.role_id)) {
+      reply.code(400).send({ error: "role_id required" });
+      return;
+    }
+    const enabledFeatures = await findEnabledFeaturesByPluginGuild(
+      ctx.pluginId,
+      body.guild_id,
+    );
+    if (enabledFeatures.length === 0) {
+      reply.code(403).send({ error: "plugin not enabled in this guild" });
+      return;
+    }
+    try {
+      await bot.rest.delete(
+        Routes.guildMemberRole(body.guild_id, body.user_id, body.role_id),
+      );
+      return { ok: true };
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      reply.code(discordErrorStatus(err)).send({
+        error: `remove_role failed: ${m}`,
+      });
+    }
+  });
+
+  // ─── messages.get ─────────────────────────────────────────────────
+  /**
+   * POST /api/plugin/messages.get
+   * Body:    { guild_id, channel_id, message_id }
+   * Returns: { message: APIMessage }
+   *
+   * guild_id is required for the per-guild feature gate (a plugin
+   * can't read a message in a guild it isn't enabled in). The bot
+   * doesn't validate that the channel actually belongs to that
+   * guild — Discord will 404 the message fetch if the channel is in
+   * a different guild, which surfaces correctly.
+   */
+  server.post<{
+    Body: { guild_id?: unknown; channel_id?: unknown; message_id?: unknown };
+  }>("/api/plugin/messages.get", async (request, reply) => {
+    const ctx = await requireScope(request, reply, "messages.get");
+    if (!ctx) return;
+    if (!bot) {
+      reply.code(503).send({ error: "bot client unavailable" });
+      return;
+    }
+    const body = request.body ?? {};
+    if (typeof body.guild_id !== "string" || !SNOWFLAKE_RE.test(body.guild_id)) {
+      reply.code(400).send({ error: "guild_id required" });
+      return;
+    }
+    if (
+      typeof body.channel_id !== "string" ||
+      !SNOWFLAKE_RE.test(body.channel_id)
+    ) {
+      reply.code(400).send({ error: "channel_id required" });
+      return;
+    }
+    if (
+      typeof body.message_id !== "string" ||
+      !SNOWFLAKE_RE.test(body.message_id)
+    ) {
+      reply.code(400).send({ error: "message_id required" });
+      return;
+    }
+    const enabledFeatures = await findEnabledFeaturesByPluginGuild(
+      ctx.pluginId,
+      body.guild_id,
+    );
+    if (enabledFeatures.length === 0) {
+      reply.code(403).send({ error: "plugin not enabled in this guild" });
+      return;
+    }
+    try {
+      const message = await bot.rest.get(
+        Routes.channelMessage(body.channel_id, body.message_id),
+      );
+      return { message };
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      reply.code(discordErrorStatus(err)).send({
+        error: `messages.get failed: ${m}`,
+      });
+    }
+  });
+
+  // ─── messages.fetch_history ──────────────────────────────────────
+  /**
+   * POST /api/plugin/messages.fetch_history
+   * Body:    { guild_id, channel_id, limit?, before?, after?, around? }
+   * Returns: { messages: APIMessage[] }
+   *
+   * Discord caps each call at 100 messages. We expose the cursor
+   * pattern directly — pass `before: <oldest_id_from_previous_page>`
+   * to walk further back. No silent multi-page fetching; that would
+   * silently consume the plugin's REST rate-limit budget.
+   */
+  server.post<{
+    Body: {
+      guild_id?: unknown;
+      channel_id?: unknown;
+      limit?: unknown;
+      before?: unknown;
+      after?: unknown;
+      around?: unknown;
+    };
+  }>("/api/plugin/messages.fetch_history", async (request, reply) => {
+    const ctx = await requireScope(request, reply, "messages.fetch_history");
+    if (!ctx) return;
+    if (!bot) {
+      reply.code(503).send({ error: "bot client unavailable" });
+      return;
+    }
+    const body = request.body ?? {};
+    if (typeof body.guild_id !== "string" || !SNOWFLAKE_RE.test(body.guild_id)) {
+      reply.code(400).send({ error: "guild_id required" });
+      return;
+    }
+    if (
+      typeof body.channel_id !== "string" ||
+      !SNOWFLAKE_RE.test(body.channel_id)
+    ) {
+      reply.code(400).send({ error: "channel_id required" });
+      return;
+    }
+    const enabledFeatures = await findEnabledFeaturesByPluginGuild(
+      ctx.pluginId,
+      body.guild_id,
+    );
+    if (enabledFeatures.length === 0) {
+      reply.code(403).send({ error: "plugin not enabled in this guild" });
+      return;
+    }
+    const limit =
+      typeof body.limit === "number" && Number.isInteger(body.limit)
+        ? Math.max(1, Math.min(100, body.limit))
+        : 50;
+    const query: Record<string, string> = { limit: String(limit) };
+    if (typeof body.before === "string" && SNOWFLAKE_RE.test(body.before)) {
+      query.before = body.before;
+    }
+    if (typeof body.after === "string" && SNOWFLAKE_RE.test(body.after)) {
+      query.after = body.after;
+    }
+    if (typeof body.around === "string" && SNOWFLAKE_RE.test(body.around)) {
+      query.around = body.around;
+    }
+    try {
+      const qs = new URLSearchParams(query).toString();
+      const messages = await bot.rest.get(
+        `${Routes.channelMessages(body.channel_id)}?${qs}` as `/${string}`,
+      );
+      return { messages };
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      reply.code(discordErrorStatus(err)).send({
+        error: `messages.fetch_history failed: ${m}`,
+      });
+    }
+  });
+
+  // ─── messages.remove_reaction ────────────────────────────────────
+  /**
+   * POST /api/plugin/messages.remove_reaction
+   * Body:    { guild_id, channel_id, message_id, emoji, user_id? }
+   * Returns: { ok: true }
+   *
+   * Removes the bot's own reaction when `user_id` is omitted; removes
+   * a specific user's reaction otherwise. `emoji` follows Discord's
+   * URL format — Unicode emoji as the character itself, custom emoji
+   * as `name:id`.
+   */
+  server.post<{
+    Body: {
+      guild_id?: unknown;
+      channel_id?: unknown;
+      message_id?: unknown;
+      emoji?: unknown;
+      user_id?: unknown;
+    };
+  }>("/api/plugin/messages.remove_reaction", async (request, reply) => {
+    const ctx = await requireScope(request, reply, "messages.remove_reaction");
+    if (!ctx) return;
+    if (!bot) {
+      reply.code(503).send({ error: "bot client unavailable" });
+      return;
+    }
+    const body = request.body ?? {};
+    if (typeof body.guild_id !== "string" || !SNOWFLAKE_RE.test(body.guild_id)) {
+      reply.code(400).send({ error: "guild_id required" });
+      return;
+    }
+    if (
+      typeof body.channel_id !== "string" ||
+      !SNOWFLAKE_RE.test(body.channel_id)
+    ) {
+      reply.code(400).send({ error: "channel_id required" });
+      return;
+    }
+    if (
+      typeof body.message_id !== "string" ||
+      !SNOWFLAKE_RE.test(body.message_id)
+    ) {
+      reply.code(400).send({ error: "message_id required" });
+      return;
+    }
+    if (typeof body.emoji !== "string" || body.emoji.length === 0) {
+      reply.code(400).send({ error: "emoji required" });
+      return;
+    }
+    const userId =
+      typeof body.user_id === "string" && SNOWFLAKE_RE.test(body.user_id)
+        ? body.user_id
+        : null;
+    const enabledFeatures = await findEnabledFeaturesByPluginGuild(
+      ctx.pluginId,
+      body.guild_id,
+    );
+    if (enabledFeatures.length === 0) {
+      reply.code(403).send({ error: "plugin not enabled in this guild" });
+      return;
+    }
+    try {
+      const encoded = encodeURIComponent(body.emoji);
+      const route = userId
+        ? Routes.channelMessageUserReaction(
+            body.channel_id,
+            body.message_id,
+            encoded,
+            userId,
+          )
+        : Routes.channelMessageOwnReaction(
+            body.channel_id,
+            body.message_id,
+            encoded,
+          );
+      await bot.rest.delete(route);
+      return { ok: true };
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      reply.code(discordErrorStatus(err)).send({
+        error: `remove_reaction failed: ${m}`,
+      });
+    }
+  });
+
+  // ─── guilds.get ──────────────────────────────────────────────────
+  /**
+   * POST /api/plugin/guilds.get
+   * Body:    { guild_id: string }
+   * Returns: { guild: APIGuild }
+   */
+  server.post<{ Body: { guild_id?: unknown } }>(
+    "/api/plugin/guilds.get",
+    async (request, reply) => {
+      const ctx = await requireScope(request, reply, "guilds.get");
+      if (!ctx) return;
+      if (!bot) {
+        reply.code(503).send({ error: "bot client unavailable" });
+        return;
+      }
+      const body = request.body ?? {};
+      if (typeof body.guild_id !== "string" || !SNOWFLAKE_RE.test(body.guild_id)) {
+        reply.code(400).send({ error: "guild_id required" });
+        return;
+      }
+      const enabledFeatures = await findEnabledFeaturesByPluginGuild(
+        ctx.pluginId,
+        body.guild_id,
+      );
+      if (enabledFeatures.length === 0) {
+        reply.code(403).send({ error: "plugin not enabled in this guild" });
+        return;
+      }
+      try {
+        const guild = await bot.rest.get(Routes.guild(body.guild_id));
+        return { guild };
+      } catch (err) {
+        const m = err instanceof Error ? err.message : String(err);
+        reply.code(discordErrorStatus(err)).send({
+          error: `guilds.get failed: ${m}`,
+        });
+      }
+    },
+  );
+
+  // ─── me.enabled_guilds ───────────────────────────────────────────
+  /**
+   * GET /api/plugin/me/enabled_guilds
+   * Returns: { guild_ids: string[] }
+   *
+   * The list of guild IDs where this plugin currently has at least
+   * one enabled feature. Closes the radio plugin's in-memory
+   * `seenGuilds` workaround (which emptied on restart). No per-guild
+   * gate — the result IS the guild list.
+   */
+  server.get(
+    "/api/plugin/me/enabled_guilds",
+    async (request, reply) => {
+      const auth = request.pluginAuth;
+      if (!auth) {
+        reply.code(401).send({ error: "plugin auth missing" });
+        return;
+      }
+      if (!auth.scopes.has("me.enabled_guilds")) {
+        reply
+          .code(403)
+          .send({ error: "plugin token missing scope 'me.enabled_guilds'" });
+        return;
+      }
+      const rows = await findFeatureRowsByPlugin(auth.pluginId);
+      const guildIds = [
+        ...new Set(rows.filter((r) => r.enabled).map((r) => r.guildId)),
+      ];
+      return { guild_ids: guildIds };
+    },
+  );
+
+  // ─── me.kv_usage ─────────────────────────────────────────────────
+  /**
+   * POST /api/plugin/me/kv_usage
+   * Body:    { guild_id: string }
+   * Returns: { used_bytes: number, quota_bytes: number }
+   *
+   * Read the plugin's current KV usage + quota for a given guild
+   * without having to issue a sentinel kv_set. Useful for admin UIs
+   * showing storage headroom.
+   */
+  server.post<{ Body: { guild_id?: unknown } }>(
+    "/api/plugin/me/kv_usage",
+    async (request, reply) => {
+      const ctx = await requireScope(request, reply, "me.kv_usage");
+      if (!ctx) return;
+      const body = request.body ?? {};
+      if (typeof body.guild_id !== "string" || !SNOWFLAKE_RE.test(body.guild_id)) {
+        reply.code(400).send({ error: "guild_id required" });
+        return;
+      }
+      const used = await sumGuildBytes(ctx.pluginId, body.guild_id);
+      const quota = await quotaForGuildKv(ctx.pluginId);
+      return { used_bytes: used, quota_bytes: quota };
     },
   );
 

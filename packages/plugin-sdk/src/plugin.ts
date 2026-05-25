@@ -228,18 +228,44 @@ export interface PluginConfig {
    * Common scopes:
    *   "interactions.respond"      — return a reply from a command handler
    *   "interactions.followup"     — post follow-up messages
+   *   "interactions.edit_followup" — patch a previously-posted followup
+   *                                  (avoid the delete+re-post flicker)
+   *   "interactions.send_modal"   — open a modal as the command response
+   *                                  (auto-injected by buildManifest when
+   *                                  any modal or responseKind:"modal" is
+   *                                  declared — plugin authors usually
+   *                                  don't need to list it manually)
+   *
+   * Discord reads:
+   *   "channels.get"              — fetch one channel's APIChannel
+   *   "channels.list"             — list all channels in a guild
+   *   "roles.list" / "roles.get"  — guild roles (APIRole[] / APIRole)
+   *   "guilds.get"                — guild metadata (APIGuild)
+   *   "messages.get"              — fetch one message (APIMessage)
+   *   "messages.fetch_history"    — channel history (APIMessage[], cursor)
+   *   "members.get"               — guild-member displayName+avatar (simplified)
+   *   "users.get"                 — global Discord user profile (no guild)
+   *
+   * Discord writes:
    *   "messages.send"             — send guild channel messages
    *   "messages.send_dm"          — DM a user
    *   "messages.delete" / "messages.edit" / "messages.add_reaction"
+   *   "messages.remove_reaction"  — remove own (or specific user's) reaction
+   *   "members.add_role" / "members.remove_role"
+   *                                — bot needs MANAGE_ROLES + must hold a
+   *                                  role above the target role
+   *
+   * Voice:
+   *   "voice.join" / "voice.leave" / "voice.play" / "voice.pause" /
+   *   "voice.stop" / "voice.status"
+   *
+   * Plugin self-service:
    *   "auth.session"              — mint plugin-session JWTs (link tokens)
-   *   "members.get"               — resolve guild-member displayName+avatar
-   *   "users.get"                 — resolve global Discord user profile
-   *                                  (works without a guild — use this
-   *                                  for DM / user-install / private-
-   *                                  channel surfaces where members.get
-   *                                  can't apply)
    *   "config.get" / "config.set" — admin-configurable plugin config
    *   "storage.kv_*"              — guild-scoped KV storage
+   *   "me.enabled_guilds"         — list guild IDs where this plugin's
+   *                                  feature is currently enabled
+   *   "me.kv_usage"               — read used + quota bytes for KV per guild
    */
   rpcMethodsUsed: string[];
   storage?: {
