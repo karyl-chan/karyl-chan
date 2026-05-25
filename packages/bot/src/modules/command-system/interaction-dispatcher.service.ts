@@ -1,23 +1,21 @@
 /**
- * command-system/interaction-dispatcher.service.ts — M1-C1 骨架實作
+ * command-system/interaction-dispatcher.service.ts
  *
  * InteractionDispatcher：統一的 Discord interactionCreate 入口。
- * 取代 main.ts 中的多重 try 分叉（system / user-slash / in-process / plugin）。
+ * main.ts 的 interactionCreate handler 一律呼叫 dispatcher.dispatch(interaction)，
+ * 取代過去 main.ts 內多重 try 分叉（system / user-slash / in-process / plugin）。
  *
- * 對齊 C-runtime §4.1 派發路徑：
- *   [1] behaviors（slash_command trigger）── source ∈ {system, custom, plugin}
- *   [2] plugin_commands（軌三）── 走 plugin-interaction-dispatch.service.ts
- *   [3] in-process registry（builtin-features）── 保留
+ * 對齊 C-runtime §4.1 派發路徑（first-claim-wins）：
+ *   [1]   behaviors（slash_command trigger）── source ∈ {system, custom, plugin}
+ *   [2]   plugin_commands（軌三）── 走 plugin-interaction-dispatch.service.ts
+ *   [2.5] plugin components（按鈕 + select menu）── 走 plugin-component-dispatch.service.ts
+ *         custom_id 必須是 `kc:<pluginKey>:<componentId>[:<tail>]`
+ *   [2.6] plugin modals（MODAL_SUBMIT）── 走 plugin-modal-dispatch.service.ts
+ *         custom_id 同 `kc:` prefix 規則
+ *   [3]   in-process registry（builtin-features）── 保留
  *   fallback：claimed=false，由 main.ts log warn
  *
- * 狀態：dormant（M1-C1）。
- *   - 所有真實邏輯已實作。
- *   - 不從 main.ts import，不掛任何 interactionCreate listener。
- *
- * M1-C2 接線時：
- *   1. 在 main.ts 的 interactionCreate handler 中呼叫 dispatcher.dispatch(interaction)
- *   2. 移除舊 dispatchUserSlashBehavior + runManualForInteraction + runBreakForInteraction 呼叫
- *   3. system behavior（source='system'）中的 stub 替換為真實實作（見下方 TODO）
+ * 狀態：live (M1-C2 完成接線；M1-C1 文字已過時)
  */
 
 import {

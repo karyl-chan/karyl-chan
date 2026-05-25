@@ -206,6 +206,14 @@ async function postEventToPlugin(
  * Fan out a Discord event to every plugin subscribed to its type.
  * Returns immediately; the dispatch itself runs in the background.
  * Plugins that are slow / down don't block the bot's main loop.
+ *
+ * TODO(event-name-whitelist): `eventType` is a free-form string here
+ * and in the manifest's `events_subscribed*` fields, so a plugin
+ * manifest with a typo (e.g. "guild.voice_state_updates" plural)
+ * registers successfully but never receives the event with no
+ * diagnostic. We should keep a canonical KNOWN_EVENT_TYPES set and
+ * surface a soft-warn from validateManifest on unknown subscriptions.
+ * Pre-existing design gap; flagged during Workpack A code review.
  */
 export function dispatchEventToPlugins(eventType: string, data: unknown): void {
   if (!index.hasSubscribers(eventType)) return;

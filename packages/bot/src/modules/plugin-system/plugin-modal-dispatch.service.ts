@@ -202,10 +202,17 @@ export async function dispatchModalToPlugin(
   // Flatten the submitted text-input values from the modal's nested
   // structure (action rows → text inputs) into a flat list keyed by
   // each input's custom_id. discord.js's `fields.fields` collection
-  // can contain Components V2 types (selects, checkboxes, …) whose
-  // `value` shape differs; we only forward text inputs (type 4) for
-  // now since the SDK contract is `Record<string, string>`. Other
-  // submit component types can be added in a follow-up workpack.
+  // can contain Components V2 types (StringSelect, UserSelect,
+  // CheckboxGroup, …) whose value shape differs (single .value vs
+  // multi .values vs boolean[]). We only forward text inputs (type 4)
+  // for now since the SDK contract is `Record<string, string>`.
+  //
+  // Future-bug guarded: if Discord ever delivers a Components V2
+  // modal payload, the `if (f.type !== 4) continue` skip below means
+  // the plugin silently sees the V2-component values missing from
+  // its fields map. Before any Components V2 modal lands, extend
+  // ModalPayload.components to {custom_id, value?, values?, checked?}
+  // and update ModalContext.fields accordingly.
   const components: Array<{ custom_id: string; value: string }> = [];
   for (const f of interaction.fields.fields.values()) {
     if (f.type !== 4) continue; // ComponentType.TextInput

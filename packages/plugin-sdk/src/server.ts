@@ -219,6 +219,24 @@ function normalizeReply(reply: CommandReply): {
   attachments: MessageAttachment[] | undefined;
   flags: MessageFlags | undefined;
 } {
+  // TypeScript forbids returning null/undefined from a handler, but
+  // a JS handler with a missing return statement (or a code path
+  // that doesn't return) silently produces undefined at runtime.
+  // Without this guard the object branch below throws a confusing
+  // TypeError ("Cannot read properties of undefined (reading
+  // 'content')") that surfaces through the outer catch as a generic
+  // "Internal error" — drowning the real diagnostic. Treat
+  // null/undefined as an empty reply.
+  if (reply === null || reply === undefined) {
+    return {
+      content: undefined,
+      ephemeral: false,
+      embeds: undefined,
+      components: undefined,
+      attachments: undefined,
+      flags: undefined,
+    };
+  }
   if (typeof reply === "string") {
     return {
       content: reply,
@@ -391,11 +409,14 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
       }
       const { handler, responseKind: commandResponseKind } = entry;
 
-      const capabilities = Array.isArray(payload.member?.capabilities)
-        ? payload.member!.capabilities!.filter(
-            (c): c is string => typeof c === "string",
-          )
-        : [];
+      // (payload.member?.capabilities ?? []) is provably string[]
+      // here — the outer ?? + Array.filter type-narrows cleanly. The
+      // previous form used `!` to override the null check, which is
+      // forward-compatible-unsafe (a refactor that loosens the
+      // ternary loses the safety net silently).
+      const capabilities = (payload.member?.capabilities ?? []).filter(
+        (c): c is string => typeof c === "string",
+      );
 
       // Tracks whether the handler called ctx.sendModal — if so, the
       // SDK skips the regular respondToInteraction call (Discord
@@ -431,6 +452,11 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
           // its manifest so the bot skipped its defer. If it did
           // defer, this call will 4xx — Discord rejects modal-after-
           // ack — and we surface that as `false`.
+          //
+          // We deliberately don't forward application_id; the bot has
+          // its own bot.application.id available and uses that for
+          // the REST callback. Forwarding a plugin-supplied id would
+          // suggest the bot honours it (it doesn't).
           const res = await callBotRpc(
             server.log,
             opts.botUrl,
@@ -439,7 +465,6 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
             {
               interaction_id: payload.interaction_id,
               interaction_token: payload.interaction_token,
-              application_id: payload.application_id,
               modal,
             },
           );
@@ -583,11 +608,14 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
         return;
       }
 
-      const capabilities = Array.isArray(payload.member?.capabilities)
-        ? payload.member!.capabilities!.filter(
-            (c): c is string => typeof c === "string",
-          )
-        : [];
+      // (payload.member?.capabilities ?? []) is provably string[]
+      // here — the outer ?? + Array.filter type-narrows cleanly. The
+      // previous form used `!` to override the null check, which is
+      // forward-compatible-unsafe (a refactor that loosens the
+      // ternary loses the safety net silently).
+      const capabilities = (payload.member?.capabilities ?? []).filter(
+        (c): c is string => typeof c === "string",
+      );
       const ctx: ComponentContext = {
         pluginKey: opts.pluginKey,
         customId: payload.custom_id,
@@ -786,11 +814,14 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
         return;
       }
 
-      const capabilities = Array.isArray(payload.member?.capabilities)
-        ? payload.member!.capabilities!.filter(
-            (c): c is string => typeof c === "string",
-          )
-        : [];
+      // (payload.member?.capabilities ?? []) is provably string[]
+      // here — the outer ?? + Array.filter type-narrows cleanly. The
+      // previous form used `!` to override the null check, which is
+      // forward-compatible-unsafe (a refactor that loosens the
+      // ternary loses the safety net silently).
+      const capabilities = (payload.member?.capabilities ?? []).filter(
+        (c): c is string => typeof c === "string",
+      );
       const fields: Record<string, string> = {};
       for (const c of payload.components ?? []) {
         if (typeof c.custom_id === "string" && typeof c.value === "string") {

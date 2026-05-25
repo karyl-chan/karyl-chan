@@ -477,6 +477,19 @@ export function definePlugin(config: PluginConfig): PluginInstance {
     }
     seenModals.add(m.id);
   }
+  // Cross-pool uniqueness: components and modals share the
+  // `kc:<pluginKey>:<id>[:<tail>]` custom_id shape. Reusing a string
+  // as both a componentId and a modalId works at runtime (they go to
+  // different dispatchers based on Discord interaction type) but is
+  // a code-smell that makes it impossible to grep for "where is id
+  // 'confirm' handled" without checking both pools. Reject it.
+  for (const id of seenComponents) {
+    if (seenModals.has(id)) {
+      throw new Error(
+        `definePlugin: id "${id}" is registered as BOTH a component and a modal — pick a different id for one of them`,
+      );
+    }
+  }
   return {
     config,
     async start(opts?: StartOptions): Promise<StartedPlugin> {
@@ -582,14 +595,42 @@ export function definePlugin(config: PluginConfig): PluginInstance {
         },
       };
 
-      for (const sig of ["SIGTERM", "SIGINT"] as const) {
-        process.on(sig, async () => {
-          await started.stop();
-          process.exit(0);
-        });
-      }
+      registerProcessSignalHandlers(started);
 
       return started;
     },
   };
+}
+
+// ── Signal handler registry (module-level) ────────────────────────────────
+//
+// We deliberately register SIGTERM/SIGINT handlers exactly ONCE per
+// process, not per `start()` call. A naive `process.on(...)` inside
+// `start()` accumulates handlers when start() is called multiple times
+// (integration tests, hot-reload, restart loops); the first SIGTERM
+// then fires N handlers concurrently, races N `stop()`s, and several
+// stale invocations call `process.exit(0)` against a torn-down server.
+//
+// The module-level `currentStarted` always points at the most recent
+// `start()` result so the single handler always shuts down the live
+// instance.
+
+let signalHandlersRegistered = false;
+let currentStarted: StartedPlugin | null = null;
+
+function registerProcessSignalHandlers(started: StartedPlugin): void {
+  currentStarted = started;
+  if (signalHandlersRegistered) return;
+  signalHandlersRegistered = true;
+  for (const sig of ["SIGTERM", "SIGINT"] as const) {
+    process.on(sig, async () => {
+      const target = currentStarted;
+      if (target) {
+        await target.stop().catch(() => {
+          /* swallow — we're exiting anyway */
+        });
+      }
+      process.exit(0);
+    });
+  }
 }
