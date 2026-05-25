@@ -24,6 +24,14 @@ export interface ManageClaims {
   purpose: "manage-access" | "manage-refresh";
   userId: string;
   capabilities: string[];
+  /**
+   * Guild the original bot manage-JWT was minted for. Null when the
+   * legacy single-arg `issueManagePair` was used (kept for backwards
+   * compat with the pre-/api/me exchange shape). Most reads should
+   * gracefully handle the null branch since the showcase / manage UI
+   * are guild-scoped surfaces today.
+   */
+  guildId: string | null;
   iat: number;
   exp: number;
 }
@@ -50,13 +58,14 @@ function sign(
   purpose: ManageClaims["purpose"],
   userId: string,
   capabilities: string[],
+  guildId: string | null,
   ttlMs: number,
 ): { token: string; expiresAt: number } {
   const now = Date.now();
   const exp = now + ttlMs;
   const headerSeg = b64urlEncode(JSON.stringify({ alg: "HS256", typ: "JWT" }));
   const bodySeg = b64urlEncode(
-    JSON.stringify({ purpose, userId, capabilities, iat: now, exp }),
+    JSON.stringify({ purpose, userId, capabilities, guildId, iat: now, exp }),
   );
   const signingInput = `${headerSeg}.${bodySeg}`;
   const sigSeg = b64urlEncode(
@@ -68,14 +77,15 @@ function sign(
 export function issueManagePair(
   userId: string,
   capabilities: string[],
+  guildId: string | null,
 ): {
   accessToken: string;
   refreshToken: string;
   accessExpiresAt: number;
   refreshExpiresAt: number;
 } {
-  const access = sign("manage-access", userId, capabilities, ACCESS_TTL_MS);
-  const refresh = sign("manage-refresh", userId, capabilities, REFRESH_TTL_MS);
+  const access = sign("manage-access", userId, capabilities, guildId, ACCESS_TTL_MS);
+  const refresh = sign("manage-refresh", userId, capabilities, guildId, REFRESH_TTL_MS);
   return {
     accessToken: access.token,
     refreshToken: refresh.token,
@@ -132,10 +142,21 @@ export function verifyManageToken(
   }
   if (typeof p.exp !== "number" || p.exp <= Date.now()) return null;
   if (typeof p.iat !== "number") return null;
+  // guildId is nullable — accept either string or null, reject anything
+  // else. Older tokens minted before this field existed are tolerated
+  // by treating missing as null.
+  const guildId =
+    p.guildId === undefined || p.guildId === null
+      ? null
+      : typeof p.guildId === "string"
+        ? p.guildId
+        : (undefined as never);
+  if (guildId === (undefined as never)) return null;
   return {
     purpose: p.purpose as ManageClaims["purpose"],
     userId: p.userId,
     capabilities: p.capabilities as string[],
+    guildId,
     iat: p.iat,
     exp: p.exp,
   };

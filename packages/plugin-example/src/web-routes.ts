@@ -151,7 +151,11 @@ export async function registerWebRoutes(
   server.post("/api/manage/exchange", async (request, reply) => {
     const claims = authManageBootstrap(request, reply, pluginKey, manageCap);
     if (!claims) return;
-    return issueManagePair(claims.userId, claims.capabilities ?? []);
+    return issueManagePair(
+      claims.userId,
+      claims.capabilities ?? [],
+      claims.guildId,
+    );
   });
 
   server.post<{ Body: { refreshToken?: unknown } }>(
@@ -177,9 +181,75 @@ export async function registerWebRoutes(
           .code(401)
           .send({ error: "Invalid or expired refresh token" });
       }
-      return issueManagePair(claims.userId, claims.capabilities);
+      return issueManagePair(claims.userId, claims.capabilities, claims.guildId);
     },
   );
+
+  // ── /api/me: hydrate the current viewer's display info ────────────────
+  // Works for both auth modes:
+  //  - session: userId + guildId straight from the plugin-session JWT.
+  //  - manage:  userId from the access token; guildId baked in at
+  //    exchange time (manage-tokens preserves the original bot JWT's
+  //    guildId so this route doesn't need extra storage round-trips).
+  // Calls bot's members.get with that (guildId, userId) and returns the
+  // member's display name + avatarUrl. members.get already pre-bakes
+  // `?animated=true` for animated avatars, so consumers don't need
+  // to swap URLs themselves.
+  server.get("/api/me", async (request, reply) => {
+    const header = request.headers.authorization;
+    const token = header?.startsWith("Bearer ") ? header.slice(7) : null;
+    if (!token) {
+      reply.code(401).send({ error: "Missing authorization" });
+      return;
+    }
+    // Try session JWT first; if that fails fall through to manage.
+    let userId: string | null = null;
+    let guildId: string | null = null;
+    const key = _sessionVerifyKey?.() ?? null;
+    if (key) {
+      const sessionClaims = verifyPluginSession(token, key);
+      if (sessionClaims) {
+        userId = sessionClaims.userId;
+        guildId = sessionClaims.guildId;
+      }
+    }
+    if (!userId) {
+      const manageClaims = verifyManageToken(token, "manage-access");
+      if (manageClaims) {
+        userId = manageClaims.userId;
+        guildId = manageClaims.guildId;
+      }
+    }
+    if (!userId) {
+      reply.code(401).send({ error: "Invalid or expired token" });
+      return;
+    }
+    if (!guildId) {
+      reply.code(400).send({ error: "Token has no guild scope" });
+      return;
+    }
+    if (!_botRpc) {
+      reply.code(503).send({ error: "bot RPC unavailable" });
+      return;
+    }
+    const result = (await _botRpc("/api/plugin/members.get", {
+      guild_id: guildId,
+      user_ids: [userId],
+    })) as
+      | { members?: Array<{ userId: string; displayName: string; avatarUrl: string }> }
+      | null;
+    const member = result?.members?.[0];
+    if (!member) {
+      reply.code(404).send({ error: "Member not found in this guild" });
+      return;
+    }
+    return {
+      userId: member.userId,
+      displayName: member.displayName,
+      avatarUrl: member.avatarUrl,
+      guildId,
+    };
+  });
 
   // ── Manage UI ─────────────────────────────────────────────────────────
   server.get<{ Querystring: { guildId?: string } }>(

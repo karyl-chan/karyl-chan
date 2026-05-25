@@ -34,6 +34,19 @@ export {
 } from "@karyl-chan/plugin-sdk/web";
 export type { ManageTokens };
 
+// ── Viewer info (works for both session + manage modes) ───────────────
+export interface MeResponse {
+  userId: string;
+  displayName: string;
+  /** Pre-baked with `?animated=true` when the avatar is animated. */
+  avatarUrl: string;
+  guildId: string;
+}
+
+export function fetchMe(): Promise<MeResponse> {
+  return api.request("GET", "/api/me");
+}
+
 // ── Manage surface ─────────────────────────────────────────────────────
 export interface StickyRow {
   userId: string;
