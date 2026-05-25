@@ -82,9 +82,50 @@ export interface PluginCommandRecord {
   manifestJson: string;
 }
 
+/** Workpack C: plugin health snapshot returned by the bot. */
+export interface PluginHealthEntry {
+  status: "healthy" | "degraded" | "unhealthy";
+  message?: string;
+  checks?: Array<{
+    name: string;
+    status: "healthy" | "degraded" | "unhealthy";
+    message?: string;
+  }>;
+  checkedAt: number;
+  receivedAt: number;
+  fromError?: boolean;
+}
+
+/** Workpack C: plugin metrics snapshot returned by the bot. */
+export interface PluginMetricsSnapshot {
+  ts: number;
+  receivedAt: number;
+  counters: Array<{
+    name: string;
+    labels: Record<string, string>;
+    value: number;
+  }>;
+  gauges: Array<{
+    name: string;
+    labels: Record<string, string>;
+    value: number;
+  }>;
+  histograms: Array<{
+    name: string;
+    labels: Record<string, string>;
+    count: number;
+    sum: number;
+    p50: number;
+    p95: number;
+    p99: number;
+  }>;
+}
+
 /** Plugin 詳情頁回傳（含 pluginCommands） */
 export interface PluginDetailRecord extends PluginRecord {
   pluginCommands: PluginCommandRecord[];
+  health?: PluginHealthEntry;
+  metrics?: PluginMetricsSnapshot;
 }
 
 export interface PluginRecord {

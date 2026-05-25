@@ -390,6 +390,15 @@ export async function registerPluginRoutes(
       const thirdTrackCommands = pluginCommands.filter(
         (c) => c.featureKey === null,
       );
+      // Workpack C: surface latest health + metrics inline for the
+      // overview tab. Both fields are optional — a plugin that hasn't
+      // pushed a metrics snapshot yet (just registered) or hasn't been
+      // probed yet (admin opened the page before the first 60 s poll)
+      // gets the field omitted.
+      const { getHealth } = await import("./plugin-health-store.js");
+      const { getSnapshot } = await import("./plugin-metrics-store.js");
+      const health = getHealth(p.pluginKey);
+      const metrics = getSnapshot(p.pluginKey);
 
       return {
         plugin: {
@@ -410,6 +419,8 @@ export async function registerPluginRoutes(
             adminEnabled: c.adminEnabled,
             manifestJson: c.manifestJson,
           })),
+          ...(health ? { health } : {}),
+          ...(metrics ? { metrics } : {}),
         },
       };
     },

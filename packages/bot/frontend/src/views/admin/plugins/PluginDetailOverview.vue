@@ -14,6 +14,27 @@ const { t } = useI18n();
 const manifest = computed(() => props.plugin.manifest);
 const hasConfigSchema = computed(() => (manifest.value?.config_schema?.length ?? 0) > 0);
 
+// Workpack C: health + metrics inline on the overview tab.
+const health = computed(() => props.plugin.health ?? null);
+const metrics = computed(() => props.plugin.metrics ?? null);
+const hasMetrics = computed(() => {
+    const m = metrics.value;
+    if (!m) return false;
+    return m.counters.length > 0 || m.gauges.length > 0 || m.histograms.length > 0;
+});
+
+function formatLabels(labels: Record<string, string>): string {
+    const entries = Object.entries(labels);
+    if (entries.length === 0) return '';
+    return entries.map(([k, v]) => `${k}=${v}`).join(', ');
+}
+function formatAge(unixMs: number): string {
+    const seconds = Math.max(0, Math.floor((Date.now() - unixMs) / 1000));
+    if (seconds < 60) return `${seconds}s ago`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+    return `${Math.floor(seconds / 3600)}h ago`;
+}
+
 // Config editor (same lazy-load pattern as PluginCard)
 const configSchema = ref<PluginConfigField[]>([]);
 const configValues = reactive<Record<string, string>>({});
@@ -99,6 +120,71 @@ onMounted(() => {
                     <dd>{{ plugin.lastHeartbeatAt ?? t('admin.plugins.neverHeartbeat') }}</dd>
                 </div>
             </dl>
+        </section>
+
+        <!-- Workpack C: health probe result -->
+        <section v-if="health" class="section">
+            <div class="section-header">
+                <h3 class="section-title">健康狀態</h3>
+                <span class="muted health-age">{{ formatAge(health.checkedAt) }}</span>
+            </div>
+            <div class="health-row">
+                <span :class="['health-badge', `status-${health.status}`]">
+                    {{ health.status }}
+                </span>
+                <span v-if="health.message" class="health-msg">{{ health.message }}</span>
+            </div>
+            <ul v-if="health.checks && health.checks.length > 0" class="health-checks">
+                <li v-for="c in health.checks" :key="c.name" class="health-check">
+                    <span :class="['health-dot', `status-${c.status}`]" aria-hidden="true" />
+                    <code class="check-name">{{ c.name }}</code>
+                    <span v-if="c.message" class="check-msg">{{ c.message }}</span>
+                </li>
+            </ul>
+        </section>
+
+        <!-- Workpack C: metrics snapshot -->
+        <section v-if="hasMetrics && metrics" class="section">
+            <div class="section-header">
+                <h3 class="section-title">指標</h3>
+                <span class="muted health-age">{{ formatAge(metrics.receivedAt) }}</span>
+            </div>
+            <div v-if="metrics.counters.length > 0" class="metrics-block">
+                <h4 class="metrics-subhead">Counters</h4>
+                <table class="metrics-table">
+                    <tr v-for="(c, i) in metrics.counters" :key="`c-${i}`">
+                        <td class="metric-name"><code>{{ c.name }}</code></td>
+                        <td class="metric-labels muted">{{ formatLabels(c.labels) }}</td>
+                        <td class="metric-value">{{ c.value }}</td>
+                    </tr>
+                </table>
+            </div>
+            <div v-if="metrics.gauges.length > 0" class="metrics-block">
+                <h4 class="metrics-subhead">Gauges</h4>
+                <table class="metrics-table">
+                    <tr v-for="(g, i) in metrics.gauges" :key="`g-${i}`">
+                        <td class="metric-name"><code>{{ g.name }}</code></td>
+                        <td class="metric-labels muted">{{ formatLabels(g.labels) }}</td>
+                        <td class="metric-value">{{ g.value }}</td>
+                    </tr>
+                </table>
+            </div>
+            <div v-if="metrics.histograms.length > 0" class="metrics-block">
+                <h4 class="metrics-subhead">Histograms</h4>
+                <table class="metrics-table">
+                    <thead>
+                        <tr><th>name</th><th>labels</th><th>count</th><th>p50</th><th>p95</th><th>p99</th></tr>
+                    </thead>
+                    <tr v-for="(h, i) in metrics.histograms" :key="`h-${i}`">
+                        <td class="metric-name"><code>{{ h.name }}</code></td>
+                        <td class="metric-labels muted">{{ formatLabels(h.labels) }}</td>
+                        <td class="metric-value">{{ h.count }}</td>
+                        <td class="metric-value">{{ h.p50.toFixed(2) }}</td>
+                        <td class="metric-value">{{ h.p95.toFixed(2) }}</td>
+                        <td class="metric-value">{{ h.p99.toFixed(2) }}</td>
+                    </tr>
+                </table>
+            </div>
         </section>
 
         <!-- Granted RPC methods (read-only — manifest's rpc_methods_used) -->
@@ -291,4 +377,73 @@ onMounted(() => {
 }
 .muted { color: var(--text-muted); font-size: 0.85rem; }
 .error { color: var(--danger); margin: 0; font-size: 0.85rem; }
+
+/* Workpack C — health + metrics blocks */
+.health-age { font-size: 0.75rem; color: var(--text-muted); }
+.health-row { display: flex; align-items: center; gap: 0.6rem; }
+.health-badge {
+    display: inline-block;
+    padding: 0.18rem 0.55rem;
+    border-radius: var(--radius-sm);
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-transform: capitalize;
+}
+.health-badge.status-healthy { background: rgba(34, 197, 94, 0.18); color: rgb(34, 197, 94); }
+.health-badge.status-degraded { background: rgba(234, 179, 8, 0.18); color: rgb(234, 179, 8); }
+.health-badge.status-unhealthy { background: rgba(239, 68, 68, 0.18); color: rgb(239, 68, 68); }
+.health-msg { color: var(--text-muted); font-size: 0.85rem; }
+.health-checks {
+    list-style: none;
+    margin: 0.6rem 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+.health-check { display: flex; align-items: center; gap: 0.45rem; font-size: 0.82rem; }
+.health-dot {
+    width: 0.55rem; height: 0.55rem;
+    border-radius: 50%;
+    background: var(--text-muted);
+    flex-shrink: 0;
+}
+.health-dot.status-healthy { background: rgb(34, 197, 94); }
+.health-dot.status-degraded { background: rgb(234, 179, 8); }
+.health-dot.status-unhealthy { background: rgb(239, 68, 68); }
+.check-name { font-family: var(--font-mono, monospace); font-size: 0.75rem; }
+.check-msg { color: var(--text-muted); }
+
+.metrics-block { margin-top: 0.5rem; }
+.metrics-block:first-child { margin-top: 0; }
+.metrics-subhead {
+    font-size: 0.78rem;
+    font-weight: 600;
+    margin: 0.7rem 0 0.3rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+.metrics-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+}
+.metrics-table th {
+    text-align: left;
+    font-weight: 500;
+    color: var(--text-muted);
+    padding: 0.2rem 0.4rem;
+    border-bottom: 1px solid var(--border);
+}
+.metrics-table td {
+    padding: 0.2rem 0.4rem;
+    border-bottom: 1px solid var(--border);
+}
+.metric-name code {
+    font-family: var(--font-mono, monospace);
+    font-size: 0.76rem;
+}
+.metric-labels { font-size: 0.75rem; }
+.metric-value { font-variant-numeric: tabular-nums; text-align: right; }
 </style>
