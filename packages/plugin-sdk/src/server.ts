@@ -239,7 +239,12 @@ function normalizeReply(reply: CommandReply): {
   };
 }
 
-/** Modal replies normalize to a strict ephemeral subset of CommandReply. */
+/**
+ * Modal replies normalize to a strict ephemeral subset of CommandReply.
+ * `ephemeral` is forced true — Discord locks ephemerality at defer
+ * time and the bot always defers modal submits as ephemeral (see
+ * plugin-modal-dispatch.service.ts). See ModalReply JSDoc.
+ */
 function normalizeModalReply(reply: ModalReply): {
   content: string | undefined;
   ephemeral: boolean;
@@ -259,7 +264,7 @@ function normalizeModalReply(reply: ModalReply): {
   }
   return {
     content: reply.content,
-    ephemeral: reply.ephemeral ?? true,
+    ephemeral: true,
     embeds: reply.embeds,
     components: reply.components,
     flags: reply.flags,
@@ -356,6 +361,23 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
 
       const entry = commandMap.get(payload.command_name);
       if (!entry) {
+        // Command arrived but no handler is registered for it. The
+        // most likely cause is a manifest/code drift: the manifest
+        // declared the command but `definePluginCommand` was never
+        // called for it (or the name in `pluginCommands` doesn't
+        // match the manifest).
+        server.log.error(
+          { commandName: payload.command_name },
+          "command dispatched but no handler registered — manifest/code drift",
+        );
+        // We can't know from here whether the bot deferred. Try to
+        // surface the message via interactions.respond:
+        //  - response_kind="deferred": bot deferred → user sees the
+        //    message
+        //  - response_kind="modal":     bot didn't defer → call 404s,
+        //    callBotRpc logs warn, user sees Discord's generic
+        //    "interaction failed". Either way the SDK error log
+        //    above is the canonical signal for the operator.
         await respondToInteraction(
           server.log,
           opts.botUrl,
@@ -575,6 +597,10 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
         channelId: payload.channel_id,
         messageId: payload.message_id,
         interactionToken: payload.interaction_token,
+        componentType:
+          typeof payload.component_type === "number"
+            ? payload.component_type
+            : 0,
         selectedValues: Array.isArray(payload.selected_values)
           ? payload.selected_values.filter(
               (v): v is string => typeof v === "string",
@@ -671,7 +697,9 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
       const ctx: AutocompleteContext = {
         pluginKey: opts.pluginKey,
         commandName: payload.command_name,
-        subCommandName: payload.sub_command_name,
+        // Normalize undefined→null so handlers branching on `=== null`
+        // see consistent values whether the bot sent the field or not.
+        subCommandName: payload.sub_command_name ?? null,
         guildId: payload.guild_id,
         userId: payload.user.id,
         focused: payload.focused,

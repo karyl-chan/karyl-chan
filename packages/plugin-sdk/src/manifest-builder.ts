@@ -30,6 +30,26 @@ function hasAutocompleteHandler(cfg: PluginConfig): boolean {
 }
 
 /**
+ * True iff the plugin opts into the modal flow in any way — by
+ * declaring at least one modal handler or at least one command with
+ * `responseKind: "modal"`. Either implies `ctx.sendModal()` will be
+ * called against the bot's `interactions.send_modal` RPC, so the
+ * scope must be in the token's set.
+ */
+function hasModalUse(cfg: PluginConfig): boolean {
+  if ((cfg.modals ?? []).length > 0) return true;
+  if ((cfg.pluginCommands ?? []).some((c) => c.responseKind === "modal")) {
+    return true;
+  }
+  for (const f of cfg.guildFeatures ?? []) {
+    if ((f.commands ?? []).some((c) => c.responseKind === "modal")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * 將 PluginConfig + pluginUrl 轉成 PluginManifest，提供給 startPluginClient
  * 註冊用。Plugin 作者不需要手動呼叫此函式（definePlugin.start() 內部會叫）。
  */
@@ -135,9 +155,20 @@ export function buildManifest(
       url: pluginUrl,
       healthcheck_path: "/health",
     },
-    ...(cfg.rpcMethodsUsed.length > 0
-      ? { rpc_methods_used: cfg.rpcMethodsUsed }
-      : {}),
+    // Auto-inject scopes that are implied by other declarations so
+    // plugin authors can't forget them. Today: declaring `modals`
+    // implies the SDK will call `interactions.send_modal` via
+    // `ctx.sendModal`, and a command with `responseKind: "modal"`
+    // implies the same. Without this, plugin authors saw a generic
+    // 403 "plugin token missing scope 'interactions.send_modal'"
+    // with no hint that the manifest opt-in was the missing piece.
+    ...(((): { rpc_methods_used?: string[] } => {
+      const scopes = new Set<string>(cfg.rpcMethodsUsed ?? []);
+      if (hasModalUse(cfg)) scopes.add("interactions.send_modal");
+      return scopes.size > 0
+        ? { rpc_methods_used: [...scopes] }
+        : {};
+    })()),
     ...(cfg.storage
       ? {
           storage: {

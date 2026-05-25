@@ -262,7 +262,17 @@ async function dispatchChatInputCommand(
         `plugin-interaction: ${plugin.pluginKey}/${interaction.commandName} POST returned ${res.status}: ${text.slice(0, 200)}`,
         { pluginId: plugin.id },
       );
-      await replyError(`⚠ Plugin 拒絕了此指令 (HTTP ${res.status})`);
+      // For modal commands, we deliberately do NOT call replyError
+      // on POST failure — sending interaction.reply() here would
+      // consume the only ack slot and race against the plugin's
+      // (possibly still in-flight) interactions.send_modal call,
+      // which would then 400 with "unknown interaction". Better to
+      // let the interaction expire naturally so a slower-than-
+      // expected plugin's sendModal can still hit Discord in time.
+      // Operator log above is the canonical signal.
+      if (responseKind !== "modal") {
+        await replyError(`⚠ Plugin 拒絕了此指令 (HTTP ${res.status})`);
+      }
     }
     // We do NOT consume res body. Plugin completes the deferred
     // reply via RPC interactions.respond. Synchronous body action
@@ -275,7 +285,10 @@ async function dispatchChatInputCommand(
       `plugin-interaction: ${plugin.pluginKey}/${interaction.commandName} POST failed: ${msg}`,
       { pluginId: plugin.id },
     );
-    await replyError(`⚠ 無法連接 plugin: ${msg}`);
+    // Same modal-race reasoning as the non-ok branch above.
+    if (responseKind !== "modal") {
+      await replyError(`⚠ 無法連接 plugin: ${msg}`);
+    }
   } finally {
     clearTimeout(timer);
   }
@@ -314,9 +327,22 @@ async function dispatchAutocomplete(
   }
 
   const focused = interaction.options.getFocused(true);
+  // Subcommand + sibling-option context so the SDK's AutocompleteContext
+  // matches what dispatchChatInputCommand sends. Without these, the SDK
+  // sets subCommandName=undefined (not null per the type) and ctx.options
+  // is empty — autocomplete handlers that filter by already-typed sibling
+  // options can't access them.
+  const subGroup = interaction.options.getSubcommandGroup(false) ?? null;
+  const sub = interaction.options.getSubcommand(false) ?? null;
+  const raw = (
+    interaction.options as unknown as { _hoistedOptions?: OptionEntry[] }
+  )._hoistedOptions;
   const payload = {
     interaction_id: interaction.id,
     command_name: interaction.commandName,
+    sub_command_name: sub,
+    sub_command_group: subGroup,
+    options: raw ?? [],
     focused: { name: focused.name, value: focused.value, type: focused.type },
     guild_id: interaction.guildId,
     user: { id: interaction.user.id },

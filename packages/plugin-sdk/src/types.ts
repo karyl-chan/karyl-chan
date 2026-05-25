@@ -274,6 +274,19 @@ export interface ComponentContext {
   /** Id of the message the component is attached to. */
   messageId: string;
   /**
+   * Numeric Discord `ComponentType` of the component that fired:
+   *   2 = Button,
+   *   3 = StringSelect,
+   *   5 = UserSelect, 6 = RoleSelect,
+   *   7 = MentionableSelect, 8 = ChannelSelect.
+   * Use this to discriminate when one `componentId` is reused across
+   * multiple component types (e.g. 'confirm' rendered as either a
+   * button or a select). Falls back to 0 if the bot didn't send it
+   * (older bot — should not happen with the bot bundled in this SDK
+   * version, but typed-defensive).
+   */
+  componentType: number;
+  /**
    * Selected values for select-menu interactions. Empty array for
    * button interactions. For user/role/mentionable/channel selects the
    * values are the chosen snowflakes.
@@ -388,8 +401,15 @@ export interface ModalContext {
  * What a modal-submit handler may return:
  *  - nothing / null / undefined → the deferred ephemeral reply lingers
  *    as a brief "thinking" then quietly disappears
- *  - string or `{ content?, embeds?, ephemeral? }` → forwarded to
- *    `interactions.respond` to edit the deferred reply
+ *  - string or `{ content?, embeds?, components?, flags? }` →
+ *    forwarded to `interactions.respond` to edit the deferred reply
+ *
+ * Modal-submit replies are ALWAYS ephemeral — the bot's modal
+ * dispatcher unconditionally `deferReply({ ephemeral: true })`s on
+ * the user's submit, and Discord locks ephemerality at defer time.
+ * Setting `flags` to clear ephemeral here would be silently ignored.
+ * (If you need a public reply after a modal, use `messages.send` to
+ * the channel and return null from the modal handler.)
  */
 export type ModalReply =
   | void
@@ -399,7 +419,6 @@ export type ModalReply =
       content?: string;
       embeds?: APIEmbed[];
       components?: MessageActionRow[];
-      ephemeral?: boolean;
       flags?: MessageFlags;
     };
 
