@@ -132,6 +132,12 @@ async function postLifecycleToPlugin(
 /**
  * Fire a guild-feature enable/disable event at a specific plugin.
  * Async but fire-and-forget — callers do not await.
+ *
+ * The inner `postLifecycleToPlugin` handles HTTP errors itself; the
+ * outer try/catch is here to swallow DB errors from `findPluginById`
+ * (Sequelize / SQLITE_BUSY) so they don't surface as unhandled
+ * rejections in Node. A toggle that the plugin never hears about is
+ * acceptable — the bot UI already shows the toggle took effect.
  */
 export function dispatchLifecycleToPlugin(
   pluginId: number,
@@ -140,15 +146,32 @@ export function dispatchLifecycleToPlugin(
   featureKey: string,
 ): void {
   void (async () => {
-    const plugin = await findPluginById(pluginId);
-    if (!plugin || !plugin.enabled || plugin.status !== "active") return;
-    const signingKey = plugin.dispatchHmacKey;
-    if (!signingKey) return;
-    await postLifecycleToPlugin(
-      plugin,
-      eventType,
-      { guild_id: guildId, feature_key: featureKey },
-      signingKey,
-    );
+    try {
+      const plugin = await findPluginById(pluginId);
+      if (!plugin || !plugin.enabled || plugin.status !== "active") return;
+      const signingKey = plugin.dispatchHmacKey;
+      if (!signingKey) return;
+      await postLifecycleToPlugin(
+        plugin,
+        eventType,
+        { guild_id: guildId, feature_key: featureKey },
+        signingKey,
+      );
+    } catch (err) {
+      if (shouldRecord(`plugin-lifecycle-iife:${pluginId}:${eventType}`)) {
+        botEventLog.record(
+          "error",
+          "bot",
+          `plugin lifecycle dispatch IIFE for pluginId=${pluginId} threw`,
+          {
+            pluginId,
+            eventType,
+            guildId,
+            featureKey,
+            error: err instanceof Error ? err.message : String(err),
+          },
+        );
+      }
+    }
   })();
 }

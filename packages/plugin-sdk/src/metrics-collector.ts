@@ -187,7 +187,18 @@ export class MetricsCollector implements PluginMetrics {
     };
   }
 
-  /** Build a snapshot of current state. Histograms drain their reservoirs. */
+  /**
+   * Build a snapshot of current state.
+   *
+   * Histograms keep their reservoir across snapshots — the reservoir
+   * IS the bounded uniform sample of all observations since the plugin
+   * started, and count/sum are cumulative. Earlier versions drained
+   * the reservoir per snapshot, which produced `p50=p95=p99=0` for
+   * idle intervals (no observations since last push) — admin UI then
+   * rendered "0ms median" for a healthy-but-idle plugin. Keeping the
+   * reservoir matches what count/sum already represent (lifetime
+   * cumulative) and avoids the misleading-zeros mode.
+   */
   snapshot(): MetricsSnapshot {
     const snapshot: MetricsSnapshot = {
       ts: Date.now(),
@@ -214,11 +225,6 @@ export class MetricsCollector implements PluginMetrics {
         };
       }),
     };
-    // Drain reservoirs so the next snapshot covers a fresh interval.
-    // count + sum are cumulative since process start, which is what
-    // counter-style aggregators expect; only the quantile sample is
-    // per-interval.
-    for (const h of this.histograms.values()) h.observations = [];
     return snapshot;
   }
 
