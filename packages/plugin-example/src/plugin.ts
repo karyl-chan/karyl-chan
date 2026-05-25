@@ -32,6 +32,8 @@ import {
   definePluginCommand,
   type CommandContext,
   type CommandReply,
+  type MetricsCounter,
+  type PluginContext,
 } from "@karyl-chan/plugin-sdk";
 import {
   registerWebRoutes,
@@ -44,6 +46,13 @@ import { publish, type ChatEvent } from "./chat-state.js";
 const PLUGIN_KEY = "karyl-example";
 const FEATURE_KEY = "example";
 const MANAGE_CAP = "manage";
+
+// Workpack C: module-level metric handles, populated by `onStart` once
+// the PluginContext is available. Command handlers below increment
+// `commandCounter` so the admin UI metrics panel renders a non-zero
+// counter without the plugin author hand-wiring metric exposition.
+let startupCounter: MetricsCounter | null = null;
+let commandCounter: MetricsCounter | null = null;
 
 function buildSpaLink(
   publicBaseUrl: string,
@@ -62,6 +71,11 @@ async function withSessionLink(
   buildLink: (publicBaseUrl: string, token: string) => string,
   noPermissionLabel: string,
 ): Promise<CommandReply> {
+  // Workpack C: tick the per-invocation counter on every command. The
+  // counter is created once in `onStart` and shared across every command
+  // handler; null-guard covers the brief window before the SDK has
+  // populated the PluginContext (very-early invocation before register).
+  commandCounter?.inc();
   if (!ctx.publicBaseUrl) {
     return {
       content:
@@ -248,6 +262,54 @@ export const plugin = definePlugin({
   ],
 
   guildFeatures: [exampleFeature],
+
+  // Workpack C demonstration —
+  // Lifecycle: onStart fires after register, onStop on SIGTERM. Both
+  // get a PluginContext with structured logger / botEventLog / metrics
+  // accessors so this plugin participates in the admin UI's observability
+  // panel without bespoke RPC plumbing.
+  async onStart(ctx: PluginContext): Promise<void> {
+    startupCounter = ctx.metrics.counter("example_starts_total");
+    commandCounter = ctx.metrics.counter("example_commands_total", {
+      kind: "any",
+    });
+    startupCounter.inc();
+    ctx.botEventLog.emit({
+      level: "info",
+      message: "plugin started",
+      eventKey: "started",
+    });
+  },
+  async onStop(ctx: PluginContext): Promise<void> {
+    ctx.botEventLog.emit({
+      level: "info",
+      message: "plugin shutting down",
+      eventKey: "stopping",
+    });
+  },
+  async onEnable(ctx: PluginContext, guildId: string): Promise<void> {
+    ctx.botEventLog.emit({
+      level: "info",
+      message: `example feature enabled in guild ${guildId}`,
+      context: { guildId },
+    });
+  },
+  async onDisable(ctx: PluginContext, guildId: string): Promise<void> {
+    ctx.botEventLog.emit({
+      level: "info",
+      message: `example feature disabled in guild ${guildId}`,
+      context: { guildId },
+    });
+  },
+  // Health producer — the bot polls /health/detail every 60 s. Simple
+  // example: report healthy unconditionally with the count of /example-*
+  // commands invoked since startup as additional context.
+  async healthCheck(): Promise<{ status: "healthy"; message: string }> {
+    return {
+      status: "healthy",
+      message: "example plugin nominal",
+    };
+  },
 
   async onReady(server) {
     await registerWebRoutes(server, PLUGIN_KEY, MANAGE_CAP);

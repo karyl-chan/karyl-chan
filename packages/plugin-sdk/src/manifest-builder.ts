@@ -170,15 +170,19 @@ export function buildManifest(
       healthcheck_path: "/health",
     },
     // Auto-inject scopes that are implied by other declarations so
-    // plugin authors can't forget them. Today: declaring `modals`
-    // implies the SDK will call `interactions.send_modal` via
-    // `ctx.sendModal`, and a command with `responseKind: "modal"`
-    // implies the same. Without this, plugin authors saw a generic
-    // 403 "plugin token missing scope 'interactions.send_modal'"
-    // with no hint that the manifest opt-in was the missing piece.
+    // plugin authors can't forget them. Today:
+    //   - `modals` / `responseKind:"modal"` ⇒ `interactions.send_modal`
+    //     (SDK calls it via `ctx.sendModal`)
+    //   - SDK observability surface ⇒ `me.log` + `me.metrics`
+    //     (SDK's BotEventEmitter / MetricsCollector flush
+    //      periodically; without the scopes a `ctx.metrics.counter().inc`
+    //      or `ctx.botEventLog.emit` call would 403 with a generic
+    //      message that doesn't point at the manifest as the fix)
     ...(((): { rpc_methods_used?: string[] } => {
       const scopes = new Set<string>(cfg.rpcMethodsUsed ?? []);
       if (hasModalUse(cfg)) scopes.add("interactions.send_modal");
+      scopes.add("me.log");
+      scopes.add("me.metrics");
       return scopes.size > 0
         ? { rpc_methods_used: [...scopes] }
         : {};
