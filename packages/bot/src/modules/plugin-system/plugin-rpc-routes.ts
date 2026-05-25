@@ -215,6 +215,39 @@ async function quotaForGuildKv(pluginId: number): Promise<number> {
   return DEFAULT_KV_QUOTA_BYTES;
 }
 
+/**
+ * Verify a channel actually belongs to the claimed guild. The
+ * per-guild feature gate only knows which guild the plugin asked
+ * about — Discord's `/channels/:id/*` routes are keyed on the
+ * channel alone, so without this check a plugin enabled in guild A
+ * could pass `channel_id` of any channel in guild B and read/write
+ * across the boundary. Hits the in-memory cache when populated and
+ * falls back to a single REST lookup. Returns false when the channel
+ * is unknown or in a different guild.
+ */
+async function assertChannelInGuild(
+  bot: Client,
+  channelId: string,
+  expectedGuildId: string,
+): Promise<boolean> {
+  const cached = bot.channels.cache.get(channelId);
+  if (cached) {
+    if (cached.isDMBased()) return false;
+    return (
+      "guildId" in cached &&
+      (cached as { guildId?: string | null }).guildId === expectedGuildId
+    );
+  }
+  try {
+    const ch = (await bot.rest.get(Routes.channel(channelId))) as {
+      guild_id?: string;
+    };
+    return ch.guild_id === expectedGuildId;
+  } catch {
+    return false;
+  }
+}
+
 export async function registerPluginRpcRoutes(
   server: FastifyInstance,
   options: PluginRpcOptions,
@@ -1673,7 +1706,15 @@ export async function registerPluginRpcRoutes(
         return;
       }
       try {
-        const channel = await bot.rest.get(Routes.channel(body.channel_id));
+        const channel = (await bot.rest.get(
+          Routes.channel(body.channel_id),
+        )) as { guild_id?: string };
+        if (channel.guild_id !== body.guild_id) {
+          reply
+            .code(403)
+            .send({ error: "channel does not belong to specified guild" });
+          return;
+        }
         return { channel };
       } catch (err) {
         const m = err instanceof Error ? err.message : String(err);
@@ -1940,10 +1981,12 @@ export async function registerPluginRpcRoutes(
    * Returns: { message: APIMessage }
    *
    * guild_id is required for the per-guild feature gate (a plugin
-   * can't read a message in a guild it isn't enabled in). The bot
-   * doesn't validate that the channel actually belongs to that
-   * guild — Discord will 404 the message fetch if the channel is in
-   * a different guild, which surfaces correctly.
+   * can't read a message in a guild it isn't enabled in). We also
+   * verify the channel actually belongs to that guild via
+   * `assertChannelInGuild` — Discord's `/channels/:id/messages/:id`
+   * route doesn't validate cross-guild itself, so without this a
+   * plugin could pass `guild_id` of a guild it owns and `channel_id`
+   * of a channel in a different guild and read across the boundary.
    */
   server.post<{
     Body: { guild_id?: unknown; channel_id?: unknown; message_id?: unknown };
@@ -1979,6 +2022,12 @@ export async function registerPluginRpcRoutes(
     );
     if (enabledFeatures.length === 0) {
       reply.code(403).send({ error: "plugin not enabled in this guild" });
+      return;
+    }
+    if (!(await assertChannelInGuild(bot, body.channel_id, body.guild_id))) {
+      reply
+        .code(403)
+        .send({ error: "channel does not belong to specified guild" });
       return;
     }
     try {
@@ -2041,24 +2090,34 @@ export async function registerPluginRpcRoutes(
       reply.code(403).send({ error: "plugin not enabled in this guild" });
       return;
     }
+    if (!(await assertChannelInGuild(bot, body.channel_id, body.guild_id))) {
+      reply
+        .code(403)
+        .send({ error: "channel does not belong to specified guild" });
+      return;
+    }
     const limit =
       typeof body.limit === "number" && Number.isInteger(body.limit)
         ? Math.max(1, Math.min(100, body.limit))
         : 50;
-    const query: Record<string, string> = { limit: String(limit) };
+    const query = new URLSearchParams({ limit: String(limit) });
     if (typeof body.before === "string" && SNOWFLAKE_RE.test(body.before)) {
-      query.before = body.before;
+      query.set("before", body.before);
     }
     if (typeof body.after === "string" && SNOWFLAKE_RE.test(body.after)) {
-      query.after = body.after;
+      query.set("after", body.after);
     }
     if (typeof body.around === "string" && SNOWFLAKE_RE.test(body.around)) {
-      query.around = body.around;
+      query.set("around", body.around);
     }
     try {
-      const qs = new URLSearchParams(query).toString();
+      // Pass `query` as an option rather than concatenating into the
+      // URL: @discordjs/rest derives the rate-limit bucket from the
+      // raw route string, which would otherwise fragment buckets per
+      // unique query combination and break 429 handling.
       const messages = await bot.rest.get(
-        `${Routes.channelMessages(body.channel_id)}?${qs}` as `/${string}`,
+        Routes.channelMessages(body.channel_id),
+        { query },
       );
       return { messages };
     } catch (err) {
@@ -2130,8 +2189,18 @@ export async function registerPluginRpcRoutes(
       reply.code(403).send({ error: "plugin not enabled in this guild" });
       return;
     }
+    if (!(await assertChannelInGuild(bot, body.channel_id, body.guild_id))) {
+      reply
+        .code(403)
+        .send({ error: "channel does not belong to specified guild" });
+      return;
+    }
     try {
-      const encoded = encodeURIComponent(body.emoji);
+      // Discord's reaction endpoint requires the literal `:` for
+      // custom emoji (`name:id`). Plain encodeURIComponent percent-
+      // encodes the colon, which Discord then rejects as Unknown
+      // Emoji (10014). Encode everything else but restore the colon.
+      const encoded = encodeURIComponent(body.emoji).replace(/%3A/gi, ":");
       const route = userId
         ? Routes.channelMessageUserReaction(
             body.channel_id,
@@ -2207,18 +2276,9 @@ export async function registerPluginRpcRoutes(
   server.get(
     "/api/plugin/me/enabled_guilds",
     async (request, reply) => {
-      const auth = request.pluginAuth;
-      if (!auth) {
-        reply.code(401).send({ error: "plugin auth missing" });
-        return;
-      }
-      if (!auth.scopes.has("me.enabled_guilds")) {
-        reply
-          .code(403)
-          .send({ error: "plugin token missing scope 'me.enabled_guilds'" });
-        return;
-      }
-      const rows = await findFeatureRowsByPlugin(auth.pluginId);
+      const ctx = await requireScope(request, reply, "me.enabled_guilds");
+      if (!ctx) return;
+      const rows = await findFeatureRowsByPlugin(ctx.pluginId);
       const guildIds = [
         ...new Set(rows.filter((r) => r.enabled).map((r) => r.guildId)),
       ];
