@@ -189,5 +189,19 @@ export interface PluginManifest {
      */
     plugin_modal?: string;
     guild_feature_action?: string;
+    /**
+     * 富 health 探針路徑（Workpack C）。SDK 永遠在 `/health/detail`
+     * 掛載；bot 每 60 s + 後台管理 UI 點按時 GET 此 endpoint 取得
+     * `HealthReport`（status / message / checks）。
+     */
+    health?: string;
+    /**
+     * Bot → plugin 生命週期事件分派路徑（Workpack C）。當 plugin 宣告
+     * `onEnable` / `onDisable` 時 SDK 才掛載 `/_kc/lifecycle`；bot 在
+     * admin 切換 guild feature 開關時對此 endpoint 發 HMAC 簽過的 POST
+     * `{ type: "plugin.guild.enabled" | "plugin.guild.disabled",
+     *    data: { guild_id, feature_key } }`。
+     */
+    plugin_lifecycle?: string;
   };
 }

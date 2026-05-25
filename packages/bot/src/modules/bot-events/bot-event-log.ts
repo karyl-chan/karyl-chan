@@ -24,7 +24,14 @@ const MAX_ROWS = 50_000;
 const PRUNE_INTERVAL_MS = 10 * 60 * 1000;
 
 export type BotEventLevel = "info" | "warn" | "error";
-export type BotEventCategory = "bot" | "auth" | "feature" | "web" | "error";
+export type BotEventCategory =
+  | "bot"
+  | "auth"
+  | "feature"
+  | "web"
+  | "error"
+  /** Plugin-originated structured log entries forwarded via `/api/plugin/log.emit`. */
+  | "plugin";
 
 /**
  * Fire-and-forget persistent bot event logger.

@@ -2312,6 +2312,145 @@ export async function registerPluginRpcRoutes(
     },
   );
 
+  // ─── log.emit ────────────────────────────────────────────────────
+  /**
+   * POST /api/plugin/log.emit
+   * Body:    { entries: Array<{ level, message, context?, eventKey? }> }
+   * Returns: { accepted: number, deduped: number }
+   *
+   * SDK-side `ctx.botEventLog.emit()` calls land here batched. Each
+   * entry is validated, optionally deduped via `shouldRecord`, and
+   * forwarded to the bot's `botEventLog` under category `"plugin"`
+   * with the plugin's key tagged on the context. Used for the admin
+   * UI event timeline.
+   */
+  server.post<{ Body: { entries?: unknown } }>(
+    "/api/plugin/log.emit",
+    async (request, reply) => {
+      const ctx = await requireScope(request, reply, "me.log");
+      if (!ctx) return;
+      const body = request.body ?? {};
+      if (!Array.isArray(body.entries)) {
+        reply.code(400).send({ error: "entries array required" });
+        return;
+      }
+      // Defensive cap — a runaway plugin could otherwise drive a 100k
+      // entry POST and saturate the bot's event-log write path.
+      if (body.entries.length > 100) {
+        reply.code(400).send({ error: "max 100 entries per batch" });
+        return;
+      }
+      let accepted = 0;
+      let deduped = 0;
+      for (const raw of body.entries) {
+        if (!raw || typeof raw !== "object") continue;
+        const e = raw as Record<string, unknown>;
+        const level = e.level;
+        if (level !== "info" && level !== "warn" && level !== "error") {
+          continue;
+        }
+        if (typeof e.message !== "string" || e.message.length === 0) continue;
+        if (
+          e.context !== undefined &&
+          (e.context === null ||
+            typeof e.context !== "object" ||
+            Array.isArray(e.context))
+        ) {
+          continue;
+        }
+        if (
+          e.eventKey !== undefined &&
+          (typeof e.eventKey !== "string" || e.eventKey.length === 0)
+        ) {
+          continue;
+        }
+        const ek = typeof e.eventKey === "string" ? e.eventKey : null;
+        if (ek) {
+          const dedupKey = `plugin-log:${ctx.pluginKey}:${ek}`;
+          if (!shouldRecord(dedupKey)) {
+            deduped++;
+            continue;
+          }
+        }
+        const message = String(e.message).slice(0, 500);
+        const context = (e.context as Record<string, unknown> | undefined) ?? {};
+        botEventLog.record(level, "plugin", `[${ctx.pluginKey}] ${message}`, {
+          ...context,
+          pluginId: ctx.pluginId,
+          pluginKey: ctx.pluginKey,
+        });
+        accepted++;
+      }
+      return { accepted, deduped };
+    },
+  );
+
+  // ─── metrics.push ────────────────────────────────────────────────
+  /**
+   * POST /api/plugin/metrics.push
+   * Body:    MetricsSnapshot
+   * Returns: { ok: true }
+   *
+   * SDK-side `MetricsCollector` pushes its snapshot here every 30 s and
+   * once more on shutdown. We don't store history — the latest snapshot
+   * per plugin is held in memory and surfaced to the admin UI via
+   * `GET /api/admin/plugins/:id`. Validation is shape-checking only;
+   * malformed snapshots are rejected without partial-stored state so
+   * the admin UI never renders a half-populated row.
+   */
+  server.post<{ Body: unknown }>(
+    "/api/plugin/metrics.push",
+    async (request, reply) => {
+      const ctx = await requireScope(request, reply, "me.metrics");
+      if (!ctx) return;
+      const body = request.body;
+      if (!body || typeof body !== "object") {
+        reply.code(400).send({ error: "snapshot object required" });
+        return;
+      }
+      const snap = body as Record<string, unknown>;
+      const ts = typeof snap.ts === "number" ? snap.ts : Date.now();
+      const counters = Array.isArray(snap.counters) ? snap.counters : [];
+      const gauges = Array.isArray(snap.gauges) ? snap.gauges : [];
+      const histograms = Array.isArray(snap.histograms) ? snap.histograms : [];
+      // Hard cap on series count per push — protects against a plugin
+      // emitting unbounded high-cardinality labels (e.g. one counter
+      // per user id).
+      if (
+        counters.length > 500 ||
+        gauges.length > 500 ||
+        histograms.length > 200
+      ) {
+        reply.code(400).send({ error: "metric series cap exceeded" });
+        return;
+      }
+      const { setSnapshot } = await import("./plugin-metrics-store.js");
+      setSnapshot(ctx.pluginKey, {
+        ts,
+        counters: counters as Array<{
+          name: string;
+          labels: Record<string, string>;
+          value: number;
+        }>,
+        gauges: gauges as Array<{
+          name: string;
+          labels: Record<string, string>;
+          value: number;
+        }>,
+        histograms: histograms as Array<{
+          name: string;
+          labels: Record<string, string>;
+          count: number;
+          sum: number;
+          p50: number;
+          p95: number;
+          p99: number;
+        }>,
+      });
+      return { ok: true };
+    },
+  );
+
   // ─── plugin self-info ─────────────────────────────────────────────
   /**
    * GET /api/plugin/me

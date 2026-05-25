@@ -46,6 +46,7 @@ import {
   dispatchEventToPlugins,
   rebuildEventIndex,
 } from "./modules/plugin-system/plugin-event-bridge.service.js";
+import { startPluginHealthPoller } from "./modules/plugin-system/plugin-health-poller.service.js";
 import {
   pluginCommandRegistry,
   setPluginCommandBotClient,
@@ -558,6 +559,10 @@ async function run() {
     // Bound the bot_events table — see bot-event-log.ts for the
     // rationale + caps. Runs in-process every 10 minutes, unref'd.
     startBotEventLogPruner();
+    // Workpack C: probe each plugin's /health/detail endpoint every
+    // 60 s and stash the result in plugin-health-store for the admin
+    // UI to read. Runs in-process; unref'd timer.
+    startPluginHealthPoller();
     // Build the in-memory event subscription index from rows already
     // in the plugins table. Without this, plugins that registered
     // before the last bot restart wouldn't receive events until they

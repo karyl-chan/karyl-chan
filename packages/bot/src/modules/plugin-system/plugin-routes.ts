@@ -31,6 +31,7 @@ import { encryptSecret } from "../../utils/crypto.js";
 import type { PluginManifest } from "./plugin-registry.service.js";
 import { pluginCommandRegistry } from "./plugin-command-registry.service.js";
 import { rebuildEventIndex } from "./plugin-event-bridge.service.js";
+import { dispatchLifecycleToPlugin } from "./plugin-lifecycle-dispatch.service.js";
 import { recordAudit } from "../admin/admin-audit.service.js";
 import { config } from "../../config.js";
 import {
@@ -334,6 +335,12 @@ export async function registerPluginRoutes(
         reply.code(404).send({ error: "plugin not found" });
         return;
       }
+      // Workpack C: surface latest health probe + metrics snapshot inline
+      // so the admin UI doesn't need a second round-trip per plugin card.
+      const { getHealth } = await import("./plugin-health-store.js");
+      const { getSnapshot } = await import("./plugin-metrics-store.js");
+      const health = getHealth(p.pluginKey);
+      const metrics = getSnapshot(p.pluginKey);
       return {
         plugin: {
           id: p.id,
@@ -346,6 +353,8 @@ export async function registerPluginRoutes(
           lastHeartbeatAt: p.lastHeartbeatAt,
           manifest: safeParse(p.manifestJson),
         },
+        ...(health ? { health } : {}),
+        ...(metrics ? { metrics } : {}),
       };
     },
   );
@@ -684,6 +693,21 @@ export async function registerPluginRoutes(
         `plugin guild feature ${enabledWasGiven ? (enabled ? "enabled" : "disabled") : "config updated"}: ${plugin.pluginKey}/${featureKey}@${guildId}`,
         { pluginId, guildId, featureKey, enabled, actor: request.authUserId },
       );
+      // Notify the plugin so it can run onEnable / onDisable hooks.
+      // Fire-and-forget: a slow plugin shouldn't delay the admin UI
+      // response. Only dispatched when the toggle actually changed
+      // (`enabledWasGiven`) — a config-only PATCH doesn't re-fire.
+      // Plugins that didn't declare lifecycle hooks have no
+      // `endpoints.plugin_lifecycle` in their manifest, so the
+      // dispatcher silently skips them.
+      if (enabledWasGiven) {
+        dispatchLifecycleToPlugin(
+          pluginId,
+          enabled ? "plugin.guild.enabled" : "plugin.guild.disabled",
+          guildId,
+          featureKey,
+        );
+      }
       return {
         feature: {
           pluginId: row.pluginId,
