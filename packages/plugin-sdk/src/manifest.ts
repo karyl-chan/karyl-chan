@@ -165,5 +165,21 @@ export interface PluginManifest {
      */
     plugin_modal?: string;
     guild_feature_action?: string;
+    /**
+     * Rich health probe. The bot polls this every 60 s and on demand from
+     * the admin UI; the response is a `HealthReport` (status / message /
+     * checks). Distinct from `plugin.healthcheck_path` (which is the
+     * lightweight liveness probe). Always present at `/health/detail`
+     * when the SDK is used.
+     */
+    health?: string;
+    /**
+     * SDK-managed lifecycle dispatch endpoint. The bot POSTs synthetic
+     * events (`plugin.guild.enabled` / `plugin.guild.disabled`) here in
+     * HMAC-signed form whenever an admin toggles a guild-feature flag.
+     * Distinct from `events` so plugins can own that route for their
+     * own event subscriptions without colliding with lifecycle delivery.
+     */
+    plugin_lifecycle?: string;
   };
 }

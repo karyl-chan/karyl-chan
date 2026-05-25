@@ -64,6 +64,22 @@ export {
 } from "./verify-plugin-session.js";
 export type { PluginSessionClaims } from "./verify-plugin-session.js";
 
+// Lifecycle + observability types (Workpack C).
+export type {
+  PluginContext,
+  PluginLogger,
+  PluginBotEventLog,
+  PluginBotEventEntry,
+  PluginMetrics,
+  MetricsCounter,
+  MetricsGauge,
+  MetricsHistogram,
+  HealthReport,
+  HealthCheckEntry,
+  HealthStatus,
+  HealthProducer,
+} from "./context.js";
+
 // HMAC primitives — used by plugins that mount their own dispatch-style
 // routes (e.g. `/events` for `guild.message_create`). The SDK already
 // verifies its built-in `/commands` + `/components` + `/modals` +

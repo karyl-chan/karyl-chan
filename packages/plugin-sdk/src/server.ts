@@ -29,6 +29,7 @@ import type {
   ModalReply,
   APIEmbed,
 } from "./types.js";
+import type { HealthReport } from "./context.js";
 
 export interface PluginServerOptions {
   pluginKey: string;
@@ -42,6 +43,23 @@ export interface PluginServerOptions {
   getToken: () => string | null;
   getDispatchHmacKey?: () => string | null;
   getPublicBaseUrl?: () => string | undefined;
+  /**
+   * Called by the SDK-mounted `/health/detail` route on each probe.
+   * Returns the report verbatim (the producer wrapper in `plugin.ts`
+   * already handles the no-producer / not-yet-registered / thrown
+   * cases). Always defined — when no `healthCheck` is configured,
+   * `plugin.ts` supplies a stub that returns `{ status: "healthy" }`.
+   */
+  getHealthReport?: () => Promise<HealthReport>;
+  /**
+   * Called by the SDK-mounted `/_kc/lifecycle` route on each
+   * HMAC-verified inbound bot dispatch. The dispatcher in `plugin.ts`
+   * resolves the event type and routes to `onEnable` / `onDisable`.
+   * When `hasLifecycleHandler` is false, the route is not mounted.
+   */
+  dispatchLifecycle?: (eventType: string, data: unknown) => Promise<void>;
+  /** When false, the SDK does NOT mount `/_kc/lifecycle`. */
+  hasLifecycleHandler?: boolean;
 }
 
 interface InteractionPayload {
@@ -340,6 +358,62 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
     (_req, body, done) => done(null, body),
   );
   server.get("/health", async () => ({ status: "ok" }));
+
+  // Rich health probe. The bot polls /health/detail every 60 s and on
+  // demand from the admin UI. When no `healthCheck` is configured in
+  // PluginConfig, `getHealthReport` returns `{ status: "healthy" }`.
+  // Errors thrown inside the producer are caught upstream in plugin.ts
+  // and surfaced as `{ status: "unhealthy", message }` — this route
+  // itself never throws to the bot.
+  server.get("/health/detail", async () => {
+    if (!opts.getHealthReport) {
+      return { status: "healthy" as const, checkedAt: Date.now() };
+    }
+    return await opts.getHealthReport();
+  });
+
+  // Lifecycle dispatch. Only mounted when the plugin declared onEnable
+  // or onDisable. HMAC-verified like /commands and /components — the
+  // bot signs every POST with the per-plugin dispatch key.
+  if (opts.hasLifecycleHandler && opts.dispatchLifecycle) {
+    server.post(
+      "/_kc/lifecycle",
+      async (request: FastifyRequest, reply: FastifyReply) => {
+        const signingKey = opts.getDispatchHmacKey?.() ?? null;
+        if (!signingKey) {
+          return reply.code(503).send({
+            error:
+              "dispatch HMAC key not available; plugin must re-register",
+          });
+        }
+        const rawBody = typeof request.body === "string" ? request.body : "";
+        const auth = verifyDispatchAuth(request, rawBody, signingKey);
+        if (!auth.ok) return reply.code(401).send({ error: auth.reason });
+        let payload: { type: unknown; data?: unknown };
+        try {
+          payload = JSON.parse(rawBody);
+        } catch {
+          return reply.code(400).send({ error: "invalid JSON" });
+        }
+        if (typeof payload.type !== "string") {
+          return reply.code(400).send({ error: "missing event type" });
+        }
+        try {
+          await opts.dispatchLifecycle!(payload.type, payload.data ?? {});
+        } catch (err) {
+          // Lifecycle hooks throwing shouldn't cause the bot to retry
+          // (the toggle has already happened on the bot side). Log
+          // and 200 — operators see the throw in admin event log via
+          // the plugin's botEventLog flushing.
+          server.log.error(
+            { err, type: payload.type },
+            "lifecycle hook threw",
+          );
+        }
+        return { ok: true };
+      },
+    );
+  }
 
   // ── 軌三：plugin command dispatch（HMAC 驗證）────────────────────────────
   server.post(

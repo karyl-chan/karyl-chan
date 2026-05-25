@@ -19,6 +19,15 @@ export interface PluginClientOptions {
   /** Override the bot-suggested cadence (rarely needed). */
   heartbeatIntervalMs?: number;
   logger?: Logger;
+  /**
+   * Called once, after the very first successful register. Receives no
+   * arguments — `token()` / `getDispatchHmacKey()` etc. on the client
+   * handle are populated by the time this fires. Used by the SDK to
+   * build the `PluginContext` and fire the plugin's `onStart` hook.
+   * Errors thrown here are caught and logged; they do NOT prevent the
+   * client from running.
+   */
+  onFirstRegister?: () => void | Promise<void>;
 }
 
 export interface PluginClient {
@@ -58,6 +67,10 @@ export function startPluginClient(opts: PluginClientOptions): PluginClient {
   let heartbeatTimer: NodeJS.Timeout | null = null;
   let stopped = false;
   let registerAttempt = 0;
+  // `onFirstRegister` fires exactly once across the client's lifetime —
+  // re-register after a 401 must not re-fire `onStart` (which would
+  // double-seed state / double-flush metrics).
+  let firstRegisterFired = false;
 
   async function register(): Promise<boolean> {
     try {
@@ -118,6 +131,15 @@ export function startPluginClient(opts: PluginClientOptions): PluginClient {
         heartbeatIntervalSec: intervalSec,
       });
       registerAttempt = 0;
+      if (!firstRegisterFired && typeof opts.onFirstRegister === "function") {
+        firstRegisterFired = true;
+        try {
+          await opts.onFirstRegister();
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          log.error(`onFirstRegister hook threw: ${msg}`);
+        }
+      }
       return true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

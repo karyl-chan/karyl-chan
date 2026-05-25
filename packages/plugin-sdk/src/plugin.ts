@@ -12,6 +12,7 @@ import type {
   ModalReply,
 } from "./types.js";
 import type { ManifestConfigField } from "./manifest.js";
+import type { HealthProducer, PluginContext } from "./context.js";
 
 // ── 共用型別 ─────────────────────────────────────────────────────────────────
 
@@ -307,6 +308,56 @@ export interface PluginConfig {
    * `server.listen()`. Use this to register additional Fastify routes.
    */
   onReady?: (server: FastifyInstance) => void | Promise<void>;
+
+  /**
+   * Called once after the HTTP server is listening AND the plugin has
+   * completed its first successful register with the bot (token + HMAC
+   * key + public base URL are populated). Use for one-time setup that
+   * requires the bot to be reachable — e.g. seeding initial state via
+   * `ctx.botRpc`, registering metrics, emitting a "plugin online" event.
+   *
+   * If `onStart` throws, `start()` rejects and the plugin process exits.
+   */
+  onStart?: (ctx: PluginContext) => void | Promise<void>;
+
+  /**
+   * Called once during graceful shutdown (SIGTERM / SIGINT), BEFORE the
+   * lifecycle client and HTTP server are torn down. Drain in-flight
+   * work, persist state, flush metrics. Errors are caught and logged
+   * but do not block shutdown — at teardown time `botRpc` calls are
+   * best-effort.
+   */
+  onStop?: (ctx: PluginContext) => void | Promise<void>;
+
+  /**
+   * Called when an admin enables one of this plugin's guild features in
+   * a specific guild. The bot delivers this via an HMAC-signed POST to
+   * the SDK-mounted `/_kc/lifecycle` route; the SDK dispatches to this
+   * hook. Use for per-guild initialization (e.g. seeding a default KV
+   * row). The hook fires AFTER the bot has persisted the toggle.
+   */
+  onEnable?: (ctx: PluginContext, guildId: string) => void | Promise<void>;
+
+  /**
+   * Mirror of `onEnable` for the disable path. Fires after the bot has
+   * disabled the feature in the guild. Use for per-guild cleanup
+   * (e.g. stopping a guild-scoped timer). Note: data inside the bot's
+   * own tables (plugin KV, feature config) is NOT auto-deleted on
+   * disable — that survives so a re-enable picks up where it left off.
+   */
+  onDisable?: (ctx: PluginContext, guildId: string) => void | Promise<void>;
+
+  /**
+   * Optional health producer probed by the bot every 60 s plus on
+   * demand from the admin UI. Return `{ status: "healthy" | "degraded"
+   * | "unhealthy", message?, checks? }`. When omitted, the plugin
+   * reports `healthy` unconditionally (which still lets the bot
+   * confirm the process is up and the SDK is reachable).
+   *
+   * Producers should complete in ~2 s; the bot times out at 3 s and
+   * records the plugin as `unhealthy` on timeout.
+   */
+  healthCheck?: HealthProducer;
 }
 
 /** The object returned by definePlugin. */
@@ -524,6 +575,8 @@ export function definePlugin(config: PluginConfig): PluginInstance {
       const { createPluginServer, callBotRpc } = await import("./server.js");
       const { startPluginClient } = await import("./client.js");
       const { buildManifest } = await import("./manifest-builder.js");
+      const { MetricsCollector } = await import("./metrics-collector.js");
+      const { BotEventEmitter } = await import("./bot-event-emitter.js");
 
       const port =
         opts?.port ?? Number.parseInt(process.env.PORT ?? "3000", 10);
@@ -542,6 +595,11 @@ export function definePlugin(config: PluginConfig): PluginInstance {
       ).replace(/\/+$/, "");
 
       let client: ReturnType<typeof startPluginClient> | null = null;
+      // Built once below — captured by closures handed to MetricsCollector
+      // / BotEventEmitter / lifecycle hooks. Initialized to a not-yet-
+      // registered placeholder; replaced once startPluginClient resolves.
+      let ctx: PluginContext | null = null;
+      const manifest = buildManifest(config, pluginUrl);
 
       const server = createPluginServer({
         pluginKey: config.key,
@@ -559,6 +617,85 @@ export function definePlugin(config: PluginConfig): PluginInstance {
         getToken: () => client?.token() ?? null,
         getDispatchHmacKey: () => client?.getDispatchHmacKey() ?? null,
         getPublicBaseUrl: () => client?.getPublicBaseUrl(),
+        // Wire health + lifecycle dispatch into the SDK server. The
+        // server.ts side mounts /health/detail and /_kc/lifecycle and
+        // calls these back when the bot probes / dispatches.
+        getHealthReport: async () => {
+          if (!config.healthCheck) {
+            return { status: "healthy" as const, checkedAt: Date.now() };
+          }
+          if (!ctx) {
+            return {
+              status: "degraded" as const,
+              message: "not yet registered",
+              checkedAt: Date.now(),
+            };
+          }
+          try {
+            const report = await config.healthCheck(ctx);
+            return { ...report, checkedAt: report.checkedAt ?? Date.now() };
+          } catch (err) {
+            return {
+              status: "unhealthy" as const,
+              message: err instanceof Error ? err.message : String(err),
+              checkedAt: Date.now(),
+            };
+          }
+        },
+        dispatchLifecycle: async (eventType, data) => {
+          if (!ctx) return;
+          const guildId =
+            (data as { guild_id?: unknown }).guild_id !== undefined &&
+            typeof (data as { guild_id?: unknown }).guild_id === "string"
+              ? ((data as { guild_id: string }).guild_id)
+              : "";
+          if (eventType === "plugin.guild.enabled" && config.onEnable) {
+            await config.onEnable(ctx, guildId);
+          } else if (
+            eventType === "plugin.guild.disabled" &&
+            config.onDisable
+          ) {
+            await config.onDisable(ctx, guildId);
+          }
+        },
+        hasLifecycleHandler:
+          typeof config.onEnable === "function" ||
+          typeof config.onDisable === "function",
+      });
+
+      // Push helpers reference `client` via the closure so they pick up
+      // the live token even though they're constructed before the
+      // client is started. Constructed after `server` so the warn-log
+      // sink is non-null.
+      const pushMetrics = async (snapshot: unknown): Promise<void> => {
+        const token = client?.token() ?? null;
+        if (!token) return;
+        await callBotRpc(
+          server.log,
+          botUrl,
+          token,
+          "/api/plugin/metrics.push",
+          snapshot,
+        );
+      };
+      const pushBotEventBatch = async (entries: unknown[]): Promise<void> => {
+        const token = client?.token() ?? null;
+        if (!token) return;
+        await callBotRpc(server.log, botUrl, token, "/api/plugin/log.emit", {
+          entries,
+        });
+      };
+      const metricsCollector = new MetricsCollector({
+        push: pushMetrics,
+        log: {
+          warn: (msg, c) => server.log.warn(c ?? {}, msg),
+        },
+      });
+      const botEventEmitter = new BotEventEmitter({
+        push: pushBotEventBatch,
+        log: {
+          warn: (msg, c) => server.log.warn(c ?? {}, msg),
+        },
       });
 
       await config.onReady?.(server);
@@ -570,7 +707,6 @@ export function definePlugin(config: PluginConfig): PluginInstance {
       );
 
       if (setupSecret && setupSecret.trim().length > 0) {
-        const manifest = buildManifest(config, pluginUrl);
         client = startPluginClient({
           botUrl,
           setupSecret,
@@ -579,6 +715,46 @@ export function definePlugin(config: PluginConfig): PluginInstance {
             info: (msg, meta) => server.log.info(meta ?? {}, msg),
             warn: (msg, meta) => server.log.warn(meta ?? {}, msg),
             error: (msg, meta) => server.log.error(meta ?? {}, msg),
+          },
+          onFirstRegister: async () => {
+            // First successful register: token + HMAC key + public base
+            // URL are now available. Build the PluginContext and fire
+            // onStart. Note: subsequent re-registers don't re-fire
+            // onStart — that hook is once-per-process by design.
+            const pluginRpc = async (
+              path: string,
+              body?: unknown,
+            ): Promise<unknown | null> => {
+              const token = client?.token() ?? null;
+              if (!token) return null;
+              return callBotRpc(server.log, botUrl, token, path, body);
+            };
+            ctx = {
+              pluginKey: config.key,
+              manifest,
+              log: {
+                debug: (msg, c) => server.log.debug(c ?? {}, msg),
+                info: (msg, c) => server.log.info(c ?? {}, msg),
+                warn: (msg, c) => server.log.warn(c ?? {}, msg),
+                error: (msg, c) => server.log.error(c ?? {}, msg),
+              },
+              botEventLog: botEventEmitter,
+              metrics: metricsCollector,
+              botRpc: pluginRpc,
+            };
+            metricsCollector.start();
+            botEventEmitter.start();
+            if (config.onStart) {
+              try {
+                await config.onStart(ctx);
+              } catch (err) {
+                server.log.error(
+                  { err },
+                  "onStart hook threw — plugin may be in an inconsistent state",
+                );
+                throw err;
+              }
+            }
           },
         });
       } else {
@@ -590,6 +766,18 @@ export function definePlugin(config: PluginConfig): PluginInstance {
       const started: StartedPlugin = {
         server,
         async stop(): Promise<void> {
+          if (config.onStop && ctx) {
+            try {
+              await config.onStop(ctx);
+            } catch (err) {
+              server.log.error(
+                { err },
+                "onStop hook threw — continuing shutdown",
+              );
+            }
+          }
+          await metricsCollector.stop().catch(() => {});
+          await botEventEmitter.stop().catch(() => {});
           client?.stop();
           try {
             await server.close();

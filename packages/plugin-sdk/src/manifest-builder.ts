@@ -30,6 +30,20 @@ function hasAutocompleteHandler(cfg: PluginConfig): boolean {
 }
 
 /**
+ * True iff the plugin declares any lifecycle hooks the SDK needs to
+ * dispatch (`onEnable` / `onDisable`). When set, manifest carries an
+ * `endpoints.plugin_lifecycle` field the bot uses to POST synthetic
+ * `plugin.guild.enabled` / `plugin.guild.disabled` events on a path
+ * separate from `endpoints.events` (so plugins that own their own
+ * `/events` route — e.g. xiangqi — don't collide).
+ */
+function hasLifecycleHooks(cfg: PluginConfig): boolean {
+  return (
+    typeof cfg.onEnable === "function" || typeof cfg.onDisable === "function"
+  );
+}
+
+/**
  * True iff the plugin opts into the modal flow in any way — by
  * declaring at least one modal handler or at least one command with
  * `responseKind: "modal"`. Either implies `ctx.sendModal()` will be
@@ -184,6 +198,17 @@ export function buildManifest(
     ...(capabilities.length > 0 ? { capabilities } : {}),
     endpoints: {
       plugin_command: "/commands/{command_name}",
+      // Always present — SDK mounts /health/detail unconditionally so
+      // the bot can poll a uniform shape regardless of whether the
+      // plugin author registered a custom HealthProducer.
+      health: "/health/detail",
+      // Separate from `events`: the bot POSTs synthetic
+      // `plugin.guild.enabled` / `plugin.guild.disabled` events here
+      // so plugins owning their own `/events` route don't collide.
+      // Only declared when at least one lifecycle hook is set.
+      ...(hasLifecycleHooks(cfg)
+        ? { plugin_lifecycle: "/_kc/lifecycle" }
+        : {}),
       ...((cfg.components ?? []).length > 0
         ? { plugin_component: "/components" }
         : {}),
