@@ -37,10 +37,30 @@ export type { ManageTokens };
 // ── Viewer info (works for both session + manage modes) ───────────────
 export interface MeResponse {
   userId: string;
+  /** Raw Discord username (post-2023 unique handle), e.g. `karyl_bot`. */
+  username: string | null;
+  /** Global display name (Discord user-set, not unique). */
+  globalName: string | null;
+  /** Guild-specific nickname when the viewer is being read from a
+   *  guild context AND has a nickname distinct from globalName. */
+  nickname: string | null;
+  /** Best display label: guild nickname → globalName → username → userId. */
   displayName: string;
-  /** Pre-baked with `?animated=true` when the avatar is animated. */
-  avatarUrl: string;
-  guildId: string;
+  /** Pre-baked with `?animated=true` for animated assets. */
+  avatarUrl: string | null;
+  /** Global Discord banner (animated supported), null when unset. */
+  bannerUrl: string | null;
+  /** Discord accent colour (24-bit int), null when unset. */
+  accentColor: number | null;
+  isBot: boolean;
+  /** Null in DM / private-channel / user-install contexts. */
+  guildId: string | null;
+  /**
+   * `guild`    — guild-context members.get returned the viewer.
+   * `global`   — no guild or member wasn't in the guild; only users.get applied.
+   * `fallback` — neither RPC returned anything; only the userId is real.
+   */
+  source: "guild" | "global" | "fallback";
 }
 
 export function fetchMe(): Promise<MeResponse> {

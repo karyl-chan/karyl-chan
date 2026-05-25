@@ -1368,6 +1368,115 @@ export async function registerPluginRpcRoutes(
     }
   });
 
+  // ─── users.get ────────────────────────────────────────────────────
+  /**
+   * POST /api/plugin/users.get
+   * Body: { user_ids: string[] }
+   * Returns: { users: Array<{userId, username, globalName, displayName,
+   *           avatarUrl, bannerUrl, accentColor, isBot}> }
+   *
+   * Resolve GLOBAL Discord user profiles for a batch of users — the
+   * companion to `members.get` for surfaces with no guild context
+   * (DM commands, user-install commands, plugin webuis opened from
+   * private channels). Returns the richer User shape (banner + accent
+   * + username/globalName) that members.get can't supply because it
+   * only returns the per-guild member projection.
+   *
+   * Permission model: any plugin with the `users.get` scope can call
+   * this — there's no per-guild gate possible because there's no
+   * guild. The natural permission boundary is the Discord API itself:
+   * `bot.users.fetch(id)` 10013s for users the bot can't see (no
+   * mutual guild, never DM'd). Users who can't be fetched are
+   * omitted from the response; the caller keeps whatever fallback
+   * it had.
+   *
+   * Use `members.get` instead whenever a guild_id is available — it
+   * surfaces the per-guild nickname + per-guild avatar override.
+   */
+  server.post<{ Body: { user_ids?: unknown } }>(
+    "/api/plugin/users.get",
+    async (request, reply) => {
+      const ctx = await requireScope(request, reply, "users.get");
+      if (!ctx) return;
+      if (!bot) {
+        reply.code(503).send({ error: "bot client unavailable" });
+        return;
+      }
+      const body = request.body ?? {};
+      if (!Array.isArray(body.user_ids)) {
+        reply.code(400).send({ error: "user_ids must be an array" });
+        return;
+      }
+      const userIds = [
+        ...new Set(
+          body.user_ids.filter(
+            (v): v is string => typeof v === "string" && SNOWFLAKE_RE.test(v),
+          ),
+        ),
+      ];
+      if (userIds.length === 0) return { users: [] };
+      // Same batch cap as members.get — keeps a single call from
+      // hammering Discord REST with 100 parallel GET /users/:id.
+      if (userIds.length > MEMBERS_GET_MAX) {
+        reply
+          .code(400)
+          .send({ error: `at most ${MEMBERS_GET_MAX} user_ids per call` });
+        return;
+      }
+      const out = await Promise.all(
+        userIds.map(async (id) => {
+          try {
+            // `force: true` so the cached projection from a member
+            // event (which often lacks `banner` / `accent_color`)
+            // doesn't shadow a full REST fetch.
+            const user = await bot!.users.fetch(id, { force: true });
+            const avatarUrl = user.displayAvatarURL({
+              size: 128,
+              extension: "webp",
+              forceStatic: true,
+            });
+            const avatarHash = user.avatar;
+            const avatarAnimated =
+              typeof avatarHash === "string" && avatarHash.startsWith("a_");
+            const bannerUrl = user.bannerURL({
+              size: 512,
+              extension: "webp",
+              forceStatic: true,
+            });
+            const bannerHash = user.banner;
+            const bannerAnimated =
+              typeof bannerHash === "string" && bannerHash.startsWith("a_");
+            return {
+              userId: user.id,
+              username: user.username,
+              globalName: user.globalName ?? null,
+              displayName: user.globalName ?? user.username,
+              avatarUrl: avatarAnimated
+                ? `${avatarUrl}${avatarUrl.includes("?") ? "&" : "?"}animated=true`
+                : avatarUrl,
+              bannerUrl: bannerUrl
+                ? bannerAnimated
+                  ? `${bannerUrl}${bannerUrl.includes("?") ? "&" : "?"}animated=true`
+                  : bannerUrl
+                : null,
+              accentColor:
+                typeof user.accentColor === "number" ? user.accentColor : null,
+              isBot: user.bot,
+            };
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            request.log.warn(
+              { err: msg, userId: id, pluginId: ctx.pluginId },
+              "users.get fetch failed for user",
+            );
+            return null;
+          }
+        }),
+      );
+      return { users: out.filter((u): u is NonNullable<typeof u> => u !== null) };
+    },
+  );
+
   // ─── plugin self-info ─────────────────────────────────────────────
   /**
    * GET /api/plugin/me

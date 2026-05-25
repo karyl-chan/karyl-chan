@@ -305,6 +305,15 @@ function onInlineClose() {
         the URL you see here is already in its final form).
       </p>
       <p v-if="meError" class="result error">{{ meError }}</p>
+      <p v-else-if="me?.source === 'fallback'" class="result warn">
+        ⚠ The bot can't see this user at all — neither members.get nor
+        users.get returned a profile. Showing the userId as fallback.
+      </p>
+      <p v-else-if="me?.source === 'global'" class="result warn">
+        ⚠ No guild context (DM / private channel) — only users.get
+        applied. Per-guild nickname / avatar overrides are unavailable
+        here, but global profile (username, banner, accent) works.
+      </p>
       <div class="row" style="align-items:center;">
         <UserAvatar :src="me?.avatarUrl ?? null" :name="me?.displayName ?? '?'" :size="40" animate="never" />
         <UserAvatar :src="me?.avatarUrl ?? null" :name="me?.displayName ?? '?'" :size="56" animate="hover" />
@@ -370,26 +379,31 @@ function onInlineClose() {
     <section>
       <h2>UserCard</h2>
       <p class="hint">
-        Profile card with banner, animated avatar, and slot-driven
-        facts / actions. First card is the real viewer
-        (<code>/api/me</code>); <code>members.get</code> doesn't return
-        banner / username / discriminator so those slots stay empty —
-        the card uses the accent fallback for the banner. Second card
-        shows the loading skeleton.
+        Profile card hydrated from <code>/api/me</code>. Fields layer:
+        <code>members.get</code> supplies the guild nickname + avatar
+        override (when there's a guild), <code>users.get</code> fills
+        the global profile (username / banner / accent / bot flag).
+        Second card shows the loading skeleton state.
       </p>
       <div class="row" style="flex-wrap:wrap;">
         <UserCard
           v-if="me"
           :name="me.displayName"
+          :nickname="me.nickname"
+          :username="me.username"
           :avatar-url="me.avatarUrl"
-          :banner-url="null"
+          :banner-url="me.bannerUrl"
+          :accent-color="me.accentColor"
+          :is-bot="me.isBot"
         >
           <template #facts>
             <dl class="facts">
               <dt>User ID</dt>
               <dd><code>{{ me.userId }}</code></dd>
-              <dt>Guild</dt>
-              <dd><code>{{ me.guildId }}</code></dd>
+              <dt v-if="me.guildId">Guild</dt>
+              <dd v-if="me.guildId"><code>{{ me.guildId }}</code></dd>
+              <dt>Source</dt>
+              <dd>{{ me.source }}</dd>
             </dl>
           </template>
           <template #actions>
@@ -451,6 +465,13 @@ section h2 {
   font-size: 0.9em;
 }
 .result { color: var(--text-muted); font-size: 0.85rem; margin-top: 0.4rem; }
+.result.error { color: var(--danger); }
+.result.warn {
+  color: var(--warn-text);
+  background: var(--warn-bg);
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.6rem;
+}
 
 .row {
   display: flex;

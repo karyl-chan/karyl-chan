@@ -185,16 +185,16 @@ export async function registerWebRoutes(
     },
   );
 
-  // ── /api/me: hydrate the current viewer's display info ────────────────
-  // Works for both auth modes:
-  //  - session: userId + guildId straight from the plugin-session JWT.
-  //  - manage:  userId from the access token; guildId baked in at
-  //    exchange time (manage-tokens preserves the original bot JWT's
-  //    guildId so this route doesn't need extra storage round-trips).
-  // Calls bot's members.get with that (guildId, userId) and returns the
-  // member's display name + avatarUrl. members.get already pre-bakes
-  // `?animated=true` for animated avatars, so consumers don't need
-  // to swap URLs themselves.
+  // ── /api/me: hydrate the current viewer's profile ─────────────────────
+  // Works for both auth modes (session + manage) and gracefully covers
+  // the no-guild path (DM / private channel / user-install):
+  //
+  //   token + guildId  → members.get (per-guild displayName + avatar)
+  //                      then users.get (global username / banner / accent)
+  //   token, no guild  → users.get only (still works without a guild)
+  //
+  // The richer projection lets UserCard render banner + accent + the
+  // global username/discriminator that members.get can't supply.
   server.get("/api/me", async (request, reply) => {
     const header = request.headers.authorization;
     const token = header?.startsWith("Bearer ") ? header.slice(7) : null;
@@ -202,7 +202,6 @@ export async function registerWebRoutes(
       reply.code(401).send({ error: "Missing authorization" });
       return;
     }
-    // Try session JWT first; if that fails fall through to manage.
     let userId: string | null = null;
     let guildId: string | null = null;
     const key = _sessionVerifyKey?.() ?? null;
@@ -224,30 +223,81 @@ export async function registerWebRoutes(
       reply.code(401).send({ error: "Invalid or expired token" });
       return;
     }
-    if (!guildId) {
-      reply.code(400).send({ error: "Token has no guild scope" });
-      return;
-    }
     if (!_botRpc) {
       reply.code(503).send({ error: "bot RPC unavailable" });
       return;
     }
-    const result = (await _botRpc("/api/plugin/members.get", {
-      guild_id: guildId,
+
+    // users.get is the source of truth for global profile fields
+    // (username / globalName / banner / accent). Both branches (guild
+    // + no-guild) call it; the guild branch additionally calls
+    // members.get to layer the per-guild nickname / avatar overrides
+    // on top.
+    const usersRes = (await _botRpc("/api/plugin/users.get", {
       user_ids: [userId],
     })) as
-      | { members?: Array<{ userId: string; displayName: string; avatarUrl: string }> }
+      | {
+          users?: Array<{
+            userId: string;
+            username: string;
+            globalName: string | null;
+            displayName: string;
+            avatarUrl: string;
+            bannerUrl: string | null;
+            accentColor: number | null;
+            isBot: boolean;
+          }>;
+        }
       | null;
-    const member = result?.members?.[0];
-    if (!member) {
-      reply.code(404).send({ error: "Member not found in this guild" });
-      return;
+    const global = usersRes?.users?.[0] ?? null;
+
+    let member:
+      | { userId: string; displayName: string; avatarUrl: string }
+      | null = null;
+    if (guildId) {
+      const membersRes = (await _botRpc("/api/plugin/members.get", {
+        guild_id: guildId,
+        user_ids: [userId],
+      })) as
+        | { members?: Array<{ userId: string; displayName: string; avatarUrl: string }> }
+        | null;
+      member = membersRes?.members?.[0] ?? null;
+    }
+
+    // Pick richest fields. If users.get itself returned nothing (the
+    // bot can't see this user at all — unlikely but possible), fall
+    // back to the userId so the webui still renders something useful.
+    if (!global && !member) {
+      return {
+        userId,
+        username: null,
+        globalName: null,
+        displayName: userId,
+        nickname: null,
+        avatarUrl: null,
+        bannerUrl: null,
+        accentColor: null,
+        isBot: false,
+        guildId,
+        source: "fallback" as const,
+      };
     }
     return {
-      userId: member.userId,
-      displayName: member.displayName,
-      avatarUrl: member.avatarUrl,
+      userId,
+      username: global?.username ?? null,
+      globalName: global?.globalName ?? null,
+      // Guild nickname > global display name > username > userId.
+      displayName: member?.displayName ?? global?.displayName ?? userId,
+      // Surface the nickname distinctly so UserCard can show its
+      // dual-line shape when the guild nickname differs from
+      // globalName.
+      nickname: member?.displayName ?? null,
+      avatarUrl: member?.avatarUrl ?? global?.avatarUrl ?? null,
+      bannerUrl: global?.bannerUrl ?? null,
+      accentColor: global?.accentColor ?? null,
+      isBot: global?.isBot ?? false,
       guildId,
+      source: guildId && member ? ("guild" as const) : ("global" as const),
     };
   });
 

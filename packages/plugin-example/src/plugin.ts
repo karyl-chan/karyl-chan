@@ -231,7 +231,13 @@ export const plugin = definePlugin({
     "interactions.respond",
     "auth.session",
     "messages.send",
+    // members.get gives us per-guild nickname + per-guild avatar
+    // overrides when the surface has a guild context.
     "members.get",
+    // users.get is the guildless companion — used for /api/me's
+    // no-guild fallback (DM / private-channel / user-install) and
+    // for the showcase's richer UserCard (banner + accent + username).
+    "users.get",
   ],
 
   capabilities: [

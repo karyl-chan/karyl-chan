@@ -163,6 +163,29 @@ export interface PluginConfig {
   description?: string;
   author?: string;
   homepage?: string;
+  /**
+   * Scopes the plugin will exercise against the bot's `/api/plugin/*`
+   * RPC surface. The bot mints plugin tokens with exactly these scopes
+   * (subject to admin approval / auto-approve); a call to any
+   * `/api/plugin/*` endpoint not listed here 403s with
+   * `plugin token missing scope '<name>'`.
+   *
+   * Common scopes:
+   *   "interactions.respond"      — return a reply from a command handler
+   *   "interactions.followup"     — post follow-up messages
+   *   "messages.send"             — send guild channel messages
+   *   "messages.send_dm"          — DM a user
+   *   "messages.delete" / "messages.edit" / "messages.add_reaction"
+   *   "auth.session"              — mint plugin-session JWTs (link tokens)
+   *   "members.get"               — resolve guild-member displayName+avatar
+   *   "users.get"                 — resolve global Discord user profile
+   *                                  (works without a guild — use this
+   *                                  for DM / user-install / private-
+   *                                  channel surfaces where members.get
+   *                                  can't apply)
+   *   "config.get" / "config.set" — admin-configurable plugin config
+   *   "storage.kv_*"              — guild-scoped KV storage
+   */
   rpcMethodsUsed: string[];
   storage?: {
     guildKv?: boolean;
