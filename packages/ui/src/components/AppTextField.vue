@@ -34,6 +34,12 @@ const props = withDefaults(defineProps<{
     /** Tag attribute for the underlying input — useful for forms. */
     name?: string;
     autocomplete?: string;
+    /** Forwarded to the input. Useful for numeric IDs on mobile keyboards. */
+    inputmode?: 'none' | 'text' | 'tel' | 'url' | 'email' | 'numeric' | 'decimal' | 'search';
+    pattern?: string;
+    min?: number | string;
+    max?: number | string;
+    step?: number | string;
 }>(), {
     label: '',
     hint: '',
@@ -82,6 +88,11 @@ const rootClass = computed(() => ({
             :maxlength="maxlength"
             :name="name || undefined"
             :autocomplete="autocomplete"
+            :inputmode="inputmode"
+            :pattern="pattern || undefined"
+            :min="min"
+            :max="max"
+            :step="step"
             @input="onInput"
             @blur="emit('blur', $event)"
             @focus="emit('focus', $event)"

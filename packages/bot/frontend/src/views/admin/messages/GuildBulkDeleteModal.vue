@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { AppModal } from '@karyl-chan/ui';
+import { AppModal, AppTextField } from '@karyl-chan/ui';
 
 const props = defineProps<{
     visible: boolean;
@@ -31,10 +31,14 @@ function submit() {
 <template>
     <AppModal :visible="visible" :title="$t('messageMgmt.bulkTitle')" width="min(380px, 92vw)" @close="emit('close')">
         <form class="body" @submit.prevent="submit">
-            <label class="field">
-                <span>{{ $t('messageMgmt.bulkCountLabel') }}</span>
-                <input v-model.number="count" type="number" min="2" max="100" autofocus />
-            </label>
+            <AppTextField
+                :model-value="String(count)"
+                :label="$t('messageMgmt.bulkCountLabel')"
+                type="number"
+                :min="2"
+                :max="100"
+                @update:model-value="count = Number($event) || 0"
+            />
             <footer class="actions">
                 <button type="button" class="btn-ghost" @click="emit('close')">{{ $t('common.cancel') }}</button>
                 <button type="submit" class="primary danger">
@@ -51,17 +55,6 @@ function submit() {
     display: flex;
     flex-direction: column;
     gap: 0.6rem;
-}
-.field { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; }
-.field span { color: var(--text-muted); }
-.field input {
-    padding: 0.4rem 0.55rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: var(--bg-surface);
-    color: var(--text);
-    font: inherit;
-    font-size: 0.9rem;
 }
 .actions {
     display: flex;

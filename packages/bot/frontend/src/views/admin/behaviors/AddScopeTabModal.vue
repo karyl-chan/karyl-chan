@@ -1,9 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { AppModal } from '@karyl-chan/ui';
-import { AppButton } from '@karyl-chan/ui';
-import { AppSelectField } from '@karyl-chan/ui';
+import { AppButton, AppModal, AppSelectField, AppTextField } from '@karyl-chan/ui';
 import { createScopeTab, type ScopeTabRow, type ScopeTabType } from '../../../api/behavior';
 
 const { t } = useI18n();
@@ -104,39 +102,43 @@ async function onSubmit() {
                 />
             </div>
 
-            <div class="field">
-                <label class="field-label">{{ t('behaviors.addTab.labelField') }}</label>
-                <input
-                    v-model="label"
-                    type="text"
-                    class="input"
-                    :placeholder="t('behaviors.addTab.labelPlaceholder')"
-                />
-            </div>
+            <AppTextField
+                v-model="label"
+                :label="t('behaviors.addTab.labelField')"
+                :placeholder="t('behaviors.addTab.labelPlaceholder')"
+            />
 
             <!-- Guild ID -->
-            <div v-if="selectedType === 'specific_guild' || selectedType === 'specific_channel'" class="field">
-                <label class="field-label">Guild ID <span class="required">*</span></label>
-                <input v-model="guildId" type="text" class="input" placeholder="e.g. 123456789012345678" />
-            </div>
+            <AppTextField
+                v-if="selectedType === 'specific_guild' || selectedType === 'specific_channel'"
+                v-model="guildId"
+                label="Guild ID *"
+                placeholder="e.g. 123456789012345678"
+            />
 
             <!-- Channel ID -->
-            <div v-if="selectedType === 'specific_channel'" class="field">
-                <label class="field-label">Channel ID <span class="required">*</span></label>
-                <input v-model="channelId" type="text" class="input" placeholder="e.g. 123456789012345678" />
-            </div>
+            <AppTextField
+                v-if="selectedType === 'specific_channel'"
+                v-model="channelId"
+                label="Channel ID *"
+                placeholder="e.g. 123456789012345678"
+            />
 
             <!-- User ID -->
-            <div v-if="selectedType === 'specific_user'" class="field">
-                <label class="field-label">User ID <span class="required">*</span></label>
-                <input v-model="userId" type="text" class="input" placeholder="e.g. 123456789012345678" />
-            </div>
+            <AppTextField
+                v-if="selectedType === 'specific_user'"
+                v-model="userId"
+                label="User ID *"
+                placeholder="e.g. 123456789012345678"
+            />
 
             <!-- Group Name -->
-            <div v-if="selectedType === 'specific_group'" class="field">
-                <label class="field-label">{{ t('behaviors.addTab.groupNameLabel') }} <span class="required">*</span></label>
-                <input v-model="groupName" type="text" class="input" :placeholder="t('behaviors.addTab.groupNamePlaceholder')" />
-            </div>
+            <AppTextField
+                v-if="selectedType === 'specific_group'"
+                v-model="groupName"
+                :label="t('behaviors.addTab.groupNameLabel') + ' *'"
+                :placeholder="t('behaviors.addTab.groupNamePlaceholder')"
+            />
 
             <p v-if="error" class="error" role="alert">{{ error }}</p>
 
@@ -168,20 +170,6 @@ async function onSubmit() {
     font-size: 0.82rem;
     font-weight: 500;
     color: var(--text-strong);
-}
-.required { color: var(--danger); }
-.input {
-    padding: 0.45rem 0.6rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-base);
-    background: var(--bg-input);
-    color: var(--text);
-    font-size: 0.9rem;
-}
-.input:focus {
-    outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 2px var(--accent-bg);
 }
 .error {
     color: var(--danger);

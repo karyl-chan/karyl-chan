@@ -10,10 +10,7 @@ import {
     type AuthorizedUser
 } from '../../../api/admin';
 import { ApiError } from '../../../api/client';
-import { AppModal } from '@karyl-chan/ui';
-import { AppSelectField, type SelectOption } from '@karyl-chan/ui';
-import { AppButton } from '@karyl-chan/ui';
-import { useConfirm } from '@karyl-chan/ui';
+import { AppButton, AppModal, AppSelectField, AppTextField, useConfirm, type SelectOption } from '@karyl-chan/ui';
 
 const props = defineProps<{
     data: AdminUserList;
@@ -241,17 +238,12 @@ const matchSummary = computed(() =>
 
         <AppModal :visible="addOpen" :title="$t('admin.users.add')" @close="addOpen = false">
             <form class="add-body" @submit.prevent="submitAdd">
-                <label class="field">
-                    <span>{{ $t('admin.users.userIdLabel') }}</span>
-                    <input
-                        v-model="addForm.userId"
-                        type="text"
-                        required
-                        pattern="\d+"
-                        inputmode="numeric"
-                        autofocus
-                    />
-                </label>
+                <AppTextField
+                    v-model="addForm.userId"
+                    :label="$t('admin.users.userIdLabel')"
+                    inputmode="numeric"
+                    pattern="\d+"
+                />
                 <label class="field">
                     <span>{{ $t('admin.users.roleLabel') }}</span>
                     <AppSelectField
@@ -260,10 +252,11 @@ const matchSummary = computed(() =>
                         :drawer-title="$t('admin.users.roleLabel')"
                     />
                 </label>
-                <label class="field">
-                    <span>{{ $t('admin.users.noteLabel') }}</span>
-                    <input v-model="addForm.note" type="text" :placeholder="$t('admin.users.notePlaceholder')" />
-                </label>
+                <AppTextField
+                    v-model="addForm.note"
+                    :label="$t('admin.users.noteLabel')"
+                    :placeholder="$t('admin.users.notePlaceholder')"
+                />
                 <footer class="actions">
                     <AppButton variant="ghost" type="button" @click="addOpen = false">{{ $t('common.cancel') }}</AppButton>
                     <AppButton variant="primary" type="submit" :loading="adding" :disabled="!roles.length">

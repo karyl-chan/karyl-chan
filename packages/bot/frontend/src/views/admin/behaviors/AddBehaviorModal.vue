@@ -2,9 +2,7 @@
 import { ref, computed, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@iconify/vue';
-import { AppModal } from '@karyl-chan/ui';
-import { AppSelectField } from '@karyl-chan/ui';
-import { AppButton } from '@karyl-chan/ui';
+import { AppButton, AppModal, AppSelectField, AppTextField } from '@karyl-chan/ui';
 import {
     createBehavior,
     type BehaviorRow,
@@ -174,10 +172,12 @@ const showAuthMode = computed(() => form.value.webhookSecret.length > 0);
             <p class="step-hint">{{ t('behaviors.addModal.subtitle') }}</p>
 
             <div class="form-section">
-                <label class="field">
-                    <span class="label">{{ t('behaviors.addModal.nameLabel') }} *</span>
-                    <input v-model="form.title" type="text" maxlength="200" :placeholder="t('behaviors.addModal.namePlaceholder')" autofocus />
-                </label>
+                <AppTextField
+                    v-model="form.title"
+                    :label="t('behaviors.addModal.nameLabel') + ' *'"
+                    :placeholder="t('behaviors.addModal.namePlaceholder')"
+                    :maxlength="200"
+                />
 
                 <!-- 觸發方式 -->
                 <div class="section-heading">{{ t('behaviors.card.triggerType') }}</div>
@@ -201,20 +201,24 @@ const showAuthMode = computed(() => form.value.webhookSecret.length > 0);
                 </div>
 
                 <template v-if="form.triggerType === 'slash_command'">
-                    <label class="field">
-                        <span class="label">{{ t('behaviors.card.slashCommandName') }} *</span>
-                        <input v-model="form.slashCommandName" type="text" maxlength="100" placeholder="指令名稱（不含 /）" />
-                    </label>
+                    <AppTextField
+                        v-model="form.slashCommandName"
+                        :label="t('behaviors.card.slashCommandName') + ' *'"
+                        placeholder="指令名稱（不含 /）"
+                        :maxlength="100"
+                    />
                 </template>
                 <template v-else>
                     <div class="field">
                         <span class="label">{{ t('behaviors.card.messagePatternKind') }}</span>
                         <AppSelectField v-model="form.messagePatternKind" :options="messagePatternKindOptions" />
                     </div>
-                    <label class="field">
-                        <span class="label">{{ t('behaviors.card.messagePatternValue') }} *</span>
-                        <input v-model="form.messagePatternValue" type="text" maxlength="2000" placeholder="觸發詞" />
-                    </label>
+                    <AppTextField
+                        v-model="form.messagePatternValue"
+                        :label="t('behaviors.card.messagePatternValue') + ' *'"
+                        placeholder="觸發詞"
+                        :maxlength="2000"
+                    />
                 </template>
 
                 <!-- 可安裝範圍 — 只有 global_all tab 才顯示自選下拉,
@@ -228,17 +232,19 @@ const showAuthMode = computed(() => form.value.webhookSecret.length > 0);
 
                 <!-- Webhook 設定 -->
                 <div class="section-heading">{{ t('behaviors.addModal.forwardLabel') }}</div>
-                <label class="field">
-                    <span class="label">Webhook URL *</span>
-                    <input v-model="form.webhookUrl" type="text" maxlength="1000" placeholder="https://…" />
-                </label>
-                <label class="field">
-                    <span class="label">
-                        {{ t('behaviors.card.webhookSecret') }}
-                        <span class="hint">{{ t('behaviors.card.webhookSecretHint') }}</span>
-                    </span>
-                    <input v-model="form.webhookSecret" type="text" maxlength="200" :placeholder="t('behaviors.card.webhookSecretPlaceholder')" autocomplete="off" />
-                </label>
+                <AppTextField
+                    v-model="form.webhookUrl"
+                    label="Webhook URL *"
+                    placeholder="https://…"
+                    :maxlength="1000"
+                />
+                <AppTextField
+                    v-model="form.webhookSecret"
+                    :label="t('behaviors.card.webhookSecret')"
+                    :hint="t('behaviors.card.webhookSecretHint')"
+                    :placeholder="t('behaviors.card.webhookSecretPlaceholder')"
+                    :maxlength="200"
+                />
                 <div v-if="showAuthMode" class="field">
                     <span class="label">{{ t('behaviors.card.webhookAuthMode') }}</span>
                     <AppSelectField v-model="form.webhookAuthMode" :options="webhookAuthModeOptions" />
@@ -286,18 +292,6 @@ const showAuthMode = computed(() => form.value.webhookSecret.length > 0);
     gap: 0.4rem;
     align-items: center;
 }
-.hint { font-size: 0.7rem; font-weight: 400; color: var(--text-faint, var(--text-muted)); }
-.field input, .field select {
-    padding: 0.45rem 0.6rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: var(--bg-surface);
-    color: var(--text);
-    font: inherit;
-    width: 100%;
-    box-sizing: border-box;
-}
-.field input:focus, .field select:focus { outline: none; border-color: var(--accent); }
 
 .section-heading {
     font-size: 0.72rem;

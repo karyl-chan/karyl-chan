@@ -5,7 +5,7 @@ import {
     type AuditLogEntry
 } from '../../../../api/guilds';
 import { useApiError } from '../../../../composables/use-api-error';
-import { AppSelectField, type SelectOption } from '@karyl-chan/ui';
+import { AppSelectField, AppTextField, type SelectOption } from '@karyl-chan/ui';
 import { useI18n } from 'vue-i18n';
 
 const props = defineProps<{
@@ -142,10 +142,12 @@ function fmtValue(v: unknown): string {
                     :drawer-title="$t('guilds.audit.filterAction')"
                 />
             </label>
-            <label class="field">
-                <span>{{ $t('guilds.audit.filterUser') }}</span>
-                <input v-model="userFilter" type="text" inputmode="numeric" pattern="[0-9]*" />
-            </label>
+            <AppTextField
+                v-model="userFilter"
+                :label="$t('guilds.audit.filterUser')"
+                inputmode="numeric"
+                pattern="[0-9]*"
+            />
             <div class="filter-actions">
                 <button type="button" class="ghost" @click="resetFilters">{{ $t('guilds.audit.filterReset') }}</button>
                 <button type="button" class="primary" @click="applyFilters">{{ $t('guilds.audit.filterApply') }}</button>
