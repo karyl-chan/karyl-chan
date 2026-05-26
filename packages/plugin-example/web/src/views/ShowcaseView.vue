@@ -27,12 +27,25 @@ import {
   UserAvatar,
   UserCard,
   UserItem,
+  useColorScheme,
   useConfirm,
   useToastStore,
+  type ColorScheme,
 } from "@karyl-chan/ui";
 
 const toast = useToastStore();
 const { confirm } = useConfirm();
+
+// Global colour-scheme picker. The composable owns the `data-theme`
+// attribute on <html> and the localStorage persistence — wiring it
+// up here is enough to make the whole page (and any other consumer
+// that reads the same tokens) flip themes.
+const { colorScheme, setColorScheme } = useColorScheme();
+const colorSchemeOptions: { value: ColorScheme; label: string }[] = [
+  { value: "system", label: "跟隨系統" },
+  { value: "light", label: "亮色" },
+  { value: "dark", label: "暗色" },
+];
 
 // Modal demo
 const modalOpen = ref(false);
@@ -114,10 +127,22 @@ function onInlineClose() {
 <template>
   <div class="showcase">
     <header>
-      <h1>@karyl-chan/ui Showcase</h1>
-      <p class="lede">
-        Every component, with a few representative configurations.
-      </p>
+      <div class="header-row">
+        <div>
+          <h1>@karyl-chan/ui Showcase</h1>
+          <p class="lede">
+            Every component, with a few representative configurations.
+          </p>
+        </div>
+        <div class="theme-picker">
+          <span class="theme-picker-label">主題</span>
+          <AppSelectField
+            :model-value="colorScheme"
+            :options="colorSchemeOptions"
+            @update:model-value="setColorScheme"
+          />
+        </div>
+      </div>
     </header>
 
     <section>
@@ -445,6 +470,23 @@ function onInlineClose() {
 }
 header h1 { margin: 0; color: var(--text-strong); }
 .lede { margin: 0.3rem 0 0; color: var(--text-muted); }
+.header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.theme-picker {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 180px;
+}
+.theme-picker-label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
 
 section h2 {
   margin: 0 0 0.4rem;
