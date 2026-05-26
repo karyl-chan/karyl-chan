@@ -18,7 +18,7 @@ import { sequelize } from "./db.js";
 import { config } from "./config.js";
 import { moduleLogger } from "./logger.js";
 import { startWebServer } from "./modules/web-core/server.js";
-import { setReady } from "./modules/web-core/readiness.js";
+import { setReady, setDraining } from "./modules/web-core/readiness.js";
 import {
   setMetricsBotClient,
   botEventLogWritesTotal,
@@ -160,6 +160,21 @@ const messageMatcher = new MessagePatternMatcher(webhookForwarder);
 
 let shuttingDown = false;
 const SHUTDOWN_TIMEOUT_MS = 30_000;
+/**
+ * SCALING_PLAN Phase 0.6 — how long to advertise 503 on /api/health/ready
+ * before we actually start closing sockets. Gives an upstream reverse
+ * proxy / load balancer a window to notice the drain and stop routing
+ * new traffic to this instance. Container orchestrators typically
+ * recheck health every 5-10s, so a 2s grace handles the most-common
+ * docker / k8s defaults without dragging out shutdown.
+ *
+ * Override with `SHUTDOWN_DRAIN_GRACE_MS` (e.g. 0 for tests).
+ */
+const SHUTDOWN_DRAIN_GRACE_MS = Number.isFinite(
+  Number(process.env.SHUTDOWN_DRAIN_GRACE_MS),
+)
+  ? Math.max(0, Number(process.env.SHUTDOWN_DRAIN_GRACE_MS))
+  : 2_000;
 
 async function gracefulShutdown(signal: string): Promise<void> {
   if (shuttingDown) {
@@ -180,6 +195,20 @@ async function gracefulShutdown(signal: string): Promise<void> {
   }, SHUTDOWN_TIMEOUT_MS);
 
   try {
+    // 0. Drain phase: flip readiness=false BEFORE closing the server.
+    //    Upstream proxies polling /api/health/ready now see 503 and
+    //    stop routing new requests. In-flight requests keep being
+    //    served by fastify until we close in step 1.
+    setDraining();
+    if (SHUTDOWN_DRAIN_GRACE_MS > 0) {
+      log.info(
+        { graceMs: SHUTDOWN_DRAIN_GRACE_MS },
+        "draining — waiting for upstream proxies to notice 503",
+      );
+      await new Promise<void>((resolve) =>
+        setTimeout(resolve, SHUTDOWN_DRAIN_GRACE_MS).unref(),
+      );
+    }
     // 1. Stop accepting new HTTP requests; fastify drains in-flight ones.
     if (webServer) {
       await webServer.close();

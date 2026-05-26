@@ -36,21 +36,27 @@ export async function registerSystemRoutes(
   // (e.g. `wget -qO- http://karyl-chan:3000/api/health/ready`).
   server.get("/api/health/ready", async (_request, reply) => {
     const r = getReadiness();
+    // Skip the DB authenticate roundtrip when we're draining — the
+    // answer is already "not ready" and we don't want to keep a
+    // sequelize pool alive during teardown.
     let dbOk = false;
     let dbError: string | undefined;
-    try {
-      await sequelize.authenticate();
-      dbOk = true;
-    } catch (err) {
-      dbError = err instanceof Error ? err.message : String(err);
+    if (!r.draining) {
+      try {
+        await sequelize.authenticate();
+        dbOk = true;
+      } catch (err) {
+        dbError = err instanceof Error ? err.message : String(err);
+      }
     }
     const allReady = r.ready && dbOk;
     const body = {
-      status: allReady ? "ready" : "not_ready",
+      status: allReady ? "ready" : r.draining ? "draining" : "not_ready",
       checks: {
         bot: r.bot,
         bootDb: r.db,
         liveDb: dbOk,
+        draining: r.draining,
         ...(dbError ? { dbError } : {}),
       },
       timestamp: new Date().toISOString(),
