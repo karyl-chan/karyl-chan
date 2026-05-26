@@ -42,8 +42,13 @@ export const BehaviorSession = sequelize.define(
       type: DataTypes.STRING,
       allowNull: false,
     },
+    // L-2 修：用 STRING 儲存 ISO 8601 字串。SQLite 無原生 DATE 型別，
+    // 之前宣告為 DataTypes.DATE 但 startSession 寫入 toISOString()，
+    // Sequelize 在不同情境會回 Date 或 string，rowOf 不得不防禦兩種型別。
+    // 改成 STRING 後 in/out 都是 ISO 字串，lexicographic 比較與 Op.lt/gt
+    // 仍正確（ISO 8601 排序語意一致）。
     expiresAt: {
-      type: DataTypes.DATE,
+      type: DataTypes.STRING,
       allowNull: true,
     },
   },
@@ -77,29 +82,28 @@ export interface BehaviorSessionRow {
 function rowOf(
   model: InstanceType<typeof BehaviorSession>,
 ): BehaviorSessionRow {
-  const expiresAtRaw = model.getDataValue("expiresAt");
   return {
     userId: model.getDataValue("userId") as string,
     behaviorId: model.getDataValue("behaviorId") as number,
     channelId: model.getDataValue("channelId") as string,
     startedAt: model.getDataValue("startedAt") as string,
-    expiresAt:
-      expiresAtRaw instanceof Date
-        ? expiresAtRaw.toISOString()
-        : ((expiresAtRaw as string | null) ?? null),
+    expiresAt: (model.getDataValue("expiresAt") as string | null) ?? null,
   };
 }
 
 export const findActiveSession = async (
   userId: string,
 ): Promise<BehaviorSessionRow | null> => {
-  const now = new Date();
+  // ISO 8601 字串可 lexicographic 比較（與 DateTime 排序語意一致）。
+  // 用 string 而非 Date 物件以對齊 column type，避免 Sequelize 對 STRING
+  // 欄位收到 Date 時的隱式轉型行為不一致。
+  const nowIso = new Date().toISOString();
 
   // 先順手清掉已過期的 session（避免殭屍 row 無限累積）
   await BehaviorSession.destroy({
     where: {
       userId,
-      expiresAt: { [Op.lt]: now },
+      expiresAt: { [Op.lt]: nowIso },
     },
   });
 
@@ -107,7 +111,7 @@ export const findActiveSession = async (
   const row = await BehaviorSession.findOne({
     where: {
       userId,
-      [Op.or]: [{ expiresAt: null }, { expiresAt: { [Op.gt]: now } }],
+      [Op.or]: [{ expiresAt: null }, { expiresAt: { [Op.gt]: nowIso } }],
     },
   });
 

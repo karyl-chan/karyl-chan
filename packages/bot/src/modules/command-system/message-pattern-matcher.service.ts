@@ -51,7 +51,38 @@ import { buildManualBehaviorsEmbed } from "./manual-list.js";
 // ── MessagePatternMatcher ─────────────────────────────────────────────────────
 
 export class MessagePatternMatcher {
+  /**
+   * Per-user in-process mutex. Two DM messages from the same user in the
+   * same event-loop tick used to both observe findActiveSession()==null,
+   * both match the same behavior, and both fire WebhookForwarder.forward
+   * before either committed a session. The session upsert then masked the
+   * race, but the webhook had already received the same first message
+   * twice. Serialize per userId — sequential per user, parallel across
+   * users — so the read-check-forward-write sequence becomes atomic from
+   * the matcher's POV.
+   */
+  private readonly userLocks = new Map<string, Promise<unknown>>();
+
   constructor(private readonly forwarder: WebhookForwarder) {}
+
+  private async withUserLock<T>(
+    userId: string,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    const prev = this.userLocks.get(userId) ?? Promise.resolve();
+    const next = prev.then(fn, fn);
+    // Store as `unknown` so generic T doesn't widen the map's value type.
+    this.userLocks.set(userId, next);
+    try {
+      return await next;
+    } finally {
+      // Only clear when we're still the tail — concurrent callers chain on
+      // top of `next` and will install their own promise.
+      if (this.userLocks.get(userId) === next) {
+        this.userLocks.delete(userId);
+      }
+    }
+  }
 
   /**
    * 掛載到 bot client（替代 registerWebhookBehaviorEvents(client)）。
@@ -96,8 +127,25 @@ export class MessagePatternMatcher {
     }
 
     const userId = djsMessage.author.id;
-    const channelId = djsMessage.channel.id;
+    return this.withUserLock(userId, () =>
+      this.onMessageLocked(djsMessage, userId),
+    );
+  }
+
+  private async onMessageLocked(
+    djsMessage: DjsMessage,
+    userId: string,
+  ): Promise<MessageMatchOutcome> {
+    const channelId = (djsMessage.channel as DMChannel).id;
     const content = djsMessage.content ?? "";
+
+    // ─ M-1 修：session 優先路徑下，DM 文字觸發的 `break` system behavior
+    // 永遠進不來（會被 session shortcircuit 吃掉並 forward 到 webhook）。
+    // 為了讓 admin 設的「!break」之類 DM 觸發確實能逃出 session，先比對
+    // enabled 的 source='system' systemKey='break' message_pattern：命中
+    // 就 endSession + 回 ack，再 return。沒命中才繼續走 session 路徑。
+    const breakEscape = await this.tryDmBreakEscape(djsMessage, userId, content);
+    if (breakEscape) return breakEscape;
 
     // ─ 查 active session（C-runtime §5.2 session 優先）
     const activeSession = await findActiveSession(userId);
@@ -182,6 +230,21 @@ export class MessagePatternMatcher {
       return { handled: false, sessionEnded: true };
     }
 
+    // H-3 修：admin 把 forwardType 從 continuous 改成 one_time 後，殘留
+    // session 不該繼續吞 DM。先收尾 session 再讓本則訊息以正常 trigger
+    // 路徑重跑（next inbound message），這則訊息靜默丟掉，
+    // 防止「forward 到舊行為的最後一發」。
+    if (behavior.forwardType !== "continuous") {
+      botEventLog.record(
+        "info",
+        "bot",
+        `message-pattern-matcher: session behaviorId=${behavior.id} forwardType 已改為 ${behavior.forwardType}，清除 session`,
+        { userId, behaviorId: behavior.id },
+      );
+      await endSession(userId);
+      return { handled: false, sessionEnded: true };
+    }
+
     const payload = this.buildPayload(djsMessage, behavior);
     const result = await this.forwarder.forward(behavior, payload);
 
@@ -203,7 +266,11 @@ export class MessagePatternMatcher {
     }
 
     if (result.ok && result.relayContent) {
-      await dmChannel.send(result.relayContent).catch(() => {});
+      // M-3 修：與 ended 分支一致 strip mentions，relay 內容來自外部 webhook
+      // 不可信，避免 user/role ping 經 group-DM 等情境放大。
+      await dmChannel
+        .send({ content: result.relayContent, allowedMentions: { parse: [] } })
+        .catch(() => {});
     }
 
     if (!result.ok) {
@@ -269,6 +336,62 @@ export class MessagePatternMatcher {
       sessionStarted,
       sessionEnded,
       behaviorId: behavior.id,
+    };
+  }
+
+  // ── 私有：DM-text break escape ────────────────────────────────────────────
+
+  /**
+   * M-1 修：在 session shortcircuit 之前先檢查使用者是否輸入符合 `break`
+   * system behavior 的 message_pattern 觸發。命中即 endSession + 回 ack，
+   * 讓 DM 文字 break 不被 session 吞掉。
+   *
+   * 沒命中（最常見路徑：使用者不是想 break，只是正常回覆 session）回 null，
+   * 呼叫端繼續走 session shortcircuit / matcher loop。
+   *
+   * 範圍：只看 enabled + source='system' + systemKey='break' +
+   * triggerType='message_pattern'。audienceKind 不過濾（system break 預設
+   * audienceKind='all'，且 admin 改不到該欄位）。
+   */
+  private async tryDmBreakEscape(
+    djsMessage: DjsMessage,
+    userId: string,
+    content: string,
+  ): Promise<MessageMatchOutcome | null> {
+    const row = await Behavior.findOne({
+      where: {
+        enabled: true,
+        source: "system",
+        systemKey: "break",
+        triggerType: "message_pattern",
+      },
+    });
+    if (!row) return null;
+    const breakRow = rowOfBehavior(row);
+    if (!breakRow.messagePatternKind || !breakRow.messagePatternValue) {
+      return null;
+    }
+    if (
+      !matchesTrigger(
+        breakRow.messagePatternKind,
+        breakRow.messagePatternValue,
+        content,
+      )
+    ) {
+      return null;
+    }
+    const ended = await endSession(userId);
+    const dmChannel = djsMessage.channel as DMChannel;
+    await dmChannel
+      .send({
+        content: ended ? "Session 已結束。" : "目前沒有活躍的 session。",
+        allowedMentions: { parse: [] },
+      })
+      .catch(() => {});
+    return {
+      handled: true,
+      sessionEnded: ended,
+      behaviorId: breakRow.id,
     };
   }
 

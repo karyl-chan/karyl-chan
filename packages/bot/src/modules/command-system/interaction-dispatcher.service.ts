@@ -32,7 +32,10 @@ import { dispatchComponentToPlugin } from "../plugin-system/plugin-component-dis
 import { dispatchModalToPlugin } from "../plugin-system/plugin-modal-dispatch.service.js";
 import { dispatchInProcessInteraction } from "../builtin-features/in-process-command-registry.service.js";
 import { issueLoginLinkForInteraction } from "../admin/admin-login.service.js";
-import { endSession } from "../behavior/models/behavior-session.model.js";
+import {
+  endSession,
+  startSession,
+} from "../behavior/models/behavior-session.model.js";
 import type { DispatchOutcome } from "./types.js";
 import type { WebhookForwarder } from "./webhook-forwarder.service.js";
 import { collectApplicableBehaviorsForUser } from "./message-pattern-matcher.service.js";
@@ -427,6 +430,28 @@ export class InteractionDispatcher {
           })
           .catch(() => {});
         return { claimed: true, claimedBy: "behavior_custom" };
+      }
+
+      // M-2 修：continuous + slash 觸發要 startSession，否則使用者後續 DM
+      // 進不到 webhook（matcher 沒 session 可走、又因 triggerType !==
+      // 'message_pattern' 跳過匹配）。channelId 用 DM channel 而不是
+      // interaction.channelId — slash 可能在 guild 觸發，但 session 是
+      // 「下一則 DM 走這條 webhook」的語意，必須是 DM channel。
+      // result.ended=true 代表 webhook 第一發就回 sentinel，session 不開。
+      // startSession 是 upsert：使用者既有 session 會被本次覆蓋（語意：
+      // admin 明示要切到這條 continuous behavior）。
+      if (behaviorRow.forwardType === "continuous" && !result.ended) {
+        try {
+          const dm = await interaction.user.createDM();
+          await startSession(interaction.user.id, behaviorRow.id, dm.id);
+        } catch (err) {
+          botEventLog.record(
+            "warn",
+            "bot",
+            `interaction-dispatcher: 無法為 continuous behavior ${behaviorRow.id} 啟動 session：${err instanceof Error ? err.message : String(err)}`,
+            { behaviorId: behaviorRow.id, userId: interaction.user.id },
+          );
+        }
       }
 
       if (result.relayContent) {

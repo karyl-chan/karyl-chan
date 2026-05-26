@@ -36,6 +36,7 @@ import {
   deriveFieldsFromTab,
   rowOf as tabRowOf,
 } from "./models/behavior-scope-tab.model.js";
+import { BehaviorSession } from "./models/behavior-session.model.js";
 import { Op, fn, col } from "sequelize";
 import { sequelize } from "../../db.js";
 import { encryptSecret } from "../../utils/crypto.js";
@@ -559,6 +560,26 @@ export async function registerBehaviorRoutes(
     await existing.update(patch);
     const updated = decryptedView(rowOfBehavior(existing));
 
+    // H-3 修：forwardType 改成非 continuous（或 enabled 被關掉）後，殘留
+    // session 不應繼續吞 DM。matcher 也會在下一則訊息進來時自我修復，
+    // 但這裡眼前清掉避免 user 多吃一發 forward。
+    const wasContinuous = existingRow.forwardType === "continuous";
+    const stillContinuous = updated.forwardType === "continuous";
+    const becameDisabled = existingRow.enabled && updated.enabled === false;
+    if ((wasContinuous && !stillContinuous) || becameDisabled) {
+      const ended = await BehaviorSession.destroy({
+        where: { behaviorId: numId },
+      });
+      if (ended > 0) {
+        botEventLog.record(
+          "info",
+          "web",
+          `behavior 更新連帶結束 ${ended} 條 session id=${numId}`,
+          { behaviorId: numId, sessionsEnded: ended },
+        );
+      }
+    }
+
     botEventLog.record(
       "info",
       "web",
@@ -594,11 +615,21 @@ export async function registerBehaviorRoutes(
       return reply.code(403).send({ error: "system behavior 不可刪除" });
     }
 
+    // H-2 修：FK onDelete:CASCADE 會在 SQLite FK 開啟時靜默清掉 session，
+    // 但 admin 看不到「連帶結束 N 條 session」這件事。先顯式清、log 數量，
+    // 再 destroy；同時讓 FK pragma 萬一沒生效時行為仍正確。
+    const endedSessions = await BehaviorSession.destroy({
+      where: { behaviorId: numId },
+    });
+
     await existing.destroy();
 
-    botEventLog.record("info", "web", `behavior 已刪除 id=${numId}`, {
-      behaviorId: numId,
-    });
+    botEventLog.record(
+      "info",
+      "web",
+      `behavior 已刪除 id=${numId}${endedSessions > 0 ? `（連帶結束 ${endedSessions} 條 session）` : ""}`,
+      { behaviorId: numId, sessionsEnded: endedSessions },
+    );
 
     scheduleReconcileAfterMutation(`delete id=${numId}`);
 

@@ -464,9 +464,10 @@ const saveLabel = computed(() => {
                     {{ t('behaviors.card.tagContinuousShort') }}
                 </span>
 
-                <!-- stop-on-match tag -->
+                <!-- stop-on-match tag — message_pattern 路徑硬寫 stop，欄位無語意，
+                     避免顯示誤導 admin。 -->
                 <span
-                    v-if="behavior.stopOnMatch"
+                    v-if="behavior.stopOnMatch && behavior.triggerType !== 'message_pattern'"
                     class="tag tag-stop"
                     :title="t('behaviors.card.tagStop')"
                 >
@@ -610,7 +611,12 @@ const saveLabel = computed(() => {
                             <AppSelectField v-model="draft.webhookAuthMode" :options="webhookAuthModeOptions" />
                         </div>
 
-                        <label class="field full inline">
+                        <!-- stopOnMatch 僅在 slash_command 有效；message_pattern
+                             路徑命中即 return，不消費此欄位。 -->
+                        <label
+                            v-if="draft.triggerType !== 'message_pattern'"
+                            class="field full inline"
+                        >
                             <input type="checkbox" v-model="draft.stopOnMatch" />
                             <span>{{ t('behaviors.card.stopOnMatch') }}</span>
                         </label>
