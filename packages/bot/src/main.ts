@@ -16,6 +16,7 @@ import { ChannelType, Events, IntentsBitField, Partials } from "discord.js";
 import { Client } from "discord.js";
 import { sequelize } from "./db.js";
 import { botEventsSequelize } from "./modules/bot-events/bot-events-db.js";
+import { getDistributedLock } from "./adapters/registry.js";
 import { config } from "./config.js";
 import { moduleLogger } from "./logger.js";
 import { startWebServer } from "./modules/web-core/server.js";
@@ -122,7 +123,14 @@ process.on("uncaughtException", (error) => {
 
 let webServer: Awaited<ReturnType<typeof startWebServer>> | null = null;
 
+// Phase 0.1 — sharding-ready Client construction. Single-shard
+// deployments (default) set shardId=0, totalShards=1 and behave
+// exactly as pre-0.1. Multi-shard deployments wire SHARD_ID +
+// TOTAL_SHARDS env vars (one container per shard) and discord.js
+// connects to only the shard's slice of the gateway.
 export const bot = new Client({
+  shards: [config.bot.shardId],
+  shardCount: config.bot.totalShards,
   intents: [
     IntentsBitField.Flags.Guilds,
     IntentsBitField.Flags.GuildMembers,
@@ -337,13 +345,29 @@ bot.once("ready", async () => {
   // registry, so we just await and move on.
   // M1-C2 注：pluginCommandRegistry.reconcileAll() 已改為 DB-only（不呼叫 Discord API）
   // 軌三 global 指令改由下方 commandReconciler.reconcileAll() 接管。
-  await pluginCommandRegistry.reconcileAll();
-
-  // M1-C2：CommandReconciler 接管軌二（behaviors）+ 軌三 global 指令。
-  // 繼 syncInProcessCommandsToDiscord + pluginCommandRegistry.reconcileAll 之後執行。
-  await commandReconciler.reconcileAll().catch((err: unknown) => {
-    log.error({ err }, "commandReconciler.reconcileAll failed");
-  });
+  //
+  // Phase 0.1: in a multi-shard deployment, only one process can
+  // call Discord's global-application-commands set — otherwise N
+  // shards stomp each other. We pick shard 0 *and* take a
+  // distributed lock so a future Redis-backed lock keeps the same
+  // invariant in flaky-restart scenarios.
+  if (config.bot.shardId === 0) {
+    await getDistributedLock().run(
+      "global-command-reconcile",
+      async () => {
+        await pluginCommandRegistry.reconcileAll();
+        await commandReconciler.reconcileAll().catch((err: unknown) => {
+          log.error({ err }, "commandReconciler.reconcileAll failed");
+        });
+      },
+      { timeoutMs: 60_000 },
+    );
+  } else {
+    log.info(
+      { shardId: config.bot.shardId },
+      "skipping global command reconcile (shard != 0)",
+    );
+  }
 
   // M1-C2：MessagePatternMatcher 掛載 messageCreate listener（DM behaviors）。
   messageMatcher.register(bot);

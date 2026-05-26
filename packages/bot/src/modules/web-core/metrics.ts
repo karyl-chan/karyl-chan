@@ -23,6 +23,12 @@ import type { Client } from "discord.js";
 import { dmEventBus } from "../dm-inbox/dm-event-bus.js";
 import { guildChannelEventBus } from "../guild-management/guild-channel-event-bus.js";
 import { pluginRegistry } from "../plugin-system/plugin-registry.service.js";
+import { config } from "../../config.js";
+
+/** Phase 0.1 — this process's shard id as a label value. Stamped on
+ *  every per-plugin / per-event metric so a multi-shard Prometheus
+ *  scrape can group by it. Single-shard deployments see `"0"`. */
+const SHARD_ID = String(config.bot.shardId);
 
 export const metricsRegistry = new Registry();
 
@@ -194,7 +200,7 @@ export const pluginDispatchInFlightGauge = new Gauge({
     const snap = await getDispatchPoolSnapshotSafe();
     this.reset();
     for (const entry of snap) {
-      this.labels({ plugin_id: entry.pluginKey, shard_id: "0" }).set(
+      this.labels({ plugin_id: entry.pluginKey, shard_id: SHARD_ID }).set(
         entry.inFlight,
       );
     }
@@ -210,7 +216,7 @@ export const pluginCircuitBreakerOpenGauge = new Gauge({
     const snap = await getDispatchPoolSnapshotSafe();
     this.reset();
     for (const entry of snap) {
-      this.labels({ plugin_id: entry.pluginKey, shard_id: "0" }).set(
+      this.labels({ plugin_id: entry.pluginKey, shard_id: SHARD_ID }).set(
         entry.breakerOpen ? 1 : 0,
       );
     }

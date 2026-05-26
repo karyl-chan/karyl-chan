@@ -17,6 +17,11 @@ export interface AppConfig {
     ownerIds: string[];
     /** When true, GuildMessageTyping and DirectMessageTyping intents are registered. */
     enableTyping: boolean;
+    /** Phase 0.1 — discord.js sharding. `shardId` is THIS process's shard
+     *  (0-indexed); `totalShards` is the full deployment shard count.
+     *  Default 0/1 = single-shard, behaviour matches pre-0.1. */
+    shardId: number;
+    totalShards: number;
   };
   web: {
     port: number;
@@ -174,6 +179,8 @@ function loadConfig(): AppConfig {
       ownerIds,
       ownerId: ownerIds[0] ?? null,
       enableTyping: parseBoolEnv("BOT_ENABLE_TYPING", false),
+      shardId: Math.max(0, parseIntEnv("SHARD_ID", 0)),
+      totalShards: Math.max(1, parseIntEnv("TOTAL_SHARDS", 1)),
     },
     web: {
       port: parseIntEnv("WEB_PORT", 3000),

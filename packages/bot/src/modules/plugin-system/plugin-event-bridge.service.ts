@@ -219,14 +219,14 @@ async function postEventToPlugin(
   // Phase 0.8: per-(plugin, event_type) latency + outcome counters.
   // `shard_id` is reserved as "0" until Phase 0.1 wires real sharding.
   pluginEventDispatchDuration.observe(
-    { event_type: eventType, plugin_id: plugin.pluginKey, shard_id: "0" },
+    { event_type: eventType, plugin_id: plugin.pluginKey, shard_id: String(config.bot.shardId) },
     elapsedSeconds,
   );
   pluginEventDispatchTotal.inc({
     event_type: eventType,
     outcome: outcome.ok ? "ok" : outcome.reason,
     plugin_id: plugin.pluginKey,
-    shard_id: "0",
+    shard_id: String(config.bot.shardId),
   });
   if (outcome.ok) return;
   // Per (plugin, eventType, reason) dedup keeps a wedged plugin from
