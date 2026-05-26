@@ -36,6 +36,7 @@ import {
 import { botEventLog, startBotEventLogPruner } from "./modules/bot-events/bot-event-log.js";
 import { ensureSystemBehaviors } from "./modules/behavior/system-seed.service.js";
 import { ensureFixedScopeTabs } from "./modules/behavior/scope-tab-seed.service.js";
+import { migrateLegacyExpiresAt } from "./modules/behavior/models/behavior-session.model.js";
 import { shouldRecord } from "./modules/bot-events/bot-event-dedup.js";
 import { initJwtSigningAuthority } from "./modules/web-core/jwt.service.js";
 // M1-C2: CommandReconciler / InteractionDispatcher / MessagePatternMatcher 接線。
@@ -544,6 +545,16 @@ async function run() {
     await ensureFixedScopeTabs();
     await ensureSystemBehaviors().catch((err: unknown) => {
       log.error({ err }, "ensureSystemBehaviors failed");
+    });
+    // One-shot data migration for behavior_sessions.expiresAt: the L-2
+    // patch flipped the column from DataTypes.DATE to STRING, but
+    // Sequelize's SQLite DATE adapter stored the value as a space-
+    // separated string that lexicographically sorts BEFORE any ISO
+    // 8601 'T'-separated string. Without this fixup every legacy
+    // session row would be silently destroyed on first findActiveSession
+    // preflight cleanup.
+    await migrateLegacyExpiresAt().catch((err: unknown) => {
+      log.error({ err }, "migrateLegacyExpiresAt failed");
     });
     await seedDefaultRoles();
     await auditStoredCapabilities();

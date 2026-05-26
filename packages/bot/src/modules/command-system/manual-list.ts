@@ -12,6 +12,14 @@ import { EmbedBuilder } from "discord.js";
 import type { BehaviorRow } from "../behavior/models/behavior.model.js";
 
 const DISCORD_EMBED_FIELD_LIMIT = 25;
+const DISCORD_EMBED_FIELD_NAME_MAX = 256;
+const DISCORD_EMBED_FIELD_VALUE_MAX = 1024;
+
+function truncate(s: string, max: number): string {
+  if (s.length <= max) return s;
+  // 預留 1 char 給省略符號;避免拼接後超界 (max 必 ≥ 2 才有意義)。
+  return `${s.slice(0, max - 1)}…`;
+}
 
 export function buildManualBehaviorsEmbed(
   behaviors: BehaviorRow[],
@@ -28,12 +36,16 @@ export function buildManualBehaviorsEmbed(
       b.triggerType === "slash_command"
         ? `/${b.slashCommandName ?? "(未設定)"}`
         : `訊息觸發（${b.messagePatternKind ?? "?"}）：${b.messagePatternValue ?? ""}`;
+    const rawValue =
+      `**類型**：${b.triggerType === "slash_command" ? "Slash 指令" : "訊息模式"}\n` +
+      `**觸發**：\`${triggerLabel}\`\n` +
+      (b.description ? `**說明**：${b.description}` : "");
+    // behavior.title / description / messagePatternValue 在 DB 是無限長 TEXT；
+    // Discord embed 限制 name ≤256, value ≤1024，超界整個訊息會被 reject。
+    // 截斷比靜默失敗好。
     embed.addFields({
-      name: b.title,
-      value:
-        `**類型**：${b.triggerType === "slash_command" ? "Slash 指令" : "訊息模式"}\n` +
-        `**觸發**：\`${triggerLabel}\`\n` +
-        (b.description ? `**說明**：${b.description}` : ""),
+      name: truncate(b.title, DISCORD_EMBED_FIELD_NAME_MAX),
+      value: truncate(rawValue, DISCORD_EMBED_FIELD_VALUE_MAX),
       inline: false,
     });
   }

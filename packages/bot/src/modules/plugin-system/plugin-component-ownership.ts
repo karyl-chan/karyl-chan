@@ -9,18 +9,24 @@
  * `custom_id="kc:plugin-b:adminAction"` and have plugin B receive the
  * click as if it had created the button itself.
  *
- * `assertOwnedComponentIds` walks the standard Discord component-v1
- * structure recursively (action-row containers in modals, nested rows
- * etc.) and rejects any `custom_id` whose prefix doesn't match the
- * calling plugin's key. Link buttons (style 5) have no custom_id and
- * are skipped. Unknown types still get their `custom_id` (if present)
- * checked — defence in depth as Discord adds new component types.
+ * The walker recurses the standard Discord component structure (action
+ * rows, v2 containers, modal rows) and rejects any `custom_id` whose
+ * prefix doesn't match the calling plugin's key. Link buttons (style
+ * 5) have no custom_id and are skipped.
  *
- * Returns the offending custom_id when ownership is violated, or null
- * when every id in the tree is OK. Callers reply 400 on rejection.
+ * Returns `null` on success, or a discriminated result on failure so
+ * callers can render distinct error messages — the previous design
+ * returned the literal sentinel string "components nested too deep"
+ * as if it were the offending id, which leaked into 400 errors as
+ * `component custom_id 'components nested too deep' must use …`.
  */
 
 const KC_PREFIX_RE = /^kc:([a-z0-9][a-z0-9-]{0,63}):/;
+const MAX_NESTING_DEPTH = 8;
+
+export type OwnershipFailure =
+  | { kind: "bad-id"; customId: string }
+  | { kind: "too-deep" };
 
 function checkCustomIdOwnership(
   customId: unknown,
@@ -40,14 +46,14 @@ function walkComponents(
   components: unknown,
   ownerKey: string,
   depth: number,
-): string | null {
-  if (depth > 8) return "components nested too deep";
+): OwnershipFailure | null {
+  if (depth > MAX_NESTING_DEPTH) return { kind: "too-deep" };
   if (!Array.isArray(components)) return null;
   for (const node of components) {
     if (!node || typeof node !== "object") continue;
     const n = node as Record<string, unknown>;
     const offender = checkCustomIdOwnership(n.custom_id, ownerKey);
-    if (offender) return offender;
+    if (offender) return { kind: "bad-id", customId: offender };
     // Action rows (type 1) and container types (e.g. v2 containers
     // type 17) carry a nested `components` array. Recurse without
     // assuming a specific type — any object with a `components`
@@ -63,7 +69,7 @@ function walkComponents(
 export function findUnownedCustomId(
   ownerKey: string,
   components: unknown,
-): string | null {
+): OwnershipFailure | null {
   return walkComponents(components, ownerKey, 0);
 }
 
@@ -78,8 +84,23 @@ export function findUnownedCustomId(
 export function findUnownedModalCustomId(
   ownerKey: string,
   modal: unknown,
-): string | null {
+): OwnershipFailure | null {
   if (!modal || typeof modal !== "object") return null;
   const m = modal as Record<string, unknown>;
-  return checkCustomIdOwnership(m.custom_id, ownerKey);
+  const offender = checkCustomIdOwnership(m.custom_id, ownerKey);
+  return offender ? { kind: "bad-id", customId: offender } : null;
+}
+
+/**
+ * Render an OwnershipFailure as a human-readable 400 error message.
+ * Centralised so every RPC route uses the same wording.
+ */
+export function describeOwnershipFailure(
+  ownerKey: string,
+  failure: OwnershipFailure,
+): string {
+  if (failure.kind === "too-deep") {
+    return `components nested too deep (max ${MAX_NESTING_DEPTH} levels)`;
+  }
+  return `component custom_id '${failure.customId}' must use the kc:${ownerKey}: namespace`;
 }

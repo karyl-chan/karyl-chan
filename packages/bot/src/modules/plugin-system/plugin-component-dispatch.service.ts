@@ -12,7 +12,7 @@ import {
   HostPolicyError,
 } from "../../utils/host-policy.js";
 import { buildOutboundSignatureHeaders } from "../../utils/hmac.js";
-import { findEnabledFeaturesByPluginGuild } from "../feature-toggle/models/plugin-guild-feature.model.js";
+import { isPluginEffectivelyEnabledInGuild } from "../feature-toggle/feature-resolve.js";
 
 /**
  * Inbound Discord *component* (button) interaction → plugin dispatcher.
@@ -113,29 +113,37 @@ export async function dispatchComponentToPlugin(
       .catch(() => {});
     return true;
   }
-  // Per-guild feature gate — once an admin disables every feature of
-  // this plugin in guild G, older buttons on existing messages must
-  // stop dispatching click events into the plugin.
-  if (interaction.guildId) {
-    const enabled = await findEnabledFeaturesByPluginGuild(
-      plugin.id,
-      interaction.guildId,
-    );
-    if (enabled.length === 0) {
-      await interaction
-        .reply({
-          content: "⚠ 此功能在本伺服器已停用。",
-          ephemeral: true,
-        })
-        .catch(() => {});
-      return true;
-    }
-  }
   const manifest = parseManifest(plugin);
   if (!manifest) {
     await interaction
       .reply({
         content: "⚠ 此 plugin 的 manifest 損壞,無法派送。",
+        ephemeral: true,
+      })
+      .catch(() => {});
+    return true;
+  }
+  // Per-guild feature gate — once an admin disables every feature of
+  // this plugin in guild G, older buttons on existing messages must
+  // stop dispatching click events into the plugin.
+  //
+  // Resolution is 3-tier (row → operator default → manifest
+  // enabled_by_default) — a plugin whose manifest defaults its features
+  // to enabled but has no row yet IS active; the prior gate that only
+  // checked enabled rows incorrectly rejected those clicks with
+  // "已停用" even though the slash commands work and the UI shows
+  // "已啟用".
+  if (
+    interaction.guildId &&
+    !(await isPluginEffectivelyEnabledInGuild(
+      plugin.id,
+      interaction.guildId,
+      manifest,
+    ))
+  ) {
+    await interaction
+      .reply({
+        content: "⚠ 此功能在本伺服器已停用。",
         ephemeral: true,
       })
       .catch(() => {});

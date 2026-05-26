@@ -33,6 +33,7 @@ import { makePluginCapabilityToken } from "../admin/admin-capabilities.js";
 import { discordErrorStatus } from "../web-core/discord-error.js";
 import { assertPluginTarget, HostPolicyError } from "../../utils/host-policy.js";
 import {
+  describeOwnershipFailure,
   findUnownedCustomId,
   findUnownedModalCustomId,
 } from "./plugin-component-ownership.js";
@@ -324,10 +325,10 @@ export async function registerPluginRpcRoutes(
       return;
     }
     if (components) {
-      const offender = findUnownedCustomId(ctx.pluginKey, components);
-      if (offender !== null) {
+      const failure = findUnownedCustomId(ctx.pluginKey, components);
+      if (failure) {
         reply.code(400).send({
-          error: `component custom_id '${offender}' must use the kc:${ctx.pluginKey}: namespace`,
+          error: describeOwnershipFailure(ctx.pluginKey, failure),
         });
         return;
       }
@@ -656,10 +657,10 @@ export async function registerPluginRpcRoutes(
       }
     }
     if (Array.isArray(body.components)) {
-      const offender = findUnownedCustomId(ctx.pluginKey, body.components);
-      if (offender !== null) {
+      const failure = findUnownedCustomId(ctx.pluginKey, body.components);
+      if (failure) {
         reply.code(400).send({
-          error: `component custom_id '${offender}' must use the kc:${ctx.pluginKey}: namespace`,
+          error: describeOwnershipFailure(ctx.pluginKey, failure),
         });
         return;
       }
@@ -1124,10 +1125,10 @@ export async function registerPluginRpcRoutes(
       return;
     }
     if (components) {
-      const offender = findUnownedCustomId(ctx.pluginKey, components);
-      if (offender !== null) {
+      const failure = findUnownedCustomId(ctx.pluginKey, components);
+      if (failure) {
         reply.code(400).send({
-          error: `component custom_id '${offender}' must use the kc:${ctx.pluginKey}: namespace`,
+          error: describeOwnershipFailure(ctx.pluginKey, failure),
         });
         return;
       }
@@ -1275,10 +1276,10 @@ export async function registerPluginRpcRoutes(
       return;
     }
     if (components) {
-      const offender = findUnownedCustomId(ctx.pluginKey, components);
-      if (offender !== null) {
+      const failure = findUnownedCustomId(ctx.pluginKey, components);
+      if (failure) {
         reply.code(400).send({
-          error: `component custom_id '${offender}' must use the kc:${ctx.pluginKey}: namespace`,
+          error: describeOwnershipFailure(ctx.pluginKey, failure),
         });
         return;
       }
@@ -1441,10 +1442,10 @@ export async function registerPluginRpcRoutes(
       ? body.components
       : undefined;
     if (components) {
-      const offender = findUnownedCustomId(ctx.pluginKey, components);
-      if (offender !== null) {
+      const failure = findUnownedCustomId(ctx.pluginKey, components);
+      if (failure) {
         reply.code(400).send({
-          error: `component custom_id '${offender}' must use the kc:${ctx.pluginKey}: namespace`,
+          error: describeOwnershipFailure(ctx.pluginKey, failure),
         });
         return;
       }
@@ -1531,11 +1532,16 @@ export async function registerPluginRpcRoutes(
       return;
     }
     {
-      const offender = findUnownedModalCustomId(ctx.pluginKey, body.modal);
-      if (offender !== null) {
-        reply.code(400).send({
-          error: `modal custom_id '${offender}' must use the kc:${ctx.pluginKey}: namespace`,
-        });
+      const failure = findUnownedModalCustomId(ctx.pluginKey, body.modal);
+      if (failure) {
+        // describeOwnershipFailure says "component custom_id …" but for
+        // modals we override to "modal custom_id …" — the routing is on
+        // the OUTER modal id, plugin authors expect that label.
+        const msg =
+          failure.kind === "too-deep"
+            ? describeOwnershipFailure(ctx.pluginKey, failure)
+            : `modal custom_id '${failure.customId}' must use the kc:${ctx.pluginKey}: namespace`;
+        reply.code(400).send({ error: msg });
         return;
       }
     }

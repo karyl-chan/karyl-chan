@@ -104,6 +104,22 @@ export const findEnabledFeaturesByPluginGuild = async (
   return rows.map(rowOf);
 };
 
+/**
+ * Returns ALL feature rows (enabled + disabled) for (pluginId, guildId).
+ * Callers that need to resolve 3-tier precedence (row → operator default
+ * → manifest default) must NOT filter on `enabled: true` at the DB layer
+ * — a missing row means "fall through to default", not "disabled".
+ */
+export const findFeatureRowsByPluginGuild = async (
+  pluginId: number,
+  guildId: string,
+): Promise<PluginGuildFeatureRow[]> => {
+  const rows = await PluginGuildFeature.findAll({
+    where: { pluginId, guildId },
+  });
+  return rows.map(rowOf);
+};
+
 export interface UpsertFeatureInput {
   pluginId: number;
   guildId: string;

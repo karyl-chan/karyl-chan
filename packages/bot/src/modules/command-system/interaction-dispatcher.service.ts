@@ -440,11 +440,13 @@ export class InteractionDispatcher {
       // result.ended=true 代表 webhook 第一發就回 sentinel，session 不開。
       // startSession 是 upsert：使用者既有 session 會被本次覆蓋（語意：
       // admin 明示要切到這條 continuous behavior）。
+      let dmStartFailed = false;
       if (behaviorRow.forwardType === "continuous" && !result.ended) {
         try {
           const dm = await interaction.user.createDM();
           await startSession(interaction.user.id, behaviorRow.id, dm.id);
         } catch (err) {
+          dmStartFailed = true;
           botEventLog.record(
             "warn",
             "bot",
@@ -454,9 +456,22 @@ export class InteractionDispatcher {
         }
       }
 
-      if (result.relayContent) {
+      // 給使用者一個明確訊號：continuous 觸發成功但 session 沒建（最常見
+      // 原因是隱私設定關閉了 DMs），不然 user 會以為 session 已建立卻無
+      // 法後續傳訊息進來。
+      const dmWarning = dmStartFailed
+        ? "\n\n⚠ 此行為設為持續轉發，但無法開啟與您的私訊頻道。請在 Discord 隱私設定中允許伺服器/應用程式私訊後再試一次。"
+        : "";
+
+      if (result.relayContent || dmStartFailed) {
+        // relay 內容來自外部 webhook，不可信，strip mentions 防止
+        // user/role ping 經 bot relay 放大（與 message-pattern-matcher
+        // session 路徑同個威脅模型，這裡補上同等保護）。
         await interaction
-          .editReply({ content: result.relayContent })
+          .editReply({
+            content: (result.relayContent ?? "") + dmWarning,
+            allowedMentions: { parse: [] },
+          })
           .catch(() => {});
       } else {
         // 無回覆內容則刪除 deferred reply

@@ -1,6 +1,7 @@
 import { DataTypes, Op } from "sequelize";
 import { sequelize } from "../../../db.js";
 import { config } from "../../../config.js";
+import { botEventLog } from "../../bot-events/bot-event-log.js";
 import { Behavior } from "./behavior.model.js";
 
 // behavior-session.model.ts：v2 schema 不變（PK=userId，FK=behaviorId→behaviors.id）
@@ -146,3 +147,49 @@ export const endSessionsForBehavior = async (
 ): Promise<void> => {
   await BehaviorSession.destroy({ where: { behaviorId } });
 };
+
+/**
+ * One-shot migration: rewrite legacy `expiresAt` values stored under the
+ * pre-L-2 `DataTypes.DATE` column type.
+ *
+ * Why this exists: Sequelize's SQLite DATE adapter stored timestamps as
+ * `"YYYY-MM-DD HH:MM:SS.sss +00:00"` (space-separated, explicit offset).
+ * The L-2 patch flipped the column type to STRING and the writer to
+ * `new Date().toISOString()` (`"YYYY-MM-DDTHH:MM:SS.sssZ"`, T-separated,
+ * Zulu suffix). Empirically (verified via a probe test):
+ *   ' ' (0x20) < 'T' (0x54)
+ * so legacy rows lexicographically compare as ALWAYS LESS than any new
+ * `nowIso`. findActiveSession's preflight `Op.lt` cleanup would silently
+ * destroy every pre-existing session on first lookup post-deploy.
+ *
+ * Idempotent: matches only rows whose `expiresAt` contains a literal
+ * space (legacy format) and rewrites to canonical ISO. Rows already in
+ * ISO format don't have a space and are skipped. Rows with malformed
+ * dates that `new Date(...)` can't parse are left alone (parse fails →
+ * NaN → skip).
+ *
+ * Call from boot before any findActiveSession runs.
+ */
+export async function migrateLegacyExpiresAt(): Promise<number> {
+  const legacy = await BehaviorSession.findAll({
+    where: { expiresAt: { [Op.like]: "% %" } },
+  });
+  let migrated = 0;
+  for (const row of legacy) {
+    const raw = row.getDataValue("expiresAt") as string | null;
+    if (raw == null) continue;
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) continue;
+    await row.update({ expiresAt: parsed.toISOString() });
+    migrated++;
+  }
+  if (migrated > 0) {
+    botEventLog.record(
+      "info",
+      "bot",
+      `behavior-session: 將 ${migrated} 條舊格式 expiresAt 重寫為 ISO 8601`,
+      { migrated },
+    );
+  }
+  return migrated;
+}
