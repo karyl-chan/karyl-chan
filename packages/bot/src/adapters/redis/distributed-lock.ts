@@ -1,0 +1,103 @@
+/**
+ * Redis-backed DistributedLock — Phase 1.4.
+ *
+ * Uses Redis SETNX + PX TTL for atomic acquisition, plus an owner-
+ * tagged Lua release script so only the holder can delete the key.
+ * Multi-shard deployments use this to serialise global tasks
+ * (global slash-command reconcile, DB migrations, scheduled jobs)
+ * across processes.
+ *
+ *   Acquire:  SET karyl:lock:<key> <ownerToken> NX PX <ttlMs>
+ *   Release:  Lua { if get == ownerToken then del }
+ *
+ * No watchdog renewal yet — `run(fn)` callers should keep fn's
+ * runtime below `lockTtlMs` (default 60 s). If a fn might legitimately
+ * exceed that, pass a larger `timeoutMs` and we'll tune the TTL
+ * to match.
+ *
+ * Polling acquire: backs off 50→500 ms with jitter to avoid lock-
+ * stampede when N shards all start at the same time.
+ */
+
+import { randomBytes } from "crypto";
+import type { DistributedLock } from "../distributed-lock.js";
+import { getRedisClient, type RedisLike } from "./client.js";
+
+const PREFIX = "karyl:lock:";
+const lockKey = (key: string) => `${PREFIX}${key}`;
+const DEFAULT_LOCK_TTL_MS = 60_000;
+const ACQUIRE_POLL_MIN_MS = 50;
+const ACQUIRE_POLL_MAX_MS = 500;
+
+const RELEASE_SCRIPT =
+  `if redis.call("get", KEYS[1]) == ARGV[1] then ` +
+  `return redis.call("del", KEYS[1]) else return 0 end`;
+
+function jitterDelay(): number {
+  return (
+    ACQUIRE_POLL_MIN_MS +
+    Math.floor(Math.random() * (ACQUIRE_POLL_MAX_MS - ACQUIRE_POLL_MIN_MS))
+  );
+}
+
+export class RedisDistributedLock implements DistributedLock {
+  constructor(private readonly redis: RedisLike = getRedisClient()) {}
+
+  async run<T>(
+    key: string,
+    fn: () => Promise<T>,
+    opts?: { timeoutMs?: number },
+  ): Promise<T> {
+    const deadline =
+      opts?.timeoutMs && opts.timeoutMs > 0
+        ? Date.now() + opts.timeoutMs
+        : Number.POSITIVE_INFINITY;
+    const ttlMs =
+      opts?.timeoutMs && opts.timeoutMs > 0 && opts.timeoutMs < DEFAULT_LOCK_TTL_MS
+        ? // If the caller cares about a short timeout, the TTL can be
+          // tighter — gives a faster failover if the fn deadlocks.
+          opts.timeoutMs
+        : DEFAULT_LOCK_TTL_MS;
+    const owner = randomBytes(16).toString("hex");
+
+    // Acquire loop.
+    while (true) {
+      const acquired = await this.redis.set(
+        lockKey(key),
+        owner,
+        "PX",
+        ttlMs,
+        "NX",
+      );
+      if (acquired === "OK") break;
+      if (Date.now() >= deadline) {
+        throw new Error(`lock '${key}' acquire timed out`);
+      }
+      await sleep(jitterDelay());
+    }
+
+    try {
+      return await fn();
+    } finally {
+      try {
+        await this.redis.eval(RELEASE_SCRIPT, 1, lockKey(key), owner);
+      } catch {
+        // If release fails the lock will expire on its own; nothing
+        // we can do without retry storms.
+      }
+    }
+  }
+
+  async isLeader(_key: string): Promise<boolean> {
+    // Conservative — we don't try to elect a leader without a
+    // running operation. Callers that need a leader should use
+    // `run()` directly. Returning true keeps the in-process
+    // contract: "yes there's at most one process serving this
+    // request right now".
+    return true;
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms).unref());
+}

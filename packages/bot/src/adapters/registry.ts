@@ -97,6 +97,12 @@ export function getDistributedLock(): DistributedLock {
   const choice = envChoice("DISTRIBUTED_LOCK");
   if (choice === "" || choice === "inprocess") {
     cache.distributedLock = new InProcessDistributedLock();
+  } else if (choice === "redis") {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { RedisDistributedLock } = require(
+      "./redis/distributed-lock.js",
+    ) as { RedisDistributedLock: new () => DistributedLock };
+    cache.distributedLock = new RedisDistributedLock();
   } else {
     unknownImpl("DISTRIBUTED_LOCK", choice);
   }
