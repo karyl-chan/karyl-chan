@@ -1,4 +1,11 @@
-import type { ChatInputCommandInteraction, Message } from "discord.js";
+import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  EmbedBuilder,
+  type ChatInputCommandInteraction,
+  type Message,
+} from "discord.js";
 import { jwtService } from "../web-core/jwt.service.js";
 import { resolveLoginRole } from "./authorized-user.service.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
@@ -79,10 +86,35 @@ async function mintLoginLink(
   return { ok: true, url, minutesUntilExpiry, role };
 }
 
-function formatLoginReply(
+/**
+ * 把登入結果包成 embed + ActionRow(link button)。URL 只放在按鈕的 href，
+ * 不直接寫進 embed 文字，避免在訊息預覽或 log 上以純連結形式被擷取。
+ *
+ * embed 顯示「角色 + 剩餘有效時間」這兩個 admin 需要當下確認的事；
+ * 點按鈕直接帶到後台 auth route 自動換 session。
+ */
+function buildLoginReplyPayload(
   result: Extract<LoginLinkResult, { ok: true }>,
-): string {
-  return `Login link (role: ${result.role}, expires in ~${result.minutesUntilExpiry} min):\n${result.url}`;
+): { embeds: EmbedBuilder[]; components: ActionRowBuilder<ButtonBuilder>[] } {
+  const embed = new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setTitle("後台登入連結")
+    .setDescription("點下方按鈕在瀏覽器開啟後台。連結為一次性，請勿轉發。")
+    .addFields(
+      { name: "角色", value: result.role, inline: true },
+      {
+        name: "有效時間",
+        value: `約 ${result.minutesUntilExpiry} 分鐘`,
+        inline: true,
+      },
+    );
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setStyle(ButtonStyle.Link)
+      .setURL(result.url)
+      .setLabel("前往登入"),
+  );
+  return { embeds: [embed], components: [row] };
 }
 
 /**
@@ -100,7 +132,10 @@ export async function issueLoginLinkAndReply(
       messageId: message.id,
     });
     if (!result.ok) return false;
-    await message.reply(formatLoginReply(result));
+    await message.reply({
+      ...buildLoginReplyPayload(result),
+      allowedMentions: { parse: [] },
+    });
     return true;
   } catch (err) {
     log.error({ err }, "admin-login issue failed (message)");
@@ -141,7 +176,7 @@ export async function issueLoginLinkForInteraction(
       return true;
     }
     await interaction.reply({
-      content: formatLoginReply(result),
+      ...buildLoginReplyPayload(result),
       ephemeral: true,
     });
     return true;
