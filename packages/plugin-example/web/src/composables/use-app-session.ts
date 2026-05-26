@@ -1,18 +1,24 @@
-// SPA boot routing: decode URL token once, drop into one of five
-// surfaces (manage / chat / sticky / showcase / bench / denied). The
-// active surface is derived from (a) the `?surface=` URL param, and
-// (b) the JWT capabilities — manage-gated surfaces only allow callers
-// holding the manage capability.
+// SPA boot routing for plugin-example. Workpack D refactor: delegates
+// URL token parsing / JWT decode / manage exchange / sessionStorage
+// restore to `bootstrapPluginSession` from the SDK. This module keeps
+// only the plugin-specific concerns:
+//   - manage-cap gating (which surfaces require the manage capability)
+//   - chat binding (the `?c=<channelId>` URL param needed for chat)
+//   - the "denied" terminal state for the App-level router
+//
+// Surfaces (from Discord slash command links):
+//   /example-manage     → "manage"   — admin/manage UI (manage cap)
+//   /example-chat       → "chat"     — channel-bound chat SPA
+//   /example-sticky     → "sticky"   — user-bound sticky notes
+//   /example-showcase   → "showcase" — UI component showcase (manage cap)
+//   /example-bench      → "bench"    — UI stress test page (manage cap)
 
 import { ref } from "vue";
 import {
-  auth,
-  decodeJwt,
-  exchangeManageJwt,
-  readQueryParamAndStrip,
-  readTokenFromUrl,
-  API_BASE,
-} from "../api";
+  bootstrapPluginSession,
+  type SessionHandle,
+} from "@karyl-chan/plugin-sdk/web";
+import { setApi } from "../api";
 
 const PLUGIN_KEY = "karyl-example";
 const MANAGE_CAP_TOKEN = `plugin:${PLUGIN_KEY}:manage`;
@@ -36,6 +42,8 @@ const deniedMessage = ref<string>("");
 const chatBinding = ref<ChatBinding | null>(null);
 const guildId = ref<string | null>(null);
 
+let sessionHandle: SessionHandle | null = null;
+
 function deny(message: string): void {
   deniedMessage.value = message;
   surface.value = "denied";
@@ -48,88 +56,100 @@ function hasManageCaps(claims: { capabilities?: unknown } | null): boolean {
   return caps.includes("admin") || caps.includes(MANAGE_CAP_TOKEN);
 }
 
-let listenerInstalled = false;
-function ensureDeniedListener(): void {
-  if (listenerInstalled) return;
-  listenerInstalled = true;
-  auth.onAccessDenied((msg) => deny(msg || "Access denied. Request a new link from Discord."));
-}
-
 export async function bootstrap(): Promise<void> {
-  ensureDeniedListener();
+  // Per-surface auth mode policy passed to the SDK orchestrator. The
+  // orchestrator handles URL token decode + manage exchange + denied
+  // wiring; we layer the surface-specific routing on top.
+  const handle = await bootstrapPluginSession({
+    pluginKey: PLUGIN_KEY,
+    surfaces: {
+      manage: "manage",
+      showcase: "manage",
+      bench: "manage",
+      chat: "session",
+      sticky: "session",
+    },
+    extraUrlParams: ["c"],
+    onAccessDenied: (msg) =>
+      deny(msg || "Access denied. Request a new link from Discord."),
+  });
+  sessionHandle = handle;
+  setApi(handle.api);
 
-  const requestedSurface = (readQueryParamAndStrip("surface") ?? "") as AppSurface | "";
-  const channelFromUrl = readQueryParamAndStrip("c");
-  const urlToken = readTokenFromUrl();
+  // Bootstrap already terminated as denied via onAccessDenied? Stop.
+  if (surface.value === "denied") return;
 
-  if (urlToken) {
-    const claims = decodeJwt(urlToken);
-    if (!claims) {
-      deny("Token is malformed.");
-      return;
-    }
-    guildId.value = typeof claims.guildId === "string" ? claims.guildId : null;
+  guildId.value = handle.guildId;
 
-    const wantsManage =
-      requestedSurface === "manage" ||
-      requestedSurface === "showcase" ||
-      requestedSurface === "bench";
-
-    if (wantsManage) {
-      if (!hasManageCaps(claims)) {
-        deny(`You need ${MANAGE_CAP_TOKEN} (or admin) to open this surface.`);
-        return;
-      }
-      const tokens = await exchangeManageJwt(urlToken, API_BASE);
-      if (!tokens) {
-        deny("Couldn't establish a manage session — the link may have expired.");
-        return;
-      }
-      auth.setManageTokens(tokens);
-      surface.value = requestedSurface;
-      return;
-    }
-
-    // Session-mode surfaces.
-    auth.setSessionToken(urlToken);
-    if (requestedSurface === "chat") {
-      if (!channelFromUrl) {
-        deny("Chat link is missing channel info — please rerun /example-chat.");
-        return;
-      }
-      chatBinding.value = {
-        channelId: channelFromUrl,
-        guildId: guildId.value,
-      };
-      surface.value = "chat";
-      return;
-    }
-    if (requestedSurface === "sticky") {
-      surface.value = "sticky";
-      return;
-    }
-
-    deny(`Unknown surface: ${requestedSurface || "(none)"}.`);
+  // No URL token AND no restored session: nothing more we can do —
+  // bootstrap dispatched no token to us. Point the user back to Discord.
+  if (handle.mode === "none") {
+    deny("Please open this page via /example-* on Discord.");
     return;
   }
 
-  // Tab reload — fall back to stored auth + surface inference.
-  const restored = auth.loadStored();
-  if (restored === "manage") {
-    surface.value = "manage";
-    return;
-  }
-  if (restored === "session") {
-    // Without the original `?surface=` we can't know which session
-    // surface to restore. The user re-runs the slash command. This is
-    // a known simplification; a richer plugin would persist the
-    // requested surface alongside the token in storage.
+  const requestedSurface = (handle.surface ?? "") as AppSurface | "";
+  const channelFromUrl = handle.urlParams["c"];
+
+  // Tab-reload path: handle.claims is null when we restored from
+  // sessionStorage. Resume manage but not session surfaces (no record
+  // of which surface was originally requested).
+  if (!handle.claims) {
+    if (handle.mode === "manage") {
+      surface.value = "manage";
+      return;
+    }
     deny("Tab reloaded without context — request a new link from Discord.");
     return;
   }
-  deny("Please open this page via /example-* on Discord.");
+
+  if (handle.requestedMode === "manage") {
+    // bootstrap already exchanged for manage tokens — but it doesn't
+    // know our manage-cap rule. Validate now.
+    if (!hasManageCaps(handle.claims)) {
+      deny(`You need ${MANAGE_CAP_TOKEN} (or admin) to open this surface.`);
+      return;
+    }
+    if (
+      requestedSurface !== "manage" &&
+      requestedSurface !== "showcase" &&
+      requestedSurface !== "bench"
+    ) {
+      deny(`Unknown manage surface: ${requestedSurface || "(none)"}.`);
+      return;
+    }
+    surface.value = requestedSurface;
+    return;
+  }
+
+  // Session-mode surfaces.
+  if (requestedSurface === "chat") {
+    if (!channelFromUrl) {
+      deny("Chat link is missing channel info — please rerun /example-chat.");
+      return;
+    }
+    chatBinding.value = {
+      channelId: channelFromUrl,
+      guildId: handle.guildId,
+    };
+    surface.value = "chat";
+    return;
+  }
+  if (requestedSurface === "sticky") {
+    surface.value = "sticky";
+    return;
+  }
+  deny(`Unknown surface: ${requestedSurface || "(none)"}.`);
 }
 
 export function useAppSession() {
-  return { surface, deniedMessage, chatBinding, guildId, bootstrap };
+  return {
+    surface,
+    deniedMessage,
+    chatBinding,
+    guildId,
+    bootstrap,
+    /** Underlying SDK handle for advanced consumers (debug panel, etc.). */
+    handle: (): SessionHandle | null => sessionHandle,
+  };
 }

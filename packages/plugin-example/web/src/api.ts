@@ -1,37 +1,35 @@
-// Browser-side API client for plugin-example. Builds on
-// @karyl-chan/plugin-sdk/web for the auth + fetch boilerplate; adds the
-// plugin-specific helpers (chat, sticky, manage-only listings).
+// Browser-side API client for plugin-example. Built on
+// @karyl-chan/plugin-sdk/web's `bootstrapPluginSession` orchestrator
+// (Workpack D) — auth + the fetch wrapper live inside the SessionHandle
+// owned by `use-app-session.ts`. This module exposes the typed
+// per-feature endpoints; it receives the PluginApi via `setApi` once
+// bootstrap resolves.
 
 import {
   API_BASE,
-  createAuthState,
-  createPluginApi,
   openSseChannel,
-  type AuthState,
   type ManageTokens,
   type PluginApi,
   type SseChannel,
 } from "@karyl-chan/plugin-sdk/web";
 
-const bundle = createAuthState("karyl-example");
-export const auth: AuthState = bundle.state;
-const api: PluginApi = createPluginApi({
-  apiBase: API_BASE,
-  auth,
-  emitDenied: bundle.emitDenied,
-});
+// Wired at bootstrap time via setApi(handle.api). Throws if any feature
+// function fires before bootstrap (boot bug — bootstrap must resolve
+// before App mounts the surfaces that call these).
+let _api: PluginApi | null = null;
 
-// Re-export the API base so views can build asset URLs directly when
-// needed (none currently, but it's a stable hook for future use).
+export function setApi(api: PluginApi): void {
+  _api = api;
+}
+
+function api(): PluginApi {
+  if (!_api) {
+    throw new Error("plugin-example api used before bootstrapPluginSession resolved");
+  }
+  return _api;
+}
+
 export { API_BASE };
-
-// ── Auth bootstrap helpers ─────────────────────────────────────────────
-export {
-  decodeJwt,
-  readTokenFromUrl,
-  readQueryParamAndStrip,
-  exchangeManageJwt,
-} from "@karyl-chan/plugin-sdk/web";
 export type { ManageTokens };
 
 // ── Viewer info (works for both session + manage modes) ───────────────
@@ -64,7 +62,7 @@ export interface MeResponse {
 }
 
 export function fetchMe(): Promise<MeResponse> {
-  return api.request("GET", "/api/me");
+  return api().request("GET", "/api/me");
 }
 
 // ── Manage surface ─────────────────────────────────────────────────────
@@ -74,7 +72,7 @@ export interface StickyRow {
   updated: number;
 }
 export function listStickies(guildId: string): Promise<{ stickies: StickyRow[] }> {
-  return api.request(
+  return api().request(
     "GET",
     `/api/manage/stickies?guildId=${encodeURIComponent(guildId)}`,
   );
@@ -92,7 +90,7 @@ export interface ChatEvent {
 export function fetchChatHistory(
   channelId: string,
 ): Promise<{ events: ChatEvent[] }> {
-  return api.request(
+  return api().request(
     "GET",
     `/api/chat/history?channelId=${encodeURIComponent(channelId)}`,
   );
@@ -102,12 +100,12 @@ export function sendChat(
   channelId: string,
   content: string,
 ): Promise<{ ok: true; event: ChatEvent }> {
-  return api.request("POST", "/api/chat/send", { channelId, content });
+  return api().request("POST", "/api/chat/send", { channelId, content });
 }
 
 async function mintChatTicket(channelId: string): Promise<string | null> {
   try {
-    const r = (await api.request("POST", "/api/chat/sse-ticket", {
+    const r = (await api().request("POST", "/api/chat/sse-ticket", {
       channelId,
     })) as { ticket?: string };
     return r?.ticket ?? null;
@@ -136,13 +134,13 @@ export interface Sticky {
 }
 
 export function getSticky(): Promise<{ sticky: Sticky }> {
-  return api.request("GET", "/api/sticky");
+  return api().request("GET", "/api/sticky");
 }
 
 export function saveSticky(body: string): Promise<{ sticky: Sticky }> {
-  return api.request("PUT", "/api/sticky", { body });
+  return api().request("PUT", "/api/sticky", { body });
 }
 
 export function deleteSticky(): Promise<{ ok: true }> {
-  return api.request("DELETE", "/api/sticky");
+  return api().request("DELETE", "/api/sticky");
 }
