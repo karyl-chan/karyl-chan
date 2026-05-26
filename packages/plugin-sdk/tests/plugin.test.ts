@@ -183,7 +183,6 @@ describe("PluginClient.getPublicBaseUrl()", () => {
       botUrl: "http://bot",
       setupSecret: "secret",
       manifest: {
-        schema_version: "1",
         plugin: { id: "test-plugin", name: "Test", version: "0.1.0", url: "http://test-plugin:3000" },
       },
     });
@@ -212,7 +211,6 @@ describe("PluginClient.getPublicBaseUrl()", () => {
       botUrl: "http://bot",
       setupSecret: "secret",
       manifest: {
-        schema_version: "1",
         plugin: { id: "test-plugin", name: "Test", version: "0.1.0", url: "http://test-plugin:3000" },
       },
     });
@@ -249,7 +247,6 @@ describe("PluginClient.getPublicBaseUrl()", () => {
       setupSecret: "secret",
       // No heartbeatIntervalMs override — let the server-returned 100 ms drive it.
       manifest: {
-        schema_version: "1",
         plugin: { id: "test-plugin", name: "Test", version: "0.1.0", url: "http://test-plugin:3000" },
       },
     });
@@ -289,7 +286,6 @@ describe("PluginClient.getPublicBaseUrl()", () => {
       botUrl: "http://bot",
       setupSecret: "secret",
       manifest: {
-        schema_version: "1",
         plugin: { id: "test-plugin", name: "Test", version: "0.1.0", url: "http://test-plugin:3000" },
       },
     });

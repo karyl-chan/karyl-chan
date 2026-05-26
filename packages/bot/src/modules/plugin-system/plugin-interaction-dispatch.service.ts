@@ -130,7 +130,7 @@ async function dispatchChatInputCommand(
     return;
   }
   // Look up the command's manifest entry to decide:
-  //  (a) response_kind: "modal" → skip defer entirely (Discord rejects
+  //  (a) `modal: true` → skip defer entirely (Discord rejects
   //      modal-after-defer); plugin will send_modal via RPC within 3 s.
   //  (b) all other commands defer with the manifest's declared
   //      `default_ephemeral` (default true when unspecified).
@@ -147,10 +147,10 @@ async function dispatchChatInputCommand(
     ...(manifest.guild_features ?? []).flatMap((f) => f.commands ?? []),
   ];
   const cmdDef = allCmds.find((c) => c.name === cmdName);
-  const responseKind = cmdDef?.response_kind ?? "deferred";
+  const isModal = cmdDef?.modal ?? false;
   const defaultEphemeral = cmdDef?.default_ephemeral ?? true;
 
-  if (responseKind !== "modal") {
+  if (!isModal) {
     try {
       await interaction.deferReply({ ephemeral: defaultEphemeral });
       recordPluginDeferReply(interaction.token, defaultEphemeral);
@@ -170,7 +170,7 @@ async function dispatchChatInputCommand(
   // `reply` (no deferred state to edit); all other commands use
   // `editReply`. Wrap once so the rest of the function stays linear.
   const replyError = (content: string): Promise<unknown> =>
-    responseKind === "modal"
+    isModal
       ? interaction.reply({ content, ephemeral: true }).catch(() => {})
       : interaction.editReply({ content }).catch(() => {});
 
@@ -277,7 +277,7 @@ async function dispatchChatInputCommand(
       // let the interaction expire naturally so a slower-than-
       // expected plugin's sendModal can still hit Discord in time.
       // Operator log above is the canonical signal.
-      if (responseKind !== "modal") {
+      if (!isModal) {
         await replyError(`⚠ Plugin 拒絕了此指令 (HTTP ${res.status})`);
       }
     }
@@ -293,7 +293,7 @@ async function dispatchChatInputCommand(
       { pluginId: plugin.id },
     );
     // Same modal-race reasoning as the non-ok branch above.
-    if (responseKind !== "modal") {
+    if (!isModal) {
       await replyError(`⚠ 無法連接 plugin: ${msg}`);
     }
   } finally {

@@ -58,6 +58,10 @@ export type {
 
 export { verifyWebhookToken } from "./webhook-token.js";
 
+// Bot RPC error class — plugins discriminating on RPC failure
+// (network vs http_status vs no_token) catch this and inspect `reason`.
+export { BotRpcError } from "./server.js";
+
 export {
   verifyPluginSession,
   hasPluginCapability,

@@ -1,6 +1,6 @@
 /**
  * Runtime context passed to every plugin lifecycle hook
- * (`onStart` / `onStop` / `onEnable` / `onDisable` / `onEvent`).
+ * (`onStart` / `onStop` / `onEnable` / `onDisable`).
  *
  * Single source of plugin-side platform access:
  *   - `log`         — local pino-shaped logger (goes to the plugin's stdout)
@@ -29,11 +29,15 @@ export interface PluginContext {
   /** Counter / gauge / histogram primitives. */
   readonly metrics: PluginMetrics;
   /**
-   * Call any `/api/plugin/*` RPC endpoint. Returns null when the plugin
-   * has not yet completed its first register (no token), or on network
-   * / non-2xx errors (already logged).
+   * Call any `/api/plugin/*` RPC endpoint. Resolves with the parsed
+   * response body (or `{}` for 204) on success. Throws a `BotRpcError`
+   * on failure with `reason: 'no_token' | 'network' | 'http_status'`
+   * — wrap in try/catch and discriminate on `reason` to distinguish
+   * "bot unreachable" from "bot rejected my request" from "plugin not
+   * yet registered". The previous `unknown | null` shape collapsed all
+   * failures into one indistinguishable null which made debugging hard.
    */
-  readonly botRpc: (path: string, body?: unknown) => Promise<unknown | null>;
+  readonly botRpc: (path: string, body?: unknown) => Promise<unknown>;
 }
 
 // ─── Logger ─────────────────────────────────────────────────────────────

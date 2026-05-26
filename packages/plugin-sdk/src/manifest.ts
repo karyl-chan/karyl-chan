@@ -101,13 +101,12 @@ export interface ManifestCommand {
   integration_types?: ("guild_install" | "user_install")[];
   options?: ManifestCommandOption[];
   /**
-   * What kind of initial response Discord expects: `"deferred"` (bot
-   * `interaction.deferReply()`s and plugin completes via
-   * `interactions.respond`) or `"modal"` (bot skips defer, plugin must
-   * call `interactions.send_modal` within Discord's 3 s window).
-   * Defaults to `"deferred"` when omitted.
+   * `true` for commands whose handler opens a modal. The bot must
+   * decide before dispatch whether to defer the reply (Discord rejects
+   * modal-after-defer), so this flag is in the manifest. Default `false`
+   * (regular deferred command; plugin completes via `interactions.respond`).
    */
-  response_kind?: "deferred" | "modal";
+  modal?: boolean;
 }
 
 /**
@@ -133,8 +132,8 @@ export interface ManifestPluginCommand {
   /** See `ManifestCommand.default_ephemeral`. */
   default_ephemeral?: boolean;
   required_capability?: string;
-  /** 同 ManifestCommand.response_kind — `"deferred"` (預設) 或 `"modal"`。 */
-  response_kind?: "deferred" | "modal";
+  /** 同 ManifestCommand.modal — `true` 跳過 defer 並要求 sendModal。 */
+  modal?: boolean;
 }
 
 /** Plugin 宣告的一個 RBAC capability 詞條（manifest 形式）。 */
@@ -147,11 +146,15 @@ export interface ManifestCapability {
 
 /**
  * Plugin Manifest 頂層結構。
- * schema_version 必須是字串 "1"；bot 端 validateManifest 拒絕任何其他值。
+ *
+ * Pre-release status note: no `schema_version` field is required. Earlier
+ * builds carried `schema_version: "1"` against a planned multi-version
+ * migration story that never materialised — the field was a literal
+ * type with no second value. Removed to cut noise. If/when a real
+ * schema break ever happens it will reintroduce the field with a
+ * documented upgrade path, not assume one already exists.
  */
 export interface PluginManifest {
-  schema_version: "1";
-
   plugin: {
     id: string;
     name: string;
@@ -165,9 +168,9 @@ export interface PluginManifest {
 
   rpc_methods_used?: string[];
   storage?: {
-    guild_kv?: boolean;
-    guild_kv_quota_kb?: number;
-    requires_secrets?: boolean;
+    guildKv?: boolean;
+    guildKvQuotaKb?: number;
+    requiresSecrets?: boolean;
   };
   /** Plugin 級 admin config。 */
   config_schema?: ManifestConfigField[];

@@ -239,7 +239,7 @@ async function quotaForGuildKv(pluginId: number): Promise<number> {
   const plugin = await findPluginById(pluginId);
   if (!plugin) return DEFAULT_KV_QUOTA_BYTES;
   const manifest = getManifest(plugin.manifestJson);
-  const declaredKb = manifest?.storage?.guild_kv_quota_kb;
+  const declaredKb = manifest?.storage?.guildKvQuotaKb;
   if (typeof declaredKb === "number" && declaredKb > 0) {
     return Math.min(declaredKb * 1024, KV_VALUE_MAX_BYTES * 16);
   }
@@ -1549,11 +1549,11 @@ export async function registerPluginRpcRoutes(
    * Body: { interaction_id, interaction_token, modal }
    *
    * Open a Discord modal as the initial response to a plugin command.
-   * The command's manifest entry MUST declare `response_kind: "modal"`
-   * so the bot skips its own `deferReply` (Discord rejects modals
-   * after an ack of any kind). Must be called within Discord's 3 s
-   * window from the command dispatch — otherwise the interaction
-   * expires and the user sees "interaction failed".
+   * The command's manifest entry MUST declare `modal: true` so the bot
+   * skips its own `deferReply` (Discord rejects modals after an ack of
+   * any kind). Must be called within Discord's 3 s window from the
+   * command dispatch — otherwise the interaction expires and the user
+   * sees "interaction failed".
    *
    * `modal` is a discord-api-types `APIModalInteractionResponseCallbackData`
    * shape: `{ custom_id, title, components: [{ type: 1, components:

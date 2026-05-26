@@ -34,7 +34,7 @@ export interface StartedPlugin {
    * not yet completed its first register call (no token), or on
    * network / non-2xx errors (already logged).
    */
-  botRpc(path: string, body?: unknown): Promise<unknown | null>;
+  botRpc(path: string, body?: unknown): Promise<unknown>;
   /**
    * Ed25519 public key (SPKI PEM) the bot returned at register, used to
    * verify `plugin-session` JWTs offline (see `verifyPluginSession`).
@@ -105,20 +105,20 @@ export interface PluginCommandDefinition {
   defaultEphemeral?: boolean;
   requiredCapability?: string;
   /**
-   * What kind of immediate response Discord expects from this command:
-   *  - `"deferred"` (default): bot defers the reply; the handler's
-   *    return becomes the edited reply
-   *  - `"modal"`: bot does NOT defer; the handler MUST call
-   *    `ctx.sendModal(modal)` within ~2.5 s, otherwise the
-   *    interaction expires and the user sees "interaction failed".
-   *    The modal IS the response — return value from the handler
-   *    after sendModal is ignored. Wire the submit flow with
-   *    `definePluginModal({ id, handler })`.
+   * Set to `true` for commands whose handler opens a modal. The bot
+   * needs to know BEFORE dispatching whether to call `deferReply`
+   * (Discord rejects modal-after-defer), so the manifest carries this
+   * flag and the bot looks it up at dispatch time.
    *
-   * Set this at the manifest level so the bot can decide BEFORE
-   * dispatching whether to defer (Discord rejects modal-after-defer).
+   * When `true`: bot does NOT defer; the handler MUST call
+   * `ctx.sendModal(modal)` within ~2.5 s, otherwise the interaction
+   * expires and the user sees "interaction failed". The modal IS the
+   * response — return value from the handler after sendModal is
+   * ignored. Wire the submit flow with `definePluginModal({ id, handler })`.
+   *
+   * Default `false` (regular deferred command).
    */
-  responseKind?: "deferred" | "modal";
+  modal?: boolean;
   handler: (ctx: CommandContext) => CommandReply | Promise<CommandReply>;
   /**
    * Optional autocomplete handler — called when the user is typing into
@@ -245,7 +245,7 @@ export interface PluginConfig {
    *                                  (avoid the delete+re-post flicker)
    *   "interactions.send_modal"   — open a modal as the command response
    *                                  (auto-injected by buildManifest when
-   *                                  any modal or responseKind:"modal" is
+   *                                  any modal or `modal: true` command is
    *                                  declared — plugin authors usually
    *                                  don't need to list it manually)
    *
@@ -584,7 +584,9 @@ export function definePlugin(config: PluginConfig): PluginInstance {
     async start(opts?: StartOptions): Promise<StartedPlugin> {
       // Defer imports so SDK users that only use the type layer don't
       // pay the Fastify startup cost at import time.
-      const { createPluginServer, callBotRpc } = await import("./server.js");
+      const { createPluginServer, callBotRpc, BotRpcError } = await import(
+        "./server.js"
+      );
       const { startPluginClient } = await import("./client.js");
       const { buildManifest } = await import("./manifest-builder.js");
       const { MetricsCollector } = await import("./metrics-collector.js");
@@ -679,6 +681,11 @@ export function definePlugin(config: PluginConfig): PluginInstance {
       // the live token even though they're constructed before the
       // client is started. Constructed after `server` so the warn-log
       // sink is non-null.
+      // Fire-and-forget pushers — failures (network blip, bot rejecting
+      // mid-rotation) should NOT bubble up and break a plugin that isn't
+      // even aware metrics/log shipping is happening. callBotRpc throws
+      // BotRpcError on failure now, so suppress here. The internal warn
+      // log inside callBotRpc still records the issue.
       const pushMetrics = async (snapshot: unknown): Promise<void> => {
         const token = client?.token() ?? null;
         if (!token) return;
@@ -688,14 +695,14 @@ export function definePlugin(config: PluginConfig): PluginInstance {
           token,
           "/api/plugin/metrics.push",
           snapshot,
-        );
+        ).catch(() => {});
       };
       const pushBotEventBatch = async (entries: unknown[]): Promise<void> => {
         const token = client?.token() ?? null;
         if (!token) return;
         await callBotRpc(server.log, botUrl, token, "/api/plugin/log.emit", {
           entries,
-        });
+        }).catch(() => {});
       };
       const metricsCollector = new MetricsCollector({
         push: pushMetrics,
@@ -736,9 +743,14 @@ export function definePlugin(config: PluginConfig): PluginInstance {
             const pluginRpc = async (
               path: string,
               body?: unknown,
-            ): Promise<unknown | null> => {
+            ): Promise<unknown> => {
               const token = client?.token() ?? null;
-              if (!token) return null;
+              if (!token) {
+                throw new BotRpcError(
+                  "no_token",
+                  "plugin has not completed its first register yet",
+                );
+              }
               return callBotRpc(server.log, botUrl, token, path, body);
             };
             ctx = {
@@ -807,7 +819,12 @@ export function definePlugin(config: PluginConfig): PluginInstance {
         },
         async botRpc(path: string, body?: unknown) {
           const token = client?.token() ?? null;
-          if (!token) return null;
+          if (!token) {
+            throw new BotRpcError(
+              "no_token",
+              "plugin has not completed its first register yet",
+            );
+          }
           return callBotRpc(server.log, botUrl, token, path, body);
         },
         getSessionVerifyPublicKey() {

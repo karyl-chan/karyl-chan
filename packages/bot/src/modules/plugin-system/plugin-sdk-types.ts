@@ -56,14 +56,12 @@ export interface ManifestCommand {
   integration_types?: ("guild_install" | "user_install")[];
   options?: ManifestCommandOption[];
   /**
-   * What kind of initial response Discord expects:
-   *  - `"deferred"` (default): bot defers the reply; plugin completes
-   *    via `interactions.respond`.
-   *  - `"modal"`: bot SKIPS defer; plugin must call
-   *    `interactions.send_modal` within Discord's 3 s window. The
-   *    modal IS the response.
+   * `true` for commands whose handler opens a modal: bot SKIPS defer
+   * (Discord rejects modal-after-defer) and the plugin must call
+   * `interactions.send_modal` within the 3 s window. Default `false`
+   * (regular deferred command).
    */
-  response_kind?: "deferred" | "modal";
+  modal?: boolean;
 }
 
 export interface ManifestConfigField {
@@ -142,8 +140,8 @@ export interface ManifestPluginCommand {
   default_member_permissions?: string;
   default_ephemeral?: boolean;
   required_capability?: string;
-  /** Same shape as ManifestCommand.response_kind. */
-  response_kind?: "deferred" | "modal";
+  /** Same shape as ManifestCommand.modal. */
+  modal?: boolean;
 }
 
 /**
@@ -153,7 +151,12 @@ export interface ManifestPluginCommand {
  * this file as the authoritative shape.
  */
 export interface PluginManifest {
-  schema_version: string;
+  /**
+   * Legacy field — kept optional for backward compat with manifests
+   * posted by older SDK versions. New plugins omit this entirely. See
+   * validateManifest.
+   */
+  schema_version?: string;
   plugin: {
     id: string;
     name: string;
@@ -166,9 +169,9 @@ export interface PluginManifest {
   };
   rpc_methods_used?: string[];
   storage?: {
-    guild_kv?: boolean;
-    guild_kv_quota_kb?: number;
-    requires_secrets?: boolean;
+    guildKv?: boolean;
+    guildKvQuotaKb?: number;
+    requiresSecrets?: boolean;
   };
   /**
    * Plugin-level config that the operator can edit from the admin UI.

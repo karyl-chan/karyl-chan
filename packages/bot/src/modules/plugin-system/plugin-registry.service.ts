@@ -172,9 +172,11 @@ export type ManifestValidation =
   | { ok: false; error: string };
 
 /**
- * Validate a plugin manifest. schema_version must be the string "1".
+ * Validate a plugin manifest.
  *
- * Implements V-01 ~ V-08 + V-C1 / V-C2 / V-C3 from B-sdk §4.
+ * Implements V-02 ~ V-08 + V-C1 / V-C2 / V-C3 from B-sdk §4. (V-01
+ * was `schema_version === "1"` which is no longer enforced; the SDK
+ * dropped the field — see manifest.ts.)
  */
 export async function validateManifest(
   input: unknown,
@@ -184,11 +186,18 @@ export async function validateManifest(
   }
   const m = input as Record<string, unknown>;
 
-  // V-01：schema_version 必須是字串 "1"
-  if (m.schema_version !== "1") {
+  // schema_version was the V-01 check — pre-release SDK dropped the
+  // field, so we tolerate both absent and the legacy "1" value. Any
+  // other value is still rejected because it signals a deliberate
+  // future-schema attempt that the bot doesn't understand.
+  if (
+    m.schema_version !== undefined &&
+    m.schema_version !== null &&
+    m.schema_version !== "1"
+  ) {
     return {
       ok: false,
-      error: `unsupported schema_version (got ${JSON.stringify(m.schema_version)}, expected "1")`,
+      error: `unsupported schema_version (got ${JSON.stringify(m.schema_version)})`,
     };
   }
 

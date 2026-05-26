@@ -5,18 +5,27 @@ import type {
 
 /**
  * Plugin-side accumulator for `ctx.botEventLog.emit()`. Entries are
- * appended to an in-memory ring buffer and flushed to the bot in
- * batches via `POST /api/plugin/log.emit`. Flush triggers:
+ * appended to an in-memory buffer and flushed to the bot in batches
+ * via `POST /api/plugin/log.emit`. Flush triggers:
  *
- *   1. The buffer fills (cap = `RING_CAP`, 50 entries)
+ *   1. The buffer hits the flush threshold (`FLUSH_THRESHOLD`, 50 entries)
  *   2. The periodic timer fires (default 5 s)
  *   3. The plugin shuts down (caller invokes `stop()`)
  *
  * Batching keeps the bot's `botEventLog` writes (which hit SQLite) from
  * being driven at every-emit cadence by a chatty plugin.
+ *
+ * Backpressure: if pushes start failing (e.g. the bot is down or slow)
+ * the buffer can keep growing past `FLUSH_THRESHOLD` because the timer
+ * keeps re-flushing the same backlog. To bound memory, a hard cap
+ * (`MAX_BUFFER_SIZE`) drops the oldest entries with a warn-level log
+ * so the plugin stays alive at the cost of losing the least recent
+ * signals. The cap is intentionally high (~20× threshold) so a brief
+ * bot blip doesn't lose any entries — only a sustained outage does.
  */
 
-const RING_CAP = 50;
+const FLUSH_THRESHOLD = 50;
+const MAX_BUFFER_SIZE = 1000;
 const DEFAULT_FLUSH_INTERVAL_MS = 5_000;
 
 export interface BotEventEmitterOptions {
@@ -54,13 +63,25 @@ export class BotEventEmitter implements PluginBotEventLog {
     if (typeof entry.message !== "string" || entry.message.length === 0) {
       return;
     }
+    // Hard cap to prevent unbounded growth when pushes are failing.
+    // Drop oldest in batches of 50 (rather than one-by-one) so a single
+    // hot-loop emit doesn't pay the splice cost on every call. A single
+    // warn entry is reserved to surface the overflow without flooding
+    // the local log too.
+    if (this.buffer.length >= MAX_BUFFER_SIZE) {
+      const dropped = this.buffer.splice(0, FLUSH_THRESHOLD);
+      this.opts.log.warn("botEventLog buffer overflow — dropped oldest", {
+        dropped: dropped.length,
+        remaining: this.buffer.length,
+      });
+    }
     this.buffer.push({
       level: entry.level,
       message: entry.message,
       context: entry.context,
       eventKey: entry.eventKey,
     });
-    if (this.buffer.length >= RING_CAP) {
+    if (this.buffer.length >= FLUSH_THRESHOLD) {
       void this.flushNow();
     }
   }

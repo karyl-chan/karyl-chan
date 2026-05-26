@@ -10,7 +10,7 @@ The SDK encapsulates the boilerplate every plugin needs:
   (and `…/autocomplete`) plus `/components` (button) dispatch.
 - A plugin lifecycle client: `register` + `heartbeat` + automatic re-register
   on `401`.
-- HMAC signing helpers (v0 and v1), byte-for-byte compatible with the bot's
+- HMAC signing helpers byte-for-byte compatible with the bot's
   `packages/bot/src/utils/hmac.ts`.
 - A manifest builder driven by the `definePlugin` configuration.
 - `verifyPluginSession()` — offline Ed25519 verification of `plugin-session`
@@ -174,10 +174,10 @@ roughly 30 seconds.
 
 ## Protocol alignment
 
-- **HMAC.** The bot dual-signs every outbound dispatch with both `v0`
-  (`v0:<ts>:<body>`) and `v1` (`v1:<METHOD>:<path>:<ts>:<body>`). The SDK
-  verifies inbound dispatch with `v1` when present (method + path bound),
-  falling back to `v0`. Replay window is ±300 seconds.
+- **HMAC.** Signed payload is `<METHOD>:<path>:<ts>:<body>`; binding the
+  method and URL path prevents a captured signature from being replayed
+  against a different endpoint. Headers: `x-karyl-signature` (hex
+  SHA-256), `x-karyl-timestamp` (unix seconds). Replay window ±300 s.
 - **Manifest.** `schema_version: '1'`. Includes commands (with the
   three-axis spec: scope / integration types / contexts), guild features,
   components, and capabilities.

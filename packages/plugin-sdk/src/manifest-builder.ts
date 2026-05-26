@@ -46,17 +46,17 @@ function hasLifecycleHooks(cfg: PluginConfig): boolean {
 /**
  * True iff the plugin opts into the modal flow in any way — by
  * declaring at least one modal handler or at least one command with
- * `responseKind: "modal"`. Either implies `ctx.sendModal()` will be
- * called against the bot's `interactions.send_modal` RPC, so the
- * scope must be in the token's set.
+ * `modal: true`. Either implies `ctx.sendModal()` will be called
+ * against the bot's `interactions.send_modal` RPC, so the scope must
+ * be in the token's set.
  */
 function hasModalUse(cfg: PluginConfig): boolean {
   if ((cfg.modals ?? []).length > 0) return true;
-  if ((cfg.pluginCommands ?? []).some((c) => c.responseKind === "modal")) {
+  if ((cfg.pluginCommands ?? []).some((c) => c.modal)) {
     return true;
   }
   for (const f of cfg.guildFeatures ?? []) {
-    if ((f.commands ?? []).some((c) => c.responseKind === "modal")) {
+    if ((f.commands ?? []).some((c) => c.modal)) {
       return true;
     }
   }
@@ -90,7 +90,7 @@ export function buildManifest(
       ...(cmd.requiredCapability
         ? { required_capability: cmd.requiredCapability }
         : {}),
-      ...(cmd.responseKind ? { response_kind: cmd.responseKind } : {}),
+      ...(cmd.modal !== undefined ? { modal: cmd.modal } : {}),
     }),
   );
 
@@ -147,9 +147,7 @@ export function buildManifest(
                 ...(cmd.requiredCapability
                   ? { required_capability: cmd.requiredCapability }
                   : {}),
-                ...(cmd.responseKind
-                  ? { response_kind: cmd.responseKind }
-                  : {}),
+                ...(cmd.modal !== undefined ? { modal: cmd.modal } : {}),
               }),
             ),
           }
@@ -158,7 +156,6 @@ export function buildManifest(
   );
 
   const manifest: PluginManifest = {
-    schema_version: "1",
     plugin: {
       id: cfg.key,
       name: cfg.name,
@@ -171,7 +168,7 @@ export function buildManifest(
     },
     // Auto-inject scopes that are implied by other declarations so
     // plugin authors can't forget them. Today:
-    //   - `modals` / `responseKind:"modal"` ⇒ `interactions.send_modal`
+    //   - `modals` / `modal:true` ⇒ `interactions.send_modal`
     //     (SDK calls it via `ctx.sendModal`)
     //   - SDK observability surface ⇒ `me.log` + `me.metrics`
     //     (SDK's BotEventEmitter / MetricsCollector flush
@@ -190,9 +187,9 @@ export function buildManifest(
     ...(cfg.storage
       ? {
           storage: {
-            guild_kv: cfg.storage.guildKv,
-            guild_kv_quota_kb: cfg.storage.guildKvQuotaKb,
-            requires_secrets: cfg.storage.requiresSecrets,
+            guildKv: cfg.storage.guildKv,
+            guildKvQuotaKb: cfg.storage.guildKvQuotaKb,
+            requiresSecrets: cfg.storage.requiresSecrets,
           },
         }
       : {}),

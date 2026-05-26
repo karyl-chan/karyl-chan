@@ -114,13 +114,17 @@ export interface CommandContext {
   /**
    * Call a bot-side plugin RPC endpoint (e.g. `/api/plugin/voice.play`).
    * Authorization header and base URL are filled in automatically.
-   * Returns the parsed JSON body on 2xx, an empty object on 204,
-   * or null on network / non-2xx errors (already logged).
+   * Resolves with the parsed JSON body on 2xx (or `{}` for 204).
+   *
+   * Throws `BotRpcError` (imported from `@karyl-chan/plugin-sdk`) on
+   * failure with `reason: 'no_token' | 'network' | 'http_status'`.
+   * Wrap in try/catch and discriminate on `reason` if the plugin cares
+   * about the distinction; otherwise let the throw propagate.
    *
    * The plugin manifest must declare any RPC method used here under
    * `rpcMethodsUsed` or the bot will mint a token without that scope.
    */
-  botRpc(path: string, body?: unknown): Promise<unknown | null>;
+  botRpc(path: string, body?: unknown): Promise<unknown>;
   /**
    * Open a Discord modal as the response to this command. Wraps the
    * `interactions.send_modal` RPC with the interaction id/token already
@@ -349,7 +353,7 @@ export interface ComponentContext {
    * does that for you — or `/api/plugin/interactions.followup` with
    * `{ ephemeral: true }` for a nudge that doesn't touch the message.
    */
-  botRpc(path: string, body?: unknown): Promise<unknown | null>;
+  botRpc(path: string, body?: unknown): Promise<unknown>;
 }
 
 /**
@@ -412,7 +416,7 @@ export interface ModalContext {
   log: Logger;
   publicBaseUrl?: string;
   /** Call a bot-side plugin RPC (same shape as command/component context). */
-  botRpc(path: string, body?: unknown): Promise<unknown | null>;
+  botRpc(path: string, body?: unknown): Promise<unknown>;
 }
 
 /**

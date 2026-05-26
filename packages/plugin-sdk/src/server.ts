@@ -159,10 +159,38 @@ function verifyDispatchAuth(
 }
 
 /**
+ * Discriminated error from a bot RPC call. `reason` lets callers tell
+ * "the bot rejected my call" from "the bot is unreachable" — the
+ * previous `Promise<unknown | null>` shape collapsed both into a single
+ * `null` and forced plugin code to guess which one happened.
+ *
+ * Throws are routed through this class so plugins can `try { ... }
+ * catch (e) { if (e instanceof BotRpcError && e.reason === ...) ... }`.
+ *
+ * Reasons:
+ *   - `no_token`: plugin hasn't completed its first successful register
+ *     yet (no auth token to send). Mostly a startup-race signal.
+ *   - `network`: fetch threw — DNS, connection, abort, etc.
+ *   - `http_status`: bot replied 4xx/5xx. `status` carries the HTTP code.
+ */
+export class BotRpcError extends Error {
+  constructor(
+    public readonly reason: "no_token" | "network" | "http_status",
+    message: string,
+    public readonly status?: number,
+  ) {
+    super(message);
+    this.name = "BotRpcError";
+  }
+}
+
+/**
  * Generic bot RPC caller. Used by `ctx.botRpc()`, `respondToInteraction`,
- * and re-exported for `StartedPlugin.botRpc()` to share one implementation.
- * Returns the parsed JSON body, an empty object on 204, or null on
- * network / non-2xx errors (already logged).
+ * and re-exported for `StartedPlugin.botRpc()` to share one
+ * implementation. Returns the parsed JSON body (or `{}` for 204) on
+ * success. Throws `BotRpcError` on network failure or non-2xx status —
+ * fire-and-forget callers must wrap in `.catch(() => {})` if they want
+ * to swallow.
  */
 export async function callBotRpc(
   log: FastifyInstance["log"],
@@ -170,9 +198,10 @@ export async function callBotRpc(
   token: string,
   path: string,
   body: unknown,
-): Promise<unknown | null> {
+): Promise<unknown> {
+  let res: Response;
   try {
-    const res = await fetch(`${botUrl}${path}`, {
+    res = await fetch(`${botUrl}${path}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -181,20 +210,25 @@ export async function callBotRpc(
       body: JSON.stringify(body ?? {}),
       signal: AbortSignal.timeout(10_000),
     });
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      log.warn(
-        { path, status: res.status, body: text.slice(0, 200) },
-        "bot rpc call failed",
-      );
-      return null;
-    }
-    if (res.status === 204) return {};
-    return await res.json().catch(() => ({}));
   } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
     log.error({ err, path }, "bot rpc call threw");
-    return null;
+    throw new BotRpcError("network", `bot rpc network error: ${msg}`);
   }
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    log.warn(
+      { path, status: res.status, body: text.slice(0, 200) },
+      "bot rpc call failed",
+    );
+    throw new BotRpcError(
+      "http_status",
+      `bot rpc HTTP ${res.status}: ${text.slice(0, 200)}`,
+      res.status,
+    );
+  }
+  if (res.status === 204) return {};
+  return await res.json().catch(() => ({}));
 }
 
 async function respondToInteraction(
@@ -323,17 +357,16 @@ function normalizeModalReply(reply: ModalReply): {
 }
 
 export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
-  // Map carries both the handler and responseKind so the dispatcher
+  // Map carries the handler plus the modal flag so the dispatcher
   // can detect "modal-declared command returned without calling
-  // sendModal" — that scenario is silent-fail today (Discord's 3-s
-  // window expires and the user sees "interaction failed" with no
-  // bot-side trace). We surface it as a warn-level log so operators
-  // can spot the misconfiguration.
+  // sendModal" — that scenario is silent-fail (Discord's 3-s window
+  // expires and the user sees "interaction failed" with no bot-side
+  // trace). We surface it as a warn-level log.
   const commandMap = new Map<
     string,
     {
       handler: PluginCommandDefinition["handler"];
-      responseKind: "deferred" | "modal";
+      modal: boolean;
       /**
        * Per-command default for `CommandReply.ephemeral` when the
        * handler returns a plain string or an object without explicit
@@ -351,7 +384,7 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
       cmd.name,
       {
         handler: cmd.handler,
-        responseKind: cmd.responseKind ?? "deferred",
+        modal: cmd.modal ?? false,
         defaultEphemeral: cmd.defaultEphemeral ?? true,
       },
     ]),
@@ -494,9 +527,8 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
         );
         // We can't know from here whether the bot deferred. Try to
         // surface the message via interactions.respond:
-        //  - response_kind="deferred": bot deferred → user sees the
-        //    message
-        //  - response_kind="modal":     bot didn't defer → call 404s,
+        //  - regular command: bot deferred → user sees the message
+        //  - modal:true command: bot didn't defer → call 404s,
         //    callBotRpc logs warn, user sees Discord's generic
         //    "interaction failed". Either way the SDK error log
         //    above is the canonical signal for the operator.
@@ -513,7 +545,7 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
       }
       const {
         handler,
-        responseKind: commandResponseKind,
+        modal: commandIsModal,
         defaultEphemeral: commandDefaultEphemeral,
       } = entry;
 
@@ -556,10 +588,10 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
         botRpc: (path: string, body?: unknown) =>
           callBotRpc(server.log, opts.botUrl, token, path, body),
         async sendModal(modal: ModalData): Promise<boolean> {
-          // The command must have declared response_kind: "modal" in
-          // its manifest so the bot skipped its defer. If it did
-          // defer, this call will 4xx — Discord rejects modal-after-
-          // ack — and we surface that as `false`.
+          // The command must have declared `modal: true` in its
+          // manifest so the bot skipped its defer. If it did defer,
+          // this call will 4xx — Discord rejects modal-after-ack — and
+          // we surface that as `false`.
           //
           // We deliberately don't forward application_id; the bot has
           // its own bot.application.id available and uses that for
@@ -599,15 +631,15 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
           }
           return;
         }
-        if (commandResponseKind === "modal") {
+        if (commandIsModal) {
           // Handler returned without opening a modal even though the
-          // manifest declared `response_kind: "modal"`. The bot did
-          // NOT defer (Discord rejects modal-after-defer), so calling
+          // manifest declared `modal: true`. The bot did NOT defer
+          // (Discord rejects modal-after-defer), so calling
           // interactions.respond below would 404. Surface the misuse
           // as a warning rather than letting Discord just time out.
           server.log.warn(
             { commandName: payload.command_name },
-            "command declares response_kind='modal' but handler returned without calling ctx.sendModal — interaction will expire",
+            "command declares modal:true but handler returned without calling ctx.sendModal — interaction will expire",
           );
           return;
         }
@@ -629,9 +661,9 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
         server.log.error({ err }, "command handler threw");
         // Skip the post-throw error reply when:
         //  - the modal was already sent (no editable deferred reply)
-        //  - the command declared response_kind:"modal" so the bot
-        //    didn't defer; respond would 404 against the dead token
-        if (!modalSent && commandResponseKind !== "modal") {
+        //  - the command declared modal:true so the bot didn't defer;
+        //    respond would 404 against the dead token
+        if (!modalSent && !commandIsModal) {
           await respondToInteraction(
             server.log,
             opts.botUrl,
@@ -697,6 +729,10 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
       const componentId = sep === -1 ? after : after.slice(0, sep);
       const tail = sep === -1 ? "" : after.slice(sep + 1);
 
+      // Followup is called from catch handlers (component error paths)
+      // where a thrown BotRpcError would itself bubble up and obscure
+      // the original handler error. Suppress; the underlying server.log
+      // already records the failure from inside callBotRpc.
       const followup = (content: string): Promise<unknown | null> =>
         callBotRpc(
           server.log,
@@ -708,7 +744,7 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
             content,
             ephemeral: true,
           },
-        );
+        ).catch(() => null);
 
       const handler = componentMap.get(componentId);
       if (!handler) {
