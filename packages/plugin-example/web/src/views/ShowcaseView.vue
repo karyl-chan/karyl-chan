@@ -13,6 +13,7 @@
 import { onMounted, ref } from "vue";
 import { fetchMe, type MeResponse } from "../api";
 import {
+  AppBadge,
   AppButton,
   AppConfirmDialog,
   AppMenu,
@@ -500,6 +501,49 @@ function onInlineClose() {
     </section>
 
     <section>
+      <h2>AppBadge</h2>
+      <p class="hint">
+        Two axes: <code>tone</code> picks semantic colour (neutral /
+        accent / success / warn / danger); <code>variant</code> picks
+        style strength (soft / outline / solid). <code>size</code> is
+        md (default) or sm. Mono mode for IDs / keys.
+      </p>
+      <div class="badge-matrix">
+        <div class="badge-row">
+          <strong>soft</strong>
+          <AppBadge tone="neutral">neutral</AppBadge>
+          <AppBadge tone="accent">accent</AppBadge>
+          <AppBadge tone="success" icon="material-symbols:check-circle-outline-rounded">success</AppBadge>
+          <AppBadge tone="warn" icon="material-symbols:warning-outline-rounded">warn</AppBadge>
+          <AppBadge tone="danger" icon="material-symbols:error-outline-rounded">danger</AppBadge>
+        </div>
+        <div class="badge-row">
+          <strong>outline</strong>
+          <AppBadge variant="outline" tone="neutral">neutral</AppBadge>
+          <AppBadge variant="outline" tone="accent">accent</AppBadge>
+          <AppBadge variant="outline" tone="success">success</AppBadge>
+          <AppBadge variant="outline" tone="warn">warn</AppBadge>
+          <AppBadge variant="outline" tone="danger">danger</AppBadge>
+        </div>
+        <div class="badge-row">
+          <strong>solid</strong>
+          <AppBadge variant="solid" tone="neutral">neutral</AppBadge>
+          <AppBadge variant="solid" tone="accent">accent</AppBadge>
+          <AppBadge variant="solid" tone="success">success</AppBadge>
+          <AppBadge variant="solid" tone="warn">warn</AppBadge>
+          <AppBadge variant="solid" tone="danger">danger</AppBadge>
+        </div>
+        <div class="badge-row">
+          <strong>sm / mono</strong>
+          <AppBadge size="sm">sm tag</AppBadge>
+          <AppBadge size="sm" tone="accent" icon="material-symbols:bolt-rounded">slash</AppBadge>
+          <AppBadge mono tone="accent">karyl-example</AppBadge>
+          <AppBadge mono size="sm">/ping</AppBadge>
+        </div>
+      </div>
+    </section>
+
+    <section>
       <h2>UnreadPill</h2>
       <p class="hint">Tiny count badge.</p>
       <div class="row" style="align-items:center;">
@@ -614,6 +658,23 @@ section h2 {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.6rem;
+}
+.badge-matrix {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.badge-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.badge-row strong {
+  min-width: 64px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
 }
 @media (max-width: 540px) {
   .form-grid { grid-template-columns: 1fr; }

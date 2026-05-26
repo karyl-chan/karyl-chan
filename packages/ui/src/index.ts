@@ -8,6 +8,8 @@
 //   import "@karyl-chan/ui/use-popover.css";
 
 // ── Components ───────────────────────────────────────────────────────────
+export { default as AppBadge } from "./components/AppBadge.vue";
+export type { BadgeSize, BadgeTone, BadgeVariant } from "./components/AppBadge.vue";
 export { default as AppButton } from "./components/AppButton.vue";
 export { default as AppConfirmDialog } from "./components/AppConfirmDialog.vue";
 export { default as AppMenu } from "./components/AppMenu.vue";
