@@ -30,7 +30,7 @@ import {
 import { encryptSecret } from "../../utils/crypto.js";
 import type { PluginManifest } from "./plugin-registry.service.js";
 import { pluginCommandRegistry } from "./plugin-command-registry.service.js";
-import { rebuildEventIndex } from "./plugin-event-bridge.service.js";
+import { removePluginFromIndex } from "./plugin-event-bridge.service.js";
 import { dispatchLifecycleToPlugin } from "./plugin-lifecycle-dispatch.service.js";
 import { recordAudit } from "../admin/admin-audit.service.js";
 import { config } from "../../config.js";
@@ -1268,10 +1268,9 @@ export async function registerPluginRoutes(
           );
         });
 
-      // 4. Rebuild the event-dispatch index so the deleted plugin is gone.
-      await rebuildEventIndex().catch(() => {
-        /* non-fatal; will self-heal on next bot restart */
-      });
+      // 4. Drop the deleted plugin from the event-dispatch index
+      //    (Phase 0.4 — O(1) instead of a full rebuild).
+      removePluginFromIndex(pluginId);
 
       // Audit + operation log.
       await recordAudit(

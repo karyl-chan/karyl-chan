@@ -13,7 +13,11 @@ import { config } from "../../config.js";
 import { pluginAuthStore, PluginAuthStore } from "./plugin-auth.service.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { moduleLogger } from "../../logger.js";
-import { rebuildEventIndex } from "./plugin-event-bridge.service.js";
+import {
+  applyPluginChange,
+  rebuildEventIndex,
+  removePluginFromIndex,
+} from "./plugin-event-bridge.service.js";
 import {
   ManifestCommandError,
   pluginCommandRegistry,
@@ -637,16 +641,20 @@ export class PluginRegistry {
         `reconcilePluginCapabilities failed for ${manifest.plugin.id}`,
       );
     }
-    // Refresh the event subscription index so this plugin's
-    // events_subscribed start receiving fan-out immediately.
-    await rebuildEventIndex().catch((err) => {
-      log.error({ err }, "rebuildEventIndex after register failed");
+    // Phase 0.4: incremental index update. The freshly-registered
+    // plugin's manifest has been persisted to `persisted.manifestJson`,
+    // so applyPluginChange computes the new subscription set from it
+    // — no full table scan.
+    try {
+      applyPluginChange(persisted);
+    } catch (err) {
+      log.error({ err }, "applyPluginChange after register failed");
       botEventLog.record(
         "warn",
         "bot",
-        "rebuildEventIndex after register failed",
+        "applyPluginChange after register failed",
       );
-    });
+    }
     // Sync slash commands. We do this AFTER the plugin row is
     // persisted because the command registry's collision check needs
     // a real pluginId to exclude itself from the lookup. Failures
@@ -752,12 +760,14 @@ export class PluginRegistry {
       }
     }
     // Toggling enabled flips whether this plugin appears in event
-    // dispatch fan-out; rebuild so the change takes effect on the
-    // next inbound event without waiting for the next bot restart.
+    // dispatch fan-out. Phase 0.4: apply the delta directly from
+    // the post-mutation row instead of walking every plugin.
     if (row) {
-      await rebuildEventIndex().catch(() => {
-        /* logged inside the bridge */
-      });
+      try {
+        applyPluginChange(row);
+      } catch {
+        /* shape is in-memory only; nothing to do besides log */
+      }
     }
     return row;
   }
@@ -793,16 +803,10 @@ export class PluginRegistry {
             { pluginId: id, cutoff: cutoff.toISOString() },
           );
         }
-        // If we just expired anything, rebuild the event subscription
-        // index so dispatch stops fanning out events to the dead
-        // plugin. Without this the index would still hold the id and
-        // every event hit a wasted findPluginById round-trip until
-        // the next register/setEnabled triggered a rebuild.
-        if (ids.length > 0) {
-          await rebuildEventIndex().catch(() => {
-            /* logged inside the bridge */
-          });
-        }
+        // If we just expired anything, drop the dead plugins from the
+        // index so dispatch stops fanning out events to them. Phase
+        // 0.4: O(|expired|) per-id removal instead of a full rebuild.
+        for (const id of ids) removePluginFromIndex(id);
       } catch (err) {
         log.error({ err }, "plugin reaper failed");
         botEventLog.record("error", "error", "Plugin reaper failed");

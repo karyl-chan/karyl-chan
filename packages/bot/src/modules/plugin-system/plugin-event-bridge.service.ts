@@ -16,6 +16,11 @@ import {
   PluginDispatchPool,
   DEFAULT_DISPATCH_POOL_OPTIONS,
 } from "./plugin-dispatch-pool.js";
+import {
+  EventIndex,
+  collectSubscribedEvents,
+  parseManifestJson,
+} from "./plugin-event-index.js";
 
 /**
  * Bot → Plugin event dispatch. Plugins declare which event types
@@ -63,69 +68,29 @@ export async function stopDispatchPool(): Promise<void> {
   await dispatchPool.stop();
 }
 
-/**
- * In-memory index: event_type → Set<pluginId>. Rebuilt on startup
- * and whenever a plugin registers / enables / disables. Reading is
- * synchronous; the actual fan-out POSTs are async.
- */
-class EventIndex {
-  private map = new Map<string, Set<number>>();
-
-  set(map: Map<string, Set<number>>): void {
-    this.map = map;
-  }
-
-  subscribers(eventType: string): number[] {
-    const s = this.map.get(eventType);
-    return s ? Array.from(s) : [];
-  }
-
-  hasSubscribers(eventType: string): boolean {
-    const s = this.map.get(eventType);
-    return !!s && s.size > 0;
-  }
-
-  size(): number {
-    return this.map.size;
-  }
-}
-
 const index = new EventIndex();
 
 function parseManifest(plugin: PluginRow): PluginManifest | null {
-  try {
-    return JSON.parse(plugin.manifestJson) as PluginManifest;
-  } catch {
-    return null;
-  }
-}
-
-function collectSubscribedEvents(manifest: PluginManifest): Set<string> {
-  const out = new Set<string>();
-  for (const e of manifest.events_subscribed_global ?? []) {
-    if (typeof e === "string" && e.length > 0) out.add(e);
-  }
-  for (const f of manifest.guild_features ?? []) {
-    for (const e of f.events_subscribed ?? []) {
-      if (typeof e === "string" && e.length > 0) out.add(e);
-    }
-  }
-  return out;
+  return parseManifestJson(plugin.manifestJson);
 }
 
 /**
  * Walk the plugins table and rebuild the in-memory event subscription
- * index. Idempotent; safe to call after every register/enable/disable
- * even if multiple back-to-back changes happen.
+ * index. Called once at startup. Subsequent mutations should call
+ * `applyPluginChange` / `removePluginFromIndex` instead — Phase 0.4
+ * replaced the post-write full rebuild with O(|prev ∪ next|) deltas.
  */
 export async function rebuildEventIndex(): Promise<void> {
   const all = await findAllPlugins();
   const m = new Map<string, Set<number>>();
+  const perPlugin = new Map<number, Set<string>>();
   for (const p of all) {
     if (!p.enabled || p.status !== "active") continue;
     const manifest = parseManifest(p);
     if (!manifest) continue;
     const events = collectSubscribedEvents(manifest);
+    if (events.size === 0) continue;
+    perPlugin.set(p.id, events);
     for (const ev of events) {
       let set = m.get(ev);
       if (!set) {
@@ -135,7 +100,42 @@ export async function rebuildEventIndex(): Promise<void> {
       set.add(p.id);
     }
   }
-  index.set(m);
+  index.setAll(m, perPlugin);
+}
+
+/**
+ * Phase 0.4 incremental update — call after register / setEnabled /
+ * heartbeat-expire to keep the event index in sync without a full
+ * table walk.
+ *
+ * Pass the post-mutation `PluginRow` (or just enough of it). When the
+ * plugin should not receive dispatch (disabled OR status!=='active'
+ * OR no parseable manifest), this acts as a removal.
+ */
+export function applyPluginChange(plugin: PluginRow): void {
+  if (!plugin.enabled || plugin.status !== "active") {
+    index.applyPlugin(plugin.id, new Set());
+    return;
+  }
+  const manifest = parseManifest(plugin);
+  if (!manifest) {
+    index.applyPlugin(plugin.id, new Set());
+    return;
+  }
+  index.applyPlugin(plugin.id, collectSubscribedEvents(manifest));
+}
+
+/** Drop a plugin from the index — e.g. on hard delete or heartbeat expire. */
+export function removePluginFromIndex(pluginId: number): void {
+  index.applyPlugin(pluginId, new Set());
+}
+
+/** Test-only — read the index state. */
+export function __snapshotEventIndexForTests(): {
+  map: Map<string, Set<number>>;
+  perPlugin: Map<number, Set<string>>;
+} {
+  return index.snapshot();
 }
 
 function resolveEventsUrl(
