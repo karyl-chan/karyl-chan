@@ -7,29 +7,41 @@ import {
 } from "./jwt.js";
 import {
   createAuthState,
-  exchangeManageJwt,
-  type AuthMode,
+  exchangeJwtForPair,
   type AuthState,
-  type ManageTokens,
+  type BearerPair,
 } from "./auth.js";
 import { createPluginApi, type PluginApi } from "./api.js";
 
 /**
- * One-call plugin SPA bootstrap. Absorbs the 50-80 lines of
- * URL→token→decode→exchange→denied wiring every plugin would otherwise
- * hand-roll.
+ * One-call plugin SPA bootstrap.
  *
- * Returns a `SessionHandle` that exposes the resolved auth/api bundle
- * plus a `destroy()` for SPA unmount and a `subscribe(handler)` hook
- * for adapters (Vue composables, vanilla DOM listeners) that need to
- * react to mode changes.
+ * Absorbs the URL→token→decode→(maybe exchange)→denied wiring every
+ * plugin SPA would otherwise hand-roll, and returns a `SessionHandle`
+ * exposing the resolved auth/api bundle plus a `destroy()` for SPA
+ * unmount and a `subscribe(handler)` hook for adapters that need to
+ * react to auth transitions.
  *
- * Designed framework-agnostic — `SessionHandle` is plain data;
+ * Two boolean knobs decide the token flow:
+ *
+ *   - `exchangeJwt: true` — POST the boot JWT to the plugin's
+ *     `/api/manage/exchange` route and live on the returned access +
+ *     refresh pair. The plugin server gates the exchange (only certain
+ *     bot-JWT kinds, only with the right cap, etc.) — the SDK is
+ *     neutral on what "kind" of JWT this is.
+ *
+ *   - `exchangeJwt: false` (default) — use the boot JWT verbatim as
+ *     the Bearer. No refresh; the session ends when the JWT expires.
+ *
+ * The boot JWT itself comes from `?token=…` in the URL (the bot's
+ * link emitter); the SDK reads it once, strips it from the address
+ * bar, and stores the resulting credential in sessionStorage so a
+ * tab reload restores cleanly.
+ *
+ * The handle is framework-agnostic plain data;
  * `@karyl-chan/plugin-sdk/web/vue` wraps it into reactive composables
  * for Vue, but the handle itself works in any UI.
  */
-
-export type AuthSurface = "session" | "manage";
 
 export interface BootstrapOptions {
   /**
@@ -44,38 +56,27 @@ export interface BootstrapOptions {
    */
   apiBase?: string;
   /**
-   * Per-surface auth mode policy. The bootstrap reads `?surface=...`
-   * and looks up its required mode here. Surfaces not listed fall back
-   * to "session". Example:
-   *   `{ manage: "manage", showcase: "manage", chat: "session" }`.
-   */
-  surfaces?: Record<string, AuthSurface>;
-  /**
-   * Optional resolver for plugins whose link URLs do NOT carry a
-   * `?surface=` query param — typical when the JWT itself is the
-   * single source of truth for "which view should I mount?" (e.g. a
-   * token whose `capabilities` includes `plugin:<key>:manage` always
-   * means the manage UI, and a token without it always means the
-   * session UI). Receives the decoded boot-token claims and returns
-   * the surface name to look up in `surfaces` — or null to fall back
-   * to the default "session" mode.
+   * When true, POST the boot JWT to the plugin's `/api/manage/exchange`
+   * route and live on the access + refresh pair the plugin server
+   * returns. When false (default), use the boot JWT verbatim as the
+   * bearer with no refresh.
    *
-   * Precedence: explicit URL `?surface=` always wins over the
-   * resolver. The resolver only fires when the URL has none. The
-   * derived value also lands on `handle.surface` so the caller can
-   * branch on it just like the URL-driven path.
+   * The flag is intentionally orthogonal to any notion of "manage" vs
+   * "session" semantics. The plugin SPA tells the SDK what flow it
+   * wants based on its own routing (e.g. the /admin/ page asks for
+   * `exchangeJwt: true`; the /play/ page doesn't). The route name
+   * `/api/manage/exchange` is preserved from history for backward
+   * compatibility with existing plugin servers.
    */
-  surfaceFromClaims?: (claims: JwtClaims) => string | null | undefined;
+  exchangeJwt?: boolean;
   /**
    * Additional URL params to read-and-strip at boot. Values land in
    * `SessionHandle.urlParams`. Use for plugin-specific bootstrap state
-   * (`c`, `s`, etc.) that should be cleaned out of the address bar
-   * so a refresh doesn't re-trigger the side-effect.
+   * (`c`, `s`, etc.) that should be cleaned out of the address bar so
+   * a refresh doesn't re-trigger the side-effect.
    *
-   * RESERVED NAMES: `"token"` and `"surface"` are consumed by the SDK
-   * itself and are silently skipped if passed here — listing them
-   * would race the SDK's own strip and either lose the JWT or
-   * double-strip the surface.
+   * RESERVED NAME: `"token"` is consumed by the SDK itself and is
+   * silently skipped if passed here.
    */
   extraUrlParams?: string[];
   /**
@@ -90,17 +91,19 @@ export interface BootstrapOptions {
 export interface SessionHandle {
   /** Resolved API base URL. */
   readonly apiBase: string;
-  /** Auth mode at bootstrap end: `"session" | "manage" | "none"`. */
-  readonly mode: AuthMode;
-  /** Mode the URL token requested before exchange (`"session" | "manage" | null`). */
-  readonly requestedMode: AuthSurface | null;
+  /** True iff bootstrap established a usable bearer (either via the
+   *  URL token, the exchange, or a sessionStorage restore). */
+  readonly isAuthenticated: boolean;
+  /** True iff `exchangeJwt: true` was passed AND the exchange succeeded
+   *  AND the SPA has a refresh half it can spend. */
+  readonly hasRefreshPair: boolean;
   /**
    * True iff bootstrap could not establish the requested session —
-   * e.g. `exchangeManageJwt` returned null, or the URL token failed
-   * to decode. Authoritative: callers should branch on this rather
-   * than relying on a synchronous side-effect in `onAccessDenied`.
-   * False on both successful bootstrap AND tab-reload-with-no-token
-   * (the latter is `mode === "none"` but not a denial).
+   * e.g. the exchange returned null, or the URL token failed to
+   * decode. Authoritative: callers should branch on this rather than
+   * relying on a synchronous side-effect in `onAccessDenied`. False
+   * on both successful bootstrap AND tab-reload-with-no-token (the
+   * latter is `isAuthenticated === false` but not a denial).
    */
   readonly denied: boolean;
   /** Message describing the denial when `denied` is true; otherwise null. */
@@ -111,31 +114,26 @@ export interface SessionHandle {
    * token was present and we restored from sessionStorage.
    */
   readonly claims: JwtClaims | null;
-  /**
-   * The surface chosen by the bootstrap, after read-and-strip of the
-   * URL `?surface=` param AND any `surfaceFromClaims` fallback. Null
-   * means neither path produced a value (the SDK then defaulted to
-   * "session" mode internally).
-   */
-  readonly surface: string | null;
-  /** guildId from the bootstrap claims (or null). */
+  /** `guildId` from the bootstrap claims, if any. */
   readonly guildId: string | null;
   /** Extra URL params requested via `extraUrlParams`, after read-and-strip. */
   readonly urlParams: Record<string, string | null>;
   /** The auth state machine — pass to `createPluginApi` / `openSseChannel`. */
   readonly auth: AuthState;
   /**
-   * Pre-built `PluginApi` (auth + apiBase + refresh on 401). Skips
-   * the boilerplate of wiring `createPluginApi({auth, apiBase, emitDenied})`
+   * Pre-built `PluginApi` (auth + apiBase + refresh on 401). Skips the
+   * boilerplate of wiring `createPluginApi({auth, apiBase, emitDenied})`
    * in every plugin. The internal `emitDenied` is wired to call
    * `BootstrapOptions.onAccessDenied`.
    */
   readonly api: PluginApi;
   /**
-   * Subscribe to mode changes. Returns an unsubscribe. Multiple
-   * subscribers fan out from the underlying `AuthState.onModeChange`.
+   * Subscribe to auth transitions (false → true on a successful
+   * exchange/restore; true → false on denial/destroy). Returns an
+   * unsubscribe. Multiple subscribers fan out from the underlying
+   * `AuthState.onAuthChange`.
    */
-  subscribe(handler: (mode: AuthMode) => void): () => void;
+  subscribe(handler: (authenticated: boolean) => void): () => void;
   /**
    * Tear down: cancel preemptive refresh timer + clear subscribers.
    * Safe to call from SPA unmount. After destroy(), `api` calls still
@@ -155,31 +153,20 @@ export async function bootstrapPluginSession(
     auth.onAccessDenied(opts.onAccessDenied);
   }
 
-  // Strip surface + extras before any work — keep the address bar
-  // clean so a refresh doesn't re-trigger side-effects. "token" and
-  // "surface" are reserved (consumed by the SDK itself); silently
-  // drop them from extraUrlParams to avoid a race where the caller's
-  // strip beats the SDK's.
-  const urlSurface = readQueryParamAndStrip("surface");
+  // Strip extras before any work — keep the address bar clean so a
+  // refresh doesn't re-trigger side-effects. "token" is reserved
+  // (consumed by the SDK itself); silently drop it from extraUrlParams
+  // to avoid a race where the caller's strip beats the SDK's.
   const extraUrlParams: Record<string, string | null> = {};
-  const RESERVED_PARAMS = new Set(["token", "surface"]);
   for (const k of opts.extraUrlParams ?? []) {
-    if (RESERVED_PARAMS.has(k)) continue;
+    if (k === "token") continue;
     extraUrlParams[k] = readQueryParamAndStrip(k);
   }
 
   const token = readTokenFromUrl();
   let claims: JwtClaims | null = null;
-  let requestedMode: AuthSurface | null = null;
   let denied = false;
   let deniedReason: string | null = null;
-  /**
-   * The final surface used for policy lookup — starts as the URL
-   * `?surface=` value, then defers to `surfaceFromClaims` when the URL
-   * carried no surface. Exposed on `handle.surface` so the caller can
-   * branch on whatever route the SDK picked.
-   */
-  let resolvedSurface: string | null = urlSurface;
   const recordDenial = (msg: string): void => {
     denied = true;
     deniedReason = msg;
@@ -190,50 +177,27 @@ export async function bootstrapPluginSession(
     claims = decodeJwt(token);
     if (!claims) {
       recordDenial("URL token is malformed");
-    } else {
-      // URL `?surface=` takes precedence — when the bot explicitly
-      // names a surface it overrides any token-derived guess. Only
-      // when the URL has none do we ask the optional claims-based
-      // resolver. The resolver is wrapped so a buggy implementation
-      // doesn't take the whole bootstrap down.
-      if (!resolvedSurface && opts.surfaceFromClaims) {
-        try {
-          resolvedSurface = opts.surfaceFromClaims(claims) ?? null;
-        } catch {
-          resolvedSurface = null;
-        }
-      }
-      // Decide intended mode from the surfaces map; fall back to
-      // "session" when not listed. A surface absent from the URL +
-      // resolver also defaults to "session" — the historically-common
-      // case.
-      const surfacePolicy = resolvedSurface
-        ? opts.surfaces?.[resolvedSurface]
-        : undefined;
-      requestedMode = surfacePolicy ?? "session";
-
-      if (requestedMode === "manage") {
-        const exchanged: ManageTokens | null = await exchangeManageJwt(
-          token,
-          apiBase,
-        );
-        if (exchanged) {
-          auth.setManageTokens(exchanged);
-        } else {
-          // Exchange failed (no manage cap, expired, plugin restart
-          // kill-switch). Record on the handle so callers branching
-          // on `handle.denied` see it without relying on the synchronous
-          // onAccessDenied side-effect.
-          recordDenial("manage token exchange failed");
-        }
+    } else if (opts.exchangeJwt) {
+      const exchanged: BearerPair | null = await exchangeJwtForPair(
+        token,
+        apiBase,
+      );
+      if (exchanged) {
+        auth.setBearerPair(exchanged);
       } else {
-        auth.setSessionToken(token);
+        // Exchange failed (server rejected, network blip, etc.).
+        // Record on the handle so callers branching on `handle.denied`
+        // see it without relying on the synchronous onAccessDenied
+        // side-effect.
+        recordDenial("JWT exchange failed");
       }
+    } else {
+      auth.setBearer(token);
     }
   } else {
     // No URL token — tab reload or initial visit. Try sessionStorage.
-    // Not a denial — a fresh-tab visitor with no token is just `mode
-    // === "none"`.
+    // Not a denial — a fresh-tab visitor with no token just has
+    // `isAuthenticated === false`.
     auth.loadStored();
   }
 
@@ -248,20 +212,21 @@ export async function bootstrapPluginSession(
 
   const handle: SessionHandle = {
     apiBase,
-    get mode() {
-      return auth.getMode();
+    get isAuthenticated() {
+      return auth.isAuthenticated();
     },
-    requestedMode,
+    get hasRefreshPair() {
+      return auth.hasRefreshPair();
+    },
     denied,
     deniedReason,
     claims,
-    surface: resolvedSurface,
     guildId,
     urlParams: extraUrlParams,
     auth,
     api,
     subscribe(handler) {
-      return auth.onModeChange(handler);
+      return auth.onAuthChange(handler);
     },
     destroy() {
       auth.destroy();

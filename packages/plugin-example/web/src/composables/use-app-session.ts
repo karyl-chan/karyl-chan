@@ -1,10 +1,11 @@
-// SPA boot routing for plugin-example. Workpack D refactor: delegates
-// URL token parsing / JWT decode / manage exchange / sessionStorage
-// restore to `bootstrapPluginSession` from the SDK. This module keeps
-// only the plugin-specific concerns:
-//   - manage-cap gating (which surfaces require the manage capability)
-//   - chat binding (the `?c=<channelId>` URL param needed for chat)
-//   - the "denied" terminal state for the App-level router
+// SPA boot routing for plugin-example.
+//
+// Plugin-example serves multiple surfaces from one SPA bundle, so the
+// surface name lives in the URL (`?surface=...`) — different from
+// other plugins which use one bundle per surface. The bootstrap SDK
+// (0.6+) is surface-agnostic; this composable reads `?surface=` here
+// (via the SDK's `extraUrlParams` strip), decides whether to pass
+// `exchangeJwt: true` for that surface, then calls the orchestrator.
 //
 // Surfaces (from Discord slash command links):
 //   /example-manage     → "manage"   — admin/manage UI (manage cap)
@@ -23,13 +24,18 @@ import { setApi } from "../api";
 const PLUGIN_KEY = "karyl-example";
 const MANAGE_CAP_TOKEN = `plugin:${PLUGIN_KEY}:manage`;
 
+// Surfaces that go through the JWT-exchange flow (longer-lived
+// access + refresh pair, gated on the manage capability) — everything
+// else uses the boot JWT directly as a session bearer.
+const EXCHANGE_SURFACES = new Set<AppSurface>(["manage", "showcase", "bench"]);
+const SESSION_SURFACES = new Set<AppSurface>(["chat", "sticky"]);
+
 // sessionStorage key for the surface + binding state we need to survive
-// a tab reload. The SDK already persists the auth tokens themselves;
-// what it does NOT persist is which surface was originally requested
-// and the per-surface bootstrap params (`?surface=...`, `?c=...`),
-// which it strips from the URL at boot. Without our own record, the
-// reload path lands every manage user on "manage" and bails out on
-// every chat/sticky tab — that's what this storage closes.
+// a tab reload. The SDK persists the auth credential itself; what it
+// does NOT persist is which surface we landed on or the bootstrap
+// params we stripped from the URL. Without this our own record, the
+// reload path bails out on every chat/sticky tab and lands every
+// manage user on whatever default we pick.
 const SESSION_STORAGE_KEY = `${PLUGIN_KEY}:session-route`;
 
 interface PersistedRoute {
@@ -44,9 +50,6 @@ function loadPersistedRoute(): PersistedRoute | null {
     const raw = sessionStorage.getItem(SESSION_STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<PersistedRoute>;
-    // Validate surface against the known set so a stale storage value
-    // (e.g. from an older deploy that had a different surface) can't
-    // land us on an unrenderable state.
     if (
       parsed.surface === "manage" ||
       parsed.surface === "chat" ||
@@ -134,30 +137,37 @@ function hasManageCaps(claims: { capabilities?: unknown } | null): boolean {
   return caps.includes("admin") || caps.includes(MANAGE_CAP_TOKEN);
 }
 
+function isKnownSurface(name: string): name is AppSurface {
+  return (
+    name === "manage" ||
+    name === "chat" ||
+    name === "sticky" ||
+    name === "showcase" ||
+    name === "bench"
+  );
+}
+
 export async function bootstrap(): Promise<void> {
-  // Per-surface auth mode policy passed to the SDK orchestrator. The
-  // orchestrator handles URL token decode + manage exchange + denied
-  // wiring; we layer the surface-specific routing on top.
+  // Read + strip `?surface=` ourselves (via extraUrlParams) so the
+  // SDK doesn't have to know about our routing model — and use it
+  // to decide which flow to ask the orchestrator for.
+  const urlSurface = new URLSearchParams(window.location.search).get("surface");
+  const requestedSurface =
+    urlSurface && isKnownSurface(urlSurface) ? urlSurface : null;
+
   const handle = await bootstrapPluginSession({
     pluginKey: PLUGIN_KEY,
-    surfaces: {
-      manage: "manage",
-      showcase: "manage",
-      bench: "manage",
-      chat: "session",
-      sticky: "session",
-    },
-    extraUrlParams: ["c"],
+    // Exchange flow for manage-tier surfaces; direct bearer for chat /
+    // sticky. The decision is made off the URL surface — same source
+    // the bot's link emitter wrote it from.
+    exchangeJwt: requestedSurface !== null && EXCHANGE_SURFACES.has(requestedSurface),
+    extraUrlParams: ["c", "surface"],
     onAccessDenied: (msg) =>
       deny(msg || "Access denied. Request a new link from Discord."),
   });
   sessionHandle = handle;
   setApi(handle.api);
 
-  // Authoritative deny path (Workpack D post-review): branch on the
-  // handle's `denied` field rather than the legacy side-effect flag.
-  // onAccessDenied still fires above; this branch catches the same
-  // case via the resolved handle and is safe to add belt-and-braces.
   if (handle.denied) {
     if (surface.value !== "denied") {
       deny(handle.deniedReason ?? "Access denied. Request a new link from Discord.");
@@ -168,29 +178,26 @@ export async function bootstrap(): Promise<void> {
   guildId.value = handle.guildId;
 
   // No URL token AND no restored session: nothing more we can do —
-  // bootstrap dispatched no token to us. Point the user back to Discord.
-  if (handle.mode === "none") {
+  // point the user back to Discord.
+  if (!handle.isAuthenticated) {
     deny("Please open this page via /example-* on Discord.");
     return;
   }
 
-  const requestedSurface = (handle.surface ?? "") as AppSurface | "";
   const channelFromUrl = handle.urlParams["c"];
 
   // Tab-reload path: handle.claims is null when we restored from
   // sessionStorage. The SDK kept the auth tokens; we kept the
   // surface + channelId + guildId in our own storage. Combine them
-  // to resume the previous surface — including chat / sticky, which
-  // would otherwise bail out here.
+  // to resume the previous surface.
   if (!handle.claims) {
     const persisted = loadPersistedRoute();
     if (persisted) {
-      // Restore guild context first so chatBinding sees the same
-      // guildId the original session captured.
       if (persisted.guildId) guildId.value = persisted.guildId;
       if (persisted.surface === "chat") {
-        if (handle.mode !== "session" || !persisted.channelId) {
-          // Auth or storage drifted — fall back to deny.
+        if (handle.hasRefreshPair || !persisted.channelId) {
+          // Auth or storage drifted (chat shouldn't have a refresh
+          // pair) — fall back to deny.
           deny("Tab reloaded without context — request a new link from Discord.");
           return;
         }
@@ -202,23 +209,24 @@ export async function bootstrap(): Promise<void> {
         return;
       }
       if (persisted.surface === "sticky") {
-        if (handle.mode !== "session") {
+        if (handle.hasRefreshPair) {
           deny("Tab reloaded without context — request a new link from Discord.");
           return;
         }
         enterSurface("sticky");
         return;
       }
-      // Manage-mode surfaces (manage / showcase / bench).
-      if (handle.mode === "manage") {
+      // Manage-tier surfaces (manage / showcase / bench) — require
+      // the exchange pair to still be present.
+      if (handle.hasRefreshPair) {
         enterSurface(persisted.surface);
         return;
       }
     }
-    // No persisted route — fall back to the historical behaviour:
-    // manage tokens always have at least the manage surface available;
-    // session tokens carry no surface info on reload.
-    if (handle.mode === "manage") {
+    // No persisted route — fall back: a refresh pair always has at
+    // least the manage surface available; a direct bearer carries no
+    // surface info on reload.
+    if (handle.hasRefreshPair) {
       enterSurface("manage");
       return;
     }
@@ -226,26 +234,25 @@ export async function bootstrap(): Promise<void> {
     return;
   }
 
-  if (handle.requestedMode === "manage") {
-    // bootstrap already exchanged for manage tokens — but it doesn't
+  // Fresh URL with token + claims. Surface must be present and known
+  // (we only support links the bot emitted).
+  if (!requestedSurface) {
+    deny("Unknown surface — please rerun /example-* on Discord.");
+    return;
+  }
+
+  if (EXCHANGE_SURFACES.has(requestedSurface)) {
+    // Bootstrap already exchanged for the access pair — but it doesn't
     // know our manage-cap rule. Validate now.
     if (!hasManageCaps(handle.claims)) {
       deny(`You need ${MANAGE_CAP_TOKEN} (or admin) to open this surface.`);
-      return;
-    }
-    if (
-      requestedSurface !== "manage" &&
-      requestedSurface !== "showcase" &&
-      requestedSurface !== "bench"
-    ) {
-      deny(`Unknown manage surface: ${requestedSurface || "(none)"}.`);
       return;
     }
     enterSurface(requestedSurface);
     return;
   }
 
-  // Session-mode surfaces.
+  // Session-tier surfaces.
   if (requestedSurface === "chat") {
     if (!channelFromUrl) {
       deny("Chat link is missing channel info — please rerun /example-chat.");
@@ -258,8 +265,8 @@ export async function bootstrap(): Promise<void> {
     enterSurface("chat", { channelId: channelFromUrl });
     return;
   }
-  if (requestedSurface === "sticky") {
-    enterSurface("sticky");
+  if (SESSION_SURFACES.has(requestedSurface)) {
+    enterSurface(requestedSurface);
     return;
   }
   deny(`Unknown surface: ${requestedSurface || "(none)"}.`);

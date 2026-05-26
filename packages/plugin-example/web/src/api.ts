@@ -8,7 +8,7 @@
 import {
   API_BASE,
   openSseChannel,
-  type ManageTokens,
+  type BearerPair,
   type PluginApi,
   type SseChannel,
 } from "@karyl-chan/plugin-sdk/web";
@@ -30,7 +30,7 @@ function api(): PluginApi {
 }
 
 export { API_BASE };
-export type { ManageTokens };
+export type { BearerPair };
 
 // ── Viewer info (works for both session + manage modes) ───────────────
 export interface MeResponse {

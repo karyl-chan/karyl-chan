@@ -84,7 +84,7 @@ export function createPluginApi(opts: PluginApiOptions): PluginApi {
     let res = await fetch(apiBase + path, buildInit(method, body));
     if (
       res.status === 401 &&
-      auth.getMode() === "manage" &&
+      auth.hasRefreshPair() &&
       (await auth.tryRefresh(apiBase))
     ) {
       res = await fetch(apiBase + path, buildInit(method, body));
@@ -110,7 +110,7 @@ export function createPluginApi(opts: PluginApiOptions): PluginApi {
     let res = await send();
     if (
       res.status === 401 &&
-      auth.getMode() === "manage" &&
+      auth.hasRefreshPair() &&
       (await auth.tryRefresh(apiBase))
     ) {
       res = await send();

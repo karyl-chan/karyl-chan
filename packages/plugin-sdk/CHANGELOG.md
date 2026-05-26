@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.6.0](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.5.0...plugin-sdk-v0.6.0) (2026-05-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* **plugin-sdk/web:** `bootstrapPluginSession` no longer reads `?surface=` from the URL or accepts `surfaces` / `surfaceFromClaims` options. Surface routing is the SPA's concern, not the SDK's — plugins that need surface routing should read the param (or any other signal) themselves and decide what to pass to bootstrap.
+* **plugin-sdk/web:** `BootstrapOptions.surfaces` and `BootstrapOptions.surfaceFromClaims` are removed; replaced by a single boolean `exchangeJwt` knob. `exchangeJwt: true` triggers the `/api/manage/exchange` flow and uses the returned access + refresh pair; `false` (default) uses the boot JWT directly as a bearer with no refresh.
+* **plugin-sdk/web:** `SessionHandle.mode` (`"session" | "manage" | "none"`) is replaced by `SessionHandle.isAuthenticated: boolean` + `SessionHandle.hasRefreshPair: boolean`. `requestedMode` and `surface` properties are gone — call sites that need a surface should track it themselves.
+* **plugin-sdk/web:** `AuthState.setSessionToken` / `setManageTokens` / `getMode` / `getSessionToken` / `hasUsableRefresh` / `onModeChange` renamed to `setBearer` / `setBearerPair` / `isAuthenticated` / `getStoredBearer` / `hasRefreshPair` / `onAuthChange`. `AuthMode` type and `ManageTokens` interface dropped (`BearerPair` replaces the latter).
+* **plugin-sdk/web:** Exported helper renamed `exchangeManageJwt` → `exchangeJwtForPair` and Sessionstorage key prefix changed from `<key>:session` / `<key>:manage` to `<key>:bearer` / `<key>:pair`. Existing tab sessions invalidate on upgrade (one-shot re-auth).
+
+### Why
+
+The 0.5 API conflated three orthogonal axes — token kind (single bearer vs access+refresh pair), auth-state vocabulary (whether to call the credential "session" or "manage"), and surface routing (where the SPA should mount) — into one `mode: 'session' | 'manage'` flag plus a `surfaces` map plus a `surfaceFromClaims` resolver. The bot-side vocabulary ("session" / "manage") leaked into the client API even though the SDK has no business knowing what authz role the plugin server attaches to its tokens. 0.6 decomposes the API into the single decision the SDK actually cares about: should the bootstrap call `/api/manage/exchange` or not?
+
 ## [0.5.0](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.4.0...plugin-sdk-v0.5.0) (2026-05-26)
 
 

@@ -1,26 +1,33 @@
 /**
  * Plugin-WebUI auth state machine.
  *
- * Two modes:
- *  - "session" — bot's plugin-session JWT (guildId-scoped, no capabilities).
- *    Used verbatim as the Bearer for every authenticated request. Stored
- *    in sessionStorage so tab reloads survive.
- *  - "manage"  — the SPA POSTs the bot's manage JWT to `/api/manage/exchange`
- *    once on first load, receives an access(5min)+refresh(24h) pair
- *    issued by the plugin's own HS256 secret, then lives on those tokens.
- *    The pair lives in sessionStorage for tab-reload survival; on
- *    plugin server restart the HS256 secret is regenerated and every
- *    outstanding manage session invalidates at once (kill-switch).
+ * The SPA holds one of:
+ *   - a single bearer JWT (used as-is for every authenticated request), or
+ *   - an access + refresh pair (access is the active bearer; refresh
+ *     trades for a new pair on demand).
  *
- * State is created per-plugin via `createAuthState(storageKeyPrefix)` —
- * two plugins sharing one origin (via bot proxy iframes, hypothetically)
- * keep their token stores isolated. The previous module-level singleton
- * in radio/quest/xiangqi would have collided.
+ * Which one the SPA holds is decided by `bootstrapPluginSession`'s
+ * `exchangeJwt` flag — when true the boot JWT is POSTed to the
+ * plugin's `/api/manage/exchange` route and the returned pair becomes
+ * the auth state. The plugin server is free to accept any kind of
+ * bot-issued JWT at that route; the SDK is neutral on what the JWT
+ * means semantically.
+ *
+ * Storage:
+ *   - `<prefix>:bearer` — single string (the JWT)
+ *   - `<prefix>:pair`   — JSON-stringified BearerPair
+ *
+ * One prefix per plugin so two SPAs sharing an origin don't trample
+ * each other.
  */
 
-export type AuthMode = "none" | "session" | "manage";
-
-export interface ManageTokens {
+/**
+ * Plugin-issued access + refresh pair returned by `/api/manage/exchange`.
+ * The HTTP route is named after the historical "manage exchange" flow
+ * but the SDK no longer treats this pair as semantically meaning
+ * "admin" — it's just a refreshable credential.
+ */
+export interface BearerPair {
   accessToken: string;
   refreshToken: string;
   accessExpiresAt: number;  // ms epoch
@@ -28,42 +35,45 @@ export interface ManageTokens {
 }
 
 export interface AuthState {
-  /** Currently active mode, derived from in-memory state. */
-  getMode(): AuthMode;
+  /** True iff a usable bearer is currently set. */
+  isAuthenticated(): boolean;
+  /** True iff the auth state has a refresh half it can spend. */
+  hasRefreshPair(): boolean;
   /** Bearer token to send on the wire (or null). */
   bearerToken(): string | null;
-  /** Set a session JWT (bot-issued, guildId-scoped). Clears any manage state. */
-  setSessionToken(token: string | null): void;
-  /** Currently-cached session token, if any. Useful for re-decoding claims. */
-  getSessionToken(): string | null;
-  /** Cache a freshly-exchanged manage pair. Clears any session state. */
-  setManageTokens(t: ManageTokens): void;
-  /** Manage refresh tokens still live (returns false otherwise). */
-  hasUsableRefresh(): boolean;
+  /** Cache a single bearer JWT (used verbatim — no refresh). */
+  setBearer(token: string | null): void;
+  /** Currently-cached single bearer, if any. Useful for re-decoding claims. */
+  getStoredBearer(): string | null;
+  /** Cache a freshly-exchanged access + refresh pair. */
+  setBearerPair(t: BearerPair): void;
   /**
-   * Try to rotate a stale manage access token using its refresh half.
-   * Mutates state on success. Returns true if the pair was refreshed —
-   * callers (the api wrapper) should retry the original request once.
+   * Try to rotate a stale access token using the refresh half. Mutates
+   * state on success. Returns true if the pair was refreshed — callers
+   * (the api wrapper) should retry the original request once.
    * Concurrent calls share a single in-flight `/refresh` round-trip.
+   * Resolves to false when there's no refresh pair to spend.
    */
   tryRefresh(apiBase: string): Promise<boolean>;
-  /** Drop both stores. */
+  /** Drop all auth state. */
   clear(): void;
-  /** Restore from sessionStorage on tab reload. Returns the active mode. */
-  loadStored(): AuthMode;
+  /**
+   * Restore from sessionStorage on tab reload. Returns true if a
+   * usable credential was found (pair wins over single bearer).
+   */
+  loadStored(): boolean;
   /** Register a callback fired when the server returns 401/403. */
   onAccessDenied(handler: (message: string) => void): void;
   /**
-   * Multi-subscriber hook fired whenever the active auth mode changes
-   * (set / refresh / clear / loadStored). Adapters (Vue composables,
-   * vanilla DOM listeners) subscribe here to drive reactivity. Returns
-   * an unsubscribe function.
+   * Multi-subscriber hook fired whenever `isAuthenticated()` transitions.
+   * Adapters (Vue composables, vanilla DOM listeners) subscribe here
+   * to drive reactivity. Returns an unsubscribe.
    */
-  onModeChange(handler: (mode: AuthMode) => void): () => void;
+  onAuthChange(handler: (authenticated: boolean) => void): () => void;
   /**
    * Configure the API base URL used by the preemptive refresh timer.
    * Should be called once after `createAuthState`, before the first
-   * `setManageTokens`. Without this, manage-mode tokens still refresh
+   * `setBearerPair`. Without this, pair-mode tokens still refresh
    * on demand via `tryRefresh(apiBase)` but the preemptive timer is
    * disabled (no API base to call). `bootstrapPluginSession` wires
    * this for you.
@@ -91,48 +101,52 @@ export interface AuthStateBundle {
 /**
  * Create a fresh auth state scoped to a storage-key prefix.
  *
- * Storage keys:
- *  - `<prefix>:session`  — single string (the JWT)
- *  - `<prefix>:manage`   — JSON-stringified ManageTokens
- *
  * Pick a prefix unique per plugin (e.g. `karyl-radio` or `karyl-example`)
  * so two plugins sharing an origin don't trample each other.
  */
 export function createAuthState(storageKeyPrefix: string): AuthStateBundle {
-  const sessionKey = `${storageKeyPrefix}:session`;
-  const manageKey = `${storageKeyPrefix}:manage`;
+  const bearerKey = `${storageKeyPrefix}:bearer`;
+  const pairKey = `${storageKeyPrefix}:pair`;
 
-  let mode: AuthMode = "none";
-  let sessionToken: string | null = null;
-  let manage: ManageTokens | null = null;
+  let bearer: string | null = null;
+  let pair: BearerPair | null = null;
   let deniedHandler: ((message: string) => void) | null = null;
   // De-duplicates concurrent 401-retry refreshes — two API calls that
   // both 401 will share one /refresh round-trip instead of racing.
   // Cleared as soon as the in-flight promise settles.
   let refreshInFlight: Promise<boolean> | null = null;
-  // Multi-subscriber mode-change fanout. Adapters (Vue composables,
-  // vanilla DOM listeners) push subscribers; setMode below fires them
+  // Multi-subscriber auth-change fanout. Adapters (Vue composables,
+  // vanilla DOM listeners) push subscribers; emit below fires them
   // synchronously after the state mutation. The set is a Set so
   // unsubscribe is O(1).
-  const modeSubs = new Set<(mode: AuthMode) => void>();
-  // Preemptive refresh — when set, the manage path schedules a refresh
+  const authSubs = new Set<(authenticated: boolean) => void>();
+  let lastAuthenticated = false;
+  // Preemptive refresh — when a pair is set the SDK schedules a refresh
   // 60 s before access-token expiry so plugin requests don't eat a 401
   // round-trip. Configured via configureRefresh().
   let refreshApiBase: string | null = null;
   let preemptiveTimer: ReturnType<typeof setTimeout> | null = null;
   const PREEMPTIVE_REFRESH_LEAD_MS = 60_000;
   // Set true by destroy(); guards both the timer callback and any
-  // setMode/setManageTokens flow triggered by a tryRefresh that was
-  // already in flight when destroy ran. Without this, a refresh
-  // resolving after destroy would re-arm the timer and leak.
+  // setBearerPair flow triggered by a tryRefresh that was already
+  // in flight when destroy ran.
   let destroyed = false;
 
-  function setMode(next: AuthMode): void {
-    if (mode === next) return;
-    mode = next;
-    for (const sub of modeSubs) {
+  function isAuthenticated(): boolean {
+    return !!bearer || !!pair;
+  }
+
+  function hasRefreshPair(): boolean {
+    return !!pair && pair.refreshExpiresAt > Date.now();
+  }
+
+  function emitAuthChange(): void {
+    const now = isAuthenticated();
+    if (now === lastAuthenticated) return;
+    lastAuthenticated = now;
+    for (const sub of authSubs) {
       try {
-        sub(next);
+        sub(now);
       } catch {
         /* subscriber threw — don't break the loop */
       }
@@ -149,8 +163,8 @@ export function createAuthState(storageKeyPrefix: string): AuthStateBundle {
   function schedulePreemptiveRefresh(): void {
     cancelPreemptiveTimer();
     if (destroyed) return;
-    if (!refreshApiBase || !manage) return;
-    const delay = manage.accessExpiresAt - Date.now() - PREEMPTIVE_REFRESH_LEAD_MS;
+    if (!refreshApiBase || !pair) return;
+    const delay = pair.accessExpiresAt - Date.now() - PREEMPTIVE_REFRESH_LEAD_MS;
     if (delay <= 0) {
       // Already inside the lead window — fire right away.
       void tryRefresh(refreshApiBase);
@@ -164,35 +178,37 @@ export function createAuthState(storageKeyPrefix: string): AuthStateBundle {
   }
 
   function bearerToken(): string | null {
-    if (mode === "session") return sessionToken;
-    if (mode === "manage") return manage?.accessToken ?? null;
-    return null;
+    if (pair) return pair.accessToken;
+    return bearer;
   }
 
-  function setSessionToken(token: string | null): void {
-    sessionToken = token;
-    setMode(token ? "session" : "none");
-    if (token) sessionStorage.setItem(sessionKey, token);
-    else sessionStorage.removeItem(sessionKey);
-    // Switching modes — drop the other store so a stale token doesn't
-    // resurrect after a clear().
-    if (token) sessionStorage.removeItem(manageKey);
+  function setBearer(token: string | null): void {
+    bearer = token;
+    pair = null;
+    if (token) {
+      sessionStorage.setItem(bearerKey, token);
+      sessionStorage.removeItem(pairKey);
+    } else {
+      sessionStorage.removeItem(bearerKey);
+    }
     cancelPreemptiveTimer();
+    emitAuthChange();
   }
 
-  function setManageTokens(t: ManageTokens): void {
-    manage = t;
-    setMode("manage");
-    sessionStorage.setItem(manageKey, JSON.stringify(t));
-    sessionStorage.removeItem(sessionKey);
+  function setBearerPair(t: BearerPair): void {
+    pair = t;
+    bearer = null;
+    sessionStorage.setItem(pairKey, JSON.stringify(t));
+    sessionStorage.removeItem(bearerKey);
     schedulePreemptiveRefresh();
+    emitAuthChange();
   }
 
   async function tryRefresh(apiBase: string): Promise<boolean> {
-    if (mode !== "manage" || !manage) return false;
-    if (manage.refreshExpiresAt <= Date.now()) return false;
+    if (!pair) return false;
+    if (pair.refreshExpiresAt <= Date.now()) return false;
     if (refreshInFlight) return refreshInFlight;
-    const refreshToken = manage.refreshToken;
+    const refreshToken = pair.refreshToken;
     refreshInFlight = (async () => {
       try {
         const res = await fetch(`${apiBase}/api/manage/refresh`, {
@@ -201,8 +217,8 @@ export function createAuthState(storageKeyPrefix: string): AuthStateBundle {
           body: JSON.stringify({ refreshToken }),
         });
         if (!res.ok) return false;
-        const next = (await res.json()) as ManageTokens;
-        setManageTokens(next);
+        const next = (await res.json()) as BearerPair;
+        setBearerPair(next);
         return true;
       } catch {
         return false;
@@ -214,82 +230,84 @@ export function createAuthState(storageKeyPrefix: string): AuthStateBundle {
   }
 
   function clear(): void {
-    sessionToken = null;
-    manage = null;
-    sessionStorage.removeItem(sessionKey);
-    sessionStorage.removeItem(manageKey);
+    bearer = null;
+    pair = null;
+    sessionStorage.removeItem(bearerKey);
+    sessionStorage.removeItem(pairKey);
     cancelPreemptiveTimer();
-    setMode("none");
+    emitAuthChange();
   }
 
-  function loadStored(): AuthMode {
-    // Manage first: a tab that was in manage mode should resume manage,
-    // not fall back to an older session token that may also be in
-    // storage from a previous run.
-    const m = sessionStorage.getItem(manageKey);
-    if (m) {
+  function loadStored(): boolean {
+    // Pair first: a tab that was holding a refreshable pair should
+    // resume that, not fall back to an older single bearer that may
+    // also be in storage from a previous boot.
+    const p = sessionStorage.getItem(pairKey);
+    if (p) {
       try {
-        const parsed = JSON.parse(m) as ManageTokens;
+        const parsed = JSON.parse(p) as BearerPair;
         if (
           typeof parsed.refreshToken === "string" &&
           typeof parsed.refreshExpiresAt === "number" &&
           parsed.refreshExpiresAt > Date.now()
         ) {
-          manage = parsed;
-          setMode("manage");
+          pair = parsed;
           schedulePreemptiveRefresh();
-          return "manage";
+          emitAuthChange();
+          return true;
         }
       } catch {
         // Fall through and clear.
       }
-      sessionStorage.removeItem(manageKey);
+      sessionStorage.removeItem(pairKey);
     }
-    const s = sessionStorage.getItem(sessionKey);
-    if (s) {
-      sessionToken = s;
-      setMode("session");
-      return "session";
+    const b = sessionStorage.getItem(bearerKey);
+    if (b) {
+      bearer = b;
+      emitAuthChange();
+      return true;
     }
-    return "none";
+    return false;
   }
 
   const state: AuthState = {
-    getMode: () => mode,
+    isAuthenticated,
+    hasRefreshPair,
     bearerToken,
-    setSessionToken,
-    getSessionToken: () => (mode === "session" ? sessionToken : null),
-    setManageTokens,
-    hasUsableRefresh: () => !!manage && manage.refreshExpiresAt > Date.now(),
+    setBearer,
+    getStoredBearer: () => bearer,
+    setBearerPair,
     tryRefresh,
     clear,
     loadStored,
     onAccessDenied(handler) {
       deniedHandler = handler;
     },
-    onModeChange(handler) {
-      modeSubs.add(handler);
-      return () => modeSubs.delete(handler);
+    onAuthChange(handler) {
+      authSubs.add(handler);
+      return () => authSubs.delete(handler);
     },
     configureRefresh(apiBase) {
       refreshApiBase = apiBase.replace(/\/+$/, "");
-      // If we already have a manage session (e.g. loadStored ran first),
-      // schedule the preemptive refresh now.
-      if (mode === "manage") schedulePreemptiveRefresh();
+      // If we already have a pair (e.g. loadStored ran first), schedule
+      // the preemptive refresh now.
+      if (pair) schedulePreemptiveRefresh();
     },
     destroy() {
-      // Order matters: set destroyed BEFORE clearing modeSubs so a
-      // final "none" event reaches the subscribers (lets adapters
-      // clean up UI state on SPA unmount). Then cancel the timer and
-      // null refreshApiBase so an in-flight tryRefresh that resolves
-      // after this point can't re-arm the timer.
-      if (!destroyed && mode !== "none") {
-        setMode("none");
+      // Order matters: clear state BEFORE wiping subscribers so a final
+      // "false" auth-change event reaches them (lets adapters clean up
+      // UI state on SPA unmount). Then cancel the timer and null
+      // refreshApiBase so an in-flight tryRefresh that resolves after
+      // this point can't re-arm the timer.
+      if (!destroyed && isAuthenticated()) {
+        bearer = null;
+        pair = null;
+        emitAuthChange();
       }
       destroyed = true;
       cancelPreemptiveTimer();
       refreshApiBase = null;
-      modeSubs.clear();
+      authSubs.clear();
       deniedHandler = null;
     },
   };
@@ -302,22 +320,25 @@ export function createAuthState(storageKeyPrefix: string): AuthStateBundle {
 }
 
 /**
- * POST the bot's manage JWT to `/api/manage/exchange` on the plugin
- * server to receive a plugin-issued access+refresh pair. The plugin's
- * exchange route is expected to gate on the manage capability and
- * return the pair as JSON. Returns null on any failure.
+ * POST a bot-issued JWT to `/api/manage/exchange` on the plugin server
+ * to receive a plugin-issued access + refresh pair. The plugin's
+ * exchange route decides what kind of bot JWTs to accept and what
+ * capabilities the resulting pair carries — the SDK is neutral. The
+ * route name is preserved from the historical "manage exchange" flow
+ * so existing plugin servers keep working without renaming.
+ * Returns null on any failure.
  */
-export async function exchangeManageJwt(
+export async function exchangeJwtForPair(
   botJwt: string,
   apiBase: string,
-): Promise<ManageTokens | null> {
+): Promise<BearerPair | null> {
   try {
     const res = await fetch(`${apiBase}/api/manage/exchange`, {
       method: "POST",
       headers: { Authorization: `Bearer ${botJwt}` },
     });
     if (!res.ok) return null;
-    return (await res.json()) as ManageTokens;
+    return (await res.json()) as BearerPair;
   } catch {
     return null;
   }
