@@ -57,6 +57,41 @@ export async function registerBehaviorRoutes(
     return options.reconciler;
   }
 
+  /**
+   * Fire-and-forget reconcileAll after CRUD that could shift Discord 指令
+   * 登記（CREATE / UPDATE / DELETE behavior row）。不 await，避免 admin
+   * UI 多吃一個 Discord round-trip 的延遲；失敗只記 log，因為 bot ready
+   * 時的 reconcileAll 仍會兜底，下次重啟會自我修復。
+   *
+   * 為什麼需要：PATCH 把 triggerType 從 slash_command 切到 message_pattern
+   * 後，DB row 的 slashCommandName 已被清成 null。reconcileForBehavior 對
+   * non-slash_command 直接 noop，且抓不到舊指令名，因此無法刪除 Discord
+   * 端的舊登記。reconcileAll 走 owned_commands 名冊 + desired set diff，
+   * 能正確識別 stale 並清除。
+   */
+  function scheduleReconcileAfterMutation(reason: string): void {
+    getReconciler()
+      .reconcileAll()
+      .then((report) => {
+        // Tests stub reconciler.reconcileAll as `() => undefined`; production
+        // returns a real ReconcileReport. Tolerate either shape rather than
+        // letting an undefined-deref leak into the warn branch in test runs.
+        if (!report) return;
+        botEventLog.record(
+          "info",
+          "bot",
+          `behavior-routes: reconcileAll(${reason}) created=${report.created} patched=${report.patched} deleted=${report.deleted} errors=${report.errors.length}`,
+        );
+      })
+      .catch((err: unknown) => {
+        botEventLog.record(
+          "warn",
+          "bot",
+          `behavior-routes: reconcileAll(${reason}) 失敗：${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+  }
+
   // ── GET /api/behaviors ──────────────────────────────────────────────────────
 
   server.get("/api/behaviors", async (request, reply) => {
@@ -313,6 +348,8 @@ export async function registerBehaviorRoutes(
       },
     );
 
+    scheduleReconcileAfterMutation(`create id=${created.id}`);
+
     return reply.code(201).send({ behavior: created });
   });
 
@@ -531,6 +568,8 @@ export async function registerBehaviorRoutes(
       },
     );
 
+    scheduleReconcileAfterMutation(`patch id=${numId}`);
+
     return reply.send({ behavior: updated });
   });
 
@@ -560,6 +599,8 @@ export async function registerBehaviorRoutes(
     botEventLog.record("info", "web", `behavior 已刪除 id=${numId}`, {
       behaviorId: numId,
     });
+
+    scheduleReconcileAfterMutation(`delete id=${numId}`);
 
     return reply.code(204).send();
   });
