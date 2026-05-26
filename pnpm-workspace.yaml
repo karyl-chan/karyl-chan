@@ -11,6 +11,9 @@ packages:
 # pnpm 10 only warned, so every native-module dependency must be
 # enumerated.
 allowBuilds:
+  # All four packages ship native bindings or platform-specific binaries
+  # that legitimately need their postinstall to run. sqlite3 source-builds
+  # via the .npmrc build_from_source rule.
   '@discordjs/opus': true
   better-sqlite3: true
   sqlite3: true
