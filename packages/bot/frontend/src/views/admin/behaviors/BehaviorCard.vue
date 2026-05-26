@@ -49,6 +49,11 @@ const open = ref(!!props.initiallyOpen);
 
 const isCustom = computed(() => props.behavior.source === 'custom');
 const isSystem = computed(() => props.behavior.source === 'system');
+// admin-login / break 是逃生口（取得後台連結、結束 session），停用後找不回，
+// 由後端 403 + 前端 toggle disabled 雙層保護。manual 可關。
+const isProtectedSystem = computed(
+    () => isSystem.value && (props.behavior.systemKey === 'admin-login' || props.behavior.systemKey === 'break'),
+);
 
 // ── draft（可編輯欄位）────────────────────────────────────────────────────────
 
@@ -246,7 +251,9 @@ function toggleOpen() {
 }
 
 async function onToggleEnabled() {
-    if (saving.value || isSystem.value) return;
+    // protected system keys（admin-login / break）由後端 403 攔，
+    // 前端也擋一道避免無謂 round-trip + UI 閃動。
+    if (saving.value || isProtectedSystem.value) return;
     const next = !enabledLocal.value;
     enabledLocal.value = next;
     saving.value = true;
@@ -475,15 +482,20 @@ const saveLabel = computed(() => {
                     {{ t('behaviors.card.tagStopShort') }}
                 </span>
 
-                <!-- toggle（system 無 toggle） -->
+                <!-- toggle — system 也顯示，但 admin-login / break 鎖死（系統保護）。 -->
                 <button
-                    v-if="!isSystem"
                     type="button"
                     role="switch"
                     :class="['toggle', { on: enabledLocal }]"
-                    :title="enabledLocal ? t('behaviors.card.toggleEnabled') : t('behaviors.card.toggleDisabled')"
+                    :title="
+                        isProtectedSystem
+                            ? t('behaviors.card.toggleProtected')
+                            : enabledLocal
+                                ? t('behaviors.card.toggleEnabled')
+                                : t('behaviors.card.toggleDisabled')
+                    "
                     :aria-checked="enabledLocal ? 'true' : 'false'"
-                    :disabled="saving"
+                    :disabled="saving || isProtectedSystem"
                     @click.stop="onToggleEnabled"
                 >
                     <span class="slider" aria-hidden="true"></span>

@@ -1225,6 +1225,7 @@
             "tagStopShort": "Stop",
             "toggleEnabled": "Enabled (click to disable)",
             "toggleDisabled": "Disabled (click to enable)",
+            "toggleProtected": "System behavior — cannot be disabled",
             "previewStartsWith": "starts: {value}",
             "previewEndsWith": "ends: {value}",
             "previewRegex": "regex: {value}",

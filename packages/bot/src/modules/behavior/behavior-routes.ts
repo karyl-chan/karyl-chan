@@ -449,7 +449,20 @@ export async function registerBehaviorRoutes(
       }
 
       if ("enabled" in body) {
-        patch["enabled"] = !!body["enabled"];
+        const nextEnabled = !!body["enabled"];
+        // admin-login / break 是 admin 後台與 session 收尾的唯一逃生口，
+        // 一旦被停用就找不回後台，也沒辦法手動結束 session。manual 可關
+        // （只是失去 DM 列表助理）。系統行為的 protected set 在此明列。
+        if (
+          !nextEnabled &&
+          (existingRow.systemKey === "admin-login" ||
+            existingRow.systemKey === "break")
+        ) {
+          return reply.code(403).send({
+            error: `系統行為 ${existingRow.systemKey} 不可停用`,
+          });
+        }
+        patch["enabled"] = nextEnabled;
       }
     } else {
       // custom：全欄位可改

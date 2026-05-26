@@ -1225,6 +1225,7 @@
             "pluginBehaviorKeyRequired": "請選擇 behavior",
             "toggleEnabled": "已啟用（點擊停用）",
             "toggleDisabled": "已停用（點擊啟用）",
+            "toggleProtected": "系統行為保護中，不可停用",
             "previewStartsWith": "開頭：{value}",
             "previewEndsWith": "結尾：{value}",
             "previewRegex": "regex：{value}",
