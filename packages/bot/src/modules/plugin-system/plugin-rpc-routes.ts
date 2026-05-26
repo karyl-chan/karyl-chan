@@ -38,8 +38,8 @@ import {
   findUnownedModalCustomId,
 } from "./plugin-component-ownership.js";
 import {
-  clearPluginDeferEphemeral,
-  readPluginDeferEphemeral,
+  clearPluginDeferState,
+  readPluginDeferState,
 } from "./plugin-defer-state.js";
 
 /**
@@ -1148,34 +1148,76 @@ export async function registerPluginRpcRoutes(
       reply.code(400).send({ error: `attachment error: ${m}` });
       return;
     }
-    // Discord locks ephemerality at defer time. The dispatcher recorded
-    // which way it deferred (see plugin-defer-state.ts); we route the
-    // four cases of (defer, plugin-wanted) accordingly:
+    // Route on defer state.
+    //
+    // kind='update' (component clicks): the bot called deferUpdate — no
+    // "thinking…" placeholder exists, @original IS the user's message
+    // hosting the clicked component. Straight PATCH. Mismatch logic
+    // would DELETE the user's own message; bug we explicitly guard
+    // against here.
+    //
+    // kind='reply' (commands & modals, the only deferReply callers):
+    // ephemerality is locked at defer time. Four cases:
     //
     //   defer=E, want=E  → PATCH @original                    (happy)
     //   defer=P, want=P  → PATCH @original                    (happy)
     //   defer=E, want=P  → POST public follow-up + DELETE @original
     //   defer=P, want=E  → POST ephemeral follow-up + DELETE @original
     //
-    // DELETE on mismatch (instead of leaving a "↑ 已發送至頻道"
-    // placeholder) gives the user the same UX as a matched defer —
-    // the "thinking…" message just disappears and the channel/user
-    // sees only the actual reply.
-    //
-    // wantsEphemeral default: when the plugin doesn't send the flag
-    // explicitly, treat it as "match defer" — most callers will just
-    // omit ephemeral and inherit the manifest's default.
-    const wantsEphemeral =
-      body.ephemeral === undefined ? null : body.ephemeral !== false;
-    // Fallback ephemeral=true when the defer record is missing — that's
-    // the dispatcher's own default and matches the pre-redesign behavior.
-    const deferWasEphemeral =
-      readPluginDeferEphemeral(body.interaction_token) ?? true;
-    const effectiveEphemeral = wantsEphemeral ?? deferWasEphemeral;
-    const mismatch = effectiveEphemeral !== deferWasEphemeral;
+    // null defer state (TTL eviction, restart, pre-tracker interactions)
+    // falls back to {kind:'reply', ephemeral:true} — the dispatcher's
+    // default. Matches old behaviour for commands; for components it
+    // would force the wrong path, but the component dispatcher now
+    // records state in the same tick as deferUpdate so the only path
+    // to null-for-a-component is the bot restarting mid-interaction,
+    // which is rare.
+    const deferState = readPluginDeferState(body.interaction_token) ?? {
+      kind: "reply" as const,
+      ephemeral: true,
+    };
     const extraFlags = sanitizePluginFlags(body.flags);
 
     try {
+      // Components: straight PATCH. ephemeral / flags can't change the
+      // parent message's visibility (it's a regular message in a
+      // channel, not an interaction reply). SuppressEmbeds /
+      // SuppressNotifications still honoured.
+      if (deferState.kind === "update") {
+        const editFlags = extraFlags || undefined;
+        await bot.rest.patch(
+          Routes.webhookMessage(
+            bot.application.id,
+            body.interaction_token,
+            "@original",
+          ),
+          {
+            body: {
+              content,
+              embeds,
+              components,
+              flags: editFlags,
+              allowed_mentions: { parse: [] },
+            },
+            ...(attachments.length > 0
+              ? {
+                  files: attachments.map((a) => ({
+                    name: a.name,
+                    data: a.data,
+                  })),
+                }
+              : {}),
+          },
+        );
+        clearPluginDeferState(body.interaction_token);
+        return { ok: true };
+      }
+
+      // kind='reply': handle defer/want match vs mismatch.
+      const wantsEphemeral =
+        body.ephemeral === undefined ? null : body.ephemeral !== false;
+      const effectiveEphemeral = wantsEphemeral ?? deferState.ephemeral;
+      const mismatch = effectiveEphemeral !== deferState.ephemeral;
+
       if (!mismatch) {
         // Happy path: PATCH @original. flags is read-only on edit so
         // Ephemeral (set at defer) stays. Discord still honours
@@ -1206,7 +1248,7 @@ export async function registerPluginRpcRoutes(
               : {}),
           },
         );
-        clearPluginDeferEphemeral(body.interaction_token);
+        clearPluginDeferState(body.interaction_token);
         return { ok: true };
       }
 
@@ -1248,7 +1290,7 @@ export async function registerPluginRpcRoutes(
           ),
         )
         .catch(() => {});
-      clearPluginDeferEphemeral(body.interaction_token);
+      clearPluginDeferState(body.interaction_token);
       return { ok: true };
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);

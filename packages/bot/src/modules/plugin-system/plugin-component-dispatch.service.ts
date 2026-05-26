@@ -13,6 +13,7 @@ import {
 } from "../../utils/host-policy.js";
 import { buildOutboundSignatureHeaders } from "../../utils/hmac.js";
 import { isPluginEffectivelyEnabledInGuild } from "../feature-toggle/feature-resolve.js";
+import { recordPluginDeferUpdate } from "./plugin-defer-state.js";
 
 /**
  * Inbound Discord *component* (button) interaction → plugin dispatcher.
@@ -165,6 +166,12 @@ export async function dispatchComponentToPlugin(
   // message the button is on) within 15 minutes.
   try {
     await interaction.deferUpdate();
+    // Record kind='update' so the respond endpoint knows @original is
+    // the parent message (with the clicked component), NOT a deferred
+    // "thinking…" placeholder. Without this, the respond endpoint's
+    // mismatch handling would DELETE @original — wiping the user's own
+    // message that hosts the button.
+    recordPluginDeferUpdate(interaction.token);
   } catch (err) {
     botEventLog.record(
       "warn",

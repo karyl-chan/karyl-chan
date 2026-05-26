@@ -10,6 +10,7 @@ import {
 } from "../../utils/host-policy.js";
 import { buildOutboundSignatureHeaders } from "../../utils/hmac.js";
 import { isPluginEffectivelyEnabledInGuild } from "../feature-toggle/feature-resolve.js";
+import { recordPluginDeferReply } from "./plugin-defer-state.js";
 
 /**
  * Inbound Discord *modal-submit* interaction → plugin dispatcher.
@@ -171,6 +172,11 @@ export async function dispatchModalToPlugin(
   // deferred ephemerally, Discord locks it ephemeral).
   try {
     await interaction.deferReply({ ephemeral: true });
+    // Modals are always deferred ephemerally; the respond endpoint
+    // uses this record to take the happy "PATCH @original" path when
+    // the plugin handler's reply matches (default; modal replies are
+    // typed ephemeral-only in the SDK).
+    recordPluginDeferReply(interaction.token, true);
   } catch (err) {
     botEventLog.record(
       "warn",

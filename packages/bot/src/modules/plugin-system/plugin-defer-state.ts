@@ -20,8 +20,32 @@
  * sweep keeps the map bounded under steady load.
  */
 
-interface DeferEntry {
+/**
+ * Two interaction kinds need different respond-time handling:
+ *
+ *   - `reply`: bot called `deferReply({ ephemeral })`. `@original` is the
+ *     ephemeral/public "thinking…" placeholder. ephemerality is locked
+ *     at defer time; mismatched plugin responses need follow-up + DELETE
+ *     @original (see plugin-rpc-routes interactions.respond).
+ *
+ *   - `update`: bot called `deferUpdate()` (component clicks). NO
+ *     "thinking…" message exists; `@original` is the message containing
+ *     the clicked component. ANY respond/edit goes straight to that
+ *     parent message — DELETE here would nuke the user's own message.
+ *
+ * The kind is recorded by the dispatcher that called the defer; the
+ * respond endpoint routes purely on `kind` (and `ephemeral` only when
+ * kind='reply').
+ */
+export type DeferKind = "reply" | "update";
+
+export interface DeferState {
+  kind: DeferKind;
+  /** Only meaningful when kind='reply'; ignored for 'update'. */
   ephemeral: boolean;
+}
+
+interface DeferEntry extends DeferState {
   expiresAt: number;
 }
 
@@ -42,33 +66,50 @@ function ensureSweep(): void {
   sweepTimer.unref();
 }
 
-export function recordPluginDeferEphemeral(
+/** Command dispatcher records a deferReply with its ephemeral choice. */
+export function recordPluginDeferReply(
   interactionToken: string,
   ephemeral: boolean,
 ): void {
   ensureSweep();
   deferStates.set(interactionToken, {
+    kind: "reply",
     ephemeral,
     expiresAt: Date.now() + TOKEN_TTL_MS,
   });
 }
 
 /**
- * Returns the recorded defer ephemerality, or null when no record exists
- * (the bot didn't defer this token, or the record was swept after TTL).
- * Callers fall back to a conservative default — usually `true` to match
- * the bot's defer default — when the answer is unknown.
+ * Component dispatcher records a deferUpdate. ephemeral=false here is a
+ * placeholder — the field doesn't apply when the bot didn't create a
+ * deferred reply; the respond endpoint checks kind first.
  */
-export function readPluginDeferEphemeral(
+export function recordPluginDeferUpdate(interactionToken: string): void {
+  ensureSweep();
+  deferStates.set(interactionToken, {
+    kind: "update",
+    ephemeral: false,
+    expiresAt: Date.now() + TOKEN_TTL_MS,
+  });
+}
+
+/**
+ * Returns the recorded defer state, or null when no record exists (TTL
+ * eviction, bot restart between defer and respond, or an interaction
+ * that predates this tracker). Callers fall back conservatively when
+ * null — typically treat as `kind='reply'` with `ephemeral=true` (the
+ * dispatcher's own default).
+ */
+export function readPluginDeferState(
   interactionToken: string,
-): boolean | null {
+): DeferState | null {
   const entry = deferStates.get(interactionToken);
   if (!entry) return null;
   if (entry.expiresAt < Date.now()) {
     deferStates.delete(interactionToken);
     return null;
   }
-  return entry.ephemeral;
+  return { kind: entry.kind, ephemeral: entry.ephemeral };
 }
 
 /**
@@ -78,7 +119,7 @@ export function readPluginDeferEphemeral(
  * ephemeral flag — no need to remember the defer state past the first
  * respond. Cuts memory pressure on long-running plugin sessions.
  */
-export function clearPluginDeferEphemeral(interactionToken: string): void {
+export function clearPluginDeferState(interactionToken: string): void {
   deferStates.delete(interactionToken);
 }
 

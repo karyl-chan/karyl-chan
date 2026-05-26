@@ -17,7 +17,7 @@ import {
   HostPolicyError,
 } from "../../utils/host-policy.js";
 import { buildOutboundSignatureHeaders } from "../../utils/hmac.js";
-import { recordPluginDeferEphemeral } from "./plugin-defer-state.js";
+import { recordPluginDeferReply } from "./plugin-defer-state.js";
 
 /**
  * Inbound Discord interaction → plugin dispatcher.
@@ -153,7 +153,7 @@ async function dispatchChatInputCommand(
   if (responseKind !== "modal") {
     try {
       await interaction.deferReply({ ephemeral: defaultEphemeral });
-      recordPluginDeferEphemeral(interaction.token, defaultEphemeral);
+      recordPluginDeferReply(interaction.token, defaultEphemeral);
     } catch (err) {
       // Already acknowledged or token expired — nothing else we can do.
       botEventLog.record(
