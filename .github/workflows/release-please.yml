@@ -1,13 +1,13 @@
 name: release-please
 
 # Runs on every push to main. release-please scans conventional commits
-# and maintains one "release PR" per package (bot, plugin-sdk). Merging
-# such a PR bumps the package.json version, updates CHANGELOG, then
-# tags `bot-v<x.y.z>` / `plugin-sdk-v<x.y.z>` and creates a GitHub
-# release.
+# and maintains one "release PR" per package (bot, plugin-sdk, ui).
+# Merging such a PR bumps the package.json version, updates CHANGELOG,
+# then tags `bot-v<x.y.z>` / `plugin-sdk-v<x.y.z>` / `ui-v<x.y.z>` and
+# creates a GitHub release.
 #
-# The publish-bot-image.yml / publish-plugin-sdk.yml workflows
-# trigger on those tags — BUT GitHub deliberately suppresses
+# The publish-bot-image.yml / publish-plugin-sdk.yml / publish-ui.yml
+# workflows trigger on those tags — BUT GitHub deliberately suppresses
 # downstream workflow runs when the triggering event was caused by
 # the default GITHUB_TOKEN (anti-recursion). So a tag pushed by
 # release-please-action under GITHUB_TOKEN never fires its tag-
@@ -40,6 +40,8 @@ jobs:
       plugin-sdk-tag: ${{ steps.release.outputs['packages/plugin-sdk--tag_name'] }}
       bot-released: ${{ steps.release.outputs['packages/bot--release_created'] }}
       bot-tag: ${{ steps.release.outputs['packages/bot--tag_name'] }}
+      ui-released: ${{ steps.release.outputs['packages/ui--release_created'] }}
+      ui-tag: ${{ steps.release.outputs['packages/ui--tag_name'] }}
     steps:
       - uses: googleapis/release-please-action@v4
         id: release
@@ -78,3 +80,18 @@ jobs:
           gh workflow run publish-bot-image.yml \
             --repo ${{ github.repository }} \
             --ref ${{ needs.release-please.outputs.bot-tag }}
+
+  publish-ui:
+    needs: release-please
+    if: needs.release-please.outputs.ui-released == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch publish-ui
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run publish-ui.yml \
+            --repo ${{ github.repository }} \
+            --ref ${{ needs.release-please.outputs.ui-tag }}

@@ -12,6 +12,10 @@
     "packages/plugin-sdk": {
       "component": "plugin-sdk",
       "package-name": "@karyl-chan/plugin-sdk"
+    },
+    "packages/ui": {
+      "component": "ui",
+      "package-name": "@karyl-chan/ui"
     }
   }
 }

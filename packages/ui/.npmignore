@@ -1,0 +1,3 @@
+# `files: ["src"]` ships the entire src tree, which also pulls in the
+# colocated vitest specs. Strip them from the published tarball.
+*.test.ts
