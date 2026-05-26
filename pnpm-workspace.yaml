@@ -5,11 +5,13 @@ packages:
   - 'packages/bot/frontend'
 
 # pnpm 11 no longer reads the `pnpm` field in package.json; settings
-# live here. onlyBuiltDependencies is the explicit allowlist for
-# native-module install scripts (pnpm 11 errors on any ignored build,
-# previously only warned).
-onlyBuiltDependencies:
-  - '@discordjs/opus'
-  - better-sqlite3
-  - sqlite3
-  - esbuild
+# live here. pnpm 11 also replaced the v10 `onlyBuiltDependencies`
+# array with a map-shaped `allowBuilds` setting (true = allow,
+# false = deny). pnpm 11 errors on any unlisted ignored build where
+# pnpm 10 only warned, so every native-module dependency must be
+# enumerated.
+allowBuilds:
+  '@discordjs/opus': true
+  better-sqlite3: true
+  sqlite3: true
+  esbuild: true
