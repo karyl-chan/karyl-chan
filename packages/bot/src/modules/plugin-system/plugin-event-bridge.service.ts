@@ -13,6 +13,10 @@ import {
 } from "../../utils/host-policy.js";
 import { buildOutboundSignatureHeaders } from "../../utils/hmac.js";
 import {
+  TRACEPARENT_HEADER,
+  newTraceContext,
+} from "../../utils/trace-context.js";
+import {
   pluginEventDispatchDuration,
   pluginEventDispatchTotal,
 } from "../web-core/metrics.js";
@@ -194,11 +198,21 @@ async function postEventToPlugin(
     body,
   );
 
+  // Phase 0.9: stamp a fresh W3C trace context onto every outbound
+  // event dispatch. Discord events arriving at the bot don't carry a
+  // parent traceparent, so this is the root span for the
+  // bot→plugin→reaction chain. Plugins read this off the SDK's
+  // `ctx.traceparent` and forward it on any RPC they make back.
+  const trace = newTraceContext();
+  const headers = {
+    ...sigHeaders,
+    [TRACEPARENT_HEADER]: trace.traceparent,
+  };
   const startedAt = Date.now();
   const outcome = await dispatchPool.post(
     plugin.pluginKey,
     url,
-    sigHeaders,
+    headers,
     body,
   );
   const elapsedSeconds = (Date.now() - startedAt) / 1000;
