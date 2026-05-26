@@ -37,6 +37,9 @@ export interface AppConfig {
   };
   db: {
     sqlitePath: string | null;
+    /** Phase 0.7 — separate SQLite file for bot_events. Null = default
+     *  path next to the main DB. */
+    botEventsSqlitePath: string | null;
   };
   crypto: {
     encryptionKey: string | null;
@@ -191,6 +194,7 @@ function loadConfig(): AppConfig {
     },
     db: {
       sqlitePath: strEnv("SQLITE_DB_PATH"),
+      botEventsSqlitePath: strEnv("BOT_EVENTS_SQLITE_DB_PATH"),
     },
     crypto: {
       encryptionKey: strEnv("ENCRYPTION_KEY"),

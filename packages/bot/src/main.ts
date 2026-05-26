@@ -15,6 +15,7 @@ import type {
 import { ChannelType, Events, IntentsBitField, Partials } from "discord.js";
 import { Client } from "discord.js";
 import { sequelize } from "./db.js";
+import { botEventsSequelize } from "./modules/bot-events/bot-events-db.js";
 import { config } from "./config.js";
 import { moduleLogger } from "./logger.js";
 import { startWebServer } from "./modules/web-core/server.js";
@@ -226,6 +227,8 @@ async function gracefulShutdown(signal: string): Promise<void> {
     await bot.destroy();
     // 5. Close DB last — earlier steps may still be writing.
     await sequelize.close();
+    // 5'. Close the bot_events DB (Phase 0.7) — independent file.
+    await botEventsSequelize.close();
     clearTimeout(timeout);
     log.info({ signal }, "graceful shutdown complete");
     process.exit(0);
@@ -563,6 +566,10 @@ async function run() {
     // schema changes won't reach it — a migration/ALTER strategy is
     // still undecided (deferred). See docs/operations.md「升級時的 schema 變動」.
     await sequelize.sync();
+    // Phase 0.7: bot_events lives in its own SQLite file. Sync it
+    // separately so its high-rate writes don't fight the main DB's
+    // write lock.
+    await botEventsSequelize.sync();
     setReady("db", true);
     dbReady = true;
     // Load (or, on a fresh DB, generate + persist) the JWT signing key

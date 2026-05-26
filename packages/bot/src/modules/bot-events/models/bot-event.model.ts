@@ -1,5 +1,7 @@
 import { DataTypes } from "sequelize";
-import { sequelize } from "../../../db.js";
+// Phase 0.7: bot_events lives in its own SQLite file so its
+// high-rate writes don't fight the main DB's write lock.
+import { botEventsSequelize } from "../bot-events-db.js";
 
 /**
  * Persistent log of bot lifecycle and runtime events. Replaces the
@@ -10,7 +12,7 @@ import { sequelize } from "../../../db.js";
  * bot caller. Indexed for the three foreseeable admin queries: newest
  * first, filter-by-level, filter-by-category.
  */
-export const BotEvent = sequelize.define(
+export const BotEvent = botEventsSequelize.define(
   "BotEvent",
   {
     id: {
