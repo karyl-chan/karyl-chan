@@ -155,6 +155,15 @@ export interface ManifestCapability {
  * documented upgrade path, not assume one already exists.
  */
 export interface PluginManifest {
+  /**
+   * The `@karyl-chan/plugin-sdk` semver this plugin was built with.
+   * SDK's `buildManifest` auto-fills this from the SDK package.json so
+   * the bot can apply per-version compatibility shims as the wire
+   * format evolves (e.g. retire a deprecated RPC path while the older
+   * SDK is still in use). Optional only because pre-0.6 SDKs didn't
+   * emit it — bot-side code treats absent as "unknown, < 0.6".
+   */
+  sdk_version?: string;
   plugin: {
     id: string;
     name: string;

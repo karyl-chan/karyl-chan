@@ -11,6 +11,18 @@ import type {
   PluginCommandDefinition,
   PluginConfig,
 } from "./plugin.js";
+import { createRequire } from "node:module";
+
+// Pulled in so `buildManifest` can stamp the SDK version onto every
+// manifest. Bot reads this for per-version compat shims. We use
+// `createRequire` (not a JSON import) so tsc's rootDir stays under
+// `src/` — a top-level JSON import would pull the package.json into
+// the compile root and reshape dist/ to `dist/src/index.js`, breaking
+// the published `main` path.
+const pkg = createRequire(import.meta.url)("../package.json") as {
+  version: string;
+};
+const SDK_VERSION: string = pkg.version;
 
 /**
  * True iff any of the plugin's commands (top-level or guild-feature) declares
@@ -156,6 +168,7 @@ export function buildManifest(
   );
 
   const manifest: PluginManifest = {
+    sdk_version: SDK_VERSION,
     plugin: {
       id: cfg.key,
       name: cfg.name,

@@ -157,6 +157,13 @@ export interface PluginManifest {
    * validateManifest.
    */
   schema_version?: string;
+  /**
+   * `@karyl-chan/plugin-sdk` semver the plugin was built with. Auto-
+   * filled by `buildManifest`. Used by the bot to apply per-version
+   * compatibility shims as the wire format evolves. Absent when the
+   * plugin uses an SDK older than 0.6 (treated as "< 0.6").
+   */
+  sdk_version?: string;
   plugin: {
     id: string;
     name: string;

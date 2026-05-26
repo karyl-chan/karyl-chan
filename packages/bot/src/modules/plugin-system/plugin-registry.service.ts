@@ -201,6 +201,22 @@ export async function validateManifest(
     };
   }
 
+  // sdk_version is informational metadata stamped by buildManifest from
+  // the SDK's package.json. Required to be a semver-ish string when
+  // present; absent is allowed (older SDKs didn't emit it). Bot uses
+  // this to apply per-version compat shims as the wire format evolves.
+  if (m.sdk_version !== undefined && m.sdk_version !== null) {
+    if (
+      typeof m.sdk_version !== "string" ||
+      !/^\d+\.\d+\.\d+(-[A-Za-z0-9.-]+)?$/.test(m.sdk_version)
+    ) {
+      return {
+        ok: false,
+        error: `manifest.sdk_version must be a semver string (got ${JSON.stringify(m.sdk_version)})`,
+      };
+    }
+  }
+
   // V-02：plugin.id 格式
   const plugin = m.plugin as Record<string, unknown> | undefined;
   if (!plugin || typeof plugin !== "object") {
@@ -587,6 +603,7 @@ export class PluginRegistry {
         pluginId: persisted.id,
         pluginKey: manifest.plugin.id,
         version: manifest.plugin.version,
+        sdkVersion: manifest.sdk_version ?? "<0.6",
       },
     );
     // Reconcile plugin-declared RBAC capabilities. A re-register that
