@@ -49,6 +49,8 @@ export {
 export type { AppShellContext, OverlayView } from "./composables/use-app-shell";
 export { useBreakpoint } from "./composables/use-breakpoint";
 export { useClickOutsideStack } from "./composables/use-click-outside-stack";
+export { useColorScheme } from "./composables/use-color-scheme";
+export type { ColorScheme } from "./composables/use-color-scheme";
 export { useConfirm } from "./composables/use-confirm";
 export type { ConfirmOptions } from "./composables/use-confirm";
 export { useDrawer } from "./composables/use-drawer";

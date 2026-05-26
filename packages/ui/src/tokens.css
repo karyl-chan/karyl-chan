@@ -1,6 +1,16 @@
 /* @karyl-chan/ui — design tokens.
  * Import once from your app entry: `import "@karyl-chan/ui/tokens.css"`.
- * Light defaults + prefers-color-scheme: dark override.
+ *
+ * Theme model:
+ *   - Light tokens are the :root defaults.
+ *   - Dark tokens apply when EITHER the OS reports prefers-color-scheme: dark
+ *     AND no explicit light override is set, OR the consumer forces dark via
+ *     `data-theme="dark"` on <html>.
+ *   - `data-theme="light"` lets users opt out of system dark mode.
+ *   - `useColorScheme()` (composable) is the usual driver of that attribute,
+ *     including localStorage persistence; you can also set it yourself if
+ *     you want to roll your own controller.
+ *
  * Bot-specific tokens (e.g. --conv-header-height, --spoiler-*) live in
  * the bot frontend's own global.css alongside its own component styles.
  */
@@ -58,8 +68,18 @@
     --radius-pill: 999px;
 }
 
+/* Pin the UA-side color-scheme hint so native widgets (form controls,
+ * scrollbars) follow the explicit choice instead of falling back to
+ * "light dark" and tracking the OS. */
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+
+/* Dark tokens — applied in two situations:
+ *   1. System reports dark AND the user hasn't forced light.
+ *   2. The user has explicitly chosen dark (`data-theme="dark"`).
+ * Kept as a single selector list so the two paths can't drift. */
 @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme="light"]) {
         --bg-page: #1e1f22;
         --bg-surface: #2b2d31;
         --bg-surface-2: #1e1f22;
@@ -97,4 +117,43 @@
 
         --pill-bg: #313338;
     }
+}
+
+:root[data-theme="dark"] {
+    --bg-page: #1e1f22;
+    --bg-surface: #2b2d31;
+    --bg-surface-2: #1e1f22;
+    --bg-surface-hover: rgba(255, 255, 255, 0.04);
+    --bg-surface-active: #3a3c44;
+    --bg-header: #18191c;
+
+    --text: #dbdee1;
+    --text-muted: #a3a6aa;
+    --text-strong: #f2f3f5;
+    --text-faint: #80848e;
+    --text-on-header: #f2f3f5;
+    --text-on-header-muted: #b5bac1;
+
+    --border: #3f4248;
+    --border-strong: #4e5058;
+
+    --accent-bg: rgba(88, 101, 242, 0.25);
+    --accent-text: #a5b4fc;
+    --accent-text-strong: #c7d2fe;
+
+    --link: #93c5fd;
+    --link-mask: #bfdbfe;
+
+    --danger: #f87171;
+
+    --success-bg: #064e3b;
+    --success-text: #a7f3d0;
+    --warn-bg: #78350f;
+    --warn-text: #fef3c7;
+
+    --code-bg: #1e1f22;
+    --quote-border: #4e5058;
+    --quote-text: #b5bac1;
+
+    --pill-bg: #313338;
 }
