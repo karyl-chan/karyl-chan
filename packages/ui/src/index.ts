@@ -12,6 +12,8 @@ export { default as AppBadge } from "./components/AppBadge.vue";
 export type { BadgeSize, BadgeTone, BadgeVariant } from "./components/AppBadge.vue";
 export { default as AppButton } from "./components/AppButton.vue";
 export { default as AppConfirmDialog } from "./components/AppConfirmDialog.vue";
+export { default as AppItemCard } from "./components/AppItemCard.vue";
+export type { AccentBarTone } from "./components/AppItemCard.vue";
 export { default as AppMenu } from "./components/AppMenu.vue";
 export { default as AppMenuItem } from "./components/AppMenuItem.vue";
 export { default as AppModal } from "./components/AppModal.vue";

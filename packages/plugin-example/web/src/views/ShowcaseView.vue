@@ -16,6 +16,7 @@ import {
   AppBadge,
   AppButton,
   AppConfirmDialog,
+  AppItemCard,
   AppMenu,
   AppMenuItem,
   AppModal,
@@ -90,6 +91,12 @@ const textName = ref("");
 const textNumber = ref("");
 const textArea = ref("Multi-line content goes here.");
 const textError = ref("oops");
+
+// Item card demo — mirrors the BehaviorCard / PluginCard collapsed-list pattern.
+const itemAEnabled = ref(true);
+const itemAOpen = ref(true);
+const itemBEnabled = ref(false);
+const itemBOpen = ref(false);
 
 // Draggable demo — single draggable element constrained to its parent.
 const dragBoundsRef = ref<HTMLElement | null>(null);
@@ -501,6 +508,59 @@ function onInlineClose() {
     </section>
 
     <section>
+      <h2>AppItemCard</h2>
+      <p class="hint">
+        Collapsible row card with an optional left accent stripe and
+        three slots: <code>#leading</code> (drag handle / lock),
+        <code>#title</code>, and <code>#trailing</code> (badges /
+        toggles / menus). Body content lives in the default slot and
+        only mounts while expanded.
+      </p>
+      <div class="item-card-list">
+        <AppItemCard
+          v-model:expanded="itemAOpen"
+          accent-bar="accent"
+          :disabled="!itemAEnabled"
+        >
+          <template #leading>
+            <span class="leading-icon">⋮⋮</span>
+          </template>
+          <template #title>
+            <span>Greet new members</span>
+            <span class="trigger-summary">on member_join</span>
+          </template>
+          <template #trailing>
+            <AppBadge size="sm" tone="accent" variant="outline" icon="material-symbols:bolt-outline-rounded">slash</AppBadge>
+            <AppToggle v-model="itemAEnabled" aria-label="Enable greet" />
+            <AppMenu placement="bottom-end">
+              <template #trigger>
+                <button type="button" class="menu-trigger">⋯</button>
+              </template>
+              <AppMenuItem icon="material-symbols:edit-outline-rounded">Edit</AppMenuItem>
+              <AppMenuItem danger icon="material-symbols:delete-outline-rounded">Delete</AppMenuItem>
+            </AppMenu>
+          </template>
+          <p>Form fields, description, etc. — whatever the caller wants.</p>
+        </AppItemCard>
+
+        <AppItemCard
+          v-model:expanded="itemBOpen"
+          accent-bar="warn"
+          :disabled="!itemBEnabled"
+        >
+          <template #title>
+            <span>Disabled item (no leading slot)</span>
+          </template>
+          <template #trailing>
+            <AppBadge size="sm" tone="warn" variant="outline">paused</AppBadge>
+            <AppToggle v-model="itemBEnabled" aria-label="Enable item" />
+          </template>
+          <p>Body shows only when expanded.</p>
+        </AppItemCard>
+      </div>
+    </section>
+
+    <section>
       <h2>AppBadge</h2>
       <p class="hint">
         Two axes: <code>tone</code> picks semantic colour (neutral /
@@ -676,6 +736,25 @@ section h2 {
   font-size: 0.78rem;
   font-weight: 600;
 }
+.item-card-list { display: flex; flex-direction: column; gap: 0.5rem; }
+.leading-icon {
+  display: inline-flex;
+  width: 18px;
+  justify-content: center;
+  color: var(--text-muted);
+  cursor: grab;
+  user-select: none;
+}
+.trigger-summary { color: var(--text-muted); font-size: 0.85rem; }
+.menu-trigger {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 1.1rem;
+  padding: 0 0.25rem;
+}
+.menu-trigger:hover { color: var(--text); }
 @media (max-width: 540px) {
   .form-grid { grid-template-columns: 1fr; }
 }
