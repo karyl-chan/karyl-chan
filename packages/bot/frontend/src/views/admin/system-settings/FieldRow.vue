@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { AppBadge } from '@karyl-chan/ui';
 import { isSensitiveField, type SettingsField } from '../../../api/systemSettings';
 
 const props = defineProps<{
@@ -75,13 +76,11 @@ const editabilityClass = computed((): string => {
             <div class="field-value-area">
                 <!-- Sensitive: show configured/unset status badge only, never a value -->
                 <template v-if="isSensitive">
-                    <span
-                        :class="['status-badge', (field as any).status === 'configured' ? 'status-badge--ok' : 'status-badge--unset']"
-                    >
+                    <AppBadge :tone="(field as any).status === 'configured' ? 'success' : 'neutral'">
                         {{ (field as any).status === 'configured'
                             ? t('admin.systemSettings.status.configured')
                             : t('admin.systemSettings.status.unset') }}
-                    </span>
+                    </AppBadge>
                 </template>
                 <!-- Non-sensitive: readonly input showing value -->
                 <template v-else>
@@ -169,28 +168,6 @@ const editabilityClass = computed((): string => {
 .field-input::placeholder {
     color: var(--text-faint);
     font-style: italic;
-}
-
-/* Configured / unset status for sensitive fields */
-.status-badge {
-    display: inline-flex;
-    align-items: center;
-    font-size: 0.74rem;
-    font-weight: 600;
-    letter-spacing: 0.03em;
-    padding: 0.18rem 0.55rem;
-    border-radius: 999px;
-    text-transform: uppercase;
-}
-.status-badge--ok {
-    background: color-mix(in srgb, var(--success, #16a34a) 14%, var(--bg-surface));
-    color: var(--success, #16a34a);
-    border: 1px solid color-mix(in srgb, var(--success, #16a34a) 30%, transparent);
-}
-.status-badge--unset {
-    background: color-mix(in srgb, var(--text-muted) 12%, var(--bg-surface));
-    color: var(--text-muted);
-    border: 1px solid var(--border);
 }
 
 /* Right-side meta: badges + env var */

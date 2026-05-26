@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { AppBadge } from '@karyl-chan/ui';
 import type { BotStatus } from '../../../api/types';
 
 defineProps<{
@@ -56,7 +57,7 @@ function formatDuration(seconds: number): string {
                 </div>
                 <div class="hero-meta">
                     <span class="bot-name">{{ $t('dashboard.hero.unavailable') }}</span>
-                    <span class="status-pill pill-offline">{{ $t('dashboard.hero.statusOffline') }}</span>
+                    <AppBadge variant="outline" tone="danger">{{ $t('dashboard.hero.statusOffline') }}</AppBadge>
                 </div>
             </div>
         </template>
@@ -79,12 +80,12 @@ function formatDuration(seconds: number): string {
                     <span class="bot-name">{{ bot.globalName ?? bot.username ?? '—' }}</span>
                     <div class="hero-meta-row">
                         <code class="bot-tag">{{ bot.userTag ?? '—' }}</code>
-                        <span
-                            class="status-pill"
-                            :class="bot.ready ? 'pill-ready' : 'pill-connecting'"
+                        <AppBadge
+                            variant="outline"
+                            :tone="bot.ready ? 'success' : 'warn'"
                         >
                             {{ bot.ready ? $t('dashboard.hero.ready') : $t('dashboard.hero.connecting') }}
-                        </span>
+                        </AppBadge>
                     </div>
                 </div>
             </div>
@@ -230,34 +231,6 @@ function formatDuration(seconds: number): string {
     background: var(--bg-surface-2);
     padding: 0.15rem 0.45rem;
     border-radius: var(--radius-sm);
-}
-
-/* ─── Status pills ──────────────────────────────────────────────── */
-.status-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.3rem;
-    padding: 0.2rem 0.6rem;
-    border-radius: var(--radius-pill);
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-}
-
-.pill-ready {
-    background: var(--success-bg);
-    color: var(--success-text);
-}
-
-.pill-connecting {
-    background: var(--warn-bg);
-    color: var(--warn-text);
-}
-
-.pill-offline {
-    background: var(--bg-surface-2);
-    color: var(--text-muted);
 }
 
 /* ─── Stats block ───────────────────────────────────────────────── */

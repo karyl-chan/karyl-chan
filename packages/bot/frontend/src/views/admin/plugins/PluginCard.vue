@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@iconify/vue';
 import { RouterLink } from 'vue-router';
-import { AppConfirmDialog, AppButton, AppToggle } from '@karyl-chan/ui';
+import { AppBadge, AppButton, AppConfirmDialog, AppToggle } from '@karyl-chan/ui';
 import {
     deletePlugin,
     getPluginConfig,
@@ -263,14 +263,12 @@ async function confirmDelete() {
             <p v-if="description" class="desc">{{ description }}</p>
 
             <div class="stats-row">
-                <span class="stat" v-if="guildFeatureCount > 0">
-                    <Icon icon="material-symbols:hub-outline" width="14" height="14" />
+                <AppBadge v-if="guildFeatureCount > 0" variant="outline" icon="material-symbols:hub-outline">
                     {{ t('admin.plugins.guildFeaturesCount', { n: guildFeatureCount }) }}
-                </span>
-                <span class="stat" v-if="commandCount > 0">
-                    <Icon icon="material-symbols:terminal" width="14" height="14" />
+                </AppBadge>
+                <AppBadge v-if="commandCount > 0" variant="outline" icon="material-symbols:terminal">
                     {{ t('admin.plugins.commandsCount', { n: commandCount }) }}
-                </span>
+                </AppBadge>
             </div>
 
             <dl class="meta">
@@ -453,17 +451,6 @@ async function confirmDelete() {
     display: flex;
     gap: 0.5rem;
     flex-wrap: wrap;
-}
-.stat {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.25rem;
-    font-size: 0.78rem;
-    color: var(--text-muted);
-    background: var(--bg-page);
-    padding: 0.18rem 0.5rem;
-    border-radius: 999px;
-    border: 1px solid var(--border);
 }
 .meta {
     margin: 0;

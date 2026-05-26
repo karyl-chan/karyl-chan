@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@iconify/vue';
+import { AppBadge, type BadgeTone } from '@karyl-chan/ui';
 import {
     ConfigValidationError,
     getPluginConfig,
@@ -23,6 +24,13 @@ const hasConfigSchema = computed(() => (manifest.value?.config_schema?.length ??
 
 // Workpack C: health + metrics inline on the overview tab.
 const health = computed(() => props.plugin.health ?? null);
+
+function healthTone(status: string | undefined): BadgeTone {
+    if (status === 'healthy') return 'success';
+    if (status === 'degraded') return 'warn';
+    if (status === 'unhealthy') return 'danger';
+    return 'neutral';
+}
 const metrics = computed(() => props.plugin.metrics ?? null);
 const hasMetrics = computed(() => {
     const m = metrics.value;
@@ -182,9 +190,7 @@ onMounted(() => {
                 <span class="muted health-age">{{ formatAge(health.checkedAt) }}</span>
             </div>
             <div class="health-row">
-                <span :class="['health-badge', `status-${health.status}`]">
-                    {{ health.status }}
-                </span>
+                <AppBadge :tone="healthTone(health.status)">{{ health.status }}</AppBadge>
                 <span v-if="health.message" class="health-msg">{{ health.message }}</span>
             </div>
             <ul v-if="health.checks && health.checks.length > 0" class="health-checks">
@@ -460,17 +466,6 @@ onMounted(() => {
 /* Workpack C — health + metrics blocks */
 .health-age { font-size: 0.75rem; color: var(--text-muted); }
 .health-row { display: flex; align-items: center; gap: 0.6rem; }
-.health-badge {
-    display: inline-block;
-    padding: 0.18rem 0.55rem;
-    border-radius: var(--radius-sm);
-    font-size: 0.78rem;
-    font-weight: 600;
-    text-transform: capitalize;
-}
-.health-badge.status-healthy { background: rgba(34, 197, 94, 0.18); color: rgb(34, 197, 94); }
-.health-badge.status-degraded { background: rgba(234, 179, 8, 0.18); color: rgb(234, 179, 8); }
-.health-badge.status-unhealthy { background: rgba(239, 68, 68, 0.18); color: rgb(239, 68, 68); }
 .health-msg { color: var(--text-muted); font-size: 0.85rem; }
 .health-checks {
     list-style: none;

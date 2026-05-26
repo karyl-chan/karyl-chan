@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { AppMenu, AppMenuItem, AppSelectField, AppToggle, useConfirm } from '@karyl-chan/ui';
+import { AppBadge, AppMenu, AppMenuItem, AppSelectField, AppToggle, useConfirm } from '@karyl-chan/ui';
 import { Icon } from '@iconify/vue';
 import BehaviorSourceNotice from './BehaviorSourceNotice.vue';
 import {
@@ -437,47 +437,49 @@ const saveLabel = computed(() => {
                 </button>
 
                 <!-- trigger-badge pill -->
-                <span
-                    :class="['tag', behavior.triggerType === 'slash_command' ? 'tag-slash' : 'tag-pattern']"
+                <AppBadge
+                    size="sm"
+                    :tone="behavior.triggerType === 'slash_command' ? 'accent' : 'neutral'"
+                    :variant="behavior.triggerType === 'slash_command' ? 'outline' : 'soft'"
+                    :icon="behavior.triggerType === 'slash_command' ? 'material-symbols:bolt-outline-rounded' : 'material-symbols:article-outline'"
                     :title="behavior.triggerType === 'slash_command' ? 'Slash 指令' : 'Message Pattern'"
                 >
-                    <Icon
-                        :icon="behavior.triggerType === 'slash_command' ? 'material-symbols:bolt-outline-rounded' : 'material-symbols:article-outline'"
-                        width="13" height="13"
-                    />
                     {{ behavior.triggerType === 'slash_command' ? 'slash' : 'pattern' }}
-                </span>
+                </AppBadge>
 
                 <!-- source-badge（custom 不顯示，system 顯示鎖） -->
-                <span
+                <AppBadge
                     v-if="isSystem"
-                    class="tag tag-system"
+                    size="sm"
+                    tone="neutral"
+                    icon="material-symbols:settings-outline"
                     :title="t('behaviors.card.tagSystem')"
                 >
-                    <Icon icon="material-symbols:settings-outline" width="13" height="13" />
                     {{ t('behaviors.card.tagSystemShort') }}
-                </span>
+                </AppBadge>
 
                 <!-- 連續對話 tag -->
-                <span
+                <AppBadge
                     v-if="behavior.forwardType === 'continuous'"
-                    class="tag tag-continuous"
+                    size="sm"
+                    tone="accent"
+                    icon="material-symbols:loop-rounded"
                     :title="t('behaviors.card.tagContinuous')"
                 >
-                    <Icon icon="material-symbols:loop-rounded" width="13" height="13" />
                     {{ t('behaviors.card.tagContinuousShort') }}
-                </span>
+                </AppBadge>
 
                 <!-- stop-on-match tag — message_pattern 路徑硬寫 stop，欄位無語意，
                      避免顯示誤導 admin。 -->
-                <span
+                <AppBadge
                     v-if="behavior.stopOnMatch && behavior.triggerType !== 'message_pattern'"
-                    class="tag tag-stop"
+                    size="sm"
+                    tone="warn"
+                    icon="material-symbols:stop-circle-outline-rounded"
                     :title="t('behaviors.card.tagStop')"
                 >
-                    <Icon icon="material-symbols:stop-circle-outline-rounded" width="13" height="13" />
                     {{ t('behaviors.card.tagStopShort') }}
-                </span>
+                </AppBadge>
 
                 <!-- toggle — system 也顯示，但 admin-login / break 鎖死（系統保護）。 -->
                 <AppToggle
@@ -784,25 +786,6 @@ const saveLabel = computed(() => {
     white-space: nowrap;
     min-width: 0;
 }
-
-/* ── tags ────────────────────────────────────────────────────── */
-.tag {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.15rem;
-    font-size: 0.7rem;
-    padding: 0.1rem 0.45rem;
-    border-radius: 999px;
-    border: 1px solid transparent;
-    flex-shrink: 0;
-    white-space: nowrap;
-}
-.tag-slash { background: var(--accent-bg); color: var(--accent-text-strong); border-color: var(--accent-border, var(--accent)); }
-.tag-pattern { background: var(--bg-page); color: var(--text-muted); border-color: var(--border); }
-.tag-plugin { background: var(--source-plugin-bg, rgba(124,58,237,0.08)); color: var(--source-plugin, #7c3aed); border-color: var(--source-plugin-border, rgba(124,58,237,0.2)); }
-.tag-system { background: var(--bg-page); color: var(--text-muted); border-color: var(--border); }
-.tag-continuous { background: var(--accent-bg); color: var(--accent-text-strong); }
-.tag-stop { background: var(--warn-bg); color: var(--warn-text); }
 
 /* ── toggle ──────────────────────────────────────────────────── */
 

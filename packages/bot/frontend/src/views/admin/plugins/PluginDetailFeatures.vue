@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@iconify/vue';
+import { AppBadge } from '@karyl-chan/ui';
 import type { PluginDetailRecord } from '../../../api/plugins';
 
 const props = defineProps<{
@@ -35,10 +36,9 @@ const features = computed(() => props.plugin.manifest?.guild_features ?? []);
                         <code class="feat-key">{{ feat.key }}</code>
                     </div>
                     <!-- read-only: per-guild toggle 在 admin/guilds 頁 -->
-                    <span class="readonly-badge">
-                        <Icon icon="material-symbols:visibility-outline-rounded" width="11" height="11" />
+                    <AppBadge size="sm" variant="outline" icon="material-symbols:visibility-outline-rounded">
                         唯讀
-                    </span>
+                    </AppBadge>
                 </div>
                 <p v-if="feat.description" class="feat-desc">{{ feat.description }}</p>
                 <div v-if="feat.commands && feat.commands.length > 0" class="feat-commands">
@@ -124,18 +124,6 @@ const features = computed(() => props.plugin.manifest?.guild_features ?? []);
     border-radius: var(--radius-sm);
     color: var(--text-muted);
     border: 1px solid var(--border);
-}
-.readonly-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.2rem;
-    font-size: 0.72rem;
-    background: var(--bg-page);
-    color: var(--text-muted);
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: 0.1rem 0.4rem;
-    flex-shrink: 0;
 }
 .feat-desc {
     margin: 0;

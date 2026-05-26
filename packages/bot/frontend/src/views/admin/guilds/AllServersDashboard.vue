@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { Icon } from '@iconify/vue';
 import { useI18n } from 'vue-i18n';
-import { AppTabs, AppToggle } from '@karyl-chan/ui';
+import { AppBadge, AppTabs, AppToggle } from '@karyl-chan/ui';
 import type { GuildSummary } from '../../../api/guilds';
 import { useGuildListStore } from '../../../stores/guildListStore';
 import {
@@ -292,10 +292,15 @@ onMounted(refresh);
                                     {{ group.pluginName }}
                                     <span class="plugin-key muted">({{ group.pluginKey }})</span>
                                 </h4>
-                                <span :class="['status-pill', group.pluginStatus]">
+                                <AppBadge
+                                    variant="outline"
+                                    :tone="group.pluginStatus === 'active' ? 'accent' : 'warn'"
+                                >
                                     {{ group.pluginStatus === 'active' ? $t('allServers.statusActive') : $t('allServers.statusInactive') }}
-                                </span>
-                                <span v-if="!group.pluginEnabled" class="status-pill disabled">{{ $t('allServers.statusDisabled') }}</span>
+                                </AppBadge>
+                                <AppBadge v-if="!group.pluginEnabled" variant="outline" tone="danger">
+                                    {{ $t('allServers.statusDisabled') }}
+                                </AppBadge>
                             </header>
                             <ul class="feature-list">
                                 <li v-for="item in group.items" :key="item.featureKey" class="feature-row">
@@ -418,20 +423,6 @@ onMounted(refresh);
 }
 .plugin-header h4 { margin: 0; font-size: 0.92rem; flex: 1; }
 .plugin-key { font-weight: 400; font-size: 0.78rem; }
-.status-pill {
-    font-size: 0.7rem;
-    padding: 0.1rem 0.55rem;
-    border-radius: var(--radius-pill);
-    background: var(--bg-surface-2);
-    border: 1px solid var(--border);
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-}
-.status-pill.active { color: var(--accent); border-color: rgba(56, 189, 248, 0.35); }
-.status-pill.inactive { color: var(--warning, #f59e0b); border-color: rgba(245, 158, 11, 0.35); }
-.status-pill.disabled { color: var(--danger); border-color: rgba(239, 68, 68, 0.35); }
-
 .feature-list { list-style: none; margin: 0; padding: 0; }
 .feature-row {
     display: flex; gap: 0.85rem; padding: 0.7rem 0;
