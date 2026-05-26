@@ -12,6 +12,10 @@ import {
   HostPolicyError,
 } from "../../utils/host-policy.js";
 import { buildOutboundSignatureHeaders } from "../../utils/hmac.js";
+import {
+  PluginDispatchPool,
+  DEFAULT_DISPATCH_POOL_OPTIONS,
+} from "./plugin-dispatch-pool.js";
 
 /**
  * Bot → Plugin event dispatch. Plugins declare which event types
@@ -31,7 +35,33 @@ import { buildOutboundSignatureHeaders } from "../../utils/hmac.js";
  */
 
 const DEFAULT_EVENTS_PATH = "/events";
-const DISPATCH_TIMEOUT_MS = config.plugin.dispatchTimeoutMs;
+
+/**
+ * Per-plugin outbound dispatch pool: HTTP keep-alive + concurrency
+ * cap + circuit breaker + connect-refused retry. Phase 0.3.
+ * Singleton because pools are keyed by pluginKey internally.
+ */
+const dispatchPool = new PluginDispatchPool({
+  ...DEFAULT_DISPATCH_POOL_OPTIONS,
+  requestTimeoutMs: config.plugin.dispatchTimeoutMs,
+});
+
+/** Test-only — for the pool itself. */
+export function __getDispatchPoolForTests(): PluginDispatchPool {
+  return dispatchPool;
+}
+
+/** Snapshot of per-plugin pool state for metrics + admin UI. */
+export function getDispatchPoolSnapshot(): ReturnType<
+  PluginDispatchPool["snapshot"]
+> {
+  return dispatchPool.snapshot();
+}
+
+/** Stop the dispatch pool — called from gracefulShutdown. */
+export async function stopDispatchPool(): Promise<void> {
+  await dispatchPool.stop();
+}
 
 /**
  * In-memory index: event_type → Set<pluginId>. Rebuilt on startup
@@ -159,46 +189,29 @@ async function postEventToPlugin(
     parsedEventsUrl.pathname,
     body,
   );
-  const ctrl = new AbortController();
-  const timeout = setTimeout(() => ctrl.abort(), DISPATCH_TIMEOUT_MS);
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...sigHeaders,
+
+  const outcome = await dispatchPool.post(
+    plugin.pluginKey,
+    url,
+    sigHeaders,
+    body,
+  );
+  if (outcome.ok) return;
+  // Per (plugin, eventType, reason) dedup keeps a wedged plugin from
+  // flooding the bot event log at message-traffic rate.
+  const reason = outcome.reason;
+  if (shouldRecord(`plugin-dispatch-${reason}:${plugin.id}:${eventType}`)) {
+    botEventLog.record(
+      "warn",
+      "bot",
+      `plugin event ${eventType} → ${plugin.pluginKey} ${reason}: ${outcome.message}`,
+      {
+        pluginId: plugin.id,
+        eventType,
+        reason,
+        ...(outcome.status !== undefined ? { status: outcome.status } : {}),
       },
-      body,
-      signal: ctrl.signal,
-    });
-    if (!res.ok) {
-      // Dedup at (plugin, eventType) granularity — a plugin that's
-      // returning 5xx for every dispatch shouldn't spam the bot event
-      // log at message-traffic rate. shouldRecord caps emission to
-      // once/min per key.
-      if (shouldRecord(`plugin-dispatch-fail:${plugin.id}:${eventType}`)) {
-        botEventLog.record(
-          "warn",
-          "bot",
-          `plugin event ${eventType} → ${plugin.pluginKey} returned HTTP ${res.status}`,
-          { pluginId: plugin.id, eventType, status: res.status },
-        );
-      }
-    }
-    // We deliberately don't read the response body. Plugins that
-    // want to react call back through /api/plugin/* RPC.
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (shouldRecord(`plugin-dispatch-net:${plugin.id}:${eventType}`)) {
-      botEventLog.record(
-        "warn",
-        "bot",
-        `plugin event ${eventType} → ${plugin.pluginKey} dispatch failed: ${msg}`,
-        { pluginId: plugin.id, eventType, error: msg },
-      );
-    }
-  } finally {
-    clearTimeout(timeout);
+    );
   }
 }
 

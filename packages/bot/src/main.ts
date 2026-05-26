@@ -46,6 +46,7 @@ import { pluginRegistry } from "./modules/plugin-system/plugin-registry.service.
 import {
   dispatchEventToPlugins,
   rebuildEventIndex,
+  stopDispatchPool,
 } from "./modules/plugin-system/plugin-event-bridge.service.js";
 import { startPluginHealthPoller } from "./modules/plugin-system/plugin-health-poller.service.js";
 import {
@@ -216,6 +217,8 @@ async function gracefulShutdown(signal: string): Promise<void> {
     // 2. Stop background timers / cleanup.
     pluginRegistry.stopReaper();
     authStore.stop();
+    // 2'. Drain the plugin dispatch pool (HTTP keep-alive sockets).
+    await stopDispatchPool();
     // 3. Close RCON sockets (was registered as its own SIGTERM handler;
     // pulled in here so we don't race with this shutdown).
     await shutdownAllRconConnections();
