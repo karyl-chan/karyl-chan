@@ -45,6 +45,8 @@ import { botEventLog } from "../bot-events/bot-event-log.js";
 import type { MessageMatchOutcome } from "./types.js";
 import type { WebhookForwarder } from "./webhook-forwarder.service.js";
 import { findBehaviorById } from "../behavior/models/behavior.model.js";
+import { issueLoginLinkAndReply } from "../admin/admin-login.service.js";
+import { buildManualBehaviorsEmbed } from "./manual-list.js";
 
 // ── MessagePatternMatcher ─────────────────────────────────────────────────────
 
@@ -57,12 +59,10 @@ export class MessagePatternMatcher {
    *
    * 注意（C-runtime §5.1）：DM-only gate。guild channel 訊息一律丟棄。
    *
-   * system behavior 的 DM 觸發路徑（/manual、/break text trigger）：
-   *   v2 設計決定 system behavior 只走 slash_command trigger（不走 message_pattern）。
-   *   理由：v1 的 /manual、/break 文字觸發是歷史殘留。v2 slash command 已足夠，
-   *   message_pattern 觸發 system behavior 增加複雜度但無明顯收益。
-   *   若未來需要，在此加一個 source='system' 的 behavior row 查找，
-   *   然後 dispatch 到 InteractionDispatcher 等效的 system handler。
+   * system behavior 的 DM 觸發路徑（admin-login / manual / break text trigger）：
+   *   若 admin 把 source='system' behavior 的 triggerType 切到 message_pattern，
+   *   matcher 會在 matched 後走 handleMatchedSystemBehavior，dispatch 到對應的
+   *   system handler（不送 WebhookForwarder — system 沒有 webhookUrl）。
    */
   register(client: Client): void {
     client.on("messageCreate", (msg) => {
@@ -129,6 +129,11 @@ export class MessagePatternMatcher {
         content,
       );
       if (!matched) continue;
+
+      // ─ system source 不走 webhook，直接 dispatch 到對應 system handler
+      if (behavior.source === "system") {
+        return this.handleMatchedSystemBehavior(behavior, djsMessage, userId);
+      }
 
       // ─ 呼叫 WebhookForwarder + session 管理
       return this.handleMatchedBehavior(
@@ -267,16 +272,77 @@ export class MessagePatternMatcher {
     };
   }
 
+  // ── 私有：matched system behavior dispatch（admin-login / manual / break）──
+
+  private async handleMatchedSystemBehavior(
+    behavior: BehaviorRow,
+    djsMessage: DjsMessage,
+    userId: string,
+  ): Promise<MessageMatchOutcome> {
+    const dmChannel = djsMessage.channel as DMChannel;
+    const systemKey = behavior.systemKey;
+
+    if (systemKey === "admin-login") {
+      await issueLoginLinkAndReply(djsMessage).catch(() => false);
+      return { handled: true, behaviorId: behavior.id };
+    }
+
+    if (systemKey === "break") {
+      const ended = await endSession(userId);
+      await dmChannel
+        .send({
+          content: ended ? "Session 已結束。" : "目前沒有活躍的 session。",
+          allowedMentions: { parse: [] },
+        })
+        .catch(() => {});
+      return {
+        handled: true,
+        sessionEnded: ended,
+        behaviorId: behavior.id,
+      };
+    }
+
+    if (systemKey === "manual") {
+      const applicable = await collectApplicableBehaviorsForUser(userId);
+      const embed = buildManualBehaviorsEmbed(applicable);
+      if (embed) {
+        await dmChannel
+          .send({ embeds: [embed], allowedMentions: { parse: [] } })
+          .catch(() => {});
+      } else {
+        await dmChannel
+          .send({
+            content: "目前在私訊沒有可用行為。",
+            allowedMentions: { parse: [] },
+          })
+          .catch(() => {});
+      }
+      return { handled: true, behaviorId: behavior.id };
+    }
+
+    botEventLog.record(
+      "warn",
+      "bot",
+      `message-pattern-matcher: 未知 systemKey='${systemKey ?? "(null)"}'，handled=true 阻止漏到下一條`,
+      { userId, behaviorId: behavior.id, systemKey: systemKey ?? "(null)" },
+    );
+    return { handled: true, behaviorId: behavior.id };
+  }
+
   // ── 私有：collectApplicableBehaviors（三層 audienceKind 查詢）──────────
 
   /**
    * 查詢對此 userId 適用的 message_pattern behaviors。
    * 代理 module-level helper，固定只查 message_pattern 觸發。
+   * 包含 source='system'（admin-login / manual / break 可被切到 message_pattern）。
    */
   private async collectApplicableBehaviors(
     userId: string,
   ): Promise<BehaviorRow[]> {
-    return collectApplicableBehaviorsForUser(userId, "message_pattern");
+    return collectApplicableBehaviorsForUser(userId, {
+      triggerType: "message_pattern",
+      includeSystem: true,
+    });
   }
 
   // ── 私有：buildPayload ───────────────────────────────────────────────────
@@ -359,7 +425,9 @@ export class MessagePatternMatcher {
  *
  * 篩選條件：
  *   - enabled=true
- *   - source 非 'system'（system behaviors 不在 /manual 列表中）
+ *   - source：預設排除 'system'（/manual 列表給使用者看的「自訂」行為）；
+ *     MessagePatternMatcher 需要把 system 也算進去（admin-login / manual / break
+ *     可被 admin 切到 message_pattern），透過 includeSystem=true 開啟。
  *   - triggerType：若指定，只回該 triggerType；不指定則返回全部
  *   - audienceKind 符合（user / group / all 三層）
  *
@@ -367,18 +435,24 @@ export class MessagePatternMatcher {
  * 可被 MessagePatternMatcher 與 InteractionDispatcher(/manual) 共用。
  *
  * @param userId  Discord user id
- * @param triggerType  若為 'message_pattern' 則只查訊息觸發；未指定則查全部
+ * @param options.triggerType  若指定則只查該 triggerType；未指定則查全部
+ * @param options.includeSystem  預設 false（不含 system source）
  */
 export async function collectApplicableBehaviorsForUser(
   userId: string,
-  triggerType?: "message_pattern" | "slash_command",
+  options?: {
+    triggerType?: "message_pattern" | "slash_command";
+    includeSystem?: boolean;
+  },
 ): Promise<BehaviorRow[]> {
   const where: Record<string, unknown> = {
     enabled: true,
-    source: { [Op.ne]: "system" },
   };
-  if (triggerType !== undefined) {
-    where["triggerType"] = triggerType;
+  if (options?.includeSystem !== true) {
+    where["source"] = { [Op.ne]: "system" };
+  }
+  if (options?.triggerType !== undefined) {
+    where["triggerType"] = options.triggerType;
   }
   const allRows = await Behavior.findAll({
     where,

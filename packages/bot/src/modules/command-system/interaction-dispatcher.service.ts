@@ -21,7 +21,6 @@
 import {
   type Interaction,
   type ChatInputCommandInteraction,
-  EmbedBuilder,
 } from "discord.js";
 import {
   Behavior,
@@ -37,6 +36,7 @@ import { endSession } from "../behavior/models/behavior-session.model.js";
 import type { DispatchOutcome } from "./types.js";
 import type { WebhookForwarder } from "./webhook-forwarder.service.js";
 import { collectApplicableBehaviorsForUser } from "./message-pattern-matcher.service.js";
+import { buildManualBehaviorsEmbed } from "./manual-list.js";
 
 // ── Discord webhook payload 建構（slash command → webhook body）─────────────
 
@@ -369,7 +369,8 @@ export class InteractionDispatcher {
       return { claimed: true, claimedBy: "behavior_system" };
     }
 
-    if (behaviors.length === 0) {
+    const embed = buildManualBehaviorsEmbed(behaviors);
+    if (!embed) {
       await interaction
         .reply({
           content: "目前在私訊沒有可用行為。",
@@ -377,34 +378,6 @@ export class InteractionDispatcher {
         })
         .catch(() => {});
       return { claimed: true, claimedBy: "behavior_system" };
-    }
-
-    // 建構 embed，每條 behavior 一個 field
-    const embed = new EmbedBuilder()
-      .setTitle("私訊可用行為清單")
-      .setDescription(`目前對你適用的行為共 ${behaviors.length} 條：`)
-      .setColor(0x5865f2);
-
-    for (const b of behaviors.slice(0, 25)) {
-      // Discord embed 最多 25 fields
-      const triggerLabel =
-        b.triggerType === "slash_command"
-          ? `/${b.slashCommandName ?? "(未設定)"}`
-          : `訊息觸發（${b.messagePatternKind ?? "?"}）：${b.messagePatternValue ?? ""}`;
-      embed.addFields({
-        name: b.title,
-        value:
-          `**類型**：${b.triggerType === "slash_command" ? "Slash 指令" : "訊息模式"}\n` +
-          `**觸發**：\`${triggerLabel}\`\n` +
-          (b.description ? `**說明**：${b.description}` : ""),
-        inline: false,
-      });
-    }
-
-    if (behaviors.length > 25) {
-      embed.setFooter({
-        text: `（僅顯示前 25 條，共 ${behaviors.length} 條）`,
-      });
     }
 
     await interaction
