@@ -19,6 +19,10 @@ import {
   removePluginFromIndex,
 } from "./plugin-event-bridge.service.js";
 import {
+  invalidatePluginByKey,
+  invalidatePluginById,
+} from "./plugin-lookup-cache.js";
+import {
   ManifestCommandError,
   pluginCommandRegistry,
 } from "./plugin-command-registry.service.js";
@@ -641,6 +645,9 @@ export class PluginRegistry {
         `reconcilePluginCapabilities failed for ${manifest.plugin.id}`,
       );
     }
+    // Phase 0.5: invalidate the proxy/lookup cache so the fresh row
+    // is read on the next request (e.g. URL change on re-register).
+    invalidatePluginByKey(manifest.plugin.id);
     // Phase 0.4: incremental index update. The freshly-registered
     // plugin's manifest has been persisted to `persisted.manifestJson`,
     // so applyPluginChange computes the new subscription set from it
@@ -768,6 +775,9 @@ export class PluginRegistry {
       } catch {
         /* shape is in-memory only; nothing to do besides log */
       }
+      // Phase 0.5: invalidate proxy/lookup cache so the next request
+      // sees the new enabled / status.
+      invalidatePluginByKey(row.pluginKey);
     }
     return row;
   }
@@ -806,7 +816,11 @@ export class PluginRegistry {
         // If we just expired anything, drop the dead plugins from the
         // index so dispatch stops fanning out events to them. Phase
         // 0.4: O(|expired|) per-id removal instead of a full rebuild.
-        for (const id of ids) removePluginFromIndex(id);
+        // Phase 0.5: also drop them from the proxy/lookup cache.
+        for (const id of ids) {
+          removePluginFromIndex(id);
+          invalidatePluginById(id);
+        }
       } catch (err) {
         log.error({ err }, "plugin reaper failed");
         botEventLog.record("error", "error", "Plugin reaper failed");

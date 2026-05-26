@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import fastifyReplyFrom from "@fastify/reply-from";
 import { findPluginByKey } from "./models/plugin.model.js";
+import { getCachedPluginByKey } from "./plugin-lookup-cache.js";
 import {
   assertPluginTarget,
   HostPolicyError,
@@ -135,7 +136,12 @@ export async function registerPluginProxy(
         return;
       }
 
-      const plugin = await findPluginByKey(pluginKey);
+      // Phase 0.5: 30s TTL cache + lifecycle-event invalidation. Plugin
+      // proxy is the hottest read path on the plugins table — WebUI
+      // traffic + plugin → bot RPC authz both flow through here. The
+      // cache short-circuits everything except the first request per
+      // plugin per 30s window.
+      const plugin = await getCachedPluginByKey(pluginKey, findPluginByKey);
       if (!plugin || plugin.status !== "active") {
         reply.code(404).send({ error: "unknown plugin" });
         return;

@@ -31,6 +31,7 @@ import { encryptSecret } from "../../utils/crypto.js";
 import type { PluginManifest } from "./plugin-registry.service.js";
 import { pluginCommandRegistry } from "./plugin-command-registry.service.js";
 import { removePluginFromIndex } from "./plugin-event-bridge.service.js";
+import { invalidatePluginById } from "./plugin-lookup-cache.js";
 import { dispatchLifecycleToPlugin } from "./plugin-lifecycle-dispatch.service.js";
 import { recordAudit } from "../admin/admin-audit.service.js";
 import { config } from "../../config.js";
@@ -1269,8 +1270,10 @@ export async function registerPluginRoutes(
         });
 
       // 4. Drop the deleted plugin from the event-dispatch index
-      //    (Phase 0.4 — O(1) instead of a full rebuild).
+      //    (Phase 0.4 — O(1) instead of a full rebuild) and the
+      //    proxy/lookup cache (Phase 0.5).
       removePluginFromIndex(pluginId);
+      invalidatePluginById(pluginId);
 
       // Audit + operation log.
       await recordAudit(
