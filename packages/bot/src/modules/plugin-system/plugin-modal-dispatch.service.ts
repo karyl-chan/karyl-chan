@@ -9,6 +9,7 @@ import {
   HostPolicyError,
 } from "../../utils/host-policy.js";
 import { buildOutboundSignatureHeaders } from "../../utils/hmac.js";
+import { findEnabledFeaturesByPluginGuild } from "../feature-toggle/models/plugin-guild-feature.model.js";
 
 /**
  * Inbound Discord *modal-submit* interaction → plugin dispatcher.
@@ -121,6 +122,25 @@ export async function dispatchModalToPlugin(
       })
       .catch(() => {});
     return true;
+  }
+  // Per-guild feature gate. After an admin disables every feature of
+  // this plugin in guild G, modals from older messages must stop
+  // dispatching — otherwise the plugin keeps receiving submissions
+  // tagged with the very guild the operator just opted out of.
+  if (interaction.guildId) {
+    const enabled = await findEnabledFeaturesByPluginGuild(
+      plugin.id,
+      interaction.guildId,
+    );
+    if (enabled.length === 0) {
+      await interaction
+        .reply({
+          content: "⚠ 此功能在本伺服器已停用。",
+          ephemeral: true,
+        })
+        .catch(() => {});
+      return true;
+    }
   }
   const manifest = parseManifest(plugin);
   if (!manifest) {

@@ -31,6 +31,10 @@ import { resolveUserCapabilities } from "../admin/authorized-user.service.js";
 import { makePluginCapabilityToken } from "../admin/admin-capabilities.js";
 import { discordErrorStatus } from "../web-core/discord-error.js";
 import { assertPluginTarget, HostPolicyError } from "../../utils/host-policy.js";
+import {
+  findUnownedCustomId,
+  findUnownedModalCustomId,
+} from "./plugin-component-ownership.js";
 
 /**
  * Strip dangerous `parse` entries from a plugin-supplied
@@ -297,6 +301,15 @@ export async function registerPluginRpcRoutes(
       reply.code(400).send({ error: "content or embeds required" });
       return;
     }
+    if (components) {
+      const offender = findUnownedCustomId(ctx.pluginKey, components);
+      if (offender !== null) {
+        reply.code(400).send({
+          error: `component custom_id '${offender}' must use the kc:${ctx.pluginKey}: namespace`,
+        });
+        return;
+      }
+    }
     let attachments: Array<{ name: string; data: Buffer }>;
     try {
       attachments = await resolvePluginAttachments(
@@ -512,16 +525,40 @@ export async function registerPluginRpcRoutes(
       reply.code(400).send({ error: "channel_id + message_id required" });
       return;
     }
+    let channel;
     try {
-      const channel = await bot.channels.fetch(body.channel_id);
-      if (
-        !channel ||
-        !channel.isTextBased() ||
-        channel.type === ChannelType.GroupDM
-      ) {
-        reply.code(400).send({ error: "channel not text-based" });
+      channel = await bot.channels.fetch(body.channel_id);
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      reply.code(404).send({ error: `channel fetch failed: ${m}` });
+      return;
+    }
+    if (
+      !channel ||
+      !channel.isTextBased() ||
+      channel.type === ChannelType.GroupDM
+    ) {
+      reply.code(400).send({ error: "channel not text-based" });
+      return;
+    }
+    // Per-guild feature gate — symmetric with messages.send/edit. A
+    // plugin enabled in guild A cannot delete messages in guild B
+    // even if it knows the channel/message id (e.g. logged elsewhere).
+    const channelGuildId =
+      "guildId" in channel && typeof channel.guildId === "string"
+        ? channel.guildId
+        : null;
+    if (channelGuildId && !channel.isDMBased()) {
+      const enabledFeatures = await findEnabledFeaturesByPluginGuild(
+        ctx.pluginId,
+        channelGuildId,
+      );
+      if (enabledFeatures.length === 0) {
+        reply.code(403).send({ error: "plugin not enabled in this guild" });
         return;
       }
+    }
+    try {
       const msg = await channel.messages.fetch(body.message_id);
       await msg.delete();
       return { ok: true };
@@ -596,6 +633,15 @@ export async function registerPluginRpcRoutes(
         return;
       }
     }
+    if (Array.isArray(body.components)) {
+      const offender = findUnownedCustomId(ctx.pluginKey, body.components);
+      if (offender !== null) {
+        reply.code(400).send({
+          error: `component custom_id '${offender}' must use the kc:${ctx.pluginKey}: namespace`,
+        });
+        return;
+      }
+    }
     const editPayload: Record<string, unknown> = {
       allowed_mentions: { parse: [] },
     };
@@ -633,12 +679,34 @@ export async function registerPluginRpcRoutes(
         .send({ error: "channel_id + message_id + emoji required" });
       return;
     }
+    let channel;
     try {
-      const channel = await bot.channels.fetch(body.channel_id);
-      if (!channel || !channel.isTextBased()) {
-        reply.code(400).send({ error: "channel not text-based" });
+      channel = await bot.channels.fetch(body.channel_id);
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      reply.code(404).send({ error: `channel fetch failed: ${m}` });
+      return;
+    }
+    if (!channel || !channel.isTextBased()) {
+      reply.code(400).send({ error: "channel not text-based" });
+      return;
+    }
+    // Per-guild feature gate — symmetric with messages.send/edit/delete.
+    const channelGuildId =
+      "guildId" in channel && typeof channel.guildId === "string"
+        ? channel.guildId
+        : null;
+    if (channelGuildId && !channel.isDMBased()) {
+      const enabledFeatures = await findEnabledFeaturesByPluginGuild(
+        ctx.pluginId,
+        channelGuildId,
+      );
+      if (enabledFeatures.length === 0) {
+        reply.code(403).send({ error: "plugin not enabled in this guild" });
         return;
       }
+    }
+    try {
       const msg = await channel.messages.fetch(body.message_id);
       await msg.react(body.emoji);
       return { ok: true };
@@ -1022,6 +1090,15 @@ export async function registerPluginRpcRoutes(
       reply.code(400).send({ error: "content, embeds or components required" });
       return;
     }
+    if (components) {
+      const offender = findUnownedCustomId(ctx.pluginKey, components);
+      if (offender !== null) {
+        reply.code(400).send({
+          error: `component custom_id '${offender}' must use the kc:${ctx.pluginKey}: namespace`,
+        });
+        return;
+      }
+    }
     let attachments: Array<{ name: string; data: Buffer }>;
     try {
       attachments = await resolvePluginAttachments(
@@ -1116,6 +1193,15 @@ export async function registerPluginRpcRoutes(
     if (!content && !embeds && !components) {
       reply.code(400).send({ error: "content, embeds or components required" });
       return;
+    }
+    if (components) {
+      const offender = findUnownedCustomId(ctx.pluginKey, components);
+      if (offender !== null) {
+        reply.code(400).send({
+          error: `component custom_id '${offender}' must use the kc:${ctx.pluginKey}: namespace`,
+        });
+        return;
+      }
     }
     let attachments: Array<{ name: string; data: Buffer }>;
     try {
@@ -1271,6 +1357,15 @@ export async function registerPluginRpcRoutes(
     const components = Array.isArray(body.components)
       ? body.components
       : undefined;
+    if (components) {
+      const offender = findUnownedCustomId(ctx.pluginKey, components);
+      if (offender !== null) {
+        reply.code(400).send({
+          error: `component custom_id '${offender}' must use the kc:${ctx.pluginKey}: namespace`,
+        });
+        return;
+      }
+    }
     // safeAllowedMentions always returns a non-null object — `{parse:[]}`
     // when the caller passed nothing or something invalid. So this is
     // unconditional rather than the dead ternary the first draft had.
@@ -1351,6 +1446,15 @@ export async function registerPluginRpcRoutes(
     if (!body.modal || typeof body.modal !== "object") {
       reply.code(400).send({ error: "modal required" });
       return;
+    }
+    {
+      const offender = findUnownedModalCustomId(ctx.pluginKey, body.modal);
+      if (offender !== null) {
+        reply.code(400).send({
+          error: `modal custom_id '${offender}' must use the kc:${ctx.pluginKey}: namespace`,
+        });
+        return;
+      }
     }
     try {
       // InteractionResponseType.Modal = 9. Discord's REST endpoint is

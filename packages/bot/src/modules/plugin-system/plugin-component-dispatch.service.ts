@@ -12,6 +12,7 @@ import {
   HostPolicyError,
 } from "../../utils/host-policy.js";
 import { buildOutboundSignatureHeaders } from "../../utils/hmac.js";
+import { findEnabledFeaturesByPluginGuild } from "../feature-toggle/models/plugin-guild-feature.model.js";
 
 /**
  * Inbound Discord *component* (button) interaction → plugin dispatcher.
@@ -111,6 +112,24 @@ export async function dispatchComponentToPlugin(
       })
       .catch(() => {});
     return true;
+  }
+  // Per-guild feature gate — once an admin disables every feature of
+  // this plugin in guild G, older buttons on existing messages must
+  // stop dispatching click events into the plugin.
+  if (interaction.guildId) {
+    const enabled = await findEnabledFeaturesByPluginGuild(
+      plugin.id,
+      interaction.guildId,
+    );
+    if (enabled.length === 0) {
+      await interaction
+        .reply({
+          content: "⚠ 此功能在本伺服器已停用。",
+          ephemeral: true,
+        })
+        .catch(() => {});
+      return true;
+    }
   }
   const manifest = parseManifest(plugin);
   if (!manifest) {
