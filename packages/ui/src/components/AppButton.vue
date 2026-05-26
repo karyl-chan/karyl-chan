@@ -70,8 +70,8 @@ withDefaults(defineProps<{
             />
         </slot>
 
-        <!-- 主要 label -->
-        <span class="app-btn-label"><slot /></span>
+        <!-- 主要 label — 略過時不渲染，避免 icon-only 按鈕產生多餘 gap -->
+        <span v-if="$slots.default" class="app-btn-label"><slot /></span>
 
         <!-- 右側 slot -->
         <slot name="trailing" />
