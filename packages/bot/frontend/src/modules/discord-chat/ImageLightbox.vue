@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from 'vue';
+import { computed, onMounted, onUnmounted, watch } from 'vue';
 import { Icon } from '@iconify/vue';
+import { useEscapeStack } from '@karyl-chan/ui';
 import { useLightboxStore } from './stores/lightboxStore';
 
 /**
@@ -19,11 +20,6 @@ const current = computed(() => store.images[store.index] ?? null);
 
 function onKey(event: KeyboardEvent) {
     if (!visible.value) return;
-    if (event.key === 'Escape') {
-        event.preventDefault();
-        store.close();
-        return;
-    }
     if (event.key === 'ArrowLeft') {
         event.preventDefault();
         store.prev();
@@ -37,6 +33,13 @@ function onKey(event: KeyboardEvent) {
 
 onMounted(() => window.addEventListener('keydown', onKey));
 onUnmounted(() => window.removeEventListener('keydown', onKey));
+
+const escapeStack = useEscapeStack();
+watch(visible, (v) => {
+    if (v) escapeStack.register(() => store.close());
+    else escapeStack.unregister();
+});
+onUnmounted(() => escapeStack.unregister());
 </script>
 
 <template>

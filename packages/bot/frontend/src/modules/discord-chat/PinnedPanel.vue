@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from 'vue';
 import { Icon } from '@iconify/vue';
+import { useEscapeStack } from '@karyl-chan/ui';
 import type { Message } from '../../libs/messages/types';
 
 /**
@@ -35,22 +36,16 @@ function onWindowDown(event: MouseEvent) {
     if ((event.target as HTMLElement | null)?.closest('[data-pins-trigger]')) return;
     emit('close');
 }
-function onWindowKey(event: KeyboardEvent) {
-    if (!props.visible) return;
-    if (event.key === 'Escape') {
-        event.preventDefault();
-        emit('close');
-    }
-}
 
-onMounted(() => {
-    window.addEventListener('mousedown', onWindowDown);
-    window.addEventListener('keydown', onWindowKey);
+onMounted(() => window.addEventListener('mousedown', onWindowDown));
+onUnmounted(() => window.removeEventListener('mousedown', onWindowDown));
+
+const escapeStack = useEscapeStack();
+watch(() => props.visible, (visible) => {
+    if (visible) escapeStack.register(() => emit('close'));
+    else escapeStack.unregister();
 });
-onUnmounted(() => {
-    window.removeEventListener('mousedown', onWindowDown);
-    window.removeEventListener('keydown', onWindowKey);
-});
+onUnmounted(() => escapeStack.unregister());
 
 // Reset scroll position to top when the panel opens — feels weird if
 // the previously-viewed scroll position lingers across openings on

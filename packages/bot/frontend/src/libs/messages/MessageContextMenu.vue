@@ -20,8 +20,7 @@ export interface ContextMenuAction {
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, toRef, watch } from 'vue';
 import { Icon } from '@iconify/vue';
-import { useBreakpoint } from '@karyl-chan/ui';
-import { useDrawer } from '@karyl-chan/ui';
+import { useBreakpoint, useDrawer, useEscapeStack } from '@karyl-chan/ui';
 
 const props = defineProps<{
     visible: boolean;
@@ -95,29 +94,26 @@ function onWindowDown(event: MouseEvent | PointerEvent) {
     if (rootRef.value && rootRef.value.contains(event.target as Node)) return;
     emit('close');
 }
-function onWindowKey(event: KeyboardEvent) {
-    if (!visibleRef.value) return;
-    // Drawer branch handles its own Escape via useDrawer's escape stack;
-    // here we only cover the desktop popover branch.
-    if (isMobile.value) return;
-    if (event.key === 'Escape') {
-        event.preventDefault();
-        emit('close');
-    }
-}
 
 onMounted(() => {
     window.addEventListener('mousedown', onWindowDown);
     window.addEventListener('contextmenu', onWindowDown, { capture: true });
-    window.addEventListener('keydown', onWindowKey);
 });
 onUnmounted(() => {
     window.removeEventListener('mousedown', onWindowDown);
     window.removeEventListener('contextmenu', onWindowDown, { capture: true } as EventListenerOptions);
-    window.removeEventListener('keydown', onWindowKey);
     resizeObserver?.disconnect();
     resizeObserver = null;
 });
+
+// Drawer branch handles its own Escape via useDrawer's escape stack;
+// the popover branch registers here so stacked overlays close LIFO.
+const escapeStack = useEscapeStack();
+watch(popoverVisible, (v) => {
+    if (v) escapeStack.register(() => emit('close'));
+    else escapeStack.unregister();
+});
+onUnmounted(() => escapeStack.unregister());
 
 const { backdropClass, panelClass, backdropTransition, panelTransition } = useDrawer({
     visible: drawerVisible,

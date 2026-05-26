@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { Icon } from '@iconify/vue';
 import { useI18n } from 'vue-i18n';
+import { useEscapeStack } from '@karyl-chan/ui';
 import { useDmStore } from '../modules/discord-chat/stores/dmStore';
 import { useGuildChannelStore } from '../modules/discord-chat/stores/guildChannelStore';
 import { useGuildListStore } from '../stores/guildListStore';
@@ -114,11 +115,6 @@ function go(item: Item) {
 }
 
 function onKeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape') {
-        event.preventDefault();
-        close();
-        return;
-    }
     if (event.key === 'ArrowDown') {
         event.preventDefault();
         const max = filtered.value.length;
@@ -140,27 +136,21 @@ function onKeydown(event: KeyboardEvent) {
     }
 }
 
+const escapeStack = useEscapeStack();
+onUnmounted(() => escapeStack.unregister());
+
 watch(() => props.visible, async (visible) => {
-    if (!visible) return;
+    if (!visible) {
+        escapeStack.unregister();
+        return;
+    }
+    escapeStack.register(() => close());
     query.value = '';
     activeIndex.value = 0;
     await hydrateLists();
     await nextTick();
     inputRef.value?.focus();
 });
-
-// Close on backdrop click is handled in the template; also wire up Esc
-// at window level so a focus-lost state still dismisses cleanly.
-function onWindowKey(event: KeyboardEvent) {
-    if (!props.visible) return;
-    if (event.key === 'Escape') {
-        event.preventDefault();
-        close();
-    }
-}
-
-onMounted(() => window.addEventListener('keydown', onWindowKey));
-onUnmounted(() => window.removeEventListener('keydown', onWindowKey));
 </script>
 
 <template>
