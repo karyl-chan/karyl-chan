@@ -781,11 +781,33 @@ function onInlineClose() {
 /* ── Section ─────────────────────────────────────────────────────
    Each section is a flex column so consecutive rows / grids stop
    touching each other (the old layout had multiple .row divs in the
-   same section without any vertical gap). */
+   same section without any vertical gap).
+   `align-items: flex-start` keeps bare triggers (AppButton / AppMenu's
+   button / AppPopover's button / the avatar trigger) sized to their
+   own content instead of being stretched to the full section width.
+   The layout containers below opt back into full width via
+   `align-self: stretch` so multi-item rows still wrap correctly. */
 section {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 0.7rem;
+}
+section > h2,
+section > p,
+section > .row,
+section > .form-grid,
+section > .toggle-grid,
+section > .badge-matrix,
+section > .pill-row,
+section > .item-card-list,
+section > .userlist,
+section > .card-row,
+section > .drag-bounds,
+section > .avatar-row,
+section > .avatar-popover-demo,
+section > .field {
+  align-self: stretch;
 }
 section h2 {
   margin: 0;
@@ -966,6 +988,11 @@ section h2 {
   gap: 0.6rem;
 }
 .avatar-trigger {
+  /* inline-flex + line-height: 0 — without these, the surrounding
+     button has baseline descender space below the avatar, which
+     stretches the round border into an oval when active. */
+  display: inline-flex;
+  line-height: 0;
   background: none;
   border: 2px solid transparent;
   border-radius: 50%;
