@@ -8,6 +8,7 @@ import type { GuildSummary } from '../../../api/guilds';
 import { useGuildListStore } from '../../../stores/guildListStore';
 import { DashboardLayout } from '../../../layouts';
 import { useApiError } from '../../../composables/use-api-error';
+import { AppButton } from '@karyl-chan/ui';
 import AccessDeniedView from '../../../components/AccessDeniedView.vue';
 import DiscordUserCardPopover from '../../../modules/discord-chat/DiscordUserCardPopover.vue';
 
@@ -238,16 +239,16 @@ const dmActivity = computed(() => systemStats.value?.dmActivity ?? []);
             <span v-if="lastUpdated" class="last-updated">
                 {{ $t('common.updated', { time: lastUpdated.toLocaleTimeString() }) }}
             </span>
-            <button
-                type="button"
-                class="refresh-btn"
-                :disabled="globalLoading"
+            <AppButton
+                variant="secondary"
+                size="sm"
+                icon="material-symbols:refresh-rounded"
+                :loading="globalLoading"
                 :aria-label="$t('common.refresh')"
                 @click="refresh"
             >
-                <span class="refresh-icon" :class="{ spinning: globalLoading }" aria-hidden="true">↻</span>
                 {{ $t('common.refresh') }}
-            </button>
+            </AppButton>
         </template>
 
         <!-- Global access denied (401/403 on protected routes) -->
@@ -328,47 +329,6 @@ const dmActivity = computed(() => systemStats.value?.dmActivity ?? []);
 .last-updated {
     color: var(--text-muted);
     font-size: 0.8rem;
-}
-
-.refresh-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35rem;
-    padding: 0.35rem 0.75rem;
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-sm);
-    background: var(--bg-surface);
-    color: var(--text);
-    cursor: pointer;
-    font-size: 0.85rem;
-    transition:
-        background var(--transition-fast) ease,
-        border-color var(--transition-fast) ease;
-}
-
-.refresh-btn:hover:not(:disabled) {
-    background: var(--bg-surface-hover);
-    border-color: var(--accent);
-}
-
-.refresh-btn:disabled {
-    opacity: 0.55;
-    cursor: default;
-}
-
-.refresh-icon {
-    font-size: 1rem;
-    line-height: 1;
-    display: inline-block;
-    transition: transform 0.5s ease;
-}
-
-.refresh-icon.spinning {
-    animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-    to { transform: rotate(360deg); }
 }
 
 /* ─── Layout: main sections stacked with gap ────────────────────── */

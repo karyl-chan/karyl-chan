@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { Icon } from '@iconify/vue';
 import { deletePlugin, listPlugins, type PluginRecord } from '../../../api/plugins';
 import PluginCard from './PluginCard.vue';
-import { AppConfirmDialog } from '@karyl-chan/ui';
+import { AppButton, AppConfirmDialog } from '@karyl-chan/ui';
 import AddPluginModal from './AddPluginModal.vue';
 
 const { t } = useI18n();
@@ -101,13 +101,21 @@ onMounted(load);
         <header class="page-head">
             <h1 class="title">{{ t('admin.plugins.title') }}</h1>
             <p class="subtitle">{{ t('admin.plugins.subtitle') }}</p>
-            <button type="button" class="add-plugin-btn" @click="addPluginModalOpen = true">
-                <Icon icon="material-symbols:add-circle-outline" width="16" height="16" />
+            <AppButton
+                variant="primary"
+                icon="material-symbols:add-circle-outline"
+                @click="addPluginModalOpen = true"
+            >
                 {{ t('admin.plugins.addPlugin.button') }}
-            </button>
-            <button type="button" class="ghost" @click="load" :disabled="loading" :title="t('common.refresh')">
-                <Icon icon="material-symbols:refresh" width="18" height="18" />
-            </button>
+            </AppButton>
+            <AppButton
+                variant="ghost"
+                icon="material-symbols:refresh"
+                :disabled="loading"
+                :title="t('common.refresh')"
+                :aria-label="t('common.refresh')"
+                @click="load"
+            />
         </header>
 
         <p v-if="loading && plugins.length === 0" class="muted">{{ t('common.loading') }}</p>
@@ -149,16 +157,16 @@ onMounted(load);
                         class="group-chevron"
                     />
                 </button>
-                <button
-                    type="button"
-                    class="delete-all-btn"
+                <AppButton
+                    variant="danger"
+                    size="sm"
+                    icon="material-symbols:delete-sweep-outline"
                     :disabled="deletingAll"
                     :title="t('admin.plugins.deleteAllOffline')"
                     @click="deleteAllModalOpen = true"
                 >
-                    <Icon icon="material-symbols:delete-sweep-outline" width="16" height="16" />
-                    <span>{{ t('admin.plugins.deleteAllOffline') }}</span>
-                </button>
+                    {{ t('admin.plugins.deleteAllOffline') }}
+                </AppButton>
             </div>
             <div v-if="offlineOpen" class="card-list">
                 <PluginCard
@@ -215,39 +223,6 @@ onMounted(load);
     flex: 1;
     min-width: 0;
 }
-.ghost {
-    background: none;
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 0.4rem;
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-}
-.ghost:hover { background: var(--bg-surface-hover); }
-.ghost:disabled { opacity: 0.55; cursor: not-allowed; }
-
-.add-plugin-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.3rem;
-    padding: 0.35rem 0.7rem;
-    font: inherit;
-    font-size: 0.82rem;
-    font-weight: 500;
-    border: 1px solid var(--accent);
-    border-radius: var(--radius-sm);
-    background: var(--accent-bg, color-mix(in srgb, var(--accent) 12%, transparent));
-    color: var(--accent);
-    cursor: pointer;
-    white-space: nowrap;
-    transition: background 0.1s, filter 0.1s;
-}
-.add-plugin-btn:hover {
-    background: color-mix(in srgb, var(--accent) 20%, transparent);
-}
-
 .muted { color: var(--text-muted); }
 .muted.empty {
     text-align: center;
@@ -295,25 +270,6 @@ onMounted(load);
 .group-toggle-btn:hover .group-label { color: var(--text); }
 .group-head-offline {
     justify-content: space-between;
-}
-.delete-all-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.3rem;
-    padding: 0.25rem 0.6rem;
-    font-size: 0.8rem;
-    border: 1px solid color-mix(in srgb, var(--danger, #dc2626) 35%, transparent);
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--danger, #dc2626) 8%, transparent);
-    color: var(--danger, #dc2626);
-    cursor: pointer;
-}
-.delete-all-btn:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--danger, #dc2626) 15%, transparent);
-}
-.delete-all-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
 }
 .group-dot {
     width: 8px;

@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { Icon } from '@iconify/vue';
 import { useI18n } from 'vue-i18n';
-import { AppBadge, AppTabs, AppToggle } from '@karyl-chan/ui';
+import { AppBadge, AppButton, AppTabs, AppToggle } from '@karyl-chan/ui';
 import type { GuildSummary } from '../../../api/guilds';
 import { useGuildListStore } from '../../../stores/guildListStore';
 import {
@@ -180,10 +180,15 @@ onMounted(refresh);
                     <div>
                         <h2>{{ $t('allServers.overviewTitle') }}</h2>
                     </div>
-                    <button type="button" class="btn ghost" :disabled="loading" @click="refresh">
-                        <Icon icon="material-symbols:refresh-rounded" />
+                    <AppButton
+                        variant="ghost"
+                        size="sm"
+                        icon="material-symbols:refresh-rounded"
+                        :loading="loading"
+                        @click="refresh"
+                    >
                         {{ $t('allServers.refresh') }}
-                    </button>
+                    </AppButton>
                 </header>
                 <p v-if="error" class="error">{{ error }}</p>
                 <p v-if="loading" class="muted">{{ $t('allServers.loading') }}</p>
@@ -230,10 +235,15 @@ onMounted(refresh);
                             {{ $t('allServers.botFeaturesDesc') }}
                         </p>
                     </div>
-                    <button type="button" class="btn ghost" :disabled="loading" @click="refresh">
-                        <Icon icon="material-symbols:refresh-rounded" />
+                    <AppButton
+                        variant="ghost"
+                        size="sm"
+                        icon="material-symbols:refresh-rounded"
+                        :loading="loading"
+                        @click="refresh"
+                    >
                         {{ $t('allServers.refresh') }}
-                    </button>
+                    </AppButton>
                 </header>
 
                 <p v-if="error" class="error">{{ error }}</p>
@@ -448,23 +458,4 @@ onMounted(refresh);
 .toggle-wrap { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; }
 .toggle-label { font-size: 0.78rem; color: var(--text-muted); }
 
-.btn {
-    display: inline-flex; align-items: center; gap: 0.35rem;
-    padding: 0.4rem 0.7rem;
-    border: 1px solid var(--border-strong);
-    background: var(--bg-surface);
-    color: var(--text);
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    font-size: 0.82rem;
-    /* Without flex-shrink:0 the button collapses when the sibling
-       description in `.page-header` is long — characters inside the
-       inline-flex layout get squeezed before whitespace, so the icon
-       and label overlap (`btn` looks "squashed"). */
-    flex-shrink: 0;
-    white-space: nowrap;
-}
-.btn:hover:not(:disabled) { background: var(--bg-surface-hover); }
-.btn:disabled { cursor: not-allowed; opacity: 0.55; }
-.btn.ghost { background: transparent; }
 </style>

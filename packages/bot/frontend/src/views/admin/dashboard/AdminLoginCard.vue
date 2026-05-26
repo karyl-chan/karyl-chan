@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { AppBadge } from '@karyl-chan/ui';
 import type { AdminLoginEntry } from '../../../api/types';
 import { useRelativeTime } from '../../../composables/use-relative-time';
 import { useUserSummaries } from '../../../composables/use-user-summaries';
@@ -96,11 +97,11 @@ function onAdminClick(userId: string, event: MouseEvent) {
                         <div class="admin-top">
                             <span class="admin-name">{{ displayName(admin.userId) }}</span>
                             <!-- Owner badge -->
-                            <span v-if="admin.isOwner" class="badge badge-owner">
+                            <AppBadge v-if="admin.isOwner" tone="accent" variant="outline" size="sm">
                                 {{ $t('dashboard.adminLogin.owner') }}
-                            </span>
+                            </AppBadge>
                             <!-- Role badge -->
-                            <span class="badge badge-role">{{ admin.role }}</span>
+                            <AppBadge size="sm">{{ admin.role }}</AppBadge>
                         </div>
 
                         <!-- Bottom line: last login + note -->
@@ -260,31 +261,6 @@ function onAdminClick(userId: string, event: MouseEvent) {
     overflow: hidden;
     text-overflow: ellipsis;
     max-width: 160px;
-}
-
-/* ─── Badges ─────────────────────────────────────────────────────── */
-.badge {
-    display: inline-flex;
-    align-items: center;
-    padding: 0.1rem 0.45rem;
-    border-radius: var(--radius-pill);
-    font-size: 0.68rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    line-height: 1.4;
-}
-
-.badge-owner {
-    background: var(--accent-bg);
-    color: var(--accent-text);
-    border: 1px solid var(--accent);
-}
-
-.badge-role {
-    background: var(--bg-surface-2);
-    color: var(--text-muted);
-    border: 1px solid var(--border);
 }
 
 /* ─── Meta ───────────────────────────────────────────────────────── */
