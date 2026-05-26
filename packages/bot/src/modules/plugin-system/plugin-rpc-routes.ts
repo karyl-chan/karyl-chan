@@ -37,6 +37,10 @@ import {
   findUnownedCustomId,
   findUnownedModalCustomId,
 } from "./plugin-component-ownership.js";
+import {
+  clearPluginDeferEphemeral,
+  readPluginDeferEphemeral,
+} from "./plugin-defer-state.js";
 
 /**
  * Strip dangerous `parse` entries from a plugin-supplied
@@ -1144,24 +1148,52 @@ export async function registerPluginRpcRoutes(
       reply.code(400).send({ error: `attachment error: ${m}` });
       return;
     }
-    // Public path: ephemeral explicitly === false. The deferred reply
-    // was ephemeral-locked at defer time, so we POST a new public
-    // follow-up with the real content, then dismiss the @original
-    // ephemeral placeholder so the user's "thinking…" message
-    // resolves rather than hanging until timeout.
-    const wantsPublic = body.ephemeral === false;
+    // Discord locks ephemerality at defer time. The dispatcher recorded
+    // which way it deferred (see plugin-defer-state.ts); we route the
+    // four cases of (defer, plugin-wanted) accordingly:
+    //
+    //   defer=E, want=E  → PATCH @original                    (happy)
+    //   defer=P, want=P  → PATCH @original                    (happy)
+    //   defer=E, want=P  → POST public follow-up + DELETE @original
+    //   defer=P, want=E  → POST ephemeral follow-up + DELETE @original
+    //
+    // DELETE on mismatch (instead of leaving a "↑ 已發送至頻道"
+    // placeholder) gives the user the same UX as a matched defer —
+    // the "thinking…" message just disappears and the channel/user
+    // sees only the actual reply.
+    //
+    // wantsEphemeral default: when the plugin doesn't send the flag
+    // explicitly, treat it as "match defer" — most callers will just
+    // omit ephemeral and inherit the manifest's default.
+    const wantsEphemeral =
+      body.ephemeral === undefined ? null : body.ephemeral !== false;
+    // Fallback ephemeral=true when the defer record is missing — that's
+    // the dispatcher's own default and matches the pre-redesign behavior.
+    const deferWasEphemeral =
+      readPluginDeferEphemeral(body.interaction_token) ?? true;
+    const effectiveEphemeral = wantsEphemeral ?? deferWasEphemeral;
+    const mismatch = effectiveEphemeral !== deferWasEphemeral;
     const extraFlags = sanitizePluginFlags(body.flags);
+
     try {
-      if (wantsPublic) {
-        const publicFlags = extraFlags || undefined;
-        await bot.rest.post(
-          Routes.webhook(bot.application.id, body.interaction_token),
+      if (!mismatch) {
+        // Happy path: PATCH @original. flags is read-only on edit so
+        // Ephemeral (set at defer) stays. Discord still honours
+        // SuppressEmbeds / SuppressNotifications when included here,
+        // which is what the plugin actually wants to set.
+        const editFlags = extraFlags || undefined;
+        await bot.rest.patch(
+          Routes.webhookMessage(
+            bot.application.id,
+            body.interaction_token,
+            "@original",
+          ),
           {
             body: {
               content,
               embeds,
               components,
-              flags: publicFlags,
+              flags: editFlags,
               allowed_mentions: { parse: [] },
             },
             ...(attachments.length > 0
@@ -1174,45 +1206,24 @@ export async function registerPluginRpcRoutes(
               : {}),
           },
         );
-        // Best-effort placeholder resolve — failure here is non-fatal
-        // (the public message already landed). content-only PATCH
-        // keeps the message ephemeral (flags read-only on edit).
-        await bot.rest
-          .patch(
-            Routes.webhookMessage(
-              bot.application.id,
-              body.interaction_token,
-              "@original",
-            ),
-            {
-              body: {
-                content: "↑ 已發送至頻道",
-                embeds: [],
-                components: [],
-                allowed_mentions: { parse: [] },
-              },
-            },
-          )
-          .catch(() => {});
+        clearPluginDeferEphemeral(body.interaction_token);
         return { ok: true };
       }
-      // Ephemeral path (default): PATCH @original. `flags` is read-only
-      // on edit so Ephemeral (set at defer) stays — but Discord still
-      // honours SuppressEmbeds / SuppressNotifications when included
-      // here, which is what the plugin actually wants to set.
-      const editFlags = extraFlags || undefined;
-      await bot.rest.patch(
-        Routes.webhookMessage(
-          bot.application.id,
-          body.interaction_token,
-          "@original",
-        ),
+
+      // Mismatch: POST follow-up with the desired ephemerality, then
+      // DELETE @original so the user sees a single message of the
+      // right kind. follow-up's `flags` field IS honoured (this is a
+      // brand-new message, not an edit), so Ephemeral works here.
+      const followupFlags =
+        (effectiveEphemeral ? MessageFlags.Ephemeral : 0) | extraFlags;
+      await bot.rest.post(
+        Routes.webhook(bot.application.id, body.interaction_token),
         {
           body: {
             content,
             embeds,
             components,
-            flags: editFlags,
+            flags: followupFlags || undefined,
             allowed_mentions: { parse: [] },
           },
           ...(attachments.length > 0
@@ -1225,6 +1236,19 @@ export async function registerPluginRpcRoutes(
             : {}),
         },
       );
+      // Best-effort delete — failure (5xx, race with token expiry) just
+      // leaves a stale "thinking…" placeholder until Discord times it
+      // out. The actual reply already landed.
+      await bot.rest
+        .delete(
+          Routes.webhookMessage(
+            bot.application.id,
+            body.interaction_token,
+            "@original",
+          ),
+        )
+        .catch(() => {});
+      clearPluginDeferEphemeral(body.interaction_token);
       return { ok: true };
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);

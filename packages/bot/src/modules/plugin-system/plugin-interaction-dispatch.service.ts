@@ -17,6 +17,7 @@ import {
   HostPolicyError,
 } from "../../utils/host-policy.js";
 import { buildOutboundSignatureHeaders } from "../../utils/hmac.js";
+import { recordPluginDeferEphemeral } from "./plugin-defer-state.js";
 
 /**
  * Inbound Discord interaction → plugin dispatcher.
@@ -131,13 +132,15 @@ async function dispatchChatInputCommand(
   // Look up the command's manifest entry to decide:
   //  (a) response_kind: "modal" → skip defer entirely (Discord rejects
   //      modal-after-defer); plugin will send_modal via RPC within 3 s.
-  //  (b) all other commands defer EPHEMERAL. Discord locks ephemerality
-  //      at defer time — a plugin that later wants a public reply uses
-  //      a followup with ephemeral=false. Deferring ephemeral by default
-  //      means a plugin that crashes mid-handler leaves a private
-  //      "thinking…" message instead of a public stuck one, and removes
-  //      a footgun where `default_ephemeral=false` would silently
-  //      downgrade subsequent ephemeral respond()s to public.
+  //  (b) all other commands defer with the manifest's declared
+  //      `default_ephemeral` (default true when unspecified).
+  //
+  // Discord locks ephemerality at defer time, so the bot has to commit
+  // before the plugin runs. Plugins that want the opposite of their
+  // declared default for a specific case can still flip via the
+  // `ephemeral` field on their CommandReply — the respond endpoint
+  // posts a follow-up of the desired ephemerality and DELETEs @original
+  // so the user only sees one message of the right kind.
   const cmdName = interaction.commandName;
   const allCmds = [
     ...(manifest.plugin_commands ?? []),
@@ -145,10 +148,12 @@ async function dispatchChatInputCommand(
   ];
   const cmdDef = allCmds.find((c) => c.name === cmdName);
   const responseKind = cmdDef?.response_kind ?? "deferred";
+  const defaultEphemeral = cmdDef?.default_ephemeral ?? true;
 
   if (responseKind !== "modal") {
     try {
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ ephemeral: defaultEphemeral });
+      recordPluginDeferEphemeral(interaction.token, defaultEphemeral);
     } catch (err) {
       // Already acknowledged or token expired — nothing else we can do.
       botEventLog.record(

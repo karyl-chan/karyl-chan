@@ -163,6 +163,24 @@ export interface MessageAttachment {
  * `components`, and `flags` — plugin code can build them via discord.js
  * `EmbedBuilder` / `ActionRowBuilder` or raw object literals, both work.
  *
+ * **Ephemeral semantics.** Discord locks ephemerality at defer time, so
+ * the bot has to decide ephemeral-vs-public BEFORE the handler runs.
+ * The bot reads `PluginCommandDefinition.defaultEphemeral` (default
+ * `true`) and defers accordingly. The handler's return value's
+ * `ephemeral` field then either:
+ *
+ *  - matches the defer → reply edits `@original` in place (clean, single
+ *    message of the chosen ephemerality);
+ *  - mismatches the defer → bot posts a follow-up of the desired
+ *    ephemerality and deletes `@original` so the user only sees the
+ *    new message (the "thinking…" briefly appears then vanishes).
+ *
+ * Plain strings and objects with `ephemeral` omitted inherit the
+ * command's `defaultEphemeral`, so a command marked
+ * `defaultEphemeral: true` (or unset → default `true`) can `return
+ * "pong"` and stay on the happy path. Public-by-default commands
+ * declare `defaultEphemeral: false` in `definePluginCommand`.
+ *
  * `flags` accepts the `MessageFlags` enum (e.g. `MessageFlags.Ephemeral`,
  * `MessageFlags.SuppressEmbeds`). The convenience `ephemeral: true`
  * still works and gets OR'd into the flag set.

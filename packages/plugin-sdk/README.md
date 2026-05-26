@@ -108,6 +108,17 @@ interface CommandContext {
 A handler returns a `CommandReply`: either a plain string (treated as
 `{ content }`) or an object `{ content?, embeds?, components?, ephemeral? }`.
 
+**Ephemeral semantics.** Discord locks ephemerality at defer time, so
+the bot decides ephemeral-vs-public BEFORE the handler runs by reading
+`definePluginCommand({ defaultEphemeral })` from the manifest (defaults
+to `true`). The handler's return value's `ephemeral` either matches
+that — clean `@original` edit, single message — or mismatches, in which
+case the bot posts a follow-up of the desired ephemerality and deletes
+`@original` so the user still sees a single message. Plain strings and
+objects with `ephemeral` omitted inherit the command's
+`defaultEphemeral`, so the most common pattern (`return "pong"` on a
+default-ephemeral command) stays on the happy path with no extra wiring.
+
 ## `publicBaseUrl` (bot-proxied WebUI base)
 
 When the bot has `WEB_BASE_URL` configured, it exposes every registered

@@ -90,6 +90,18 @@ export interface PluginCommandDefinition {
   contexts: InteractionContext[];
   options?: CommandOption[];
   defaultMemberPermissions?: string;
+  /**
+   * Whether the bot defers this command's reply as ephemeral.
+   * Defaults to `true` when omitted.
+   *
+   * The bot reads this at dispatch time and defers accordingly.
+   * Handlers that return a plain string or omit `ephemeral` on their
+   * return inherit this default — `defaultEphemeral: true` + `return
+   * "pong"` produces a clean ephemeral reply with no follow-up dance.
+   * Explicit `CommandReply.ephemeral` on a per-call basis still wins;
+   * on mismatch the bot posts a follow-up of the desired ephemerality
+   * and deletes `@original`.
+   */
   defaultEphemeral?: boolean;
   requiredCapability?: string;
   /**

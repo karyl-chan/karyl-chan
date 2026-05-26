@@ -86,6 +86,14 @@ export interface ManifestCommand {
   description: string;
   scope?: "guild" | "global";
   default_member_permissions?: string;
+  /**
+   * Whether the bot defers this command's reply as ephemeral.
+   * Defaults to `true` (private "thinking…" → private reply) when
+   * omitted. Set to `false` to defer publicly — the channel will see
+   * "thinking…" and the eventual reply. Plugin handlers can still flip
+   * per-call via `CommandReply.ephemeral`; on mismatch the bot posts a
+   * follow-up of the desired ephemerality and deletes `@original`.
+   */
   default_ephemeral?: boolean;
   required_capability?: string;
   dm_permission?: boolean;
@@ -122,6 +130,7 @@ export interface ManifestPluginCommand {
    * PermissionFlagsBits key 名稱字串，例如 "ManageGuild"。
    */
   default_member_permissions?: string;
+  /** See `ManifestCommand.default_ephemeral`. */
   default_ephemeral?: boolean;
   required_capability?: string;
   /** 同 ManifestCommand.response_kind — `"deferred"` (預設) 或 `"modal"`。 */

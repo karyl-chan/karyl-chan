@@ -228,8 +228,23 @@ function readOpts(payload: InteractionPayload): Record<string, unknown> {
   return out;
 }
 
-/** Normalize a CommandReply to its full field set. */
-function normalizeReply(reply: CommandReply): {
+/**
+ * Normalize a CommandReply to its full field set.
+ *
+ * `defaultEphemeral` is the per-command default declared in the
+ * manifest (`PluginCommandDefinition.defaultEphemeral`, mapped to
+ * `default_ephemeral` on the wire). The bot uses the same value to
+ * choose the defer ephemerality, so when the handler returns a plain
+ * string or omits `ephemeral`, the reply matches the defer and the
+ * bot stays on the happy "PATCH @original" path — no follow-up + DELETE
+ * dance. Explicit `ephemeral: true` / `ephemeral: false` on the reply
+ * still wins per call (the bot handles the mismatch by posting a
+ * follow-up of the right ephemerality and deleting @original).
+ */
+function normalizeReply(
+  reply: CommandReply,
+  defaultEphemeral: boolean,
+): {
   content: string | undefined;
   ephemeral: boolean;
   embeds: APIEmbed[] | undefined;
@@ -248,7 +263,7 @@ function normalizeReply(reply: CommandReply): {
   if (reply === null || reply === undefined) {
     return {
       content: undefined,
-      ephemeral: false,
+      ephemeral: defaultEphemeral,
       embeds: undefined,
       components: undefined,
       attachments: undefined,
@@ -258,7 +273,7 @@ function normalizeReply(reply: CommandReply): {
   if (typeof reply === "string") {
     return {
       content: reply,
-      ephemeral: false,
+      ephemeral: defaultEphemeral,
       embeds: undefined,
       components: undefined,
       attachments: undefined,
@@ -267,7 +282,7 @@ function normalizeReply(reply: CommandReply): {
   }
   return {
     content: reply.content,
-    ephemeral: reply.ephemeral ?? false,
+    ephemeral: reply.ephemeral ?? defaultEphemeral,
     embeds: reply.embeds,
     components: reply.components,
     attachments: reply.attachments,
@@ -319,11 +334,26 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
     {
       handler: PluginCommandDefinition["handler"];
       responseKind: "deferred" | "modal";
+      /**
+       * Per-command default for `CommandReply.ephemeral` when the
+       * handler returns a plain string or an object without explicit
+       * `ephemeral`. Matches the bot's defer choice (the bot also reads
+       * `default_ephemeral` from the manifest at dispatch time), so a
+       * matching command stays on the happy "PATCH @original" path
+       * without the plugin author having to wrap every return in
+       * `{ content, ephemeral: true }`. Defaults to `true` when
+       * omitted — same as the bot's defer default.
+       */
+      defaultEphemeral: boolean;
     }
   >(
     (opts.pluginCommands ?? []).map((cmd) => [
       cmd.name,
-      { handler: cmd.handler, responseKind: cmd.responseKind ?? "deferred" },
+      {
+        handler: cmd.handler,
+        responseKind: cmd.responseKind ?? "deferred",
+        defaultEphemeral: cmd.defaultEphemeral ?? true,
+      },
     ]),
   );
 
@@ -481,7 +511,11 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
         );
         return;
       }
-      const { handler, responseKind: commandResponseKind } = entry;
+      const {
+        handler,
+        responseKind: commandResponseKind,
+        defaultEphemeral: commandDefaultEphemeral,
+      } = entry;
 
       // (payload.member?.capabilities ?? []) is provably string[]
       // here — the outer ?? + Array.filter type-narrows cleanly. The
@@ -578,7 +612,7 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
           return;
         }
         const { content, ephemeral, embeds, components, attachments, flags } =
-          normalizeReply(rawReply);
+          normalizeReply(rawReply, commandDefaultEphemeral);
         await respondToInteraction(
           server.log,
           opts.botUrl,
@@ -831,7 +865,10 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
   // Bot POSTs to /modals/{modal_id} when a user submits a modal whose
   // custom_id is `kc:<thisPluginKey>:<modalId>[:<tail>]`. Bot has
   // already deferReply'd ephemerally; handler returns a reply to edit
-  // the deferred message (default ephemeral=true).
+  // the deferred message. Modal replies are ALWAYS ephemeral — see
+  // ModalReply doc in types.ts: Discord locks ephemerality at defer
+  // time and modals are unconditionally deferred ephemeral, so
+  // flipping `flags` here is silently ignored.
   server.post<{ Params: { modalId: string } }>(
     "/modals/:modalId",
     async (request, reply) => {
