@@ -288,11 +288,11 @@ async function confirmDelete() {
                                 {{ opt.label }}
                             </option>
                         </select>
-                        <input
+                        <AppToggle
                             v-else-if="field.type === 'boolean'"
-                            type="checkbox"
-                            :checked="configValues[field.key] === 'true'"
-                            @change="(e) => { configValues[field.key] = (e.target as HTMLInputElement).checked ? 'true' : 'false'; }"
+                            :modelValue="configValues[field.key] === 'true'"
+                            :aria-label="field.label || field.key"
+                            @update:modelValue="(v) => { configValues[field.key] = v ? 'true' : 'false'; }"
                         />
                         <input
                             v-else
@@ -453,7 +453,6 @@ async function confirmDelete() {
     font-size: 0.85rem;
     font-family: inherit;
 }
-.config-field input[type="checkbox"] { align-self: flex-start; margin-top: 0.2rem; }
 .config-actions {
     grid-column: 1 / -1;
     display: flex; justify-content: flex-end;
