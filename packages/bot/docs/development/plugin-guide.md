@@ -23,13 +23,14 @@ Admin pre-provisions a per-plugin setup secret:
 Plugin start:
    POST /api/plugins/register
      header  X-Plugin-Setup-Secret: <setupSecret>
-     body    { manifest }
+     body    { manifest }                       (manifest.sdk_version
+                                                  auto-stamped by the SDK)
    ← { plugin, token, dispatchHmacKey, sessionVerifyPublicKey,
-       heartbeat: { path, interval_seconds } }
+       publicBaseUrl?, heartbeat: { path, interval_seconds } }
 
 Every ~30 s the plugin pings:
    POST /api/plugins/heartbeat   header  Authorization: Bearer <token>
-   ← { ok: true, sessionVerifyPublicKey }      (carries the latest rotated public key)
+   ← { ok: true, sessionVerifyPublicKey, publicBaseUrl? }   (latest rotated values)
 
 401 (the bot has restarted and cleared its token cache) → the plugin re-registers.
 ```
@@ -92,8 +93,40 @@ returning empty or null leaves the message unchanged.
 
 ### Events
 
-The manifest's `events_subscribed` lists the events the plugin wants;
-the bot fan-outs each to the plugin's `/events`.
+The manifest's `events_subscribed_global` (auto-merged from the SDK's
+`eventHandlers` keys) plus per-feature `events_subscribed` lists the
+events the plugin wants; the bot fan-outs each to the plugin's
+`/events` endpoint. The SDK-side `definePlugin({ eventHandlers })`
+declares handlers by event type and the SDK mounts `/events`,
+verifies the HMAC, parses JSON, and dispatches — plugins do **not**
+roll their own `/events` route (pre-0.4 pattern). The bot ACKs by
+fire-and-forget; the plugin returns `204` immediately and runs the
+handler in the background.
+
+### Modal submit
+
+The plugin can open a Discord modal by declaring a command with
+`modal: true` and calling `ctx.sendModal(modal)` from its handler.
+On submit, the bot `deferReply`s ephemerally and POSTs the form
+data to the manifest's `endpoints.plugin_modal` (default
+`/modals/{modal_id}`). SDK side: `definePluginModal({ id, handler })`.
+
+### Lifecycle (guild feature toggle)
+
+When an admin enables or disables one of the plugin's guild features,
+the bot POSTs a synthetic event to the manifest's
+`endpoints.plugin_lifecycle` (default `/_kc/lifecycle`) — type
+`plugin.guild.enabled` or `plugin.guild.disabled`. SDK side:
+`onEnable(ctx, guildId)` and `onDisable(ctx, guildId)` hooks on the
+plugin config. The endpoint is HMAC-verified like the others and
+only mounted when at least one hook is declared.
+
+### Rich health probe
+
+The bot polls `endpoints.health` (default `/health/detail`) every
+60 seconds for a structured `HealthReport`. SDK side:
+`definePlugin({ healthCheck })`. When no producer is configured the
+SDK returns `{ status: "healthy" }` unconditionally.
 
 ## Plugin → Bot RPC
 
@@ -108,21 +141,38 @@ checks the scope (a call to a method not declared in the manifest returns
 403), so the plugin can only call what it has declared.
 
 Common methods (see `src/modules/plugin-system/plugin-rpc-routes.ts` for
-the full set; SDK side: `ctx.botRpc(path, body)`):
+the full set; SDK side: `ctx.discord.*` / `ctx.voice.*` typed facade,
+with `ctx.botRpc(path, body)` as escape hatch):
 
-- `interactions.respond` and `interactions.followup`.
-- `messages.send` (may include `components` — Discord v1 action rows).
+- `interactions.respond` and `interactions.followup`
+  (`ctx.discord.interactions.respond/followup`).
+- `messages.send` (may include `components` — Discord v1 action rows)
+  (`ctx.discord.messages.send`).
 - `messages.edit` (modify a message the bot has sent; `components: []`
-  clears the buttons).
-- `messages.delete`.
+  clears the buttons) (`ctx.discord.messages.edit`).
+- `messages.delete` (`ctx.discord.messages.delete`).
+- `messages.add_reaction` (`ctx.discord.messages.addReaction`).
 - `messages.send_dm`.
 - `voice.join`, `voice.play`, `voice.pause` (`{ guild_id, paused? }`;
-  omitting `paused` toggles), `voice.stop`, `voice.status`.
-- `auth.session` and KV access.
+  omitting `paused` toggles), `voice.stop`, `voice.status`, `voice.leave`
+  — all available as `ctx.voice.*`.
+- `members.get` (`ctx.discord.members.get`).
+- `auth.session` and KV access (no typed facade yet — use `ctx.botRpc`).
 
 `messages.send` and `messages.edit` are gated by the per-guild feature
 toggle: the plugin must have at least one enabled feature in the target
 channel's guild to send or edit messages there.
+
+### Failure handling — `BotRpcError` and retry
+
+Every `/api/plugin/*` call (via either the typed facade or
+`ctx.botRpc`) throws `BotRpcError` on failure with
+`reason: 'no_token' | 'network' | 'http_status'`. The SDK auto-retries
+on `503` / `429` / network errors up to 3 times with exponential
+backoff (200 ms base, 1.5 s cap, ±30% jitter; respects `Retry-After`).
+Other `5xx` and any `4xx` (other than `429`) are surfaced immediately
+because the bot may already have processed the request — plugins
+must not layer their own retry on top.
 
 ### WebUI authorisation (plugin-session token)
 
