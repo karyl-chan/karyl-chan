@@ -657,6 +657,14 @@ export async function registerPluginRoutes(
         // shared validator before persisting. Same 422 + fieldErrors
         // shape as the plugin-level PUT so the admin UI can render
         // both panels identically.
+        //
+        // The validator expects Record<string,string>. We build that
+        // shadow map for validation only — booleans / numbers from
+        // non-UI callers are stringified to "true" / "42" so the
+        // validator can range-/type-check them, but the stored shape
+        // preserves the caller's native type below so a JSON
+        // round-trip keeps `false` as `false` (not the truthy string
+        // "false") and `42` as a number (not "42").
         const stringValues: Record<string, string> = {};
         const earlyErrors: Array<{ key: string; message: string; code: string }> = [];
         for (const [key, raw] of Object.entries(incomingObj)) {
@@ -665,8 +673,6 @@ export async function registerPluginRoutes(
             continue;
           }
           if (typeof raw === "boolean" || typeof raw === "number") {
-            // Coerce primitives to string for the validator — historical
-            // callers may have sent booleans/numbers raw.
             stringValues[key] = String(raw);
             continue;
           }
@@ -697,26 +703,37 @@ export async function registerPluginRoutes(
         }
         const stored: Record<string, unknown> = {};
         const schemaByKey = new Map(featureSchema.map((f) => [f.key, f]));
-        for (const [key, raw] of Object.entries(stringValues)) {
+        for (const [key, sv] of Object.entries(stringValues)) {
           const field = schemaByKey.get(key);
           if (!field) {
             // unknown key — keep historical pass-through behaviour,
             // but never persist the literal secret sentinel: the bot
             // would otherwise store "********" for a key that used to
             // be a secret in an older schema version. Drop instead.
-            if (raw === "********") continue;
-            stored[key] = raw;
+            if (sv === "********") continue;
+            // Preserve the caller's native type so admin scripts that
+            // pass `{flag: false, n: 42}` survive a JSON round-trip.
+            const original = incomingObj[key];
+            stored[key] = original === undefined ? sv : original;
             continue;
           }
-          if (field.type === "secret" && raw === "********") {
+          if (field.type === "secret" && sv === "********") {
             // sentinel — skip; preserves existing stored value
             continue;
           }
-          if (field.type === "secret" && raw.length > 0) {
-            stored[field.key] = encryptSecret(raw);
-          } else {
-            stored[field.key] = raw;
+          if (field.type === "secret") {
+            stored[field.key] = sv.length > 0 ? encryptSecret(sv) : "";
+            continue;
           }
+          if (field.type === "boolean") {
+            stored[field.key] = sv === "true";
+            continue;
+          }
+          if (field.type === "number") {
+            stored[field.key] = sv.length === 0 ? null : Number(sv);
+            continue;
+          }
+          stored[field.key] = sv;
         }
         configJson = JSON.stringify(stored);
       }

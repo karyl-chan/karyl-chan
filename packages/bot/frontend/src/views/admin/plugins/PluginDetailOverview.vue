@@ -60,12 +60,26 @@ function clearFieldErrors(): void {
     for (const k of Object.keys(configFieldErrors)) delete configFieldErrors[k];
 }
 
+function resetConfigState(): void {
+    for (const k of Object.keys(configValues)) delete configValues[k];
+    configSchema.value = [];
+    clearFieldErrors();
+    configError.value = null;
+    configSavedAt.value = null;
+    configLoaded.value = false;
+}
+
 async function loadConfig() {
     if (configLoaded.value || configLoading.value) return;
     configLoading.value = true;
     configError.value = null;
+    // Capture the plugin id at load time. The user might switch to
+    // another plugin while the fetch is in flight; the late response
+    // must not splat A's values onto B's editor.
+    const requestedId = props.plugin.id;
     try {
-        const r = await getPluginConfig(props.plugin.id);
+        const r = await getPluginConfig(requestedId);
+        if (props.plugin.id !== requestedId) return;
         configSchema.value = r.schema;
         for (const v of r.values) {
             configValues[v.key] = v.value ?? '';
@@ -77,9 +91,12 @@ async function loadConfig() {
         }
         configLoaded.value = true;
     } catch (err) {
+        if (props.plugin.id !== requestedId) return;
         configError.value = err instanceof Error ? err.message : String(err);
     } finally {
-        configLoading.value = false;
+        if (props.plugin.id === requestedId) {
+            configLoading.value = false;
+        }
     }
 }
 
@@ -108,9 +125,18 @@ async function saveConfig() {
     }
 }
 
-watch(() => props.plugin.id, () => {
-    configLoaded.value = false;
-});
+watch(
+    () => props.plugin.id,
+    (id, oldId) => {
+        if (id === oldId) return;
+        // Plugin switched while this component stayed mounted (e.g.
+        // navigating between two plugin detail routes). Drop the
+        // previous plugin's reactive config map outright — otherwise a
+        // subsequent save would PUT plugin A's values into plugin B.
+        resetConfigState();
+        if (hasConfigSchema.value) void loadConfig();
+    },
+);
 
 onMounted(() => {
     if (hasConfigSchema.value) void loadConfig();
