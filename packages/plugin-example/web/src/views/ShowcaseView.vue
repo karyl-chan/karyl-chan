@@ -22,6 +22,8 @@ import {
   AppSelect,
   AppSelectField,
   AppTabs,
+  AppTextArea,
+  AppTextField,
   AppToggle,
   Draggable,
   UnreadPill,
@@ -81,6 +83,12 @@ const subTab = ref("a");
 const toggleA = ref(true);
 const toggleB = ref(false);
 const toggleSm = ref(true);
+
+// Text field demo
+const textName = ref("");
+const textNumber = ref("");
+const textArea = ref("Multi-line content goes here.");
+const textError = ref("oops");
 
 // Draggable demo — single draggable element constrained to its parent.
 const dragBoundsRef = ref<HTMLElement | null>(null);
@@ -301,6 +309,23 @@ function onInlineClose() {
           </li>
         </ul>
       </AppSelect>
+    </section>
+
+    <section>
+      <h2>AppTextField &amp; AppTextArea</h2>
+      <p class="hint">
+        Single-line + multi-line text inputs with the shared label /
+        hint / error chrome the admin pages were each re-rolling.
+        <code>fullWidth</code> makes the field span an entire row in a
+        parent <code>.grid</code>.
+      </p>
+      <div class="form-grid">
+        <AppTextField v-model="textName" label="Display name" placeholder="e.g. Karyl-chan" hint="Shown in greetings." />
+        <AppTextField v-model="textNumber" label="Port" type="number" placeholder="3000" />
+        <AppTextField v-model="textError" label="With error" :error="textError ? '' : 'Required'" />
+        <AppTextField :model-value="'sk_live_********'" label="Read-only" readonly muted />
+      </div>
+      <AppTextArea v-model="textArea" label="Description" :rows="3" hint="Wraps and grows; resize handle is vertical only." full-width />
     </section>
 
     <section>
@@ -584,6 +609,14 @@ section h2 {
 .field label {
   font-size: 0.8rem;
   color: var(--text-muted);
+}
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+@media (max-width: 540px) {
+  .form-grid { grid-template-columns: 1fr; }
 }
 
 .custom-list {
