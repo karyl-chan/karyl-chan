@@ -19,6 +19,8 @@ const props = withDefaults(defineProps<{
     maxlength?: number;
     fullWidth?: boolean;
     name?: string;
+    autofocus?: boolean;
+    required?: boolean;
 }>(), {
     label: '',
     hint: '',
@@ -28,7 +30,9 @@ const props = withDefaults(defineProps<{
     readonly: false,
     rows: 3,
     fullWidth: false,
-    name: ''
+    name: '',
+    autofocus: false,
+    required: false
 });
 
 const emit = defineEmits<{
@@ -64,6 +68,8 @@ const rootClass = computed(() => ({
             :rows="rows"
             :maxlength="maxlength"
             :name="name || undefined"
+            :autofocus="autofocus"
+            :required="required"
             @input="onInput"
             @blur="emit('blur', $event)"
             @focus="emit('focus', $event)"

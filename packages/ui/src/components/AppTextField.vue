@@ -1,4 +1,4 @@
-<script setup lang="ts" generic="V extends string | number | null">
+<script setup lang="ts" generic="V extends string | number | null | undefined">
 import { computed, useId } from 'vue';
 
 /**
@@ -34,6 +34,10 @@ const props = withDefaults(defineProps<{
     /** Tag attribute for the underlying input — useful for forms. */
     name?: string;
     autocomplete?: string;
+    /** Focus on mount (typical for the first field in a modal). */
+    autofocus?: boolean;
+    /** Native `required` for form validation. */
+    required?: boolean;
     /** Forwarded to the input. Useful for numeric IDs on mobile keyboards. */
     inputmode?: 'none' | 'text' | 'tel' | 'url' | 'email' | 'numeric' | 'decimal' | 'search';
     pattern?: string;
@@ -51,7 +55,9 @@ const props = withDefaults(defineProps<{
     muted: false,
     fullWidth: false,
     name: '',
-    autocomplete: 'off'
+    autocomplete: 'off',
+    autofocus: false,
+    required: false
 });
 
 const emit = defineEmits<{
@@ -88,6 +94,8 @@ const rootClass = computed(() => ({
             :maxlength="maxlength"
             :name="name || undefined"
             :autocomplete="autocomplete"
+            :autofocus="autofocus"
+            :required="required"
             :inputmode="inputmode"
             :pattern="pattern || undefined"
             :min="min"
