@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { AppBadge, AppMenu, AppMenuItem, AppSelectField, AppToggle, useConfirm } from '@karyl-chan/ui';
+import { AppBadge, AppItemCard, AppMenu, AppMenuItem, AppSelectField, AppToggle, useConfirm, type AccentBarTone } from '@karyl-chan/ui';
 import { Icon } from '@iconify/vue';
 import BehaviorSourceNotice from './BehaviorSourceNotice.vue';
 import {
@@ -242,10 +242,19 @@ const dirty = computed(() => {
 
 // ── toggle enabled ────────────────────────────────────────────────────────────
 
-function toggleOpen() {
-    open.value = !open.value;
-    emit('toggle', open.value);
+// AppItemCard owns the expanded state via v-model; this is the bridge
+// between its `update:expanded` and the parent BehaviorWorkspace, which
+// uses the `toggle` event to scroll-anchor on expand.
+function onExpandChange(next: boolean): void {
+    open.value = next;
+    emit('toggle', next);
 }
+
+// Map behaviour `source` (custom / system) to the AppItemCard
+// accent-stripe palette.
+const accentBarTone = computed<AccentBarTone | null>(() =>
+    props.behavior.source === 'custom' ? 'accent' : 'neutral'
+);
 
 async function onToggleEnabled() {
     // protected system keys（admin-login / break）由後端 403 攔，
@@ -395,128 +404,121 @@ const saveLabel = computed(() => {
 </script>
 
 <template>
-    <article :class="['card', `card--${behavior.source}`, { 'is-disabled': !enabledLocal }]">
-        <!-- source-bar 色條（左側 3px，D-ui §1.3） -->
-        <div :class="['source-bar', `source-bar--${behavior.source}`]" aria-hidden="true"></div>
+    <AppItemCard
+        :class="['behavior-card', `behavior-card--${behavior.source}`]"
+        :expanded="open"
+        :disabled="!enabledLocal"
+        :accent-bar="accentBarTone"
+        @update:expanded="onExpandChange"
+    >
+        <!-- drag-handle：custom 可拖曳，其他 locked -->
+        <template #leading>
+            <button
+                v-if="isCustom"
+                type="button"
+                class="drag-handle"
+                :title="t('behaviors.card.dragHint')"
+                :aria-label="t('behaviors.card.dragHint')"
+            >
+                <Icon icon="material-symbols:drag-indicator" width="18" height="18" />
+            </button>
+            <span
+                v-else
+                class="drag-handle drag-handle--locked"
+                :title="t('behaviors.card.systemRowLocked')"
+                aria-hidden="true"
+            >
+                <Icon icon="material-symbols:lock-outline" width="16" height="16" />
+            </span>
+        </template>
 
-        <div class="card-inner">
-            <!-- ─ card head ─────────────────────────────────────────────────── -->
-            <header class="card-head">
-                <!-- drag-handle：custom 可拖曳，其他 locked -->
-                <button
-                    v-if="isCustom"
-                    type="button"
-                    class="drag-handle"
-                    :title="t('behaviors.card.dragHint')"
-                    :aria-label="t('behaviors.card.dragHint')"
-                >
-                    <Icon icon="material-symbols:drag-indicator" width="18" height="18" />
-                </button>
-                <span
-                    v-else
-                    class="drag-handle drag-handle--locked"
-                    :title="t('behaviors.card.systemRowLocked')"
-                    aria-hidden="true"
-                >
-                    <Icon icon="material-symbols:lock-outline" width="16" height="16" />
-                </span>
+        <template #title>
+            <span class="title">{{ behavior.title }}</span>
+            <span class="trigger-summary">{{ triggerSummary }}</span>
+        </template>
 
-                <!-- expand toggle + title -->
-                <button
-                    type="button"
-                    class="title-btn"
-                    @click="toggleOpen"
-                    :aria-expanded="open"
-                >
-                    <Icon
-                        :icon="open ? 'material-symbols:expand-less-rounded' : 'material-symbols:expand-more-rounded'"
-                        width="18" height="18"
-                    />
-                    <span class="title">{{ behavior.title }}</span>
-                    <span class="trigger-summary">{{ triggerSummary }}</span>
-                </button>
+        <template #trailing>
+            <!-- trigger-badge pill -->
+            <AppBadge
+                size="sm"
+                :tone="behavior.triggerType === 'slash_command' ? 'accent' : 'neutral'"
+                :variant="behavior.triggerType === 'slash_command' ? 'outline' : 'soft'"
+                :icon="behavior.triggerType === 'slash_command' ? 'material-symbols:bolt-outline-rounded' : 'material-symbols:article-outline'"
+                :title="behavior.triggerType === 'slash_command' ? 'Slash 指令' : 'Message Pattern'"
+            >
+                {{ behavior.triggerType === 'slash_command' ? 'slash' : 'pattern' }}
+            </AppBadge>
 
-                <!-- trigger-badge pill -->
-                <AppBadge
-                    size="sm"
-                    :tone="behavior.triggerType === 'slash_command' ? 'accent' : 'neutral'"
-                    :variant="behavior.triggerType === 'slash_command' ? 'outline' : 'soft'"
-                    :icon="behavior.triggerType === 'slash_command' ? 'material-symbols:bolt-outline-rounded' : 'material-symbols:article-outline'"
-                    :title="behavior.triggerType === 'slash_command' ? 'Slash 指令' : 'Message Pattern'"
-                >
-                    {{ behavior.triggerType === 'slash_command' ? 'slash' : 'pattern' }}
-                </AppBadge>
+            <!-- source-badge（custom 不顯示，system 顯示鎖） -->
+            <AppBadge
+                v-if="isSystem"
+                size="sm"
+                tone="neutral"
+                icon="material-symbols:settings-outline"
+                :title="t('behaviors.card.tagSystem')"
+            >
+                {{ t('behaviors.card.tagSystemShort') }}
+            </AppBadge>
 
-                <!-- source-badge（custom 不顯示，system 顯示鎖） -->
-                <AppBadge
-                    v-if="isSystem"
-                    size="sm"
-                    tone="neutral"
-                    icon="material-symbols:settings-outline"
-                    :title="t('behaviors.card.tagSystem')"
-                >
-                    {{ t('behaviors.card.tagSystemShort') }}
-                </AppBadge>
+            <!-- 連續對話 tag -->
+            <AppBadge
+                v-if="behavior.forwardType === 'continuous'"
+                size="sm"
+                tone="accent"
+                icon="material-symbols:loop-rounded"
+                :title="t('behaviors.card.tagContinuous')"
+            >
+                {{ t('behaviors.card.tagContinuousShort') }}
+            </AppBadge>
 
-                <!-- 連續對話 tag -->
-                <AppBadge
-                    v-if="behavior.forwardType === 'continuous'"
-                    size="sm"
-                    tone="accent"
-                    icon="material-symbols:loop-rounded"
-                    :title="t('behaviors.card.tagContinuous')"
-                >
-                    {{ t('behaviors.card.tagContinuousShort') }}
-                </AppBadge>
+            <!-- stop-on-match tag — message_pattern 路徑硬寫 stop，欄位無語意，
+                 避免顯示誤導 admin。 -->
+            <AppBadge
+                v-if="behavior.stopOnMatch && behavior.triggerType !== 'message_pattern'"
+                size="sm"
+                tone="warn"
+                icon="material-symbols:stop-circle-outline-rounded"
+                :title="t('behaviors.card.tagStop')"
+            >
+                {{ t('behaviors.card.tagStopShort') }}
+            </AppBadge>
 
-                <!-- stop-on-match tag — message_pattern 路徑硬寫 stop，欄位無語意，
-                     避免顯示誤導 admin。 -->
-                <AppBadge
-                    v-if="behavior.stopOnMatch && behavior.triggerType !== 'message_pattern'"
-                    size="sm"
-                    tone="warn"
-                    icon="material-symbols:stop-circle-outline-rounded"
-                    :title="t('behaviors.card.tagStop')"
-                >
-                    {{ t('behaviors.card.tagStopShort') }}
-                </AppBadge>
+            <!-- toggle — system 也顯示，但 admin-login / break 鎖死（系統保護）。 -->
+            <AppToggle
+                :model-value="enabledLocal"
+                :title="
+                    isProtectedSystem
+                        ? t('behaviors.card.toggleProtected')
+                        : enabledLocal
+                            ? t('behaviors.card.toggleEnabled')
+                            : t('behaviors.card.toggleDisabled')
+                "
+                :aria-label="enabledLocal ? t('behaviors.card.toggleEnabled') : t('behaviors.card.toggleDisabled')"
+                :disabled="saving || isProtectedSystem"
+                @update:model-value="onToggleEnabled"
+            />
 
-                <!-- toggle — system 也顯示，但 admin-login / break 鎖死（系統保護）。 -->
-                <AppToggle
-                    :model-value="enabledLocal"
-                    :title="
-                        isProtectedSystem
-                            ? t('behaviors.card.toggleProtected')
-                            : enabledLocal
-                                ? t('behaviors.card.toggleEnabled')
-                                : t('behaviors.card.toggleDisabled')
-                    "
-                    :aria-label="enabledLocal ? t('behaviors.card.toggleEnabled') : t('behaviors.card.toggleDisabled')"
-                    :disabled="saving || isProtectedSystem"
-                    @update:model-value="onToggleEnabled"
-                />
+            <!-- 三點 menu（只 custom 有刪除） -->
+            <AppMenu v-if="isCustom" placement="bottom-end" :offset="[0, 6]">
+                <template #trigger>
+                    <button
+                        type="button"
+                        class="menu-trigger"
+                        :title="t('behaviors.card.moreActions')"
+                        :aria-label="t('behaviors.card.moreActions')"
+                    >
+                        <Icon icon="material-symbols:more-vert" width="18" height="18" />
+                    </button>
+                </template>
+                <AppMenuItem :disabled="saving" danger @click="onDelete">
+                    <Icon icon="material-symbols:delete-outline-rounded" width="16" height="16" />
+                    {{ t('common.delete') }}
+                </AppMenuItem>
+            </AppMenu>
+        </template>
 
-                <!-- 三點 menu（只 custom 有刪除） -->
-                <AppMenu v-if="isCustom" placement="bottom-end" :offset="[0, 6]">
-                    <template #trigger>
-                        <button
-                            type="button"
-                            class="menu-trigger"
-                            :title="t('behaviors.card.moreActions')"
-                            :aria-label="t('behaviors.card.moreActions')"
-                        >
-                            <Icon icon="material-symbols:more-vert" width="18" height="18" />
-                        </button>
-                    </template>
-                    <AppMenuItem :disabled="saving" danger @click="onDelete">
-                        <Icon icon="material-symbols:delete-outline-rounded" width="16" height="16" />
-                        {{ t('common.delete') }}
-                    </AppMenuItem>
-                </AppMenu>
-            </header>
-
-            <!-- ─ card body ─────────────────────────────────────────────────── -->
-            <div v-if="open" class="card-body">
+        <!-- ─ card body ─────────────────────────────────────────────────── -->
+        <template #default>
 
                 <!-- source notice banner（system） -->
                 <BehaviorSourceNotice v-if="isSystem" :source="behavior.source" />
@@ -689,51 +691,12 @@ const saveLabel = computed(() => {
                         {{ saving ? t('common.saving') : saveLabel }}
                     </button>
                 </footer>
-            </div>
-        </div>
-    </article>
+        </template>
+    </AppItemCard>
 </template>
 
 <style scoped>
-/* ── 卡片外層（含色條）────────────────────────────────────────── */
-.card {
-    display: flex;
-    flex-direction: row;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-base);
-    background: var(--bg-surface);
-    overflow: hidden;
-}
-.card.is-disabled .title { color: var(--text-muted); text-decoration: line-through; }
-
-/* 左側 3px source-bar（D-ui §1.3） */
-.source-bar {
-    width: 3px;
-    flex-shrink: 0;
-    border-radius: var(--radius-base) 0 0 var(--radius-base);
-}
-.source-bar--custom { background: var(--accent); }
-.source-bar--plugin { background: var(--source-plugin, #7c3aed); }
-.source-bar--system { background: var(--text-muted); }
-
-.card-inner {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-}
-
-/* ── card-head ───────────────────────────────────────────────── */
-.card-head {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.45rem 0.75rem 0.45rem 0.4rem;
-    background: var(--bg-page);
-    border-bottom: 1px solid transparent;
-}
-.card-head:has(+ .card-body) { border-bottom-color: var(--border); }
-
+/* ── drag-handle (left of AppItemCard's expand button) ─────────── */
 .drag-handle {
     background: none;
     border: none;
@@ -754,21 +717,7 @@ const saveLabel = computed(() => {
     flex-shrink: 0;
 }
 
-.title-btn {
-    flex: 1;
-    min-width: 0;
-    background: none;
-    border: none;
-    text-align: left;
-    cursor: pointer;
-    color: var(--text);
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    padding: 0.25rem 0.1rem;
-    overflow: hidden;
-}
-.title-btn:hover { color: var(--text-strong); }
+/* ── title row (inside AppItemCard's #title slot) ──────────────── */
 .title {
     font-weight: 600;
     color: var(--text-strong);
@@ -787,9 +736,7 @@ const saveLabel = computed(() => {
     min-width: 0;
 }
 
-/* ── toggle ──────────────────────────────────────────────────── */
-
-/* ── menu ────────────────────────────────────────────────────── */
+/* ── kebab menu trigger button ─────────────────────────────────── */
 .menu-trigger {
     flex-shrink: 0;
     background: none;
@@ -804,14 +751,6 @@ const saveLabel = computed(() => {
     justify-content: center;
 }
 .menu-trigger:hover { background: var(--bg-surface-hover); color: var(--text); }
-
-/* ── card-body ───────────────────────────────────────────────── */
-.card-body {
-    padding: 0.75rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.6rem;
-}
 
 /* ── grid ────────────────────────────────────────────────────── */
 .grid {
