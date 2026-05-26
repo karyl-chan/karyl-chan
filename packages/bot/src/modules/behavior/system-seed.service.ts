@@ -39,6 +39,10 @@ interface SystemBehaviorSeed {
 // self-heal block below migrates pre-existing rows from the old home.
 const SYSTEM_SCOPE_TAB_ID = FIXED_TAB_IDS.all_bot_dms;
 
+// sortOrder：受保護的 system behaviour（admin-login / break，不可停用）排前
+// 面，可調節的 manual 排後面。UI 端 workspace 直接照 sortOrder 渲染，沒有
+// 額外排序邏輯。Self-heal 在下方會把既存 row 的 sortOrder 拉回 seed 值，
+// 已部署環境 reboot 一次即同步。
 const SEEDS: SystemBehaviorSeed[] = [
   {
     systemKey: "admin-login",
@@ -50,21 +54,21 @@ const SEEDS: SystemBehaviorSeed[] = [
     sortOrder: -1000,
   },
   {
-    systemKey: "manual",
-    slashCommandName: "manual",
-    title: "查看可用行為列表",
-    description:
-      "私訊 bot `/manual`(或符合觸發條件)時,列出此使用者在私訊可用的所有 behaviors。系統行為,不可刪除或更換目標對象。",
-    slashCommandDescription: "查看你在私訊可用的行為列表",
-    sortOrder: -999,
-  },
-  {
     systemKey: "break",
     slashCommandName: "break",
     title: "結束持續轉發",
     description:
       "私訊 bot `/break`(或符合觸發條件)時,結束此使用者目前的持續轉發 session。系統行為,不可刪除或更換目標對象。",
     slashCommandDescription: "結束目前正在進行的持續轉發",
+    sortOrder: -999,
+  },
+  {
+    systemKey: "manual",
+    slashCommandName: "manual",
+    title: "查看可用行為列表",
+    description:
+      "私訊 bot `/manual`(或符合觸發條件)時,列出此使用者在私訊可用的所有 behaviors。系統行為,不可刪除或更換目標對象。",
+    slashCommandDescription: "查看你在私訊可用的行為列表",
     sortOrder: -998,
   },
 ];
@@ -123,33 +127,49 @@ export async function ensureSystemBehaviors(): Promise<{
       const currentIntegrationTypes = row.getDataValue(
         "integrationTypes",
       ) as string | null;
+      const currentSortOrder = row.getDataValue("sortOrder") as number;
       const needsMigrate = currentTabId === FIXED_TAB_IDS.all_dms;
       const needsRealign =
         currentTabId === SYSTEM_SCOPE_TAB_ID &&
         (currentContexts !== derived.contexts ||
           currentIntegrationTypes !== expectedIntegrationTypes);
-      if (needsMigrate || needsRealign) {
-        await row.update({
-          scopeTabId: SYSTEM_SCOPE_TAB_ID,
-          scope: derived.scope,
-          contexts: derived.contexts,
-          integrationTypes: expectedIntegrationTypes,
-          audienceKind: derived.audienceKind,
-          audienceUserId: derived.audienceUserId,
-          audienceGroupName: derived.audienceGroupName,
-          placementGuildId: derived.placementGuildId,
-          placementChannelId: derived.placementChannelId,
-        });
+      // System sortOrder 不對外開放（reorder endpoint 只受理 source='custom'），
+      // 所以 row 上的值只可能來自 seed 自身。Seed 改值時把既存 row 拉到一致。
+      const needsResort = currentSortOrder !== seed.sortOrder;
+      if (needsMigrate || needsRealign || needsResort) {
+        const update: Record<string, unknown> = {};
+        if (needsMigrate || needsRealign) {
+          update["scopeTabId"] = SYSTEM_SCOPE_TAB_ID;
+          update["scope"] = derived.scope;
+          update["contexts"] = derived.contexts;
+          update["integrationTypes"] = expectedIntegrationTypes;
+          update["audienceKind"] = derived.audienceKind;
+          update["audienceUserId"] = derived.audienceUserId;
+          update["audienceGroupName"] = derived.audienceGroupName;
+          update["placementGuildId"] = derived.placementGuildId;
+          update["placementChannelId"] = derived.placementChannelId;
+        }
+        if (needsResort) {
+          update["sortOrder"] = seed.sortOrder;
+        }
+        await row.update(update);
         botEventLog.record(
           "info",
           "bot",
-          `system-seed: self-heal ${seed.systemKey} tab=${currentTabId} → ${SYSTEM_SCOPE_TAB_ID}`,
+          `system-seed: self-heal ${seed.systemKey}` +
+            (needsMigrate || needsRealign
+              ? ` tab=${currentTabId} → ${SYSTEM_SCOPE_TAB_ID}`
+              : "") +
+            (needsResort
+              ? ` sortOrder=${currentSortOrder} → ${seed.sortOrder}`
+              : ""),
           {
             systemKey: seed.systemKey,
             before: {
               tabId: currentTabId,
               contexts: currentContexts,
               integrationTypes: currentIntegrationTypes,
+              sortOrder: currentSortOrder,
             },
           },
         );
