@@ -16,8 +16,6 @@ export interface PluginClientOptions {
   botUrl: string;
   setupSecret: string;
   manifest: PluginManifest;
-  /** Override the bot-suggested cadence (rarely needed). */
-  heartbeatIntervalMs?: number;
   logger?: Logger;
   /**
    * Called once, after the very first successful register. Receives no
@@ -120,10 +118,7 @@ export function startPluginClient(opts: PluginClientOptions): PluginClient {
       } else {
         publicBaseUrl = undefined;
       }
-      const intervalSec =
-        opts.heartbeatIntervalMs != null
-          ? Math.max(5_000, opts.heartbeatIntervalMs) / 1000
-          : (data.heartbeat?.interval_seconds ?? 30);
+      const intervalSec = data.heartbeat?.interval_seconds ?? 30;
       scheduleHeartbeat(intervalSec * 1000);
       log.info("registered with bot", {
         pluginKey: data.plugin?.pluginKey,

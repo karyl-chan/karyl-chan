@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.6.1](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.6.0...plugin-sdk-v0.6.1) (2026-05-26)
+
+
+### Code Cleanup
+
+* **plugin-sdk:** drop `GuildFeatureDefinition.overviewMetrics` and the matching manifest field. No real consumer ever declared it, the bot side never read it, and no admin UI surface displayed it — it was vestigial scaffolding from an early observability sketch.
+* **plugin-sdk:** drop `PluginClientOptions.heartbeatIntervalMs`. The bot's `/api/plugins/register` response already carries the canonical cadence; no plugin ever needed to override it.
+
+Both removals are non-breaking — the fields were optional and no callsite set them.
+
 ## [0.6.0](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.5.0...plugin-sdk-v0.6.0) (2026-05-26)
 
 

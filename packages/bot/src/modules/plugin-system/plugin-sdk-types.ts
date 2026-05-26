@@ -106,7 +106,6 @@ export interface ManifestGuildFeature {
   events_subscribed?: string[];
   config_schema?: ManifestConfigField[];
   surfaces?: string[];
-  overview_metrics?: Array<{ key: string; label: string; type: string }>;
   /**
    * Slash commands that belong to this guild_feature. They register
    * per-guild and are gated by the same per-guild toggle that

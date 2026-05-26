@@ -75,7 +75,6 @@ export interface ManifestGuildFeature {
   events_subscribed?: string[];
   config_schema?: ManifestConfigField[];
   surfaces?: string[];
-  overview_metrics?: Array<{ key: string; label: string; type: string }>;
   /** guild-scoped slash commands，隨 feature toggle 管理。 */
   commands?: ManifestCommand[];
 }

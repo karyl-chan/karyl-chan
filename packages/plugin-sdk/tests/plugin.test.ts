@@ -245,7 +245,7 @@ describe("PluginClient.getPublicBaseUrl()", () => {
     const client = startPluginClient({
       botUrl: "http://bot",
       setupSecret: "secret",
-      // No heartbeatIntervalMs override — let the server-returned 100 ms drive it.
+      // The server-returned 100 ms drives the heartbeat cadence.
       manifest: {
         plugin: { id: "test-plugin", name: "Test", version: "0.1.0", url: "http://test-plugin:3000" },
       },

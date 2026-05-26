@@ -156,7 +156,6 @@ export function buildManifest(
       ...(f.eventsSubscribed ? { events_subscribed: f.eventsSubscribed } : {}),
       ...(f.configSchema ? { config_schema: f.configSchema } : {}),
       ...(f.surfaces ? { surfaces: f.surfaces } : {}),
-      ...(f.overviewMetrics ? { overview_metrics: f.overviewMetrics } : {}),
       ...(f.commands && f.commands.length > 0
         ? {
             commands: f.commands.map(

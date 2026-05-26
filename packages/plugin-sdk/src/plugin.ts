@@ -255,7 +255,6 @@ export interface GuildFeatureDefinition {
   eventsSubscribed?: string[];
   configSchema?: ManifestConfigField[];
   surfaces?: string[];
-  overviewMetrics?: Array<{ key: string; label: string; type: string }>;
   /** This feature's guild-scoped slash commands (with handlers — see above). */
   commands?: PluginCommandDefinition[];
 }
