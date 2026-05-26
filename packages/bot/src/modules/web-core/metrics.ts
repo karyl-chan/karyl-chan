@@ -51,13 +51,29 @@ export const httpRequestDuration = new Histogram({
 });
 
 // Plugin event dispatch counter — counts every fanout from
-// plugin-event-bridge to a plugin endpoint. Labelled by event_type
-// only (plugin_id is unbounded as plugins can register / unregister
-// freely; would explode cardinality).
+// plugin-event-bridge to a plugin endpoint. Labels:
+//   - event_type: bounded by the manifest event set
+//   - outcome:    "ok" / "shed" / "breaker_open" / "connect_refused"
+//                  / "network" / "http_error"
+//   - plugin_id:  bounded by registered plugin count (typically ≤30)
+//   - shard_id:   reserved for Phase 0.1; pinned to "0" until sharding
+//                  is wired up
 export const pluginEventDispatchTotal = new Counter({
   name: "karyl_plugin_event_dispatch_total",
   help: "Plugin event dispatches fanned out from plugin-event-bridge",
-  labelNames: ["event_type", "outcome"] as const,
+  labelNames: ["event_type", "outcome", "plugin_id", "shard_id"] as const,
+  registers: [metricsRegistry],
+});
+
+// Plugin event dispatch latency — wall-clock time from postEventToPlugin
+// entry to outcome (success or failure). Buckets stretch to 30s to
+// cover the timeout ceiling + retry; the long tail is the most
+// interesting part operationally.
+export const pluginEventDispatchDuration = new Histogram({
+  name: "karyl_plugin_event_dispatch_duration_seconds",
+  help: "Wall-clock duration of plugin event dispatches",
+  labelNames: ["event_type", "plugin_id", "shard_id"] as const,
+  buckets: [0.005, 0.025, 0.1, 0.5, 1, 2.5, 5, 10, 30],
   registers: [metricsRegistry],
 });
 
@@ -165,3 +181,57 @@ export const pluginActiveCountGauge = new Gauge({
     }
   },
 });
+
+// Per-plugin dispatch pool stats (Phase 0.8). Read from the pool's
+// snapshot at scrape time so the gauge is always fresh and we don't
+// have to remember to .set() on every transition.
+export const pluginDispatchInFlightGauge = new Gauge({
+  name: "karyl_plugin_dispatch_in_flight",
+  help: "Concurrent in-flight bot→plugin dispatches per plugin",
+  labelNames: ["plugin_id", "shard_id"] as const,
+  registers: [metricsRegistry],
+  async collect() {
+    const snap = await getDispatchPoolSnapshotSafe();
+    this.reset();
+    for (const entry of snap) {
+      this.labels({ plugin_id: entry.pluginKey, shard_id: "0" }).set(
+        entry.inFlight,
+      );
+    }
+  },
+});
+
+export const pluginCircuitBreakerOpenGauge = new Gauge({
+  name: "karyl_plugin_circuit_breaker_open",
+  help: "1 when the per-plugin circuit breaker is open, 0 when closed",
+  labelNames: ["plugin_id", "shard_id"] as const,
+  registers: [metricsRegistry],
+  async collect() {
+    const snap = await getDispatchPoolSnapshotSafe();
+    this.reset();
+    for (const entry of snap) {
+      this.labels({ plugin_id: entry.pluginKey, shard_id: "0" }).set(
+        entry.breakerOpen ? 1 : 0,
+      );
+    }
+  },
+});
+
+/**
+ * Wrapper that defers the actual `getDispatchPoolSnapshot` import to
+ * call time so the metrics module loads without pulling the plugin-
+ * system tree at boot. The plugin-event-bridge module already imports
+ * metrics; importing it back would create a cycle.
+ */
+async function getDispatchPoolSnapshotSafe(): Promise<
+  Array<{ pluginKey: string; inFlight: number; breakerOpen: boolean }>
+> {
+  try {
+    const mod = await import(
+      "../plugin-system/plugin-event-bridge.service.js"
+    );
+    return mod.getDispatchPoolSnapshot();
+  } catch {
+    return [];
+  }
+}

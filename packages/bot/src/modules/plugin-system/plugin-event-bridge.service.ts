@@ -13,6 +13,10 @@ import {
 } from "../../utils/host-policy.js";
 import { buildOutboundSignatureHeaders } from "../../utils/hmac.js";
 import {
+  pluginEventDispatchDuration,
+  pluginEventDispatchTotal,
+} from "../web-core/metrics.js";
+import {
   PluginDispatchPool,
   DEFAULT_DISPATCH_POOL_OPTIONS,
 } from "./plugin-dispatch-pool.js";
@@ -190,12 +194,26 @@ async function postEventToPlugin(
     body,
   );
 
+  const startedAt = Date.now();
   const outcome = await dispatchPool.post(
     plugin.pluginKey,
     url,
     sigHeaders,
     body,
   );
+  const elapsedSeconds = (Date.now() - startedAt) / 1000;
+  // Phase 0.8: per-(plugin, event_type) latency + outcome counters.
+  // `shard_id` is reserved as "0" until Phase 0.1 wires real sharding.
+  pluginEventDispatchDuration.observe(
+    { event_type: eventType, plugin_id: plugin.pluginKey, shard_id: "0" },
+    elapsedSeconds,
+  );
+  pluginEventDispatchTotal.inc({
+    event_type: eventType,
+    outcome: outcome.ok ? "ok" : outcome.reason,
+    plugin_id: plugin.pluginKey,
+    shard_id: "0",
+  });
   if (outcome.ok) return;
   // Per (plugin, eventType, reason) dedup keeps a wedged plugin from
   // flooding the bot event log at message-traffic rate.
