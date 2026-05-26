@@ -188,6 +188,37 @@ export interface PluginConfigField {
   required?: boolean;
   default?: unknown;
   options?: Array<{ value: string; label: string }>;
+  // Workpack D constraint fields
+  min?: number;
+  max?: number;
+  step?: number;
+  pattern?: string;
+}
+
+/** Workpack D: per-field validation error returned from a 422 config save. */
+export interface FieldValidationError {
+  key: string;
+  message: string;
+  code:
+    | "required"
+    | "type_mismatch"
+    | "pattern"
+    | "range"
+    | "length"
+    | "unknown_key"
+    | "invalid_default"
+    | "invalid_pattern"
+    | "invalid_range";
+}
+
+/** Thrown by setPluginConfig on 422 — has parsed fieldErrors array. */
+export class ConfigValidationError extends Error {
+  fieldErrors: FieldValidationError[];
+  constructor(message: string, fieldErrors: FieldValidationError[]) {
+    super(message);
+    this.name = "ConfigValidationError";
+    this.fieldErrors = fieldErrors;
+  }
 }
 
 export interface PluginConfigValue {
@@ -218,6 +249,19 @@ export async function setPluginConfig(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ values }),
   });
+  // Workpack D: 422 carries `{ error, fieldErrors: FieldValidationError[] }`
+  // — surface it as a typed exception so the UI can render per-field
+  // markers instead of a single banner.
+  if (r.status === 422) {
+    const body = (await r.json().catch(() => null)) as {
+      error?: string;
+      fieldErrors?: FieldValidationError[];
+    } | null;
+    throw new ConfigValidationError(
+      body?.error ?? "Config validation failed",
+      body?.fieldErrors ?? [],
+    );
+  }
   return jsonOrThrow<{ accepted: string[]; skipped: string[] }>(r);
 }
 

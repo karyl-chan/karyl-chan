@@ -2,7 +2,14 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@iconify/vue';
-import { getPluginConfig, setPluginConfig, type PluginConfigField, type PluginDetailRecord } from '../../../api/plugins';
+import {
+    ConfigValidationError,
+    getPluginConfig,
+    setPluginConfig,
+    type FieldValidationError,
+    type PluginConfigField,
+    type PluginDetailRecord,
+} from '../../../api/plugins';
 import { safeHref } from '../../../libs/messages/safe-href';
 
 const props = defineProps<{
@@ -43,6 +50,15 @@ const configLoading = ref(false);
 const configSaving = ref(false);
 const configError = ref<string | null>(null);
 const configSavedAt = ref<number | null>(null);
+// Workpack D: per-field validation errors from the most recent save
+// attempt. Keyed by field key; populated from a 422 ConfigValidationError.
+const configFieldErrors = reactive<Record<string, string>>({});
+function fieldErrorFor(key: string): string | null {
+    return configFieldErrors[key] ?? null;
+}
+function clearFieldErrors(): void {
+    for (const k of Object.keys(configFieldErrors)) delete configFieldErrors[k];
+}
 
 async function loadConfig() {
     if (configLoaded.value || configLoading.value) return;
@@ -71,11 +87,22 @@ async function saveConfig() {
     if (configSaving.value) return;
     configSaving.value = true;
     configError.value = null;
+    clearFieldErrors();
     try {
         await setPluginConfig(props.plugin.id, { ...configValues });
         configSavedAt.value = Date.now();
     } catch (err) {
-        configError.value = err instanceof Error ? err.message : String(err);
+        if (err instanceof ConfigValidationError) {
+            for (const fe of err.fieldErrors) {
+                configFieldErrors[fe.key] = fe.message;
+            }
+            configError.value =
+                err.fieldErrors.length === 1
+                    ? `1 field has errors — correct it and save again.`
+                    : `${err.fieldErrors.length} fields have errors — correct them and save again.`;
+        } else {
+            configError.value = err instanceof Error ? err.message : String(err);
+        }
     } finally {
         configSaving.value = false;
     }
@@ -207,7 +234,10 @@ onMounted(() => {
                 <label
                     v-for="field in configSchema"
                     :key="field.key"
-                    :class="['config-field', { full: field.type === 'textarea' }]"
+                    :class="[
+                        'config-field',
+                        { full: field.type === 'textarea', 'has-error': fieldErrorFor(field.key) !== null },
+                    ]"
                 >
                     <span class="config-label">
                         {{ field.label }}
@@ -219,6 +249,7 @@ onMounted(() => {
                         v-model="configValues[field.key]"
                         rows="3"
                         spellcheck="false"
+                        :maxlength="field.max"
                     />
                     <select
                         v-else-if="field.type === 'select' && field.options"
@@ -242,7 +273,17 @@ onMounted(() => {
                         :placeholder="field.type === 'secret' ? '留空 = 不變更' : ''"
                         autocomplete="off"
                         spellcheck="false"
+                        :min="field.type === 'number' ? field.min : undefined"
+                        :max="field.type === 'number' ? field.max : undefined"
+                        :step="field.type === 'number' ? field.step : undefined"
+                        :maxlength="field.type !== 'number' ? field.max : undefined"
+                        :pattern="field.pattern"
                     />
+                    <span
+                        v-if="fieldErrorFor(field.key)"
+                        class="field-error"
+                        role="alert"
+                    >{{ fieldErrorFor(field.key) }}</span>
                 </label>
                 <div class="config-actions">
                     <button type="button" class="primary" :disabled="configSaving" @click="saveConfig">
@@ -346,6 +387,18 @@ onMounted(() => {
     color: var(--text);
     font-size: 0.85rem;
     font-family: inherit;
+}
+.config-field.has-error input[type="text"],
+.config-field.has-error input[type="number"],
+.config-field.has-error input[type="password"],
+.config-field.has-error textarea,
+.config-field.has-error select {
+    border-color: var(--danger);
+}
+.field-error {
+    color: var(--danger);
+    font-size: 0.78rem;
+    margin-top: 0.2rem;
 }
 .config-field input[type="checkbox"] { align-self: flex-start; margin-top: 0.2rem; }
 .config-actions {
