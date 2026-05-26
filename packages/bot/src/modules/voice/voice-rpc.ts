@@ -29,6 +29,7 @@ import {
   pausePlayback,
   stopPlayback,
   getStatus,
+  VoiceCapacityError,
 } from "./voice-manager.service.js";
 import { findPluginById } from "../plugin-system/models/plugin.model.js";
 import {
@@ -139,14 +140,27 @@ export async function registerVoiceRpcRoutes(
       reply.code(404).send({ error: "voice channel not found" });
       return;
     }
-    const status = await joinVoice({
-      guildId: body.guild_id,
-      channelId: channel.id,
-      adapterCreator: guild.voiceAdapterCreator,
-      selfDeaf: typeof body.self_deaf === "boolean" ? body.self_deaf : true,
-      selfMute: typeof body.self_mute === "boolean" ? body.self_mute : false,
-    });
-    return status;
+    try {
+      const status = await joinVoice({
+        guildId: body.guild_id,
+        channelId: channel.id,
+        adapterCreator: guild.voiceAdapterCreator,
+        selfDeaf: typeof body.self_deaf === "boolean" ? body.self_deaf : true,
+        selfMute: typeof body.self_mute === "boolean" ? body.self_mute : false,
+      });
+      return status;
+    } catch (err) {
+      // Phase 3.1 — voice capacity cap; surface as 429 so plugins
+      // (radio queue, voice-using plugins) can back off.
+      if (err instanceof VoiceCapacityError) {
+        reply.code(429).send({
+          error: "voice capacity reached",
+          message: err.message,
+        });
+        return;
+      }
+      throw err;
+    }
   });
 
   server.post<{ Body: { guild_id?: unknown } }>(

@@ -101,12 +101,43 @@ export interface JoinOptions {
  * the same channel, returns the existing state. If connected to a
  * different channel in the same guild, transparently moves.
  */
+/**
+ * Phase 3.1 — cap concurrent voice guild connections. Each
+ * connection allocates a `VoiceConnection` plus an ffmpeg child
+ * process on every `play()`; running unbounded at 2500-guild scale
+ * is the primary OOM risk. Reject new joins with a sentinel that
+ * the RPC layer translates to HTTP 429.
+ *
+ * Default 50 — comfortably above the radio plugin's typical
+ * concurrent guild count today, but a hard ceiling.
+ * Override with `MAX_CONCURRENT_VOICE_GUILDS=N`.
+ */
+const MAX_CONCURRENT_VOICE_GUILDS = Math.max(
+  1,
+  Number.parseInt(process.env.MAX_CONCURRENT_VOICE_GUILDS ?? "50", 10) || 50,
+);
+
+export class VoiceCapacityError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "VoiceCapacityError";
+  }
+}
+
 export async function joinVoice(opts: JoinOptions): Promise<VoiceStatus> {
   const { guildId, channelId, adapterCreator, selfDeaf, selfMute } = opts;
   log.info({ guildId, channelId, selfDeaf, selfMute }, "joinVoice called");
   const existing = states.get(guildId);
   if (existing && existing.channelId === channelId) {
     return getStatus(guildId);
+  }
+  // Phase 3.1: refuse new guilds when the cap is hit. Same-guild
+  // moves (existing != null) bypass the cap — the slot is already
+  // accounted for.
+  if (!existing && states.size >= MAX_CONCURRENT_VOICE_GUILDS) {
+    throw new VoiceCapacityError(
+      `concurrent voice guilds at cap (${MAX_CONCURRENT_VOICE_GUILDS})`,
+    );
   }
   if (existing) {
     // Move to a different channel in the same guild — destroy old,
