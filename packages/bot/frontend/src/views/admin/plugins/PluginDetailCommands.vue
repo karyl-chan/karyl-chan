@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@iconify/vue';
+import { AppToggle } from '@karyl-chan/ui';
 import { setPluginCommandEnabled, type PluginDetailRecord } from '../../../api/plugins';
 
 const props = defineProps<{
@@ -70,19 +71,17 @@ async function onToggle(id: number, current: boolean) {
                             {{ parseManifest(cmd.manifestJson).description as string }}
                         </p>
                     </div>
-                    <button
-                        type="button"
-                        role="switch"
-                        :class="['toggle', { on: cmd.adminEnabled }]"
-                        :aria-checked="cmd.adminEnabled ? 'true' : 'false'"
+                    <AppToggle
+                        :model-value="cmd.adminEnabled"
                         :disabled="savingIds.has(cmd.id)"
                         :title="cmd.adminEnabled
                             ? t('admin.plugins.detail.commands.toggleOff')
                             : t('admin.plugins.detail.commands.toggleOn')"
-                        @click="onToggle(cmd.id, cmd.adminEnabled)"
-                    >
-                        <span class="slider" aria-hidden="true" />
-                    </button>
+                        :aria-label="cmd.adminEnabled
+                            ? t('admin.plugins.detail.commands.toggleOff')
+                            : t('admin.plugins.detail.commands.toggleOn')"
+                        @update:model-value="onToggle(cmd.id, cmd.adminEnabled)"
+                    />
                 </div>
 
                 <!-- 三軸 read-only badges -->
@@ -196,40 +195,6 @@ async function onToggle(id: number, current: boolean) {
     color: var(--text-muted);
     line-height: 1.4;
 }
-
-/* Toggle switch */
-.toggle {
-    position: relative;
-    width: 32px;
-    height: 18px;
-    flex-shrink: 0;
-    cursor: pointer;
-    border: none;
-    padding: 0;
-    background: none;
-    margin-top: 0.1rem;
-}
-.toggle:disabled { cursor: not-allowed; opacity: 0.6; }
-.slider {
-    position: absolute;
-    inset: 0;
-    background: var(--border-strong);
-    border-radius: 999px;
-    transition: background 0.15s;
-}
-.slider::before {
-    content: '';
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 14px;
-    height: 14px;
-    background: var(--bg-surface);
-    border-radius: 50%;
-    transition: transform 0.15s;
-}
-.toggle.on .slider { background: var(--accent); }
-.toggle.on .slider::before { transform: translateX(14px); }
 
 .axes-row {
     display: flex;

@@ -1,11 +1,8 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useConfirm } from '@karyl-chan/ui';
+import { AppMenu, AppMenuItem, AppSelectField, AppToggle, useConfirm } from '@karyl-chan/ui';
 import { Icon } from '@iconify/vue';
-import { AppMenu } from '@karyl-chan/ui';
-import { AppMenuItem } from '@karyl-chan/ui';
-import { AppSelectField } from '@karyl-chan/ui';
 import BehaviorSourceNotice from './BehaviorSourceNotice.vue';
 import {
     type BehaviorRow,
@@ -483,10 +480,8 @@ const saveLabel = computed(() => {
                 </span>
 
                 <!-- toggle — system 也顯示，但 admin-login / break 鎖死（系統保護）。 -->
-                <button
-                    type="button"
-                    role="switch"
-                    :class="['toggle', { on: enabledLocal }]"
+                <AppToggle
+                    :model-value="enabledLocal"
                     :title="
                         isProtectedSystem
                             ? t('behaviors.card.toggleProtected')
@@ -494,12 +489,10 @@ const saveLabel = computed(() => {
                                 ? t('behaviors.card.toggleEnabled')
                                 : t('behaviors.card.toggleDisabled')
                     "
-                    :aria-checked="enabledLocal ? 'true' : 'false'"
+                    :aria-label="enabledLocal ? t('behaviors.card.toggleEnabled') : t('behaviors.card.toggleDisabled')"
                     :disabled="saving || isProtectedSystem"
-                    @click.stop="onToggleEnabled"
-                >
-                    <span class="slider" aria-hidden="true"></span>
-                </button>
+                    @update:model-value="onToggleEnabled"
+                />
 
                 <!-- 三點 menu（只 custom 有刪除） -->
                 <AppMenu v-if="isCustom" placement="bottom-end" :offset="[0, 6]">
@@ -812,37 +805,6 @@ const saveLabel = computed(() => {
 .tag-stop { background: var(--warn-bg); color: var(--warn-text); }
 
 /* ── toggle ──────────────────────────────────────────────────── */
-.toggle {
-    position: relative;
-    width: 32px;
-    height: 18px;
-    flex-shrink: 0;
-    cursor: pointer;
-    border: none;
-    padding: 0;
-    background: none;
-}
-.toggle:disabled { cursor: not-allowed; opacity: 0.6; }
-.slider {
-    position: absolute;
-    inset: 0;
-    background: var(--border-strong);
-    border-radius: 999px;
-    transition: background 0.15s;
-}
-.slider::before {
-    content: '';
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 14px;
-    height: 14px;
-    background: var(--bg-surface);
-    border-radius: 50%;
-    transition: transform 0.15s;
-}
-.toggle.on .slider { background: var(--accent); }
-.toggle.on .slider::before { transform: translateX(14px); }
 
 /* ── menu ────────────────────────────────────────────────────── */
 .menu-trigger {

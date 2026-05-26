@@ -3,8 +3,7 @@ import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@iconify/vue';
 import { RouterLink } from 'vue-router';
-import { AppConfirmDialog } from '@karyl-chan/ui';
-import { AppButton } from '@karyl-chan/ui';
+import { AppConfirmDialog, AppButton, AppToggle } from '@karyl-chan/ui';
 import {
     deletePlugin,
     getPluginConfig,
@@ -234,17 +233,13 @@ async function confirmDelete() {
             >
                 <Icon icon="material-symbols:open-in-new-rounded" width="15" height="15" />
             </RouterLink>
-            <button
-                type="button"
-                role="switch"
-                :class="['toggle', { on: enabledLocal }]"
+            <AppToggle
+                :model-value="enabledLocal"
                 :title="enabledLocal ? t('admin.plugins.toggleEnabled') : t('admin.plugins.toggleDisabled')"
-                :aria-checked="enabledLocal ? 'true' : 'false'"
+                :aria-label="enabledLocal ? t('admin.plugins.toggleEnabled') : t('admin.plugins.toggleDisabled')"
                 :disabled="saving"
-                @click.stop="onToggleEnabled"
-            >
-                <span class="slider" aria-hidden="true"></span>
-            </button>
+                @update:model-value="onToggleEnabled"
+            />
             <!-- Three-dot menu: only for inactive plugins -->
             <div v-if="plugin.status === 'inactive'" class="more-wrap">
                 <button
@@ -441,37 +436,6 @@ async function confirmDelete() {
     color: var(--text-muted);
     flex-shrink: 0;
 }
-.toggle {
-    position: relative;
-    width: 32px;
-    height: 18px;
-    flex-shrink: 0;
-    cursor: pointer;
-    border: none;
-    padding: 0;
-    background: none;
-}
-.toggle:disabled { cursor: not-allowed; opacity: 0.6; }
-.slider {
-    position: absolute;
-    inset: 0;
-    background: var(--border-strong);
-    border-radius: 999px;
-    transition: background 0.15s;
-}
-.slider::before {
-    content: '';
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 14px;
-    height: 14px;
-    background: var(--bg-surface);
-    border-radius: 50%;
-    transition: transform 0.15s;
-}
-.toggle.on .slider { background: var(--accent); }
-.toggle.on .slider::before { transform: translateX(14px); }
 
 .card-body {
     padding: 0.75rem;

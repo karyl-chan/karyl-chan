@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { Icon } from '@iconify/vue';
 import { useI18n } from 'vue-i18n';
+import { AppToggle } from '@karyl-chan/ui';
 import {
     listGuildFeatures,
     setGuildFeatureEnabled,
@@ -177,17 +178,13 @@ watch(() => props.guildId, refresh);
                                 </template>
                             </div>
                         </div>
-                        <button
-                            type="button"
-                            role="switch"
-                            :class="['toggle', { on: row.enabled }]"
-                            :aria-checked="row.enabled ? 'true' : 'false'"
+                        <AppToggle
+                            :model-value="row.enabled"
                             :disabled="busy.has(builtinRowKey(row.key))"
                             :title="row.enabled ? '停用此功能' : '啟用此功能'"
-                            @click="onToggleBuiltin(row)"
-                        >
-                            <span class="slider" aria-hidden="true"></span>
-                        </button>
+                            :aria-label="row.enabled ? '停用此功能' : '啟用此功能'"
+                            @update:model-value="onToggleBuiltin(row)"
+                        />
                     </li>
                 </ul>
             </section>
@@ -217,17 +214,13 @@ watch(() => props.guildId, refresh);
                                 ⚠ Plugin 目前 {{ !item.pluginEnabled ? '已停用' : '不在線' }};即使 toggle 開啟也不會收到事件。
                             </div>
                         </div>
-                        <button
-                            type="button"
-                            role="switch"
-                            :class="['toggle', { on: item.enabled }]"
-                            :aria-checked="item.enabled ? 'true' : 'false'"
+                        <AppToggle
+                            :model-value="item.enabled"
                             :disabled="busy.has(pluginKey(item)) || !item.pluginEnabled"
                             :title="item.enabled ? '停用此功能' : '啟用此功能'"
-                            @click="onTogglePlugin(item)"
-                        >
-                            <span class="slider" aria-hidden="true"></span>
-                        </button>
+                            :aria-label="item.enabled ? '停用此功能' : '啟用此功能'"
+                            @update:model-value="onTogglePlugin(item)"
+                        />
                     </li>
                 </ul>
             </section>
@@ -297,28 +290,7 @@ watch(() => props.guildId, refresh);
 }
 .feature-stats .dot { opacity: 0.4; }
 .plugin-tag { font-weight: 400; font-size: 0.78rem; }
-.toggle {
-    position: relative; width: 32px; height: 18px;
-    flex-shrink: 0; cursor: pointer; border: none; padding: 0; background: none;
-    margin-top: 0.15rem;
-}
-.toggle:disabled { cursor: not-allowed; opacity: 0.6; }
-.slider {
-    position: absolute; inset: 0;
-    background: var(--border-strong);
-    border-radius: 999px;
-    transition: background 0.15s;
-}
-.slider::before {
-    content: '';
-    position: absolute; top: 2px; left: 2px;
-    width: 14px; height: 14px;
-    background: var(--bg-surface);
-    border-radius: 50%;
-    transition: transform 0.15s;
-}
-.toggle.on .slider { background: var(--accent); }
-.toggle.on .slider::before { transform: translateX(14px); }
+.feature-row :deep(.app-toggle) { margin-top: 0.15rem; }
 .btn {
     display: inline-flex; align-items: center; gap: 0.35rem;
     padding: 0.4rem 0.7rem;

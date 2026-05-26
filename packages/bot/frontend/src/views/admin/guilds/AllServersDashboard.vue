@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { Icon } from '@iconify/vue';
 import { useI18n } from 'vue-i18n';
-import { AppTabs } from '@karyl-chan/ui';
+import { AppTabs, AppToggle } from '@karyl-chan/ui';
 import type { GuildSummary } from '../../../api/guilds';
 import { useGuildListStore } from '../../../stores/guildListStore';
 import {
@@ -265,16 +265,12 @@ onMounted(refresh);
                                 <div class="feature-controls">
                                     <label class="toggle-wrap">
                                         <span class="toggle-label">{{ item.state!.effectiveDefault ? $t('allServers.defaultEnabled') : $t('allServers.defaultDisabled') }}</span>
-                                        <button
-                                            type="button"
-                                            role="switch"
-                                            :class="['toggle', { on: item.state!.effectiveDefault }]"
-                                            :aria-checked="item.state!.effectiveDefault ? 'true' : 'false'"
+                                        <AppToggle
+                                            :model-value="item.state!.effectiveDefault"
                                             :disabled="busy.has(`builtin:${item.key}`)"
-                                            @click="onToggleBuiltinDefault(item.key, item.state!.effectiveDefault)"
-                                        >
-                                            <span class="slider" aria-hidden="true"></span>
-                                        </button>
+                                            :aria-label="item.state!.effectiveDefault ? $t('allServers.defaultEnabled') : $t('allServers.defaultDisabled')"
+                                            @update:model-value="onToggleBuiltinDefault(item.key, item.state!.effectiveDefault)"
+                                        />
                                     </label>
                                 </div>
                             </li>
@@ -326,16 +322,12 @@ onMounted(refresh);
                                     <div class="feature-controls">
                                         <label class="toggle-wrap">
                                             <span class="toggle-label">{{ item.effectiveDefault ? $t('allServers.defaultEnabled') : $t('allServers.defaultDisabled') }}</span>
-                                            <button
-                                                type="button"
-                                                role="switch"
-                                                :class="['toggle', { on: item.effectiveDefault }]"
-                                                :aria-checked="item.effectiveDefault ? 'true' : 'false'"
+                                            <AppToggle
+                                                :model-value="item.effectiveDefault"
                                                 :disabled="busy.has(`plugin:${pluginKey(item)}`)"
-                                                @click="onTogglePluginDefault(item)"
-                                            >
-                                                <span class="slider" aria-hidden="true"></span>
-                                            </button>
+                                                :aria-label="item.effectiveDefault ? $t('allServers.defaultEnabled') : $t('allServers.defaultDisabled')"
+                                                @update:model-value="onTogglePluginDefault(item)"
+                                            />
                                         </label>
                                     </div>
                                 </li>
@@ -464,27 +456,6 @@ onMounted(refresh);
 }
 .toggle-wrap { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; }
 .toggle-label { font-size: 0.78rem; color: var(--text-muted); }
-.toggle {
-    position: relative; width: 32px; height: 18px;
-    flex-shrink: 0; cursor: pointer; border: none; padding: 0; background: none;
-}
-.toggle:disabled { cursor: not-allowed; opacity: 0.6; }
-.slider {
-    position: absolute; inset: 0;
-    background: var(--border-strong);
-    border-radius: 999px;
-    transition: background 0.15s;
-}
-.slider::before {
-    content: '';
-    position: absolute; top: 2px; left: 2px;
-    width: 14px; height: 14px;
-    background: var(--bg-surface);
-    border-radius: 50%;
-    transition: transform 0.15s;
-}
-.toggle.on .slider { background: var(--accent); }
-.toggle.on .slider::before { transform: translateX(14px); }
 
 .btn {
     display: inline-flex; align-items: center; gap: 0.35rem;
