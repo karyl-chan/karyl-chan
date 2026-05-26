@@ -32,6 +32,8 @@ import {
   type VoiceStateStore,
   InProcessVoiceStateStore,
 } from "./voice-state-store.js";
+import { type SessionStore } from "./session-store.js";
+import { InProcessSessionStore } from "./in-process-session-store.js";
 
 interface AdapterCache {
   pluginMetricsStore?: PluginMetricsStore;
@@ -39,6 +41,7 @@ interface AdapterCache {
   distributedLock?: DistributedLock;
   rateLimitStoreFactory?: RateLimitStoreFactory;
   voiceStateStore?: VoiceStateStore;
+  sessionStore?: SessionStore;
 }
 
 const cache: AdapterCache = {};
@@ -99,6 +102,26 @@ export function getRateLimitStoreFactory(): RateLimitStoreFactory {
   return cache.rateLimitStoreFactory;
 }
 
+export function getSessionStore(): SessionStore {
+  if (cache.sessionStore) return cache.sessionStore;
+  const choice = envChoice("SESSION_STORE");
+  if (choice === "" || choice === "inprocess") {
+    cache.sessionStore = new InProcessSessionStore();
+  } else if (choice === "redis") {
+    // Dynamic require to avoid pulling ioredis into a process that
+    // never asks for Redis. Top-level import would always load the
+    // module at boot.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { RedisSessionStore } = require("./redis/session-store.js") as {
+      RedisSessionStore: new () => SessionStore;
+    };
+    cache.sessionStore = new RedisSessionStore();
+  } else {
+    unknownImpl("SESSION_STORE", choice);
+  }
+  return cache.sessionStore;
+}
+
 export function getVoiceStateStore(): VoiceStateStore {
   if (cache.voiceStateStore) return cache.voiceStateStore;
   const choice = envChoice("VOICE_STATE_STORE");
@@ -121,4 +144,5 @@ export function __resetAdaptersForTests(): void {
   cache.distributedLock = undefined;
   cache.rateLimitStoreFactory = undefined;
   cache.voiceStateStore = undefined;
+  cache.sessionStore = undefined;
 }

@@ -17,6 +17,7 @@ import { Client } from "discord.js";
 import { sequelize } from "./db.js";
 import { botEventsSequelize } from "./modules/bot-events/bot-events-db.js";
 import { getDistributedLock } from "./adapters/registry.js";
+import { closeRedisClient } from "./adapters/redis/client.js";
 import { config } from "./config.js";
 import { moduleLogger } from "./logger.js";
 import { startWebServer } from "./modules/web-core/server.js";
@@ -237,6 +238,9 @@ async function gracefulShutdown(signal: string): Promise<void> {
     await sequelize.close();
     // 5'. Close the bot_events DB (Phase 0.7) — independent file.
     await botEventsSequelize.close();
+    // 5''. Close the shared Redis client (Phase 1.1+) if one was
+    //      opened. Safe no-op when no adapter ever requested Redis.
+    await closeRedisClient();
     clearTimeout(timeout);
     log.info({ signal }, "graceful shutdown complete");
     process.exit(0);

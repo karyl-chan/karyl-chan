@@ -4,6 +4,7 @@ export type {
   IssuedTokens,
   SseTicket,
 } from "./session-store.js";
+export { InProcessSessionStore } from "./in-process-session-store.js";
 export {
   type PluginMetricsStore,
   type StoredMetricsSnapshot,
@@ -35,5 +36,6 @@ export {
   getDistributedLock,
   getRateLimitStoreFactory,
   getVoiceStateStore,
+  getSessionStore,
   __resetAdaptersForTests,
 } from "./registry.js";
