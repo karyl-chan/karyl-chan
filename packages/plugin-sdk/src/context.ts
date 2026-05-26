@@ -16,6 +16,8 @@
  * or a custom Fastify route without re-plumbing it everywhere.
  */
 import type { PluginManifest } from "./manifest.js";
+import type { Discord } from "./rpc/discord.js";
+import type { Voice } from "./rpc/voice.js";
 
 export interface PluginContext {
   /** Plugin key (matches `PluginConfig.key`). */
@@ -34,10 +36,21 @@ export interface PluginContext {
    * on failure with `reason: 'no_token' | 'network' | 'http_status'`
    * — wrap in try/catch and discriminate on `reason` to distinguish
    * "bot unreachable" from "bot rejected my request" from "plugin not
-   * yet registered". The previous `unknown | null` shape collapsed all
-   * failures into one indistinguishable null which made debugging hard.
+   * yet registered".
+   *
+   * Escape hatch for RPC methods not yet covered by `discord` / `voice`.
+   * Prefer the typed namespaces (Lockdown L-2) for messages, members,
+   * interactions, and voice — they survive future renames / batching /
+   * shard-aware routing transparently.
    */
   readonly botRpc: (path: string, body?: unknown) => Promise<unknown>;
+  /**
+   * Typed Discord RPC facade. `ctx.discord.messages.send({...})`,
+   * `ctx.discord.interactions.respond({...})`, etc. (Lockdown L-2.)
+   */
+  readonly discord: Discord;
+  /** Typed Voice RPC facade. `ctx.voice.play({ guildId, url })`, etc. */
+  readonly voice: Voice;
 }
 
 // ─── Logger ─────────────────────────────────────────────────────────────

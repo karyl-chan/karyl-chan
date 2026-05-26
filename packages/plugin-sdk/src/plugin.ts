@@ -812,6 +812,8 @@ export function definePlugin(config: PluginConfig): PluginInstance {
               }
               return callBotRpc(server.log, botUrl, token, path, body);
             };
+            const { createPluginRpc } = await import("./rpc/index.js");
+            const rpcFacade = createPluginRpc(pluginRpc);
             ctx = {
               pluginKey: config.key,
               manifest,
@@ -824,6 +826,8 @@ export function definePlugin(config: PluginConfig): PluginInstance {
               botEventLog: botEventEmitter,
               metrics: metricsCollector,
               botRpc: pluginRpc,
+              discord: rpcFacade.discord,
+              voice: rpcFacade.voice,
             };
             metricsCollector.start();
             botEventEmitter.start();

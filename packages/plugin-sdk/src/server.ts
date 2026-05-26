@@ -30,6 +30,7 @@ import type {
   APIEmbed,
 } from "./types.js";
 import type { HealthReport } from "./context.js";
+import { createPluginRpc } from "./rpc/index.js";
 
 export interface PluginServerOptions {
   pluginKey: string;
@@ -727,6 +728,9 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
       // doesn't accept a follow-up reply after a modal response).
       let modalSent = false;
 
+      const callRpc = (path: string, body?: unknown) =>
+        callBotRpc(server.log, opts.botUrl, token, path, body);
+      const rpc = createPluginRpc(callRpc);
       const ctx: CommandContext = {
         pluginKey: opts.pluginKey,
         commandName: payload.command_name,
@@ -749,8 +753,9 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
           warn: (msg, meta) => server.log.warn(meta ?? {}, msg),
           error: (msg, meta) => server.log.error(meta ?? {}, msg),
         },
-        botRpc: (path: string, body?: unknown) =>
-          callBotRpc(server.log, opts.botUrl, token, path, body),
+        botRpc: callRpc,
+        discord: rpc.discord,
+        voice: rpc.voice,
         async sendModal(modal: ModalData): Promise<boolean> {
           // The command must have declared `modal: true` in its
           // manifest so the bot skipped its defer. If it did defer,
@@ -924,6 +929,9 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
       const capabilities = (payload.member?.capabilities ?? []).filter(
         (c): c is string => typeof c === "string",
       );
+      const callRpc = (path: string, body?: unknown) =>
+        callBotRpc(server.log, opts.botUrl, token, path, body);
+      const rpc = createPluginRpc(callRpc);
       const ctx: ComponentContext = {
         pluginKey: opts.pluginKey,
         customId: payload.custom_id,
@@ -956,8 +964,9 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
           warn: (msg, meta) => server.log.warn(meta ?? {}, msg),
           error: (msg, meta) => server.log.error(meta ?? {}, msg),
         },
-        botRpc: (path: string, body?: unknown) =>
-          callBotRpc(server.log, opts.botUrl, token, path, body),
+        botRpc: callRpc,
+        discord: rpc.discord,
+        voice: rpc.voice,
       };
 
       try {
@@ -1139,6 +1148,9 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
           fields[c.custom_id] = c.value;
         }
       }
+      const callRpc = (path: string, body?: unknown) =>
+        callBotRpc(server.log, opts.botUrl, token, path, body);
+      const rpc = createPluginRpc(callRpc);
       const ctx: ModalContext = {
         pluginKey: opts.pluginKey,
         customId: payload.custom_id,
@@ -1161,8 +1173,9 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
           warn: (msg, meta) => server.log.warn(meta ?? {}, msg),
           error: (msg, meta) => server.log.error(meta ?? {}, msg),
         },
-        botRpc: (path: string, body?: unknown) =>
-          callBotRpc(server.log, opts.botUrl, token, path, body),
+        botRpc: callRpc,
+        discord: rpc.discord,
+        voice: rpc.voice,
       };
 
       try {

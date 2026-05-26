@@ -47,6 +47,9 @@ export type {
   ModalData,
   ModalReply,
   WebhookPayload,
+  // Typed RPC facade (Lockdown L-2)
+  Discord,
+  Voice,
   // discord-api-types primitives re-exported for plugin authors
   APIApplicationCommandOptionChoice,
   APIEmbed,
@@ -56,6 +59,27 @@ export type {
   APIModalInteractionResponseCallbackData,
   MessageFlags,
 } from "./types.js";
+
+// Typed RPC argument / return shapes — exported so plugin code can
+// type intermediate helpers (`function fooBar(): Promise<VoiceStatus>`).
+export type {
+  DiscordMessages,
+  DiscordMembers,
+  DiscordInteractions,
+  MessageSendArgs,
+  MessageEditArgs,
+  MessageDeleteArgs,
+  MessageAddReactionArgs,
+  MessageHandle,
+  MemberGetArgs,
+  MemberSummary,
+  InteractionRespondArgs,
+  InteractionFollowupArgs,
+  VoiceJoinArgs,
+  VoicePlayArgs,
+  VoicePauseArgs,
+  VoiceStatus,
+} from "./rpc/index.js";
 
 export { verifyWebhookToken } from "./webhook-token.js";
 
