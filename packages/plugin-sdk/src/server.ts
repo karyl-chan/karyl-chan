@@ -191,7 +191,48 @@ export class BotRpcError extends Error {
  * success. Throws `BotRpcError` on network failure or non-2xx status —
  * fire-and-forget callers must wrap in `.catch(() => {})` if they want
  * to swallow.
+ *
+ * Retry policy (Lockdown L-4): on a 503 / 429 / network failure we
+ * retry up to MAX_RPC_RETRIES times with exponential backoff + jitter,
+ * honouring a server-supplied `Retry-After` header when present. These
+ * three failure modes share the same invariant: the bot has NOT yet
+ * accepted the request body, so a retry is safe even for non-idempotent
+ * RPCs (messages.send, interactions.respond, …). Any other 5xx is
+ * surfaced immediately — once the bot has accepted the body we can't
+ * know whether the side effect happened, so we don't double-send.
+ *
+ * Total worst-case wall time on a fully degenerate path: ~3.5 s of
+ * sleeps on top of the 10 s per-attempt fetch timeout. Plugin code
+ * should NOT layer its own retry on top — that compounds.
  */
+const MAX_RPC_RETRIES = 3;
+const RETRY_BASE_MS = 200;
+const RETRY_MAX_MS = 1_500;
+
+function computeBackoffMs(
+  attempt: number,
+  retryAfterHeader: string | null,
+): number {
+  // `Retry-After` may be either delta-seconds or an HTTP date. We only
+  // honour the integer-seconds form — the date form is rare in practice
+  // and parsing it adds bytes for ~0 benefit on a private bot↔plugin
+  // RPC link.
+  if (retryAfterHeader) {
+    const sec = Number.parseInt(retryAfterHeader, 10);
+    if (Number.isFinite(sec) && sec > 0) {
+      return Math.min(sec * 1000, RETRY_MAX_MS);
+    }
+  }
+  const base = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** attempt);
+  // ±30% jitter — spreads simultaneous retries across plugins so a
+  // bot drain doesn't release a synchronized stampede.
+  return base + Math.floor(Math.random() * base * 0.3);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function callBotRpc(
   log: FastifyInstance["log"],
   botUrl: string,
@@ -199,36 +240,97 @@ export async function callBotRpc(
   path: string,
   body: unknown,
 ): Promise<unknown> {
-  let res: Response;
-  try {
-    res = await fetch(`${botUrl}${path}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(body ?? {}),
-      signal: AbortSignal.timeout(10_000),
-    });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log.error({ err, path }, "bot rpc call threw");
-    throw new BotRpcError("network", `bot rpc network error: ${msg}`);
-  }
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
+  const serialized = JSON.stringify(body ?? {});
+  let lastNetworkErr: unknown = null;
+  let lastHttpStatus = 0;
+  let lastHttpText = "";
+  let lastRetryAfter: string | null = null;
+
+  for (let attempt = 0; attempt <= MAX_RPC_RETRIES; attempt++) {
+    if (attempt > 0) {
+      const delay = computeBackoffMs(attempt - 1, lastRetryAfter);
+      log.debug(
+        { path, attempt, delay, lastStatus: lastHttpStatus || "network" },
+        "bot rpc retrying after transient failure",
+      );
+      await sleep(delay);
+    }
+
+    let res: Response;
+    try {
+      res = await fetch(`${botUrl}${path}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: serialized,
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch (err) {
+      // Network errors are retryable: the bot definitionally never
+      // received the body, so re-sending can't duplicate side effects.
+      lastNetworkErr = err;
+      lastHttpStatus = 0;
+      lastRetryAfter = null;
+      continue;
+    }
+
+    if (res.ok) {
+      if (res.status === 204) return {};
+      return await res.json().catch(() => ({}));
+    }
+
+    lastHttpStatus = res.status;
+    lastHttpText = await res.text().catch(() => "");
+    lastRetryAfter = res.headers.get("retry-after");
+
+    // 503 = graceful drain or bot-not-ready; 429 = rate limit. Both
+    // signal "bot rejected before processing" → safe to retry. Other
+    // statuses (4xx, 500, 502, 504) are NOT retried: we can't tell
+    // whether the side effect happened.
+    if (res.status === 503 || res.status === 429) {
+      continue;
+    }
+
     log.warn(
-      { path, status: res.status, body: text.slice(0, 200) },
+      { path, status: res.status, body: lastHttpText.slice(0, 200) },
       "bot rpc call failed",
     );
     throw new BotRpcError(
       "http_status",
-      `bot rpc HTTP ${res.status}: ${text.slice(0, 200)}`,
+      `bot rpc HTTP ${res.status}: ${lastHttpText.slice(0, 200)}`,
       res.status,
     );
   }
-  if (res.status === 204) return {};
-  return await res.json().catch(() => ({}));
+
+  // Out of retries. Surface whichever failure-mode we ended on.
+  if (lastHttpStatus > 0) {
+    log.warn(
+      {
+        path,
+        status: lastHttpStatus,
+        attempts: MAX_RPC_RETRIES + 1,
+        body: lastHttpText.slice(0, 200),
+      },
+      "bot rpc retries exhausted",
+    );
+    throw new BotRpcError(
+      "http_status",
+      `bot rpc HTTP ${lastHttpStatus} after ${MAX_RPC_RETRIES + 1} attempts: ${lastHttpText.slice(0, 200)}`,
+      lastHttpStatus,
+    );
+  }
+  const msg =
+    lastNetworkErr instanceof Error ? lastNetworkErr.message : String(lastNetworkErr);
+  log.error(
+    { err: lastNetworkErr, path, attempts: MAX_RPC_RETRIES + 1 },
+    "bot rpc network retries exhausted",
+  );
+  throw new BotRpcError(
+    "network",
+    `bot rpc network error after ${MAX_RPC_RETRIES + 1} attempts: ${msg}`,
+  );
 }
 
 async function respondToInteraction(
