@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { AppBadge, AppModal, useConfirm } from '@karyl-chan/ui';
+import { AppBadge, AppModal, AppTextField, useConfirm } from '@karyl-chan/ui';
 import {
     createGuildEmoji,
     createGuildSticker,
@@ -217,10 +217,13 @@ function onPickStickerFile(event: Event) {
 
     <AppModal :visible="emojiUploadOpen" :title="$t('emojiMgmt.uploadTitle')" width="min(420px, 92vw)" @close="emojiUploadOpen = false">
         <form class="modal-body" @submit.prevent="submitEmojiUpload">
-            <label class="field">
-                <span>{{ $t('emojiMgmt.fieldName') }}</span>
-                <input v-model="emojiUploadName" type="text" maxlength="32" autofocus required />
-            </label>
+            <AppTextField
+                v-model="emojiUploadName"
+                :label="$t('emojiMgmt.fieldName')"
+                :maxlength="32"
+                autofocus
+                required
+            />
             <label class="field">
                 <span>{{ $t('emojiMgmt.fieldFile') }}</span>
                 <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" @change="onPickEmojiFile" required />
@@ -239,18 +242,25 @@ function onPickStickerFile(event: Event) {
         @close="stickerModalOpen = false"
     >
         <form class="modal-body" @submit.prevent="submitStickerModal">
-            <label class="field">
-                <span>{{ $t('stickerMgmt.fieldName') }}</span>
-                <input v-model="stickerForm.name" type="text" maxlength="30" autofocus required />
-            </label>
-            <label class="field">
-                <span>{{ $t('stickerMgmt.fieldTags') }}</span>
-                <input v-model="stickerForm.tags" type="text" maxlength="200" required />
-            </label>
-            <label class="field">
-                <span>{{ $t('stickerMgmt.fieldDescription') }}</span>
-                <input v-model="stickerForm.description" type="text" maxlength="100" required />
-            </label>
+            <AppTextField
+                v-model="stickerForm.name"
+                :label="$t('stickerMgmt.fieldName')"
+                :maxlength="30"
+                autofocus
+                required
+            />
+            <AppTextField
+                v-model="stickerForm.tags"
+                :label="$t('stickerMgmt.fieldTags')"
+                :maxlength="200"
+                required
+            />
+            <AppTextField
+                v-model="stickerForm.description"
+                :label="$t('stickerMgmt.fieldDescription')"
+                :maxlength="100"
+                required
+            />
             <label v-if="!stickerEditing" class="field">
                 <span>{{ $t('stickerMgmt.fieldFile') }}</span>
                 <input type="file" accept="image/png,image/apng,application/json" @change="onPickStickerFile" required />

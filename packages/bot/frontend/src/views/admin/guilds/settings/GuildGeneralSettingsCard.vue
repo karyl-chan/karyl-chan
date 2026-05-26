@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue';
+import { AppTextArea, AppTextField } from '@karyl-chan/ui';
 import { useGuildSettings } from './use-guild-settings';
 import type { GuildSettings } from '../../../../api/guilds';
 
@@ -45,19 +46,18 @@ function save() {
                 <h3>{{ $t('guilds.settings.general') }}</h3>
                 <span v-if="savedFlash" class="saved-flash">{{ $t('guilds.settings.saved') }}</span>
             </header>
-            <label class="field">
-                <span>{{ $t('guilds.settings.name') }}</span>
-                <input v-model="draft.name" type="text" maxlength="100" />
-            </label>
-            <label class="field">
-                <span>{{ $t('guilds.settings.description') }}</span>
-                <textarea
-                    v-model="draft.description"
-                    rows="2"
-                    maxlength="120"
-                    :placeholder="$t('guilds.settings.descriptionPlaceholder')"
-                />
-            </label>
+            <AppTextField
+                v-model="draft.name"
+                :label="$t('guilds.settings.name')"
+                :maxlength="100"
+            />
+            <AppTextArea
+                v-model="draft.description"
+                :label="$t('guilds.settings.description')"
+                :rows="2"
+                :maxlength="120"
+                :placeholder="$t('guilds.settings.descriptionPlaceholder')"
+            />
             <p v-if="error" class="error">{{ $t('guilds.settings.saveFailed') }}: {{ error }}</p>
             <footer class="actions">
                 <button type="button" class="ghost" :disabled="!dirty || saving" @click="discard">

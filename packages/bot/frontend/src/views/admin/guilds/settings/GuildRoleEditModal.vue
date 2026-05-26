@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { AppModal } from '@karyl-chan/ui';
+import { AppModal, AppTextField } from '@karyl-chan/ui';
 import {
     createGuildRole,
     editGuildRole,
@@ -231,10 +231,14 @@ const totalSelected = computed(() => permissionFlags.value.size);
     <AppModal :visible="visible" :title="titleText" width="min(620px, 95vw)" @close="close">
         <form class="body" @submit.prevent="submit">
             <div class="row-fields">
-                <label class="field grow">
-                    <span>{{ $t('roleMgmt.fieldName') }}</span>
-                    <input v-model="name" type="text" maxlength="100" autofocus required />
-                </label>
+                <AppTextField
+                    class="grow"
+                    v-model="name"
+                    :label="$t('roleMgmt.fieldName')"
+                    :maxlength="100"
+                    autofocus
+                    required
+                />
                 <label class="field">
                     <span>{{ $t('roleMgmt.fieldColor') }}</span>
                     <input v-model="color" type="color" />
@@ -273,11 +277,13 @@ const totalSelected = computed(() => permissionFlags.value.size);
                     </ul>
                 </div>
 
-                <label class="field advanced">
-                    <span>{{ $t('roleMgmt.fieldPermissionsAdvanced') }}</span>
-                    <input v-model="advancedPermissions" type="text" :placeholder="$t('roleMgmt.permissionsBitfieldPlaceholder')" />
-                    <small class="muted">{{ $t('roleMgmt.advancedHint') }}</small>
-                </label>
+                <AppTextField
+                    class="advanced"
+                    v-model="advancedPermissions"
+                    :label="$t('roleMgmt.fieldPermissionsAdvanced')"
+                    :placeholder="$t('roleMgmt.permissionsBitfieldPlaceholder')"
+                    :hint="$t('roleMgmt.advancedHint')"
+                />
             </fieldset>
 
             <p v-if="error" class="error">{{ error }}</p>

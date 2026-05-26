@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { AppBadge, AppItemCard, AppMenu, AppMenuItem, AppSelectField, AppToggle, useConfirm, type AccentBarTone } from '@karyl-chan/ui';
+import { AppBadge, AppItemCard, AppMenu, AppMenuItem, AppSelectField, AppTextArea, AppTextField, AppToggle, useConfirm, type AccentBarTone } from '@karyl-chan/ui';
 import { Icon } from '@iconify/vue';
 import BehaviorSourceNotice from './BehaviorSourceNotice.vue';
 import {
@@ -526,14 +526,19 @@ const saveLabel = computed(() => {
                 <!-- ═══ source=custom：完全可編輯 ════════════════════════════ -->
                 <template v-if="isCustom">
                     <div class="grid">
-                        <label class="field full">
-                            <span class="label">{{ t('behaviors.card.title') }}</span>
-                            <input v-model="draft.title" type="text" maxlength="200" />
-                        </label>
-                        <label class="field full">
-                            <span class="label">{{ t('behaviors.card.description') }}</span>
-                            <textarea v-model="draft.description" rows="2" maxlength="2000" />
-                        </label>
+                        <AppTextField
+                            v-model="draft.title"
+                            :label="t('behaviors.card.title')"
+                            :maxlength="200"
+                            fullWidth
+                        />
+                        <AppTextArea
+                            v-model="draft.description"
+                            :label="t('behaviors.card.description')"
+                            :rows="2"
+                            :maxlength="2000"
+                            fullWidth
+                        />
 
                         <!-- trigger section -->
                         <div class="field">
@@ -542,14 +547,18 @@ const saveLabel = computed(() => {
                         </div>
 
                         <template v-if="draft.triggerType === 'slash_command'">
-                            <label class="field">
-                                <span class="label">{{ t('behaviors.card.slashCommandName') }}</span>
-                                <input v-model="draft.slashCommandName" type="text" maxlength="100" placeholder="指令名稱" />
-                            </label>
-                            <label class="field full">
-                                <span class="label">{{ t('behaviors.card.slashCommandDescription') }}</span>
-                                <input v-model="draft.slashCommandDescription" type="text" maxlength="200" />
-                            </label>
+                            <AppTextField
+                                v-model="draft.slashCommandName"
+                                :label="t('behaviors.card.slashCommandName')"
+                                :maxlength="100"
+                                placeholder="指令名稱"
+                            />
+                            <AppTextField
+                                v-model="draft.slashCommandDescription"
+                                :label="t('behaviors.card.slashCommandDescription')"
+                                :maxlength="200"
+                                fullWidth
+                            />
                         </template>
 
                         <template v-else>
@@ -557,10 +566,11 @@ const saveLabel = computed(() => {
                                 <span class="label">{{ t('behaviors.card.messagePatternKind') }}</span>
                                 <AppSelectField v-model="draft.messagePatternKind" :options="messagePatternKindOptions" />
                             </div>
-                            <label class="field">
-                                <span class="label">{{ t('behaviors.card.messagePatternValue') }}</span>
-                                <input v-model="draft.messagePatternValue" type="text" maxlength="2000" />
-                            </label>
+                            <AppTextField
+                                v-model="draft.messagePatternValue"
+                                :label="t('behaviors.card.messagePatternValue')"
+                                :maxlength="2000"
+                            />
                         </template>
 
                         <!-- 可安裝範圍 — 只有 global_all tab 可自選。其他
@@ -570,18 +580,14 @@ const saveLabel = computed(() => {
                             <span class="label">{{ t('behaviors.card.integrationTypes') }}</span>
                             <AppSelectField v-model="integrationMode" :options="integrationModeOptions" />
                         </div>
-                        <div v-else class="field">
-                            <span class="label">
-                                {{ t('behaviors.card.integrationTypes') }}
-                                <span class="hint">{{ t('behaviors.card.integrationTypesLocked') }}</span>
-                            </span>
-                            <input
-                                :value="integrationModeOptions.find((o) => o.value === integrationMode)?.label ?? ''"
-                                type="text"
-                                readonly
-                                class="readonly-input"
-                            />
-                        </div>
+                        <AppTextField
+                            v-else
+                            :modelValue="integrationModeOptions.find((o) => o.value === integrationMode)?.label ?? ''"
+                            :label="t('behaviors.card.integrationTypes')"
+                            :hint="t('behaviors.card.integrationTypesLocked')"
+                            readonly
+                            muted
+                        />
 
                         <!-- 轉發設定 -->
                         <div class="field">
@@ -590,29 +596,22 @@ const saveLabel = computed(() => {
                         </div>
 
                         <!-- webhook 設定 -->
-                        <label class="field full">
-                            <span class="label">{{ t('behaviors.card.webhookUrl') }}</span>
-                            <input
-                                v-model="draft.webhookUrl"
-                                type="text"
-                                placeholder="https://…"
-                                maxlength="1000"
-                            />
-                        </label>
-                        <label class="field full">
-                            <span class="label">
-                                {{ t('behaviors.card.webhookSecret') }}
-                                <span class="hint">{{ t('behaviors.card.webhookSecretHint') }}</span>
-                            </span>
-                            <input
-                                v-model="draft.webhookSecret"
-                                type="text"
-                                :placeholder="t('behaviors.card.webhookSecretPlaceholder')"
-                                maxlength="200"
-                                autocomplete="off"
-                                spellcheck="false"
-                            />
-                        </label>
+                        <AppTextField
+                            v-model="draft.webhookUrl"
+                            :label="t('behaviors.card.webhookUrl')"
+                            placeholder="https://…"
+                            :maxlength="1000"
+                            fullWidth
+                        />
+                        <AppTextField
+                            v-model="draft.webhookSecret"
+                            :label="t('behaviors.card.webhookSecret')"
+                            :hint="t('behaviors.card.webhookSecretHint')"
+                            :placeholder="t('behaviors.card.webhookSecretPlaceholder')"
+                            :maxlength="200"
+                            autocomplete="off"
+                            fullWidth
+                        />
 
                         <!-- webhookAuthMode（CR-2）：有 secret 時才顯示 -->
                         <div v-if="showAuthModeSelect" class="field">
@@ -636,13 +635,13 @@ const saveLabel = computed(() => {
                 <template v-else-if="isSystem">
                     <!-- 唯讀區 -->
                     <div class="grid readonly-grid">
-                        <label class="field full">
-                            <span class="label readonly-label">
-                                {{ t('behaviors.card.title') }}
-                                <Icon icon="material-symbols:lock-outline" width="12" height="12" aria-hidden="true" />
-                            </span>
-                            <input :value="behavior.title" type="text" readonly class="readonly-input" />
-                        </label>
+                        <AppTextField
+                            :modelValue="behavior.title"
+                            :label="t('behaviors.card.title')"
+                            readonly
+                            muted
+                            fullWidth
+                        />
                     </div>
 
                     <!-- 可編輯：trigger -->
@@ -654,24 +653,29 @@ const saveLabel = computed(() => {
                         </div>
 
                         <template v-if="draft.triggerType === 'slash_command'">
-                            <label class="field">
-                                <span class="label">{{ t('behaviors.card.slashCommandName') }}</span>
-                                <input v-model="draft.slashCommandName" type="text" maxlength="100" />
-                            </label>
-                            <label class="field full">
-                                <span class="label">{{ t('behaviors.card.slashCommandDescription') }}</span>
-                                <input v-model="draft.slashCommandDescription" type="text" maxlength="200" />
-                            </label>
+                            <AppTextField
+                                v-model="draft.slashCommandName"
+                                :label="t('behaviors.card.slashCommandName')"
+                                :maxlength="100"
+                            />
+                            <AppTextField
+                                v-model="draft.slashCommandDescription"
+                                :label="t('behaviors.card.slashCommandDescription')"
+                                :maxlength="200"
+                                fullWidth
+                            />
                         </template>
                         <template v-else>
                             <div class="field">
                                 <span class="label">{{ t('behaviors.card.messagePatternKind') }}</span>
                                 <AppSelectField v-model="draft.messagePatternKind" :options="messagePatternKindOptions" />
                             </div>
-                            <label class="field full">
-                                <span class="label">{{ t('behaviors.card.messagePatternValue') }}</span>
-                                <input v-model="draft.messagePatternValue" type="text" maxlength="2000" />
-                            </label>
+                            <AppTextField
+                                v-model="draft.messagePatternValue"
+                                :label="t('behaviors.card.messagePatternValue')"
+                                :maxlength="2000"
+                                fullWidth
+                            />
                         </template>
                     </div>
                 </template>
@@ -783,35 +787,12 @@ const saveLabel = computed(() => {
     font-weight: 400;
     color: var(--text-faint, var(--text-muted));
 }
-.field input,
-.field textarea,
-.field select {
-    padding: 0.45rem 0.6rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: var(--bg-surface);
-    color: var(--text);
-    font: inherit;
-    width: 100%;
-    box-sizing: border-box;
-}
-.field textarea { resize: vertical; min-height: 2.5rem; font-family: inherit; }
-.field input:focus,
-.field textarea:focus,
-.field select:focus { outline: none; border-color: var(--accent); }
-
 /* ── 唯讀區 ──────────────────────────────────────────────────── */
 .readonly-grid {
     background: var(--bg-page);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     padding: 0.6rem;
-}
-.readonly-label { color: var(--text-faint, var(--text-muted)); }
-.readonly-input {
-    background: var(--bg-page) !important;
-    color: var(--text-muted) !important;
-    cursor: default;
 }
 
 /* ── section divider ─────────────────────────────────────────── */

@@ -5,7 +5,7 @@ import {
     upsertRconForward,
     type GuildDetail
 } from '../../../api/guilds';
-import { AppBadge, AppSelectField } from '@karyl-chan/ui';
+import { AppBadge, AppSelectField, AppTextField } from '@karyl-chan/ui';
 import { useBotFeatureCard } from '../_shared/use-bot-feature-card';
 import { useChannelPicker } from '../_shared/use-feature-pickers';
 
@@ -64,11 +64,11 @@ async function rmRcon(channelId: string) {
                 :drawer-title="$t('guilds.feature.rconTitle')"
             />
             <div class="grid-2">
-                <input v-model="rconHost" type="text" :placeholder="$t('guilds.feature.host')" />
-                <input v-model="rconPort" type="number" :placeholder="$t('guilds.feature.port')" />
-                <input v-model="rconPassword" type="password" :placeholder="$t('guilds.feature.password')" />
-                <input v-model="rconCmdPrefix" type="text" :placeholder="$t('guilds.feature.commandPrefix')" />
-                <input v-model="rconTriggerPrefix" type="text" :placeholder="$t('guilds.feature.triggerPrefix')" />
+                <AppTextField v-model="rconHost" :placeholder="$t('guilds.feature.host')" />
+                <AppTextField v-model="rconPort" type="number" :placeholder="$t('guilds.feature.port')" />
+                <AppTextField v-model="rconPassword" type="password" :placeholder="$t('guilds.feature.password')" />
+                <AppTextField v-model="rconCmdPrefix" :placeholder="$t('guilds.feature.commandPrefix')" />
+                <AppTextField v-model="rconTriggerPrefix" :placeholder="$t('guilds.feature.triggerPrefix')" />
             </div>
             <button type="button" class="primary submit" :disabled="!rconChannel" @click="saveRcon">
                 {{ $t('guilds.feature.saveBtn') }}

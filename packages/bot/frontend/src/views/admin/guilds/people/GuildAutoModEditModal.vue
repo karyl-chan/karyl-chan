@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { AppModal } from '@karyl-chan/ui';
-import { AppSelectField, type SelectOption } from '@karyl-chan/ui';
+import { AppModal, AppSelectField, AppTextArea, AppTextField, type SelectOption } from '@karyl-chan/ui';
 import type { AutoModRule, AutoModRulePayload } from '../../../../api/guilds';
 
 const props = defineProps<{
@@ -182,10 +181,12 @@ async function submit() {
         @close="$emit('close')"
     >
         <form class="body" @submit.prevent="submit">
-            <label class="field">
-                <span>{{ $t('guilds.automod.fieldName') }}</span>
-                <input v-model="draft.name" type="text" maxlength="100" autofocus />
-            </label>
+            <AppTextField
+                v-model="draft.name"
+                :label="$t('guilds.automod.fieldName')"
+                :maxlength="100"
+                autofocus
+            />
 
             <label class="field">
                 <span>{{ $t('guilds.automod.fieldTriggerType') }}</span>
@@ -199,19 +200,21 @@ async function submit() {
             </label>
 
             <template v-if="draft.triggerType === 1 || draft.triggerType === 6">
-                <label class="field">
-                    <span>{{ $t('guilds.automod.fieldKeywords') }}</span>
-                    <input v-model="draft.keywords" type="text" />
-                    <small class="hint">{{ $t('guilds.automod.fieldKeywordsHint') }}</small>
-                </label>
-                <label v-if="draft.triggerType === 1" class="field">
-                    <span>{{ $t('guilds.automod.fieldRegex') }}</span>
-                    <textarea v-model="draft.regex" rows="3"></textarea>
-                </label>
-                <label class="field">
-                    <span>{{ $t('guilds.automod.fieldAllowList') }}</span>
-                    <input v-model="draft.allowList" type="text" />
-                </label>
+                <AppTextField
+                    v-model="draft.keywords"
+                    :label="$t('guilds.automod.fieldKeywords')"
+                    :hint="$t('guilds.automod.fieldKeywordsHint')"
+                />
+                <AppTextArea
+                    v-if="draft.triggerType === 1"
+                    v-model="draft.regex"
+                    :label="$t('guilds.automod.fieldRegex')"
+                    :rows="3"
+                />
+                <AppTextField
+                    v-model="draft.allowList"
+                    :label="$t('guilds.automod.fieldAllowList')"
+                />
             </template>
 
             <template v-if="draft.triggerType === 4">
@@ -226,17 +229,20 @@ async function submit() {
                         {{ $t('guilds.automod.preset.' + p) }}
                     </label>
                 </fieldset>
-                <label class="field">
-                    <span>{{ $t('guilds.automod.fieldAllowList') }}</span>
-                    <input v-model="draft.allowList" type="text" />
-                </label>
+                <AppTextField
+                    v-model="draft.allowList"
+                    :label="$t('guilds.automod.fieldAllowList')"
+                />
             </template>
 
             <template v-if="draft.triggerType === 5">
-                <label class="field">
-                    <span>{{ $t('guilds.automod.fieldMentionLimit') }}</span>
-                    <input v-model="draft.mentionLimit" type="number" min="1" max="50" />
-                </label>
+                <AppTextField
+                    v-model="draft.mentionLimit"
+                    :label="$t('guilds.automod.fieldMentionLimit')"
+                    type="number"
+                    :min="1"
+                    :max="50"
+                />
                 <label class="check">
                     <input type="checkbox" v-model="draft.mentionRaid" />
                     {{ $t('guilds.automod.fieldMentionRaid') }}
@@ -254,31 +260,39 @@ async function submit() {
                             :drawer-title="$t('guilds.automod.actionType')"
                         />
                     </label>
-                    <label v-if="a.type === 1" class="field">
-                        <span>{{ $t('guilds.automod.actionCustomMsg') }}</span>
-                        <input v-model="a.customMessage" type="text" maxlength="150" />
-                    </label>
-                    <label v-if="a.type === 2" class="field">
-                        <span>{{ $t('guilds.automod.actionChannel') }}</span>
-                        <input v-model="a.channelId" type="text" inputmode="numeric" />
-                    </label>
-                    <label v-if="a.type === 3" class="field">
-                        <span>{{ $t('guilds.automod.actionDuration') }}</span>
-                        <input v-model="a.durationSeconds" type="number" min="1" max="2419200" />
-                    </label>
+                    <AppTextField
+                        v-if="a.type === 1"
+                        v-model="a.customMessage"
+                        :label="$t('guilds.automod.actionCustomMsg')"
+                        :maxlength="150"
+                    />
+                    <AppTextField
+                        v-if="a.type === 2"
+                        v-model="a.channelId"
+                        :label="$t('guilds.automod.actionChannel')"
+                        inputmode="numeric"
+                    />
+                    <AppTextField
+                        v-if="a.type === 3"
+                        v-model="a.durationSeconds"
+                        :label="$t('guilds.automod.actionDuration')"
+                        type="number"
+                        :min="1"
+                        :max="2419200"
+                    />
                     <button type="button" class="ghost danger remove" @click="removeAction(idx)">×</button>
                 </div>
                 <button type="button" class="ghost add" @click="addAction">+ {{ $t('guilds.automod.actionAdd') }}</button>
             </fieldset>
 
-            <label class="field">
-                <span>{{ $t('guilds.automod.fieldExemptRoles') }}</span>
-                <input v-model="draft.exemptRoles" type="text" />
-            </label>
-            <label class="field">
-                <span>{{ $t('guilds.automod.fieldExemptChannels') }}</span>
-                <input v-model="draft.exemptChannels" type="text" />
-            </label>
+            <AppTextField
+                v-model="draft.exemptRoles"
+                :label="$t('guilds.automod.fieldExemptRoles')"
+            />
+            <AppTextField
+                v-model="draft.exemptChannels"
+                :label="$t('guilds.automod.fieldExemptChannels')"
+            />
 
             <label class="check">
                 <input type="checkbox" v-model="draft.enabled" />
@@ -308,19 +322,6 @@ async function submit() {
 }
 .field { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.84rem; }
 .field span { color: var(--text-muted); }
-.field input,
-.field select,
-.field textarea {
-    padding: 0.4rem 0.55rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: var(--bg-surface);
-    color: var(--text);
-    font: inherit;
-    font-size: 0.88rem;
-}
-.field textarea { resize: vertical; min-height: 3rem; }
-.field select:disabled { opacity: 0.6; }
 .hint { color: var(--text-muted); font-size: 0.74rem; }
 .check { display: flex; align-items: center; gap: 0.4rem; font-size: 0.86rem; }
 .checks {

@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { AppModal } from '@karyl-chan/ui';
-import { AppSelectField, type SelectOption } from '@karyl-chan/ui';
+import { AppModal, AppSelectField, AppTextField, type SelectOption } from '@karyl-chan/ui';
 import {
     createGuildChannel,
     editGuildChannel,
@@ -151,10 +150,13 @@ const showTextChannelExtras = computed(() =>
 <template>
     <AppModal :visible="visible" :title="titleText" width="min(440px, 92vw)" @close="close">
         <form class="body" @submit.prevent="submit">
-            <label class="field">
-                <span>{{ $t('channelMgmt.fieldName') }}</span>
-                <input v-model="name" type="text" maxlength="100" autofocus required />
-            </label>
+            <AppTextField
+                v-model="name"
+                :label="$t('channelMgmt.fieldName')"
+                :maxlength="100"
+                autofocus
+                required
+            />
             <label v-if="target?.mode === 'create'" class="field">
                 <span>{{ $t('channelMgmt.fieldType') }}</span>
                 <AppSelectField
@@ -190,14 +192,18 @@ const showTextChannelExtras = computed(() =>
                 </label>
             </template>
             <template v-if="showTextChannelExtras">
-                <label class="field">
-                    <span>{{ $t('channelMgmt.fieldTopic') }}</span>
-                    <input v-model="topic" type="text" maxlength="1024" />
-                </label>
-                <label class="field">
-                    <span>{{ $t('channelMgmt.fieldSlowmode') }}</span>
-                    <input v-model.number="slowmode" type="number" min="0" max="21600" />
-                </label>
+                <AppTextField
+                    v-model="topic"
+                    :label="$t('channelMgmt.fieldTopic')"
+                    :maxlength="1024"
+                />
+                <AppTextField
+                    v-model.number="slowmode"
+                    :label="$t('channelMgmt.fieldSlowmode')"
+                    type="number"
+                    :min="0"
+                    :max="21600"
+                />
                 <label class="check">
                     <input type="checkbox" v-model="nsfw" />
                     {{ $t('channelMgmt.fieldNsfw') }}
@@ -221,16 +227,6 @@ const showTextChannelExtras = computed(() =>
 }
 .field { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; }
 .field span { color: var(--text-muted); }
-.field input,
-.field select {
-    padding: 0.4rem 0.55rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: var(--bg-surface);
-    color: var(--text);
-    font: inherit;
-    font-size: 0.9rem;
-}
 .check { display: flex; align-items: center; gap: 0.4rem; font-size: 0.88rem; }
 .error { color: var(--danger); font-size: 0.85rem; }
 .actions {

@@ -10,7 +10,7 @@ import {
     setRoleReceiveMessageGroup,
     type GuildDetail
 } from '../../../api/guilds';
-import { AppBadge, AppSelectField, type SelectOption } from '@karyl-chan/ui';
+import { AppBadge, AppSelectField, AppTextField, type SelectOption } from '@karyl-chan/ui';
 import { useBotFeatureCard } from '../_shared/use-bot-feature-card';
 import { useChannelPicker, useRolePicker } from '../_shared/use-feature-pickers';
 
@@ -200,7 +200,7 @@ async function changeWatchedGroup(channelId: string, messageId: string, groupId:
                         :placeholder="$t('guilds.feature.rolePlaceholder')"
                         :drawer-title="$t('guilds.feature.pickRole')"
                     />
-                    <input v-model="mappingEmojiInput" type="text" :placeholder="$t('guilds.feature.emoji')" />
+                    <AppTextField v-model="mappingEmojiInput" :placeholder="$t('guilds.feature.emoji')" />
                     <small class="hint">{{ $t('guilds.feature.emojiHint') }}</small>
                     <button
                         type="button"
@@ -246,7 +246,7 @@ async function changeWatchedGroup(channelId: string, messageId: string, groupId:
                         :placeholder="$t('guilds.feature.channelPlaceholder')"
                         :drawer-title="$t('guilds.feature.roleReceiveTitle')"
                     />
-                    <input v-model="watchMessage" type="text" inputmode="numeric" :placeholder="$t('guilds.feature.messageId')" />
+                    <AppTextField v-model="watchMessage" inputmode="numeric" :placeholder="$t('guilds.feature.messageId')" />
                     <AppSelectField
                         v-model="watchGroupId"
                         :options="groupPickerOptions"

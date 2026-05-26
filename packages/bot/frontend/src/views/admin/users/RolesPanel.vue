@@ -13,9 +13,8 @@ import {
 } from '../../../api/admin';
 import { ApiError } from '../../../api/client';
 import { GLOBAL_CAPABILITY_KEYS, isBehaviorScopeToken, isPluginCapabilityToken } from '../../../libs/admin-capabilities';
-import { AppModal } from '@karyl-chan/ui';
+import { AppModal, AppTextField, useConfirm } from '@karyl-chan/ui';
 import RoleCapabilityModal from './RoleCapabilityModal.vue';
-import { useConfirm } from '@karyl-chan/ui';
 
 const props = defineProps<{
     roles: AdminRole[];
@@ -387,18 +386,17 @@ function summariseCaps(role: AdminRole): CapSummary {
 
         <AppModal :visible="addOpen" :title="$t('admin.roles.add')" @close="addOpen = false">
             <form class="add-body" @submit.prevent="submitAdd">
-                <label class="field">
-                    <span>{{ $t('admin.roles.nameLabel') }}</span>
-                    <input v-model="addForm.name" type="text" required autofocus />
-                </label>
-                <label class="field">
-                    <span>{{ $t('admin.roles.descriptionLabel') }}</span>
-                    <input
-                        v-model="addForm.description"
-                        type="text"
-                        :placeholder="$t('admin.roles.descriptionPlaceholder')"
-                    />
-                </label>
+                <AppTextField
+                    v-model="addForm.name"
+                    :label="$t('admin.roles.nameLabel')"
+                    required
+                    autofocus
+                />
+                <AppTextField
+                    v-model="addForm.description"
+                    :label="$t('admin.roles.descriptionLabel')"
+                    :placeholder="$t('admin.roles.descriptionPlaceholder')"
+                />
                 <footer class="actions">
                     <button type="button" class="ghost" @click="addOpen = false">{{ $t('common.cancel') }}</button>
                     <button type="submit" class="primary" :disabled="adding">{{ $t('admin.roles.addSubmit') }}</button>

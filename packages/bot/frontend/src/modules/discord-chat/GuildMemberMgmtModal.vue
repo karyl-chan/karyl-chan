@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { AppModal } from '@karyl-chan/ui';
-import { AppSelectField, type SelectOption } from '@karyl-chan/ui';
+import { AppModal, AppSelectField, AppTextField, type SelectOption } from '@karyl-chan/ui';
 import {
     addGuildMemberRole,
     banGuildMember,
@@ -168,10 +167,12 @@ const titleText = computed(() => {
                                 :drawer-title="$t('memberMgmt.banDeleteLabel')"
                             />
                         </label>
-                        <label class="field">
-                            <span>{{ $t('memberMgmt.reasonLabel') }}</span>
-                            <input v-model="reason" type="text" :placeholder="$t('memberMgmt.reasonPlaceholder')" maxlength="512" />
-                        </label>
+                        <AppTextField
+                            v-model="reason"
+                            :label="$t('memberMgmt.reasonLabel')"
+                            :placeholder="$t('memberMgmt.reasonPlaceholder')"
+                            :maxlength="512"
+                        />
                     </template>
                     <template v-else-if="target?.mode === 'timeout'">
                         <label class="field">
@@ -182,19 +183,26 @@ const titleText = computed(() => {
                                 :drawer-title="$t('memberMgmt.timeoutDuration')"
                             />
                         </label>
-                        <label class="field">
-                            <span>{{ $t('memberMgmt.reasonLabel') }}</span>
-                            <input v-model="reason" type="text" :placeholder="$t('memberMgmt.reasonPlaceholder')" maxlength="512" />
-                        </label>
+                        <AppTextField
+                            v-model="reason"
+                            :label="$t('memberMgmt.reasonLabel')"
+                            :placeholder="$t('memberMgmt.reasonPlaceholder')"
+                            :maxlength="512"
+                        />
                     </template>
                     <template v-else-if="target?.mode === 'nickname'">
-                        <label class="field">
-                            <input v-model="nickname" type="text" :placeholder="$t('memberMgmt.nicknamePlaceholder')" maxlength="32" autofocus />
-                        </label>
-                        <label class="field">
-                            <span>{{ $t('memberMgmt.reasonLabel') }}</span>
-                            <input v-model="reason" type="text" :placeholder="$t('memberMgmt.reasonPlaceholder')" maxlength="512" />
-                        </label>
+                        <AppTextField
+                            v-model="nickname"
+                            :placeholder="$t('memberMgmt.nicknamePlaceholder')"
+                            :maxlength="32"
+                            autofocus
+                        />
+                        <AppTextField
+                            v-model="reason"
+                            :label="$t('memberMgmt.reasonLabel')"
+                            :placeholder="$t('memberMgmt.reasonPlaceholder')"
+                            :maxlength="512"
+                        />
                     </template>
                     <template v-else-if="target?.mode === 'roles'">
                         <p v-if="loadingRoles" class="muted">{{ $t('common.loading') }}</p>
