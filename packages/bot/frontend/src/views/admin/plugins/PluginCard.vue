@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@iconify/vue';
 import { RouterLink } from 'vue-router';
-import { AppBadge, AppButton, AppConfirmDialog, AppToggle } from '@karyl-chan/ui';
+import { AppBadge, AppButton, AppConfirmDialog, AppItemCard, AppMenu, AppMenuItem, AppToggle } from '@karyl-chan/ui';
 import {
     deletePlugin,
     getPluginConfig,
@@ -156,35 +156,11 @@ async function onToggleEnabled() {
 }
 
 // ── Delete (inactive plugins only) ──────────────────────────────────
-const menuOpen = ref(false);
 const deleteModalOpen = ref(false);
 const deleting = ref(false);
 const deleteError = ref<string | null>(null);
 
-function openMenu(e: Event) {
-    e.stopPropagation();
-    if (menuOpen.value) {
-        closeMenu();
-        return;
-    }
-    menuOpen.value = true;
-    // One-shot click-outside: anything that bubbles to document closes
-    // the menu. The next tick (via setTimeout 0) skips the click that
-    // just opened it.
-    setTimeout(() => document.addEventListener('click', closeMenu, { once: true }), 0);
-}
-
-function closeMenu() {
-    menuOpen.value = false;
-    document.removeEventListener('click', closeMenu);
-}
-
-onBeforeUnmount(() => {
-    document.removeEventListener('click', closeMenu);
-});
-
 function openDeleteModal() {
-    closeMenu();
     deleteModalOpen.value = true;
     deleteError.value = null;
 }
@@ -206,23 +182,13 @@ async function confirmDelete() {
 </script>
 
 <template>
-    <article :class="['card', { 'is-disabled': !enabledLocal }]">
-        <header class="card-head">
-            <button
-                type="button"
-                class="title-btn"
-                @click="open = !open"
-                :aria-expanded="open"
-            >
-                <Icon
-                    :icon="open ? 'material-symbols:expand-less-rounded' : 'material-symbols:expand-more-rounded'"
-                    width="18"
-                    height="18"
-                />
-                <span class="title">{{ plugin.name }}</span>
-                <span class="key">{{ plugin.pluginKey }}</span>
-                <span class="version">v{{ plugin.version }}</span>
-            </button>
+    <AppItemCard v-model:expanded="open" :disabled="!enabledLocal">
+        <template #title>
+            <span class="title">{{ plugin.name }}</span>
+            <span class="key">{{ plugin.pluginKey }}</span>
+            <span class="version">v{{ plugin.version }}</span>
+        </template>
+        <template #trailing>
             <span class="status-dot" :style="{ background: statusColor }" :title="statusLabel" />
             <span class="status-text">{{ statusLabel }}</span>
             <RouterLink
@@ -241,25 +207,23 @@ async function confirmDelete() {
                 @update:model-value="onToggleEnabled"
             />
             <!-- Three-dot menu: only for inactive plugins -->
-            <div v-if="plugin.status === 'inactive'" class="more-wrap">
-                <button
-                    type="button"
-                    class="more-btn"
-                    :title="t('admin.plugins.menu.delete')"
-                    @click="openMenu"
-                >
-                    <Icon icon="material-symbols:more-vert" width="16" height="16" />
-                </button>
-                <div v-if="menuOpen" class="more-menu" @click.stop>
-                    <button type="button" class="more-menu-item danger" @click="openDeleteModal">
-                        <Icon icon="material-symbols:delete-outline-rounded" width="14" height="14" />
-                        {{ t('admin.plugins.menu.delete') }}
+            <AppMenu v-if="plugin.status === 'inactive'" placement="bottom-end" :offset="[0, 6]">
+                <template #trigger>
+                    <button
+                        type="button"
+                        class="more-btn"
+                        :title="t('admin.plugins.menu.delete')"
+                    >
+                        <Icon icon="material-symbols:more-vert" width="16" height="16" />
                     </button>
-                </div>
-            </div>
-        </header>
+                </template>
+                <AppMenuItem danger icon="material-symbols:delete-outline-rounded" @click="openDeleteModal">
+                    {{ t('admin.plugins.menu.delete') }}
+                </AppMenuItem>
+            </AppMenu>
+        </template>
 
-        <div v-if="open" class="card-body">
+        <template #default>
             <p v-if="description" class="desc">{{ description }}</p>
 
             <div class="stats-row">
@@ -353,8 +317,8 @@ async function confirmDelete() {
             </details>
 
             <p v-if="error" class="error" role="alert">{{ error }}</p>
-        </div>
-    </article>
+        </template>
+    </AppItemCard>
 
     <!-- Delete plugin confirmation modal -->
     <AppConfirmDialog
@@ -371,39 +335,6 @@ async function confirmDelete() {
 </template>
 
 <style scoped>
-.card {
-    border: 1px solid var(--border);
-    border-radius: var(--radius-base);
-    background: var(--bg-surface);
-    /* Don't clip absolutely-positioned descendants (more-menu drops out
-       of the header). The radius is preserved by .card-head's own
-       border-radius rather than relying on the parent to mask. */
-}
-.card.is-disabled .title { color: var(--text-muted); }
-.card-head {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 0.75rem;
-    background: var(--bg-page);
-    border-bottom: 1px solid transparent;
-}
-.card-head:has(+ .card-body) { border-bottom-color: var(--border); }
-.title-btn {
-    flex: 1;
-    min-width: 0;
-    background: none;
-    border: none;
-    text-align: left;
-    cursor: pointer;
-    color: var(--text);
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    padding: 0.25rem 0.1rem;
-    overflow: hidden;
-}
-.title-btn:hover { color: var(--text-strong); }
 .title {
     font-weight: 600;
     color: var(--text-strong);
@@ -433,13 +364,6 @@ async function confirmDelete() {
     font-size: 0.78rem;
     color: var(--text-muted);
     flex-shrink: 0;
-}
-
-.card-body {
-    padding: 0.75rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.6rem;
 }
 .desc {
     margin: 0;
@@ -592,11 +516,7 @@ async function confirmDelete() {
     color: var(--accent);
 }
 
-/* ── Three-dot more menu ─────────────────────────────────────────── */
-.more-wrap {
-    position: relative;
-    flex-shrink: 0;
-}
+/* ── Three-dot more menu trigger (visual only; AppMenu owns the panel) ─ */
 .more-btn {
     display: inline-flex;
     align-items: center;
@@ -614,36 +534,6 @@ async function confirmDelete() {
 .more-btn:hover {
     background: var(--bg-surface-hover, var(--bg-page));
     color: var(--text);
-}
-.more-menu {
-    position: absolute;
-    top: calc(100% + 4px);
-    right: 0;
-    z-index: 50;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    min-width: 120px;
-    padding: 0.2rem 0;
-}
-.more-menu-item {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    width: 100%;
-    padding: 0.4rem 0.75rem;
-    background: none;
-    border: none;
-    text-align: left;
-    font-size: 0.85rem;
-    cursor: pointer;
-    color: var(--text);
-}
-.more-menu-item:hover { background: var(--bg-surface-hover, var(--bg-page)); }
-.more-menu-item.danger { color: var(--danger, #dc2626); }
-.more-menu-item.danger:hover {
-    background: color-mix(in srgb, var(--danger, #dc2626) 9%, var(--bg-surface));
 }
 
 /* ── Scope approve modal internals ───────────────────────────────── */
