@@ -1,10 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, toRef, type ComponentPublicInstance } from 'vue';
-import { Icon } from '@iconify/vue';
 import { DynamicScroller, DynamicScrollerItem } from 'vue-virtual-scroller';
 import MessageView from '../../libs/messages/MessageView.vue';
 import MessageComposer from '../../libs/messages/MessageComposer.vue';
-import { dmProactiveFeatures } from '../dm-proactive-features';
 import MediaPickerPopover from '../../libs/messages/picker/MediaPickerPopover.vue';
 import MessageContextMenu, { type ContextMenuAction } from '../../libs/messages/MessageContextMenu.vue';
 import ConversationHeader from './ConversationHeader.vue';
@@ -55,11 +53,6 @@ const props = defineProps<{
      *  `browse-threads`. Hosts (the guild workspace) wire it to a modal
      *  that lists active + archived threads of the current channel. */
     canBrowseThreads?: boolean;
-    /** When true, the composer shows the bot proactive-features menu
-     *  next to the attach button. DM workspaces flip this on; guild
-     *  workspaces leave it off. The menu's entries themselves come
-     *  from `modules/dm-proactive-features/registry`. */
-    showProactiveFeatures?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -86,10 +79,6 @@ const emit = defineEmits<{
     (e: 'bulk-delete', anchorMessage: Message): void;
     /** Surfaced when the user clicks the header's threads button. */
     (e: 'browse-threads'): void;
-    /** Surfaced when the user picks an entry from the bot
-     *  proactive-features menu. The host owns the API call so it can
-     *  apply surface-specific routing / error handling. */
-    (e: 'proactive-action', name: string): void;
 }>();
 
 const composerRef = ref<InstanceType<typeof MessageComposer> | null>(null);
@@ -433,23 +422,7 @@ const replyToProp = computed(() => props.replyTo);
                 :disabled="sending"
                 @send="(payload: OutgoingMessage) => emit('send', payload)"
                 @cancel-reply="emit('cancel-reply')"
-            >
-                <template v-if="showProactiveFeatures" #plus-menu-extras="{ close }">
-                    <button
-                        v-for="feature in dmProactiveFeatures"
-                        :key="feature.name"
-                        type="button"
-                        class="plus-menu-item"
-                        @click="emit('proactive-action', feature.name); close();"
-                    >
-                        <Icon :icon="feature.icon" width="18" height="18" class="plus-menu-icon" />
-                        <span class="plus-menu-text">
-                            <span class="plus-menu-label">{{ $t(feature.labelKey) }}</span>
-                            <span v-if="feature.descriptionKey" class="plus-menu-desc">{{ $t(feature.descriptionKey) }}</span>
-                        </span>
-                    </button>
-                </template>
-            </MessageComposer>
+            />
         </footer>
     </div>
 </template>
