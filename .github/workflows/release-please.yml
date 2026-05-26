@@ -4,8 +4,18 @@ name: release-please
 # and maintains one "release PR" per package (bot, plugin-sdk). Merging
 # such a PR bumps the package.json version, updates CHANGELOG, then
 # tags `bot-v<x.y.z>` / `plugin-sdk-v<x.y.z>` and creates a GitHub
-# release. The existing publish-bot-image.yml / publish-plugin-sdk.yml
-# workflows trigger on those tags and push the actual artifacts.
+# release.
+#
+# The publish-bot-image.yml / publish-plugin-sdk.yml workflows
+# trigger on those tags — BUT GitHub deliberately suppresses
+# downstream workflow runs when the triggering event was caused by
+# the default GITHUB_TOKEN (anti-recursion). So a tag pushed by
+# release-please-action under GITHUB_TOKEN never fires its tag-
+# listening publish workflow. workflow_dispatch and repository_dispatch
+# are the documented exceptions, so we chain explicitly: when
+# release-please reports that it created a release for a given
+# package, the matching publish job below uses `gh workflow run` to
+# dispatch the publish workflow against the freshly-created tag.
 
 on:
   push:
@@ -22,7 +32,49 @@ concurrency:
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    # Per-package outputs are path-prefixed (release-please-action@v4):
+    # `<path>--release_created`, `<path>--tag_name`. We surface what the
+    # downstream chained-dispatch jobs need.
+    outputs:
+      plugin-sdk-released: ${{ steps.release.outputs['packages/plugin-sdk--release_created'] }}
+      plugin-sdk-tag: ${{ steps.release.outputs['packages/plugin-sdk--tag_name'] }}
+      bot-released: ${{ steps.release.outputs['packages/bot--release_created'] }}
+      bot-tag: ${{ steps.release.outputs['packages/bot--tag_name'] }}
     steps:
       - uses: googleapis/release-please-action@v4
+        id: release
         # config-file / manifest-file default to repo root, matching
         # where we keep them.
+
+  publish-plugin-sdk:
+    needs: release-please
+    if: needs.release-please.outputs.plugin-sdk-released == 'true'
+    runs-on: ubuntu-latest
+    # actions: write is required for the workflow_dispatch API call
+    # (`gh workflow run`). Scoped per-job so the release-please job
+    # itself stays minimum-privilege.
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch publish-plugin-sdk
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run publish-plugin-sdk.yml \
+            --repo ${{ github.repository }} \
+            --ref ${{ needs.release-please.outputs.plugin-sdk-tag }}
+
+  publish-bot:
+    needs: release-please
+    if: needs.release-please.outputs.bot-released == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch publish-bot-image
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run publish-bot-image.yml \
+            --repo ${{ github.repository }} \
+            --ref ${{ needs.release-please.outputs.bot-tag }}
