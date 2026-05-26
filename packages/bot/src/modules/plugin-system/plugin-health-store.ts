@@ -1,50 +1,37 @@
 /**
- * In-memory store for plugin health probe results.
+ * Plugin health store — thin re-export over the adapter registry.
  *
- * Populated by `plugin-health-poller.service.ts` (background poll every
- * 60 s) and read by the admin UI. Like `plugin-metrics-store`, this is
- * not persisted — on bot restart, the poller re-populates within a
- * polling cycle. Entries older than the freshness TTL are treated as
- * absent on read so a plugin going offline doesn't keep showing the
- * last-known-good status forever.
+ * Mirror of `plugin-metrics-store.ts`. The interface +
+ * `InProcessPluginHealthStore` live in
+ * `src/adapters/plugin-health-store.ts`; this module keeps the
+ * pre-Phase-0.2 free-function surface so callers don't have to know
+ * about the registry.
+ *
+ * Swap implementation (Phase 1.3): set `PLUGIN_HEALTH_STORE` env var.
  */
 
-export type HealthStatus = "healthy" | "degraded" | "unhealthy";
+import { getPluginHealthStore } from "../../adapters/registry.js";
+import type {
+  StoredHealthEntry,
+  HealthStatus,
+} from "../../adapters/plugin-health-store.js";
 
-export interface StoredHealthEntry {
-  status: HealthStatus;
-  message?: string;
-  checks?: Array<{ name: string; status: HealthStatus; message?: string }>;
-  /** Plugin-reported timestamp from the response. */
-  checkedAt: number;
-  /** Wall-clock receipt time. */
-  receivedAt: number;
-  /** True when the result is the poller's record of failure (timeout / network). */
-  fromError?: boolean;
-}
-
-const store = new Map<string, StoredHealthEntry>();
-
-/** Older than this and a read treats the cache as cold. */
-const FRESHNESS_TTL_MS = 5 * 60 * 1000;
+export type {
+  HealthStatus,
+  StoredHealthEntry,
+} from "../../adapters/plugin-health-store.js";
 
 export function setHealth(
   pluginKey: string,
   entry: Omit<StoredHealthEntry, "receivedAt">,
 ): void {
-  store.set(pluginKey, { ...entry, receivedAt: Date.now() });
+  getPluginHealthStore().setHealth(pluginKey, entry);
 }
 
 export function getHealth(pluginKey: string): StoredHealthEntry | null {
-  const e = store.get(pluginKey);
-  if (!e) return null;
-  if (Date.now() - e.receivedAt > FRESHNESS_TTL_MS) {
-    store.delete(pluginKey);
-    return null;
-  }
-  return e;
+  return getPluginHealthStore().getHealth(pluginKey);
 }
 
 export function clearHealth(pluginKey: string): void {
-  store.delete(pluginKey);
+  getPluginHealthStore().clearHealth(pluginKey);
 }

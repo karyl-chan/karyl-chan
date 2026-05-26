@@ -1,65 +1,32 @@
 /**
- * In-memory store for plugin-pushed metrics snapshots.
+ * Plugin metrics store — thin re-export over the adapter registry.
  *
- * Each active plugin pushes a snapshot via `POST /api/plugin/metrics.push`
- * every 30 s. The bot keeps only the latest snapshot per plugin — restart-
- * resilience is unnecessary because plugins re-push within a snapshot
- * interval after the bot comes back up.
+ * The actual implementation lives in `src/adapters/plugin-metrics-store.ts`
+ * (interface + `InProcessPluginMetricsStore`). This module preserves the
+ * pre-Phase-0.2 import surface (`setSnapshot` / `getSnapshot` /
+ * `clearSnapshot` as free functions) so existing call sites don't have
+ * to chase the refactor — they delegate to the registry-resolved store.
  *
- * The shape mirrors the wire format from `MetricsCollector.snapshot()` on
- * the SDK side; we accept the JSON verbatim and store it. Schema drift
- * would surface in the admin UI rendering, not in storage.
+ * To swap the implementation (Phase 1.3): set `PLUGIN_METRICS_STORE`
+ * env var; nothing else changes.
  */
 
-export interface StoredMetricsSnapshot {
-  ts: number;
-  counters: Array<{
-    name: string;
-    labels: Record<string, string>;
-    value: number;
-  }>;
-  gauges: Array<{
-    name: string;
-    labels: Record<string, string>;
-    value: number;
-  }>;
-  histograms: Array<{
-    name: string;
-    labels: Record<string, string>;
-    count: number;
-    sum: number;
-    p50: number;
-    p95: number;
-    p99: number;
-  }>;
-  /** Wall-clock receipt time (server side). */
-  receivedAt: number;
-}
+import { getPluginMetricsStore } from "../../adapters/registry.js";
+import type { StoredMetricsSnapshot } from "../../adapters/plugin-metrics-store.js";
 
-const store = new Map<string, StoredMetricsSnapshot>();
-
-/** Cap on how stale a snapshot can be before it's evicted on read. */
-const FRESHNESS_TTL_MS = 5 * 60 * 1000;
+export type { StoredMetricsSnapshot } from "../../adapters/plugin-metrics-store.js";
 
 export function setSnapshot(
   pluginKey: string,
   snapshot: Omit<StoredMetricsSnapshot, "receivedAt">,
 ): void {
-  store.set(pluginKey, { ...snapshot, receivedAt: Date.now() });
+  getPluginMetricsStore().setSnapshot(pluginKey, snapshot);
 }
 
 export function getSnapshot(pluginKey: string): StoredMetricsSnapshot | null {
-  const s = store.get(pluginKey);
-  if (!s) return null;
-  // A plugin that's been offline > TTL — drop the cached snapshot so
-  // the admin UI doesn't render stale numbers as live.
-  if (Date.now() - s.receivedAt > FRESHNESS_TTL_MS) {
-    store.delete(pluginKey);
-    return null;
-  }
-  return s;
+  return getPluginMetricsStore().getSnapshot(pluginKey);
 }
 
 export function clearSnapshot(pluginKey: string): void {
-  store.delete(pluginKey);
+  getPluginMetricsStore().clearSnapshot(pluginKey);
 }
