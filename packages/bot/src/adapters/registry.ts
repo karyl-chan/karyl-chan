@@ -34,6 +34,7 @@ import {
 } from "./voice-state-store.js";
 import { type SessionStore } from "./session-store.js";
 import { InProcessSessionStore } from "./in-process-session-store.js";
+import { type PluginEventBus } from "./plugin-event-bus.js";
 
 interface AdapterCache {
   pluginMetricsStore?: PluginMetricsStore;
@@ -42,6 +43,7 @@ interface AdapterCache {
   rateLimitStoreFactory?: RateLimitStoreFactory;
   voiceStateStore?: VoiceStateStore;
   sessionStore?: SessionStore;
+  pluginEventBus?: PluginEventBus;
 }
 
 const cache: AdapterCache = {};
@@ -162,6 +164,33 @@ export function getVoiceStateStore(): VoiceStateStore {
  * with the current env. Do NOT call from production code; the
  * adapters hold open resources (DB connections in later phases).
  */
+/**
+ * Optional event bus — `null` is a valid answer here meaning "use
+ * the legacy HTTP fan-out path baked into plugin-event-bridge".
+ * Phase 2.2 ships the Redis Streams producer; the SDK consumer ships
+ * in a follow-up. Until then, setting EVENT_BUS=redis-streams should
+ * be paired with an SDK ≥ 0.8 consumer or events go into the void.
+ */
+export function getPluginEventBus(): PluginEventBus | null {
+  if (cache.pluginEventBus) return cache.pluginEventBus;
+  const choice = envChoice("EVENT_BUS");
+  if (choice === "" || choice === "http" || choice === "inprocess") {
+    // The legacy HTTP path lives inside plugin-event-bridge directly,
+    // so the bus pointer stays null and that module's existing logic
+    // runs unchanged.
+    return null;
+  }
+  if (choice === "redis-streams") {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { RedisStreamsPluginEventBus } = require(
+      "./redis/plugin-event-bus.js",
+    ) as { RedisStreamsPluginEventBus: new () => PluginEventBus };
+    cache.pluginEventBus = new RedisStreamsPluginEventBus();
+    return cache.pluginEventBus;
+  }
+  unknownImpl("EVENT_BUS", choice);
+}
+
 export function __resetAdaptersForTests(): void {
   cache.pluginMetricsStore = undefined;
   cache.pluginHealthStore = undefined;
@@ -169,4 +198,5 @@ export function __resetAdaptersForTests(): void {
   cache.rateLimitStoreFactory = undefined;
   cache.voiceStateStore = undefined;
   cache.sessionStore = undefined;
+  cache.pluginEventBus = undefined;
 }
