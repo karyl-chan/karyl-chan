@@ -22,6 +22,7 @@ import {
   AppSelect,
   AppSelectField,
   AppTabs,
+  AppToggle,
   Draggable,
   UnreadPill,
   UserAvatar,
@@ -75,6 +76,11 @@ const fieldValue = ref<string>("");
 // Tabs demo
 const tab = ref("first");
 const subTab = ref("a");
+
+// Toggle demo
+const toggleA = ref(true);
+const toggleB = ref(false);
+const toggleSm = ref(true);
 
 // Draggable demo — single draggable element constrained to its parent.
 const dragBoundsRef = ref<HTMLElement | null>(null);
@@ -160,6 +166,28 @@ function onInlineClose() {
         <AppButton loading>Loading</AppButton>
         <AppButton disabled>Disabled</AppButton>
         <AppButton icon="material-symbols:add-rounded">With icon</AppButton>
+      </div>
+    </section>
+
+    <section>
+      <h2>AppToggle</h2>
+      <p class="hint">
+        Pill-shaped on/off switch. <code>v-model</code> is a boolean;
+        <code>size</code> is <code>md</code> (default, 32×18) or
+        <code>sm</code> (26×15). Pair with an external label — the
+        toggle itself only exposes a name via <code>ariaLabel</code>.
+      </p>
+      <div class="row" style="align-items:center;">
+        <AppToggle v-model="toggleA" aria-label="Demo toggle A" />
+        <span>On: <code>{{ toggleA }}</code></span>
+        <AppToggle v-model="toggleB" aria-label="Demo toggle B" />
+        <span>Off: <code>{{ toggleB }}</code></span>
+        <AppToggle v-model="toggleSm" size="sm" aria-label="Small demo" />
+        <span>Small</span>
+        <AppToggle :model-value="true" disabled aria-label="Disabled on" />
+        <span>Disabled (on)</span>
+        <AppToggle :model-value="false" disabled aria-label="Disabled off" />
+        <span>Disabled (off)</span>
       </div>
     </section>
 

@@ -19,6 +19,7 @@ export { default as AppSelectField } from "./components/AppSelectField.vue";
 export type { SelectOption } from "./components/AppSelectField.vue";
 export { default as AppTabs } from "./components/AppTabs.vue";
 export type { TabDef } from "./components/tab-types";
+export { default as AppToggle } from "./components/AppToggle.vue";
 // AppTabsRouted carries a vue-router dependency. Importing it from a
 // plugin SPA that doesn't have vue-router installed will fail at build
 // time — that's the intended boundary. The non-routed AppTabs above
