@@ -44,13 +44,15 @@ const classes = computed(() => [
     `app-badge--${props.size}`,
     { 'app-badge--mono': props.mono }
 ]);
-
-const iconPx = computed(() => (props.size === 'sm' ? 11 : 13));
 </script>
 
 <template>
     <span :class="classes">
-        <Icon v-if="icon" :icon="icon" :width="iconPx" :height="iconPx" class="app-badge__icon" />
+        <!-- Icon sizes itself off Iconify's 1em default, which inherits
+             the badge's font-size — this keeps the icon proportional to
+             the label and avoids a Ref<number> being silently rejected
+             by Iconify's width/height customisation typing. -->
+        <Icon v-if="icon" :icon="icon" class="app-badge__icon" aria-hidden="true" />
         <slot />
     </span>
 </template>
@@ -67,7 +69,13 @@ const iconPx = computed(() => (props.size === 'sm' ? 11 : 13));
     box-sizing: border-box;
     border: 1px solid transparent;
 }
-.app-badge__icon { flex-shrink: 0; }
+.app-badge__icon {
+    flex-shrink: 0;
+    /* Iconify uses font-size for its default 1em sizing; bumping it
+       slightly so the icon balances visually against the label
+       (Material Symbols icons read best at ~1.2× the text height). */
+    font-size: 1.2em;
+}
 .app-badge--md { font-size: 0.74rem; padding: 0.15rem 0.55rem; min-height: 18px; }
 .app-badge--sm { font-size: 0.68rem; padding: 0.1rem 0.45rem; min-height: 15px; }
 
