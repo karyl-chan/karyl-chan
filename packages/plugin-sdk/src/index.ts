@@ -79,7 +79,17 @@ export type {
   VoicePlayArgs,
   VoicePauseArgs,
   VoiceStatus,
+  PluginRpc,
+  RpcCaller,
 } from "./rpc/index.js";
+
+/**
+ * Factory for the typed RPC facade — exposed so test helpers and
+ * alternative runtime wrappers can build a `Discord` / `Voice`
+ * namespace from an arbitrary `RpcCaller` (e.g. a vi.fn() stub that
+ * records calls).
+ */
+export { createPluginRpc } from "./rpc/index.js";
 
 export { verifyWebhookToken } from "./webhook-token.js";
 
