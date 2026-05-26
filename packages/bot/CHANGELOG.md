@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.0.0](https://github.com/karyl-chan/karyl-chan/compare/bot-v1.2.0...bot-v2.0.0) (2026-05-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* **plugin-sdk:** stamp sdk_version onto every manifest
+
+### Features
+
+* **plugin-sdk:** stamp sdk_version onto every manifest ([159ac9c](https://github.com/karyl-chan/karyl-chan/commit/159ac9c3ccba39bfbb43fd7d76d927faad2ae894))
+
+
+### Bug Fixes
+
+* **bot/dockerfile:** source-rebuild sqlite3 after pnpm deploy ([fe1e1eb](https://github.com/karyl-chan/karyl-chan/commit/fe1e1ebbecca31d525b6c75088d87685395dd7d8))
+
 ## [1.2.0](https://github.com/karyl-chan/karyl-chan/compare/bot-v1.1.0...bot-v1.2.0) (2026-05-26)
 
 
