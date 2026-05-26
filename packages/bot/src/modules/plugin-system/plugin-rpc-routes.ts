@@ -25,6 +25,7 @@ import {
   findEnabledFeaturesByPluginGuild,
   findFeatureRowsByPlugin,
 } from "../feature-toggle/models/plugin-guild-feature.model.js";
+import { findFeatureDefaultsByPlugin } from "../feature-toggle/models/plugin-feature-default.model.js";
 import type { PluginManifest } from "./plugin-registry.service.js";
 import { jwtService } from "../web-core/jwt.service.js";
 import { resolveUserCapabilities } from "../admin/authorized-user.service.js";
@@ -46,6 +47,27 @@ import {
  * id lists (defence in depth against `everyone` smuggled into `roles`).
  */
 const SNOWFLAKE_RE = /^[0-9]{17,20}$/;
+/**
+ * Subset of MessageFlags a plugin is allowed to set via
+ * `interactions.respond` / `interactions.followup`. Ephemeral is
+ * deliberately NOT included — that bit is controlled by the dedicated
+ * `ephemeral` field which has follow-on routing behaviour (POST a
+ * public webhook follow-up vs PATCH @original). Letting a plugin sneak
+ * the Ephemeral bit in through `flags` would bypass that.
+ *
+ * SuppressEmbeds (1 << 2)         = 4
+ * SuppressNotifications (1 << 12) = 4096
+ */
+const ALLOWED_MESSAGE_FLAGS_MASK =
+  MessageFlags.SuppressEmbeds | MessageFlags.SuppressNotifications;
+
+function sanitizePluginFlags(raw: unknown): number {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return 0;
+  const n = Math.trunc(raw);
+  if (n < 0) return 0;
+  return n & ALLOWED_MESSAGE_FLAGS_MASK;
+}
+
 function safeAllowedMentions(raw: unknown): Record<string, unknown> {
   if (!raw || typeof raw !== "object") return { parse: [] };
   const m = raw as Record<string, unknown>;
@@ -1127,8 +1149,10 @@ export async function registerPluginRpcRoutes(
     // ephemeral placeholder so the user's "thinking…" message
     // resolves rather than hanging until timeout.
     const wantsPublic = body.ephemeral === false;
+    const extraFlags = sanitizePluginFlags(body.flags);
     try {
       if (wantsPublic) {
+        const publicFlags = extraFlags || undefined;
         await bot.rest.post(
           Routes.webhook(bot.application.id, body.interaction_token),
           {
@@ -1136,6 +1160,7 @@ export async function registerPluginRpcRoutes(
               content,
               embeds,
               components,
+              flags: publicFlags,
               allowed_mentions: { parse: [] },
             },
             ...(attachments.length > 0
@@ -1171,7 +1196,10 @@ export async function registerPluginRpcRoutes(
         return { ok: true };
       }
       // Ephemeral path (default): PATCH @original. `flags` is read-only
-      // on edit so the bit set at defer (Ephemeral) is what sticks.
+      // on edit so Ephemeral (set at defer) stays — but Discord still
+      // honours SuppressEmbeds / SuppressNotifications when included
+      // here, which is what the plugin actually wants to set.
+      const editFlags = extraFlags || undefined;
       await bot.rest.patch(
         Routes.webhookMessage(
           bot.application.id,
@@ -1183,6 +1211,7 @@ export async function registerPluginRpcRoutes(
             content,
             embeds,
             components,
+            flags: editFlags,
             allowed_mentions: { parse: [] },
           },
           ...(attachments.length > 0
@@ -1218,6 +1247,7 @@ export async function registerPluginRpcRoutes(
       embeds?: unknown;
       components?: unknown;
       ephemeral?: unknown;
+      flags?: unknown;
       attachments?: unknown;
     };
   }>("/api/plugin/interactions.followup", async (request, reply) => {
@@ -1265,6 +1295,9 @@ export async function registerPluginRpcRoutes(
       return;
     }
     const ephemeral = body.ephemeral === true;
+    const followupExtraFlags = sanitizePluginFlags(body.flags);
+    const followupFlags =
+      (ephemeral ? MessageFlags.Ephemeral : 0) | followupExtraFlags;
     try {
       const created = (await bot.rest.post(
         Routes.webhook(bot.application.id, body.interaction_token),
@@ -1273,7 +1306,7 @@ export async function registerPluginRpcRoutes(
             content,
             embeds,
             components,
-            flags: ephemeral ? MessageFlags.Ephemeral : undefined,
+            flags: followupFlags || undefined,
             allowed_mentions: { parse: [] },
           },
           ...(attachments.length > 0
@@ -2422,21 +2455,64 @@ export async function registerPluginRpcRoutes(
    * GET /api/plugin/me/enabled_guilds
    * Returns: { guild_ids: string[] }
    *
-   * The list of guild IDs where this plugin currently has at least
-   * one enabled feature. Closes the radio plugin's in-memory
-   * `seenGuilds` workaround (which emptied on restart). No per-guild
-   * gate — the result IS the guild list.
+   * Guild ids where this plugin has at least one *effectively enabled*
+   * feature. Effective = per-guild row precedence:
+   *   row.enabled (if a row exists) → operator default override →
+   *   manifest's enabled_by_default → false.
+   *
+   * Iterating only the rows would miss guilds that are following an
+   * enabled-by-default feature with no row written yet — background
+   * workers (e.g. radio's heartbeat loop) need those guilds too.
+   * Walks bot.guilds.cache once so the result reflects only guilds the
+   * bot is currently in.
    */
   server.get(
     "/api/plugin/me/enabled_guilds",
     async (request, reply) => {
       const ctx = await requireScope(request, reply, "me.enabled_guilds");
       if (!ctx) return;
-      const rows = await findFeatureRowsByPlugin(ctx.pluginId);
-      const guildIds = [
-        ...new Set(rows.filter((r) => r.enabled).map((r) => r.guildId)),
-      ];
-      return { guild_ids: guildIds };
+      if (!bot) {
+        reply.code(503).send({ error: "bot client unavailable" });
+        return;
+      }
+      const plugin = await findPluginById(ctx.pluginId);
+      const manifest = plugin ? getManifest(plugin.manifestJson) : null;
+      const manifestFeatures = manifest?.guild_features ?? [];
+      if (manifestFeatures.length === 0) {
+        return { guild_ids: [] };
+      }
+      const [rows, defaults] = await Promise.all([
+        findFeatureRowsByPlugin(ctx.pluginId),
+        findFeatureDefaultsByPlugin(ctx.pluginId),
+      ]);
+      const operatorDefaultByKey = new Map(
+        defaults.map((d) => [d.featureKey, d.enabled]),
+      );
+      const manifestDefaultByKey = new Map(
+        manifestFeatures.map((f) => [f.key, !!f.enabled_by_default]),
+      );
+      const rowsByGuild = new Map<string, Map<string, boolean>>();
+      for (const r of rows) {
+        let byKey = rowsByGuild.get(r.guildId);
+        if (!byKey) {
+          byKey = new Map();
+          rowsByGuild.set(r.guildId, byKey);
+        }
+        byKey.set(r.featureKey, r.enabled);
+      }
+      const enabledGuilds: string[] = [];
+      for (const guildId of bot.guilds.cache.keys()) {
+        const guildRows = rowsByGuild.get(guildId);
+        const anyEnabled = manifestFeatures.some((feature) => {
+          const rowVal = guildRows?.get(feature.key);
+          if (rowVal !== undefined) return rowVal;
+          const opDefault = operatorDefaultByKey.get(feature.key);
+          if (opDefault !== undefined) return opDefault;
+          return manifestDefaultByKey.get(feature.key) ?? false;
+        });
+        if (anyEnabled) enabledGuilds.push(guildId);
+      }
+      return { guild_ids: enabledGuilds };
     },
   );
 

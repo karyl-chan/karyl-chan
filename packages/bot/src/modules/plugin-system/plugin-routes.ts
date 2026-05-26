@@ -634,18 +634,26 @@ export async function registerPluginRoutes(
       // config-only PATCH yet — `setGuildFeatureEnabled` always sends
       // `enabled`.)
       const enabledWasGiven = body.enabled !== undefined;
+      // Read the prior row up-front so we can detect a real state
+      // change for the lifecycle dispatch below. Without this, an
+      // admin UI that re-submits an unchanged `enabled: true` would
+      // refire onEnable on every save and break plugins whose hook
+      // isn't perfectly idempotent (duplicate timers, INSERT
+      // conflicts on seed rows, double-counted metrics).
+      const existingRow = await findFeatureRow(pluginId, guildId, featureKey);
       let enabled: boolean;
       if (enabledWasGiven) {
         enabled = !!body.enabled;
       } else {
-        const existing = await findFeatureRow(pluginId, guildId, featureKey);
         enabled =
-          existing?.enabled ??
+          existingRow?.enabled ??
           (await findFeatureDefaultsByPlugin(pluginId)).find(
             (d) => d.featureKey === featureKey,
           )?.enabled ??
           !!feature.enabled_by_default;
       }
+      const enabledChanged =
+        enabledWasGiven && existingRow?.enabled !== enabled;
       let configJson: string | undefined;
       if (body.config !== undefined) {
         if (!body.config || typeof body.config !== "object") {
@@ -774,12 +782,13 @@ export async function registerPluginRoutes(
       );
       // Notify the plugin so it can run onEnable / onDisable hooks.
       // Fire-and-forget: a slow plugin shouldn't delay the admin UI
-      // response. Only dispatched when the toggle actually changed
-      // (`enabledWasGiven`) — a config-only PATCH doesn't re-fire.
-      // Plugins that didn't declare lifecycle hooks have no
+      // response. Only dispatched when the toggle actually flipped
+      // (`enabledChanged`) — a config-only PATCH or an unchanged
+      // re-submit of `enabled: true` does NOT re-fire. Plugins that
+      // didn't declare lifecycle hooks have no
       // `endpoints.plugin_lifecycle` in their manifest, so the
       // dispatcher silently skips them.
-      if (enabledWasGiven) {
+      if (enabledChanged) {
         dispatchLifecycleToPlugin(
           pluginId,
           enabled ? "plugin.guild.enabled" : "plugin.guild.disabled",
