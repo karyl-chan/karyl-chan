@@ -55,6 +55,11 @@ export interface BootstrapOptions {
    * `SessionHandle.urlParams`. Use for plugin-specific bootstrap state
    * (`c`, `s`, etc.) that should be cleaned out of the address bar
    * so a refresh doesn't re-trigger the side-effect.
+   *
+   * RESERVED NAMES: `"token"` and `"surface"` are consumed by the SDK
+   * itself and are silently skipped if passed here — listing them
+   * would race the SDK's own strip and either lose the JWT or
+   * double-strip the surface.
    */
   extraUrlParams?: string[];
   /**
@@ -73,6 +78,17 @@ export interface SessionHandle {
   readonly mode: AuthMode;
   /** Mode the URL token requested before exchange (`"session" | "manage" | null`). */
   readonly requestedMode: AuthSurface | null;
+  /**
+   * True iff bootstrap could not establish the requested session —
+   * e.g. `exchangeManageJwt` returned null, or the URL token failed
+   * to decode. Authoritative: callers should branch on this rather
+   * than relying on a synchronous side-effect in `onAccessDenied`.
+   * False on both successful bootstrap AND tab-reload-with-no-token
+   * (the latter is `mode === "none"` but not a denial).
+   */
+  readonly denied: boolean;
+  /** Message describing the denial when `denied` is true; otherwise null. */
+  readonly deniedReason: string | null;
   /**
    * The decoded JWT claims from the boot token (no signature check —
    * the server is authoritative). Null on tab reload where no URL
@@ -123,42 +139,62 @@ export async function bootstrapPluginSession(
   }
 
   // Strip surface + extras before any work — keep the address bar
-  // clean so a refresh doesn't re-trigger side-effects.
+  // clean so a refresh doesn't re-trigger side-effects. "token" and
+  // "surface" are reserved (consumed by the SDK itself); silently
+  // drop them from extraUrlParams to avoid a race where the caller's
+  // strip beats the SDK's.
   const surface = readQueryParamAndStrip("surface");
   const extraUrlParams: Record<string, string | null> = {};
+  const RESERVED_PARAMS = new Set(["token", "surface"]);
   for (const k of opts.extraUrlParams ?? []) {
+    if (RESERVED_PARAMS.has(k)) continue;
     extraUrlParams[k] = readQueryParamAndStrip(k);
   }
 
   const token = readTokenFromUrl();
   let claims: JwtClaims | null = null;
   let requestedMode: AuthSurface | null = null;
+  let denied = false;
+  let deniedReason: string | null = null;
+  const recordDenial = (msg: string): void => {
+    denied = true;
+    deniedReason = msg;
+    opts.onAccessDenied?.(msg);
+  };
 
   if (token) {
     claims = decodeJwt(token);
-    // Decide intended mode from the surfaces map; fall back to
-    // "session" when not listed. A surface absent from the URL also
-    // defaults to "session" — the historically-common case.
-    const surfacePolicy = surface ? opts.surfaces?.[surface] : undefined;
-    requestedMode = surfacePolicy ?? "session";
-
-    if (requestedMode === "manage") {
-      const exchanged: ManageTokens | null = await exchangeManageJwt(
-        token,
-        apiBase,
-      );
-      if (exchanged) {
-        auth.setManageTokens(exchanged);
-      } else {
-        // Exchange failed (no manage cap, expired, plugin restart kill-
-        // switch). Fire the denied callback so the SPA can route.
-        opts.onAccessDenied?.("manage token exchange failed");
-      }
+    if (!claims) {
+      recordDenial("URL token is malformed");
     } else {
-      auth.setSessionToken(token);
+      // Decide intended mode from the surfaces map; fall back to
+      // "session" when not listed. A surface absent from the URL also
+      // defaults to "session" — the historically-common case.
+      const surfacePolicy = surface ? opts.surfaces?.[surface] : undefined;
+      requestedMode = surfacePolicy ?? "session";
+
+      if (requestedMode === "manage") {
+        const exchanged: ManageTokens | null = await exchangeManageJwt(
+          token,
+          apiBase,
+        );
+        if (exchanged) {
+          auth.setManageTokens(exchanged);
+        } else {
+          // Exchange failed (no manage cap, expired, plugin restart
+          // kill-switch). Record on the handle so callers branching
+          // on `handle.denied` see it without relying on the synchronous
+          // onAccessDenied side-effect.
+          recordDenial("manage token exchange failed");
+        }
+      } else {
+        auth.setSessionToken(token);
+      }
     }
   } else {
     // No URL token — tab reload or initial visit. Try sessionStorage.
+    // Not a denial — a fresh-tab visitor with no token is just `mode
+    // === "none"`.
     auth.loadStored();
   }
 
@@ -177,6 +213,8 @@ export async function bootstrapPluginSession(
       return auth.getMode();
     },
     requestedMode,
+    denied,
+    deniedReason,
     claims,
     surface,
     guildId,

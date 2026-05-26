@@ -700,7 +700,11 @@ export async function registerPluginRoutes(
         for (const [key, raw] of Object.entries(stringValues)) {
           const field = schemaByKey.get(key);
           if (!field) {
-            // unknown key — keep historical pass-through behaviour
+            // unknown key — keep historical pass-through behaviour,
+            // but never persist the literal secret sentinel: the bot
+            // would otherwise store "********" for a key that used to
+            // be a secret in an older schema version. Drop instead.
+            if (raw === "********") continue;
             stored[key] = raw;
             continue;
           }

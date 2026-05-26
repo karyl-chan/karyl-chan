@@ -76,8 +76,16 @@ export async function bootstrap(): Promise<void> {
   sessionHandle = handle;
   setApi(handle.api);
 
-  // Bootstrap already terminated as denied via onAccessDenied? Stop.
-  if (surface.value === "denied") return;
+  // Authoritative deny path (Workpack D post-review): branch on the
+  // handle's `denied` field rather than the legacy side-effect flag.
+  // onAccessDenied still fires above; this branch catches the same
+  // case via the resolved handle and is safe to add belt-and-braces.
+  if (handle.denied) {
+    if (surface.value !== "denied") {
+      deny(handle.deniedReason ?? "Access denied. Request a new link from Discord.");
+    }
+    return;
+  }
 
   guildId.value = handle.guildId;
 

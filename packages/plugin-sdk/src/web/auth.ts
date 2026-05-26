@@ -121,6 +121,11 @@ export function createAuthState(storageKeyPrefix: string): AuthStateBundle {
   let refreshApiBase: string | null = null;
   let preemptiveTimer: ReturnType<typeof setTimeout> | null = null;
   const PREEMPTIVE_REFRESH_LEAD_MS = 60_000;
+  // Set true by destroy(); guards both the timer callback and any
+  // setMode/setManageTokens flow triggered by a tryRefresh that was
+  // already in flight when destroy ran. Without this, a refresh
+  // resolving after destroy would re-arm the timer and leak.
+  let destroyed = false;
 
   function setMode(next: AuthMode): void {
     if (mode === next) return;
@@ -143,6 +148,7 @@ export function createAuthState(storageKeyPrefix: string): AuthStateBundle {
 
   function schedulePreemptiveRefresh(): void {
     cancelPreemptiveTimer();
+    if (destroyed) return;
     if (!refreshApiBase || !manage) return;
     const delay = manage.accessExpiresAt - Date.now() - PREEMPTIVE_REFRESH_LEAD_MS;
     if (delay <= 0) {
@@ -152,6 +158,7 @@ export function createAuthState(storageKeyPrefix: string): AuthStateBundle {
     }
     preemptiveTimer = setTimeout(() => {
       preemptiveTimer = null;
+      if (destroyed) return;
       if (refreshApiBase) void tryRefresh(refreshApiBase);
     }, delay);
   }
@@ -271,7 +278,17 @@ export function createAuthState(storageKeyPrefix: string): AuthStateBundle {
       if (mode === "manage") schedulePreemptiveRefresh();
     },
     destroy() {
+      // Order matters: set destroyed BEFORE clearing modeSubs so a
+      // final "none" event reaches the subscribers (lets adapters
+      // clean up UI state on SPA unmount). Then cancel the timer and
+      // null refreshApiBase so an in-flight tryRefresh that resolves
+      // after this point can't re-arm the timer.
+      if (!destroyed && mode !== "none") {
+        setMode("none");
+      }
+      destroyed = true;
       cancelPreemptiveTimer();
+      refreshApiBase = null;
       modeSubs.clear();
       deniedHandler = null;
     },
