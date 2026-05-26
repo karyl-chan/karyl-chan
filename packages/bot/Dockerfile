@@ -59,6 +59,19 @@ RUN pnpm --filter @karyl-chan/bot build
 # workspace; the bot has no workspace-package dependencies, so the
 # legacy hard-copy behaviour is exactly what is wanted here.
 RUN pnpm --filter @karyl-chan/bot deploy --legacy --prod /app
+# sqlite3@6.0.1's install script (`prebuild-install -r napi || node-gyp
+# rebuild`) downloads a prebuilt binary linked to GLIBC_2.38, which
+# bullseye's 2.31 cannot dlopen. .npmrc's `build_from_source=sqlite3`
+# stopped propagating in pnpm 11, and `pnpm deploy` re-runs scripts on
+# the deployed tree — so any rebuild done before deploy gets clobbered.
+# Final-pass source-build inside /app: invoke node-gyp directly (which
+# is what sqlite3's own fallback would have used) so the binary that
+# lands in the runtime image is linked against bullseye's glibc.
+RUN set -e; \
+    SQLITE3_DIR=$(ls -d /app/node_modules/.pnpm/sqlite3@*/node_modules/sqlite3 | head -1); \
+    NODE_GYP=$(ls /app/node_modules/.pnpm/node-gyp@*/node_modules/node-gyp/bin/node-gyp.js | head -1); \
+    test -n "$SQLITE3_DIR" -a -n "$NODE_GYP" || { echo "sqlite3 / node-gyp not found in /app"; exit 1; }; \
+    cd "$SQLITE3_DIR" && rm -rf build && node "$NODE_GYP" rebuild 2>&1 | tail -8
 
 
 FROM node:22-bullseye-slim AS runtime
