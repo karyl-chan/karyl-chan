@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.4.0](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.3.0...plugin-sdk-v0.4.0) (2026-05-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* **plugin-sdk:** `manifest.sdk_version` is now auto-stamped from the SDK's own package.json — plugins that set it manually no longer need to.
+* **plugin-sdk:** SDK now owns the `/events` route and `eventHandlers` is declared via plugin config; the previous hand-rolled `app.post('/events', ...)` route in plugins has been removed.
+* **plugin-sdk:** typed RPC facade replaces raw `callBotRpc(...)`; plugins should migrate to `ctx.discord.*` and `ctx.voice.*` for compile-time-checked method names + payload shapes.
+
+### Features
+
+* **plugin-sdk:** auto-retry callBotRpc on 503/429/network ([5d6a4b0](https://github.com/karyl-chan/karyl-chan/commit/5d6a4b0))
+* **plugin-sdk:** expose discord/voice on StartedPlugin too ([6532191](https://github.com/karyl-chan/karyl-chan/commit/6532191))
+* **plugin-sdk:** export createPluginRpc + RpcCaller / PluginRpc types ([5fcef4f](https://github.com/karyl-chan/karyl-chan/commit/5fcef4f))
+* **plugin-sdk:** SDK owns /events route + eventHandlers config ([7d7ed36](https://github.com/karyl-chan/karyl-chan/commit/7d7ed36))
+* **plugin-sdk:** stamp sdk_version onto every manifest ([159ac9c](https://github.com/karyl-chan/karyl-chan/commit/159ac9c))
+* **plugin-sdk:** typed RPC facade ctx.discord / ctx.voice ([8530d0a](https://github.com/karyl-chan/karyl-chan/commit/8530d0a))
+
+
+### Documentation
+
+* **plugin-sdk:** document L-1..L-4 lockdown surface ([beff6d4](https://github.com/karyl-chan/karyl-chan/commit/beff6d4))
+
 ## [0.3.0](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.2.0...plugin-sdk-v0.3.0) (2026-05-26)
 
 
