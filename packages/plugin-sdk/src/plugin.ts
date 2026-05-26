@@ -13,6 +13,8 @@ import type {
 } from "./types.js";
 import type { ManifestConfigField } from "./manifest.js";
 import type { HealthProducer, PluginContext } from "./context.js";
+import type { Discord } from "./rpc/discord.js";
+import type { Voice } from "./rpc/voice.js";
 
 /**
  * Handler for one Discord-side event the plugin subscribed to.
@@ -56,8 +58,20 @@ export interface StartedPlugin {
    * (e.g. from a background interval). Returns null if the plugin has
    * not yet completed its first register call (no token), or on
    * network / non-2xx errors (already logged).
+   *
+   * Escape hatch for RPC methods not covered by `discord` / `voice` —
+   * for the typed surface, prefer `started.discord.*` / `started.voice.*`.
    */
   botRpc(path: string, body?: unknown): Promise<unknown>;
+  /**
+   * Typed Discord RPC facade — same surface as `PluginContext.discord`
+   * but bound to the plugin token (not a per-interaction one). Use from
+   * background timers, WebUI route handlers, or anywhere outside a
+   * command/component/modal dispatch. (Lockdown L-2.)
+   */
+  discord: Discord;
+  /** Typed Voice RPC facade, plugin-token-bound counterpart of `discord`. */
+  voice: Voice;
   /**
    * Ed25519 public key (SPKI PEM) the bot returned at register, used to
    * verify `plugin-session` JWTs offline (see `verifyPluginSession`).
@@ -850,6 +864,22 @@ export function definePlugin(config: PluginConfig): PluginInstance {
         );
       }
 
+      const startedBotRpc = async (
+        path: string,
+        body?: unknown,
+      ): Promise<unknown> => {
+        const token = client?.token() ?? null;
+        if (!token) {
+          throw new BotRpcError(
+            "no_token",
+            "plugin has not completed its first register yet",
+          );
+        }
+        return callBotRpc(server.log, botUrl, token, path, body);
+      };
+      const { createPluginRpc } = await import("./rpc/index.js");
+      const startedRpc = createPluginRpc(startedBotRpc);
+
       const started: StartedPlugin = {
         server,
         async stop(): Promise<void> {
@@ -880,16 +910,9 @@ export function definePlugin(config: PluginConfig): PluginInstance {
             `http://${host}:${port}`
           );
         },
-        async botRpc(path: string, body?: unknown) {
-          const token = client?.token() ?? null;
-          if (!token) {
-            throw new BotRpcError(
-              "no_token",
-              "plugin has not completed its first register yet",
-            );
-          }
-          return callBotRpc(server.log, botUrl, token, path, body);
-        },
+        botRpc: startedBotRpc,
+        discord: startedRpc.discord,
+        voice: startedRpc.voice,
         getSessionVerifyPublicKey() {
           return client?.getSessionVerifyPublicKey() ?? null;
         },
