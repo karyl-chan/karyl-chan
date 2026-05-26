@@ -96,6 +96,12 @@ export function getRateLimitStoreFactory(): RateLimitStoreFactory {
   const choice = envChoice("RATE_LIMIT_STORE");
   if (choice === "" || choice === "inprocess") {
     cache.rateLimitStoreFactory = new InProcessRateLimitStoreFactory();
+  } else if (choice === "redis") {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { RedisRateLimitStoreFactory } = require(
+      "./redis/rate-limit-store.js",
+    ) as { RedisRateLimitStoreFactory: new () => RateLimitStoreFactory };
+    cache.rateLimitStoreFactory = new RedisRateLimitStoreFactory();
   } else {
     unknownImpl("RATE_LIMIT_STORE", choice);
   }
