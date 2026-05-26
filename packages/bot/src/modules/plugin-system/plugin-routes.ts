@@ -340,8 +340,8 @@ export async function registerPluginRoutes(
       // so the admin UI doesn't need a second round-trip per plugin card.
       const { getHealth } = await import("./plugin-health-store.js");
       const { getSnapshot } = await import("./plugin-metrics-store.js");
-      const health = getHealth(p.pluginKey);
-      const metrics = getSnapshot(p.pluginKey);
+      const health = await getHealth(p.pluginKey);
+      const metrics = await getSnapshot(p.pluginKey);
       return {
         plugin: {
           id: p.id,
@@ -398,8 +398,8 @@ export async function registerPluginRoutes(
       // gets the field omitted.
       const { getHealth } = await import("./plugin-health-store.js");
       const { getSnapshot } = await import("./plugin-metrics-store.js");
-      const health = getHealth(p.pluginKey);
-      const metrics = getSnapshot(p.pluginKey);
+      const health = await getHealth(p.pluginKey);
+      const metrics = await getSnapshot(p.pluginKey);
 
       return {
         plugin: {

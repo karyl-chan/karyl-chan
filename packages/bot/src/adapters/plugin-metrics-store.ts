@@ -40,9 +40,16 @@ export interface PluginMetricsStore {
   setSnapshot(
     pluginKey: string,
     snapshot: Omit<StoredMetricsSnapshot, "receivedAt">,
-  ): void;
-  getSnapshot(pluginKey: string): StoredMetricsSnapshot | null;
-  clearSnapshot(pluginKey: string): void;
+  ): void | Promise<void>;
+  /**
+   * Returns the latest snapshot or null on miss. Sync for the
+   * InProcess default; async for any cross-shard implementation
+   * (Redis), so callers should `await` defensively.
+   */
+  getSnapshot(
+    pluginKey: string,
+  ): StoredMetricsSnapshot | null | Promise<StoredMetricsSnapshot | null>;
+  clearSnapshot(pluginKey: string): void | Promise<void>;
 }
 
 const FRESHNESS_TTL_MS = 5 * 60 * 1000;

@@ -1,14 +1,13 @@
 /**
  * Plugin metrics store — thin re-export over the adapter registry.
  *
- * The actual implementation lives in `src/adapters/plugin-metrics-store.ts`
- * (interface + `InProcessPluginMetricsStore`). This module preserves the
- * pre-Phase-0.2 import surface (`setSnapshot` / `getSnapshot` /
- * `clearSnapshot` as free functions) so existing call sites don't have
- * to chase the refactor — they delegate to the registry-resolved store.
+ * Phase 1.3 widened the interface so a Redis-backed implementation
+ * can be hot-swapped. Sync callers (admin UI handler in plugin-routes)
+ * already run inside async handlers; the only change is one
+ * `await`.
  *
- * To swap the implementation (Phase 1.3): set `PLUGIN_METRICS_STORE`
- * env var; nothing else changes.
+ * Swap implementation: `PLUGIN_METRICS_STORE=redis` (Phase 1.3) +
+ * `REDIS_URL=redis://...`.
  */
 
 import { getPluginMetricsStore } from "../../adapters/registry.js";
@@ -16,17 +15,19 @@ import type { StoredMetricsSnapshot } from "../../adapters/plugin-metrics-store.
 
 export type { StoredMetricsSnapshot } from "../../adapters/plugin-metrics-store.js";
 
-export function setSnapshot(
+export async function setSnapshot(
   pluginKey: string,
   snapshot: Omit<StoredMetricsSnapshot, "receivedAt">,
-): void {
-  getPluginMetricsStore().setSnapshot(pluginKey, snapshot);
+): Promise<void> {
+  await getPluginMetricsStore().setSnapshot(pluginKey, snapshot);
 }
 
-export function getSnapshot(pluginKey: string): StoredMetricsSnapshot | null {
+export async function getSnapshot(
+  pluginKey: string,
+): Promise<StoredMetricsSnapshot | null> {
   return getPluginMetricsStore().getSnapshot(pluginKey);
 }
 
-export function clearSnapshot(pluginKey: string): void {
-  getPluginMetricsStore().clearSnapshot(pluginKey);
+export async function clearSnapshot(pluginKey: string): Promise<void> {
+  await getPluginMetricsStore().clearSnapshot(pluginKey);
 }

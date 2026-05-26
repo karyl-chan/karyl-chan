@@ -63,6 +63,12 @@ export function getPluginMetricsStore(): PluginMetricsStore {
   const choice = envChoice("PLUGIN_METRICS_STORE");
   if (choice === "" || choice === "inprocess") {
     cache.pluginMetricsStore = new InProcessPluginMetricsStore();
+  } else if (choice === "redis") {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { RedisPluginMetricsStore } = require(
+      "./redis/plugin-metrics-store.js",
+    ) as { RedisPluginMetricsStore: new () => PluginMetricsStore };
+    cache.pluginMetricsStore = new RedisPluginMetricsStore();
   } else {
     unknownImpl("PLUGIN_METRICS_STORE", choice);
   }
@@ -74,6 +80,12 @@ export function getPluginHealthStore(): PluginHealthStore {
   const choice = envChoice("PLUGIN_HEALTH_STORE");
   if (choice === "" || choice === "inprocess") {
     cache.pluginHealthStore = new InProcessPluginHealthStore();
+  } else if (choice === "redis") {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { RedisPluginHealthStore } = require(
+      "./redis/plugin-health-store.js",
+    ) as { RedisPluginHealthStore: new () => PluginHealthStore };
+    cache.pluginHealthStore = new RedisPluginHealthStore();
   } else {
     unknownImpl("PLUGIN_HEALTH_STORE", choice);
   }

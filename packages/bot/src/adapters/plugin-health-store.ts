@@ -27,9 +27,11 @@ export interface PluginHealthStore {
   setHealth(
     pluginKey: string,
     entry: Omit<StoredHealthEntry, "receivedAt">,
-  ): void;
-  getHealth(pluginKey: string): StoredHealthEntry | null;
-  clearHealth(pluginKey: string): void;
+  ): void | Promise<void>;
+  getHealth(
+    pluginKey: string,
+  ): StoredHealthEntry | null | Promise<StoredHealthEntry | null>;
+  clearHealth(pluginKey: string): void | Promise<void>;
 }
 
 const FRESHNESS_TTL_MS = 5 * 60 * 1000;

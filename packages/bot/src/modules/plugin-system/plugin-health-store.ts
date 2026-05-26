@@ -1,19 +1,17 @@
 /**
  * Plugin health store — thin re-export over the adapter registry.
  *
- * Mirror of `plugin-metrics-store.ts`. The interface +
- * `InProcessPluginHealthStore` live in
- * `src/adapters/plugin-health-store.ts`; this module keeps the
- * pre-Phase-0.2 free-function surface so callers don't have to know
- * about the registry.
+ * Mirror of `plugin-metrics-store.ts`. Phase 1.3 widened the
+ * interface to async so a Redis-backed implementation can plug in
+ * uniformly; sync callers (health poller) already run inside async
+ * functions.
  *
- * Swap implementation (Phase 1.3): set `PLUGIN_HEALTH_STORE` env var.
+ * Swap implementation: `PLUGIN_HEALTH_STORE=redis`.
  */
 
 import { getPluginHealthStore } from "../../adapters/registry.js";
 import type {
   StoredHealthEntry,
-  HealthStatus,
 } from "../../adapters/plugin-health-store.js";
 
 export type {
@@ -21,17 +19,19 @@ export type {
   StoredHealthEntry,
 } from "../../adapters/plugin-health-store.js";
 
-export function setHealth(
+export async function setHealth(
   pluginKey: string,
   entry: Omit<StoredHealthEntry, "receivedAt">,
-): void {
-  getPluginHealthStore().setHealth(pluginKey, entry);
+): Promise<void> {
+  await getPluginHealthStore().setHealth(pluginKey, entry);
 }
 
-export function getHealth(pluginKey: string): StoredHealthEntry | null {
+export async function getHealth(
+  pluginKey: string,
+): Promise<StoredHealthEntry | null> {
   return getPluginHealthStore().getHealth(pluginKey);
 }
 
-export function clearHealth(pluginKey: string): void {
-  getPluginHealthStore().clearHealth(pluginKey);
+export async function clearHealth(pluginKey: string): Promise<void> {
+  await getPluginHealthStore().clearHealth(pluginKey);
 }
