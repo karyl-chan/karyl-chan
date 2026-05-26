@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.3.0](https://github.com/karyl-chan/karyl-chan/compare/bot-v1.2.0...bot-v1.3.0) (2026-05-26)
+
+
+### Features
+
+* **bot, sdk:** validateManifest accepts the new auto-stamped `sdk_version` field; registry log records it for per-version compatibility shims ([159ac9c](https://github.com/karyl-chan/karyl-chan/commit/159ac9c3ccba39bfbb43fd7d76d927faad2ae894))
+
+
+### Bug Fixes
+
+* **bot/dockerfile:** source-rebuild sqlite3 after pnpm deploy so the runtime image links against bullseye's glibc 2.31 ([fe1e1eb](https://github.com/karyl-chan/karyl-chan/commit/fe1e1ebbecca31d525b6c75088d87685395dd7d8))
+* **ui:** AppBadge icon sizing — drop the unreliable :width ref, sized via 1em font-size inheritance ([5268e4a](https://github.com/karyl-chan/karyl-chan/commit/5268e4a))
+* **ui:** AppTabs full-width root + suppress implicit vertical scroll ([ba5cfd2](https://github.com/karyl-chan/karyl-chan/commit/ba5cfd2))
+
+
+### Refactors
+
+* **bot/frontend:** rebuild PluginCard on AppItemCard + AppMenu so the kebab + collapse share chrome with BehaviorCard ([763011f](https://github.com/karyl-chan/karyl-chan/commit/763011f))
+* **bot/frontend:** rebuild BehaviorCard on AppItemCard — drop the per-page card chrome and adopt the shared slot-driven list-card primitive ([b50e19e](https://github.com/karyl-chan/karyl-chan/commit/b50e19e))
+
 ## [1.2.0](https://github.com/karyl-chan/karyl-chan/compare/bot-v1.1.0...bot-v1.2.0) (2026-05-26)
 
 
