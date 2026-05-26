@@ -3,3 +3,13 @@ packages:
   # frontend is nested inside the bot package but is still a workspace
   # member so a single `pnpm install` at the root resolves its deps too.
   - 'packages/bot/frontend'
+
+# pnpm 11 no longer reads the `pnpm` field in package.json; settings
+# live here. onlyBuiltDependencies is the explicit allowlist for
+# native-module install scripts (pnpm 11 errors on any ignored build,
+# previously only warned).
+onlyBuiltDependencies:
+  - '@discordjs/opus'
+  - better-sqlite3
+  - sqlite3
+  - esbuild
