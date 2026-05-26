@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.0](https://github.com/karyl-chan/karyl-chan/compare/bot-v1.1.0...bot-v1.2.0) (2026-05-26)
+
+
+### Features
+
+* **bot, sdk:** SDK audit cleanup — 8 outdated docs / questionable designs ([92dbef3](https://github.com/karyl-chan/karyl-chan/commit/92dbef3206894bc5ae33489ef7bba1b0004d43e9))
+* **bot,sdk:** defer reads default_ephemeral; mismatch via DELETE [@original](https://github.com/original) ([58e24cf](https://github.com/karyl-chan/karyl-chan/commit/58e24cfef1cee80513ff41e40b452c46ac17ee2b))
+
+
+### Bug Fixes
+
+* **bot:** respond endpoint must distinguish deferReply vs deferUpdate ([0098632](https://github.com/karyl-chan/karyl-chan/commit/00986326c21ad26048aa85b19f54552059e01bfc))
+
 ## [1.1.0](https://github.com/karyl-chan/karyl-chan/compare/bot-v1.0.1...bot-v1.1.0) (2026-05-26)
 
 
