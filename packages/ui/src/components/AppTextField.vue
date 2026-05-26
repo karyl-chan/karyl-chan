@@ -17,6 +17,8 @@ import { computed, useId } from 'vue';
 
 const props = withDefaults(defineProps<{
     modelValue: V;
+    /** v-model modifier bag (e.g. `.number`, `.trim`); Vue populates this. */
+    modelModifiers?: { number?: boolean; trim?: boolean; lazy?: boolean };
     label?: string;
     hint?: string;
     error?: string;
@@ -70,7 +72,16 @@ const fieldId = useId();
 
 function onInput(e: Event): void {
     const target = e.target as HTMLInputElement;
-    emit('update:modelValue', target.value as V);
+    let value: string | number = target.value;
+    if (props.modelModifiers?.trim) value = (value as string).trim();
+    if (props.modelModifiers?.number) {
+        const n = Number(value);
+        // Mirror Vue's `.number` semantics: only coerce when parseable;
+        // otherwise pass through the raw string so the input stays
+        // editable during typing (e.g. "1.").
+        if (!Number.isNaN(n) && value !== '') value = n;
+    }
+    emit('update:modelValue', value as V);
 }
 
 const rootClass = computed(() => ({
