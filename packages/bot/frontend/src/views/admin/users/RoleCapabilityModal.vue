@@ -211,11 +211,12 @@ function behaviorTabToken(scopeKey: string): string {
 }
 
 function tabIcon(tab: ScopeTabRow): string {
+    // material-symbols 的 `public` 與 `dns` 沒有 `-rounded` 變體 — 用 outline。
     switch (tab.tabType) {
-        case 'global_all': return 'material-symbols:public-rounded';
+        case 'global_all': return 'material-symbols:public';
         case 'all_dms': return 'material-symbols:forum-outline-rounded';
         case 'all_bot_dms': return 'material-symbols:smart-toy-outline-rounded';
-        case 'all_guilds': return 'material-symbols:dns-outline-rounded';
+        case 'all_guilds': return 'material-symbols:dns-outline';
         case 'specific_guild': return 'material-symbols:shield-outline-rounded';
         case 'specific_channel': return 'material-symbols:tag-rounded';
         case 'specific_user': return 'material-symbols:person-outline-rounded';

@@ -22,15 +22,17 @@ const emit = defineEmits<{
 // ── Section grouping ─────────────────────────────────────────────────────────
 
 const topTabs = computed(() =>
-    props.tabs.filter(t => ['global_all', 'all_dms', 'all_bot_dms'].includes(t.tabType))
+    props.tabs.filter(t => ['global_all', 'all_dms'].includes(t.tabType))
 );
 
 const guildTabs = computed(() =>
     props.tabs.filter(t => ['all_guilds', 'specific_guild', 'specific_channel'].includes(t.tabType))
 );
 
+// `all_bot_dms` 歸屬 Bot 私訊分類（語意上就是「跟 Bot 的私訊」）。
+// 仍保留 .pinned 樣式（isFixed=true）讓它與 specific_* 動態 tab 視覺有別。
 const dmTabs = computed(() =>
-    props.tabs.filter(t => ['specific_user', 'specific_group'].includes(t.tabType))
+    props.tabs.filter(t => ['all_bot_dms', 'specific_user', 'specific_group'].includes(t.tabType))
 );
 
 // ── Collapsible state ────────────────────────────────────────────────────────
@@ -48,11 +50,14 @@ const { getDisplayName } = useUserSummaries(userIds);
 // ── Label helpers ────────────────────────────────────────────────────────────
 
 function iconFor(tab: ScopeTabRow): string {
+    // material-symbols 的 `public` 與 `dns` 沒有 `-rounded` 變體 — 舊版用
+    // `public-rounded` / `dns-outline-rounded` 在 iconify 找不到，靜默失敗，
+    // sidebar 上的圓圈會空白。改用 outline (default style) 名稱。
     switch (tab.tabType) {
-        case 'global_all': return 'material-symbols:public-rounded';
+        case 'global_all': return 'material-symbols:public';
         case 'all_dms': return 'material-symbols:forum-outline-rounded';
         case 'all_bot_dms': return 'material-symbols:smart-toy-outline-rounded';
-        case 'all_guilds': return 'material-symbols:dns-outline-rounded';
+        case 'all_guilds': return 'material-symbols:dns-outline';
         case 'specific_guild': return 'material-symbols:shield-outline-rounded';
         case 'specific_channel': return 'material-symbols:tag-rounded';
         case 'specific_user': return 'material-symbols:person-outline-rounded';
@@ -175,7 +180,7 @@ function avatarClassFor(tab: ScopeTabRow): string {
             <li
                 v-for="tab in dmTabs"
                 :key="tab.id"
-                :class="['tab-row', { active: selectedTabId === tab.id }]"
+                :class="['tab-row', { active: selectedTabId === tab.id, pinned: tab.isFixed }]"
                 @click="emit('select', tab.id)"
             >
                 <div :class="['avatar', avatarClassFor(tab)]" aria-hidden="true">
