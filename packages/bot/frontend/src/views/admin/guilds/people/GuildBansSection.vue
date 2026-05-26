@@ -2,7 +2,7 @@
 import { onMounted, ref, watch } from 'vue';
 import { listGuildBans, unbanGuildUser, type GuildBanEntry } from '../../../../api/guilds';
 import { useApiError } from '../../../../composables/use-api-error';
-import { useConfirm } from '@karyl-chan/ui';
+import { AppBadge, useConfirm } from '@karyl-chan/ui';
 
 const props = defineProps<{
     guildId: string;
@@ -54,7 +54,7 @@ async function onUnban(b: GuildBanEntry) {
 <template>
     <section class="card">
         <header class="card-head">
-            <h3>{{ $t('guilds.bans.title') }} <span class="count-pill">{{ bans.length }}</span></h3>
+            <h3>{{ $t('guilds.bans.title') }} <AppBadge>{{ bans.length }}</AppBadge></h3>
         </header>
 
         <p v-if="loadError" class="error">{{ loadError }}</p>
@@ -99,14 +99,6 @@ async function onUnban(b: GuildBanEntry) {
     display: flex;
     align-items: center;
     gap: 0.4rem;
-}
-.count-pill {
-    background: var(--bg-surface-2);
-    color: var(--text-muted);
-    border-radius: var(--radius-pill);
-    padding: 0 0.5rem;
-    font-size: 0.78rem;
-    font-weight: 500;
 }
 .bans {
     list-style: none;

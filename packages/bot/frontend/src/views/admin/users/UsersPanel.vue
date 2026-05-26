@@ -10,7 +10,7 @@ import {
     type AuthorizedUser
 } from '../../../api/admin';
 import { ApiError } from '../../../api/client';
-import { AppButton, AppModal, AppSelectField, AppTextField, useConfirm, type SelectOption } from '@karyl-chan/ui';
+import { AppBadge, AppButton, AppModal, AppSelectField, AppTextField, useConfirm, type SelectOption } from '@karyl-chan/ui';
 
 const props = defineProps<{
     data: AdminUserList;
@@ -193,7 +193,7 @@ const matchSummary = computed(() =>
                 <div class="identity">
                     <div class="display-name">
                         {{ displayNameFor(ownerEntry) }}
-                        <span class="owner-badge">{{ $t('admin.users.ownerBadge') }}</span>
+                        <AppBadge tone="accent" variant="solid" size="sm">{{ $t('admin.users.ownerBadge') }}</AppBadge>
                     </div>
                     <code class="handle">{{ handleFor(ownerEntry) ?? ownerEntry.userId }}</code>
                 </div>
@@ -366,18 +366,6 @@ const matchSummary = computed(() =>
     align-items: center;
     gap: 0.4rem;
     flex-wrap: wrap;
-}
-.owner-badge {
-    display: inline-flex;
-    align-items: center;
-    padding: 0.05rem 0.5rem;
-    background: var(--accent);
-    color: var(--text-on-accent);
-    border-radius: var(--radius-pill);
-    font-size: 0.65rem;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
 }
 .handle {
     font-size: 0.78rem;

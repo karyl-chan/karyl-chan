@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { addPictureOnlyChannel, removePictureOnlyChannel, type GuildDetail } from '../../../api/guilds';
-import { AppSelectField } from '@karyl-chan/ui';
+import { AppBadge, AppSelectField } from '@karyl-chan/ui';
 import { useBotFeatureCard } from '../_shared/use-bot-feature-card';
 import { useChannelPicker } from '../_shared/use-feature-pickers';
 
@@ -29,7 +29,7 @@ async function rmPicture(channelId: string) {
         <p v-if="error" class="error">{{ error }}</p>
         <header class="card-head">
             <h3>{{ $t('guilds.feature.pictureTitle') }}
-                <span class="count-pill">{{ detailLocal.pictureOnlyChannels.length }}</span>
+                <AppBadge>{{ detailLocal.pictureOnlyChannels.length }}</AppBadge>
             </h3>
         </header>
         <p class="hint">{{ $t('guilds.feature.pictureHint') }}</p>

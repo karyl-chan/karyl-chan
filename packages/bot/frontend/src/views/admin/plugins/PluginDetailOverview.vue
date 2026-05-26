@@ -250,7 +250,7 @@ onMounted(() => {
         <section v-if="(manifest?.rpc_methods_used?.length ?? 0) > 0" class="section">
             <h3 class="section-title">{{ t('admin.plugins.rpcScopes') }}</h3>
             <div class="chip-row">
-                <code v-for="m in (manifest?.rpc_methods_used ?? [])" :key="m" class="rpc-chip">{{ m }}</code>
+                <AppBadge v-for="m in (manifest?.rpc_methods_used ?? [])" :key="m" variant="outline" mono>{{ m }}</AppBadge>
             </div>
         </section>
 
@@ -258,7 +258,7 @@ onMounted(() => {
         <section v-if="hasConfigSchema" class="section config-section">
             <div class="section-header">
                 <h3 class="section-title">外掛設定</h3>
-                <span v-if="configSavedAt && (Date.now() - configSavedAt < 4000)" class="saved-badge">已儲存</span>
+                <AppBadge v-if="configSavedAt && (Date.now() - configSavedAt < 4000)" tone="success" size="sm">已儲存</AppBadge>
             </div>
             <p v-if="configLoading" class="muted">{{ t('common.loading') }}</p>
             <p v-if="configError" class="error" role="alert">{{ configError }}</p>
@@ -359,7 +359,6 @@ onMounted(() => {
     color: var(--text-strong);
     flex: 1;
 }
-.saved-badge { color: var(--accent); font-size: 0.78rem; }
 .meta {
     margin: 0;
     display: grid;
@@ -381,15 +380,6 @@ onMounted(() => {
 .link:hover { text-decoration: underline; }
 
 .chip-row { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.5rem; }
-.rpc-chip {
-    font-family: var(--font-mono, monospace);
-    font-size: 0.76rem;
-    padding: 0.12rem 0.4rem;
-    border-radius: var(--radius-sm);
-    background: var(--bg-page);
-    border: 1px solid var(--border);
-    color: var(--text-muted);
-}
 
 .config-section { margin-top: 0; }
 .config-grid {

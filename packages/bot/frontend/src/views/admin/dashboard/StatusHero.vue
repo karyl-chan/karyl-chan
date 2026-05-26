@@ -79,7 +79,7 @@ function formatDuration(seconds: number): string {
                 <div class="hero-meta">
                     <span class="bot-name">{{ bot.globalName ?? bot.username ?? '—' }}</span>
                     <div class="hero-meta-row">
-                        <code class="bot-tag">{{ bot.userTag ?? '—' }}</code>
+                        <AppBadge mono size="sm">{{ bot.userTag ?? '—' }}</AppBadge>
                         <AppBadge
                             variant="outline"
                             :tone="bot.ready ? 'success' : 'warn'"
@@ -222,15 +222,6 @@ function formatDuration(seconds: number): string {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-}
-
-.bot-tag {
-    font-family: "JetBrains Mono", "Fira Code", "Courier New", monospace;
-    font-size: 0.78rem;
-    color: var(--text-muted);
-    background: var(--bg-surface-2);
-    padding: 0.15rem 0.45rem;
-    border-radius: var(--radius-sm);
 }
 
 /* ─── Stats block ───────────────────────────────────────────────── */

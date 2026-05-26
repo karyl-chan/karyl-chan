@@ -9,6 +9,7 @@ import {
     type GuildMemberRow
 } from '../../../../api/guilds';
 import { useApiError } from '../../../../composables/use-api-error';
+import { AppBadge } from '@karyl-chan/ui';
 
 const props = defineProps<{
     guildId: string;
@@ -110,7 +111,7 @@ function onNickname(m: GuildMemberRow) {
 <template>
     <section class="card">
         <header class="card-head">
-            <h3>{{ $t('guilds.members.title') }} <span class="count-pill">{{ filtered.length }}</span></h3>
+            <h3>{{ $t('guilds.members.title') }} <AppBadge>{{ filtered.length }}</AppBadge></h3>
             <input
                 v-model="search"
                 type="search"
@@ -182,14 +183,6 @@ function onNickname(m: GuildMemberRow) {
     display: flex;
     gap: 0.4rem;
     align-items: center;
-}
-.count-pill {
-    background: var(--bg-surface-2);
-    color: var(--text-muted);
-    border-radius: var(--radius-pill);
-    padding: 0 0.5rem;
-    font-size: 0.78rem;
-    font-weight: 500;
 }
 .search {
     flex: 1;

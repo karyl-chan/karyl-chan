@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useConfirm } from '@karyl-chan/ui';
-import { AppModal } from '@karyl-chan/ui';
+import { AppBadge, AppModal, useConfirm } from '@karyl-chan/ui';
 import {
     createGuildEmoji,
     createGuildSticker,
@@ -179,7 +178,7 @@ function onPickStickerFile(event: Event) {
     <section class="card">
         <h3>
             {{ $t('emojiMgmt.title') }}
-            <span class="count-pill">{{ emojis.length }}</span>
+            <AppBadge>{{ emojis.length }}</AppBadge>
             <button type="button" class="action-btn" @click="openEmojiUpload">{{ $t('emojiMgmt.uploadButton') }}</button>
         </h3>
         <p v-if="error" class="error">{{ error }}</p>
@@ -199,7 +198,7 @@ function onPickStickerFile(event: Event) {
     <section class="card">
         <h3>
             {{ $t('stickerMgmt.title') }}
-            <span class="count-pill">{{ stickers.length }}</span>
+            <AppBadge>{{ stickers.length }}</AppBadge>
             <button type="button" class="action-btn" @click="openStickerUpload">{{ $t('stickerMgmt.uploadButton') }}</button>
         </h3>
         <p v-if="stickers.length === 0" class="muted">{{ $t('stickerMgmt.empty') }}</p>
@@ -278,13 +277,6 @@ function onPickStickerFile(event: Event) {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-}
-.count-pill {
-    background: var(--bg-surface-2);
-    color: var(--text-muted);
-    border-radius: var(--radius-pill);
-    padding: 0 0.5rem;
-    font-size: 0.78rem;
 }
 .action-btn {
     margin-left: auto;

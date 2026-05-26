@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Icon } from '@iconify/vue';
+import { AppBadge } from '@karyl-chan/ui';
 import type { GuildRoleSummary } from '../../../../api/guilds';
 
 defineProps<{
@@ -18,7 +19,7 @@ const emit = defineEmits<{
         <header class="head">
             <h3>
                 {{ $t('guilds.rolesTitle') }}
-                <span class="count-pill">{{ roles.length }}</span>
+                <AppBadge>{{ roles.length }}</AppBadge>
             </h3>
             <button type="button" class="primary small" @click="emit('create')">
                 <Icon icon="material-symbols:add-rounded" width="14" height="14" />
@@ -70,13 +71,6 @@ const emit = defineEmits<{
     display: flex;
     align-items: center;
     gap: 0.45rem;
-}
-.count-pill {
-    background: var(--bg-surface-2);
-    color: var(--text-muted);
-    border-radius: var(--radius-pill);
-    padding: 0 0.5rem;
-    font-size: 0.78rem;
 }
 .primary {
     display: inline-flex;

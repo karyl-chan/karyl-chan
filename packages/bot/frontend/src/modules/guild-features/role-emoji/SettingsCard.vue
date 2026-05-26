@@ -10,7 +10,7 @@ import {
     setRoleReceiveMessageGroup,
     type GuildDetail
 } from '../../../api/guilds';
-import { AppSelectField, type SelectOption } from '@karyl-chan/ui';
+import { AppBadge, AppSelectField, type SelectOption } from '@karyl-chan/ui';
 import { useBotFeatureCard } from '../_shared/use-bot-feature-card';
 import { useChannelPicker, useRolePicker } from '../_shared/use-feature-pickers';
 
@@ -144,7 +144,7 @@ async function changeWatchedGroup(channelId: string, messageId: string, groupId:
         <section class="card">
             <header class="card-head">
                 <h3>{{ $t('guilds.feature.roleEmojiGroupsTitle') }}
-                    <span class="count-pill">{{ detailLocal.roleEmojiGroups.length }}</span>
+                    <AppBadge>{{ detailLocal.roleEmojiGroups.length }}</AppBadge>
                 </h3>
             </header>
             <p class="hint">{{ $t('guilds.feature.roleEmojiGroupsHint') }}</p>
@@ -179,7 +179,7 @@ async function changeWatchedGroup(channelId: string, messageId: string, groupId:
         <section class="card">
             <header class="card-head">
                 <h3>{{ $t('guilds.feature.roleEmojiTitle') }}
-                    <span class="count-pill">{{ mappingsInSelectedGroup.length }}</span>
+                    <AppBadge>{{ mappingsInSelectedGroup.length }}</AppBadge>
                 </h3>
             </header>
             <p class="hint">{{ $t('guilds.feature.roleEmojiHint') }}</p>
@@ -231,7 +231,7 @@ async function changeWatchedGroup(channelId: string, messageId: string, groupId:
         <section class="card">
             <header class="card-head">
                 <h3>{{ $t('guilds.feature.roleReceiveTitle') }}
-                    <span class="count-pill">{{ detailLocal.roleReceiveMessages.length }}</span>
+                    <AppBadge>{{ detailLocal.roleReceiveMessages.length }}</AppBadge>
                 </h3>
             </header>
             <p class="hint">{{ $t('guilds.feature.roleReceiveHint') }}</p>

@@ -9,7 +9,7 @@ import {
     type AutoModRulePayload
 } from '../../../../api/guilds';
 import { useApiError } from '../../../../composables/use-api-error';
-import { useConfirm } from '@karyl-chan/ui';
+import { AppBadge, useConfirm } from '@karyl-chan/ui';
 import { useI18n } from 'vue-i18n';
 import GuildAutoModEditModal from './GuildAutoModEditModal.vue';
 
@@ -107,7 +107,7 @@ function triggerLabel(t1: number): string {
 <template>
     <section class="card">
         <header class="card-head">
-            <h3>{{ $t('guilds.automod.title') }} <span class="count-pill">{{ rules.length }}</span></h3>
+            <h3>{{ $t('guilds.automod.title') }} <AppBadge>{{ rules.length }}</AppBadge></h3>
             <button type="button" class="primary" @click="openCreate">{{ $t('guilds.automod.create') }}</button>
         </header>
 
@@ -167,14 +167,6 @@ function triggerLabel(t1: number): string {
     display: flex;
     align-items: center;
     gap: 0.4rem;
-}
-.count-pill {
-    background: var(--bg-surface-2);
-    color: var(--text-muted);
-    border-radius: var(--radius-pill);
-    padding: 0 0.5rem;
-    font-size: 0.78rem;
-    font-weight: 500;
 }
 .rules { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .rule {

@@ -43,7 +43,7 @@ const features = computed(() => props.plugin.manifest?.guild_features ?? []);
                 <p v-if="feat.description" class="feat-desc">{{ feat.description }}</p>
                 <div v-if="feat.commands && feat.commands.length > 0" class="feat-commands">
                     <span class="feat-commands-label">Feature 指令：</span>
-                    <code v-for="cmd in feat.commands" :key="cmd.name" class="cmd-chip">/{{ cmd.name }}</code>
+                    <AppBadge v-for="cmd in feat.commands" :key="cmd.name" variant="outline" mono>/{{ cmd.name }}</AppBadge>
                 </div>
             </article>
         </div>
@@ -141,14 +141,5 @@ const features = computed(() => props.plugin.manifest?.guild_features ?? []);
 .feat-commands-label {
     font-size: 0.78rem;
     color: var(--text-muted);
-}
-.cmd-chip {
-    font-family: var(--font-mono, monospace);
-    font-size: 0.75rem;
-    background: var(--bg-page);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: 0.1rem 0.35rem;
-    color: var(--text);
 }
 </style>
