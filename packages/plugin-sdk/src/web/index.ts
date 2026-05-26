@@ -26,3 +26,13 @@ export { createPluginApi } from "./api";
 export type { PluginApi, PluginApiOptions } from "./api";
 export { openSseChannel } from "./sse";
 export type { SseChannel, SseChannelOptions } from "./sse";
+
+// Workpack D: one-call orchestrator that composes auth + api into a
+// single SessionHandle. Plugin SPAs go from 80-line bootstrap to one
+// await call.
+export { bootstrapPluginSession } from "./bootstrap";
+export type {
+  BootstrapOptions,
+  SessionHandle,
+  AuthSurface,
+} from "./bootstrap";

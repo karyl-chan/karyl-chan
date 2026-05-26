@@ -456,6 +456,33 @@ export async function validateManifest(
     }
   }
 
+  // Workpack D: register-time config_schema validation. Reject
+  // manifests with malformed defaults / invalid regex / inverted
+  // ranges so the bug surfaces at plugin startup instead of after an
+  // admin opens the config editor and gets an unhelpful save error.
+  const { validateSchema } = await import("./config-validator.js");
+  if (Array.isArray(m.config_schema)) {
+    const fail = validateSchema(m.config_schema as ManifestConfigField[]);
+    if (fail) {
+      return {
+        ok: false,
+        error: `config_schema[${fail.key}]: ${fail.message}`,
+      };
+    }
+  }
+  for (const f of
+    (m.guild_features as ManifestGuildFeature[] | undefined) ?? []) {
+    if (Array.isArray(f.config_schema)) {
+      const fail = validateSchema(f.config_schema as ManifestConfigField[]);
+      if (fail) {
+        return {
+          ok: false,
+          error: `guild_features[${f.key}].config_schema[${fail.key}]: ${fail.message}`,
+        };
+      }
+    }
+  }
+
   return { ok: true, manifest: input as PluginManifest };
 }
 

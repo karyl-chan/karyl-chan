@@ -53,6 +53,27 @@ export interface AuthState {
   loadStored(): AuthMode;
   /** Register a callback fired when the server returns 401/403. */
   onAccessDenied(handler: (message: string) => void): void;
+  /**
+   * Multi-subscriber hook fired whenever the active auth mode changes
+   * (set / refresh / clear / loadStored). Adapters (Vue composables,
+   * vanilla DOM listeners) subscribe here to drive reactivity. Returns
+   * an unsubscribe function.
+   */
+  onModeChange(handler: (mode: AuthMode) => void): () => void;
+  /**
+   * Configure the API base URL used by the preemptive refresh timer.
+   * Should be called once after `createAuthState`, before the first
+   * `setManageTokens`. Without this, manage-mode tokens still refresh
+   * on demand via `tryRefresh(apiBase)` but the preemptive timer is
+   * disabled (no API base to call). `bootstrapPluginSession` wires
+   * this for you.
+   */
+  configureRefresh(apiBase: string): void;
+  /**
+   * Tear down: cancel the preemptive refresh timer + drop subscribers.
+   * Safe to call from SPA unmount.
+   */
+  destroy(): void;
 }
 
 /**
@@ -89,6 +110,51 @@ export function createAuthState(storageKeyPrefix: string): AuthStateBundle {
   // both 401 will share one /refresh round-trip instead of racing.
   // Cleared as soon as the in-flight promise settles.
   let refreshInFlight: Promise<boolean> | null = null;
+  // Multi-subscriber mode-change fanout. Adapters (Vue composables,
+  // vanilla DOM listeners) push subscribers; setMode below fires them
+  // synchronously after the state mutation. The set is a Set so
+  // unsubscribe is O(1).
+  const modeSubs = new Set<(mode: AuthMode) => void>();
+  // Preemptive refresh — when set, the manage path schedules a refresh
+  // 60 s before access-token expiry so plugin requests don't eat a 401
+  // round-trip. Configured via configureRefresh().
+  let refreshApiBase: string | null = null;
+  let preemptiveTimer: ReturnType<typeof setTimeout> | null = null;
+  const PREEMPTIVE_REFRESH_LEAD_MS = 60_000;
+
+  function setMode(next: AuthMode): void {
+    if (mode === next) return;
+    mode = next;
+    for (const sub of modeSubs) {
+      try {
+        sub(next);
+      } catch {
+        /* subscriber threw — don't break the loop */
+      }
+    }
+  }
+
+  function cancelPreemptiveTimer(): void {
+    if (preemptiveTimer) {
+      clearTimeout(preemptiveTimer);
+      preemptiveTimer = null;
+    }
+  }
+
+  function schedulePreemptiveRefresh(): void {
+    cancelPreemptiveTimer();
+    if (!refreshApiBase || !manage) return;
+    const delay = manage.accessExpiresAt - Date.now() - PREEMPTIVE_REFRESH_LEAD_MS;
+    if (delay <= 0) {
+      // Already inside the lead window — fire right away.
+      void tryRefresh(refreshApiBase);
+      return;
+    }
+    preemptiveTimer = setTimeout(() => {
+      preemptiveTimer = null;
+      if (refreshApiBase) void tryRefresh(refreshApiBase);
+    }, delay);
+  }
 
   function bearerToken(): string | null {
     if (mode === "session") return sessionToken;
@@ -98,19 +164,21 @@ export function createAuthState(storageKeyPrefix: string): AuthStateBundle {
 
   function setSessionToken(token: string | null): void {
     sessionToken = token;
-    mode = token ? "session" : "none";
+    setMode(token ? "session" : "none");
     if (token) sessionStorage.setItem(sessionKey, token);
     else sessionStorage.removeItem(sessionKey);
     // Switching modes — drop the other store so a stale token doesn't
     // resurrect after a clear().
     if (token) sessionStorage.removeItem(manageKey);
+    cancelPreemptiveTimer();
   }
 
   function setManageTokens(t: ManageTokens): void {
     manage = t;
-    mode = "manage";
+    setMode("manage");
     sessionStorage.setItem(manageKey, JSON.stringify(t));
     sessionStorage.removeItem(sessionKey);
+    schedulePreemptiveRefresh();
   }
 
   async function tryRefresh(apiBase: string): Promise<boolean> {
@@ -139,11 +207,12 @@ export function createAuthState(storageKeyPrefix: string): AuthStateBundle {
   }
 
   function clear(): void {
-    mode = "none";
     sessionToken = null;
     manage = null;
     sessionStorage.removeItem(sessionKey);
     sessionStorage.removeItem(manageKey);
+    cancelPreemptiveTimer();
+    setMode("none");
   }
 
   function loadStored(): AuthMode {
@@ -160,7 +229,8 @@ export function createAuthState(storageKeyPrefix: string): AuthStateBundle {
           parsed.refreshExpiresAt > Date.now()
         ) {
           manage = parsed;
-          mode = "manage";
+          setMode("manage");
+          schedulePreemptiveRefresh();
           return "manage";
         }
       } catch {
@@ -171,7 +241,7 @@ export function createAuthState(storageKeyPrefix: string): AuthStateBundle {
     const s = sessionStorage.getItem(sessionKey);
     if (s) {
       sessionToken = s;
-      mode = "session";
+      setMode("session");
       return "session";
     }
     return "none";
@@ -189,6 +259,21 @@ export function createAuthState(storageKeyPrefix: string): AuthStateBundle {
     loadStored,
     onAccessDenied(handler) {
       deniedHandler = handler;
+    },
+    onModeChange(handler) {
+      modeSubs.add(handler);
+      return () => modeSubs.delete(handler);
+    },
+    configureRefresh(apiBase) {
+      refreshApiBase = apiBase.replace(/\/+$/, "");
+      // If we already have a manage session (e.g. loadStored ran first),
+      // schedule the preemptive refresh now.
+      if (mode === "manage") schedulePreemptiveRefresh();
+    },
+    destroy() {
+      cancelPreemptiveTimer();
+      modeSubs.clear();
+      deniedHandler = null;
     },
   };
   return {

@@ -652,19 +652,66 @@ export async function registerPluginRoutes(
           reply.code(400).send({ error: "config must be an object" });
           return;
         }
+        const incomingObj = body.config as Record<string, unknown>;
+        // Workpack D: validate every per-guild config value through the
+        // shared validator before persisting. Same 422 + fieldErrors
+        // shape as the plugin-level PUT so the admin UI can render
+        // both panels identically.
+        const stringValues: Record<string, string> = {};
+        const earlyErrors: Array<{ key: string; message: string; code: string }> = [];
+        for (const [key, raw] of Object.entries(incomingObj)) {
+          if (raw === null || raw === undefined) {
+            stringValues[key] = "";
+            continue;
+          }
+          if (typeof raw === "boolean" || typeof raw === "number") {
+            // Coerce primitives to string for the validator — historical
+            // callers may have sent booleans/numbers raw.
+            stringValues[key] = String(raw);
+            continue;
+          }
+          if (typeof raw !== "string") {
+            earlyErrors.push({
+              key,
+              message: `'${key}' must be a string`,
+              code: "type_mismatch",
+            });
+            continue;
+          }
+          stringValues[key] = raw;
+        }
+        const featureSchema = feature.config_schema ?? [];
+        const { validateValues } = await import("./config-validator.js");
+        const result = validateValues(featureSchema, stringValues, {
+          // Per-guild feature config historically tolerates unknown
+          // keys (e.g. orphaned values from an older schema version
+          // — we don't want to break old guilds by tightening here).
+          allowUnknownKeys: true,
+        });
+        if (earlyErrors.length > 0 || !result.ok) {
+          reply.code(422).send({
+            error: "config validation failed",
+            fieldErrors: [...earlyErrors, ...result.errors],
+          });
+          return;
+        }
         const stored: Record<string, unknown> = {};
-        const incoming = body.config as Record<string, unknown>;
-        for (const field of feature.config_schema ?? []) {
-          const v = incoming[field.key];
-          if (v === undefined) continue;
-          if (
-            field.type === "secret" &&
-            typeof v === "string" &&
-            v.length > 0
-          ) {
-            stored[field.key] = encryptSecret(v);
+        const schemaByKey = new Map(featureSchema.map((f) => [f.key, f]));
+        for (const [key, raw] of Object.entries(stringValues)) {
+          const field = schemaByKey.get(key);
+          if (!field) {
+            // unknown key — keep historical pass-through behaviour
+            stored[key] = raw;
+            continue;
+          }
+          if (field.type === "secret" && raw === "********") {
+            // sentinel — skip; preserves existing stored value
+            continue;
+          }
+          if (field.type === "secret" && raw.length > 0) {
+            stored[field.key] = encryptSecret(raw);
           } else {
-            stored[field.key] = v;
+            stored[field.key] = raw;
           }
         }
         configJson = JSON.stringify(stored);
@@ -949,13 +996,13 @@ export async function registerPluginRoutes(
    * PUT /api/plugins/:id/config
    * Body: { values: Record<string, string | null> }
    *
-   * Upsert each provided key. `null` deletes the key. Secret values
-   * coming in as the sentinel "********" are ignored (i.e. the
-   * existing encrypted value is kept) — that's how the UI says "leave
-   * this secret unchanged" without sending the plaintext back.
-   *
-   * Unknown keys (not in manifest.config_schema) are rejected so
-   * admins can't bloat the table with stray entries.
+   * Workpack D: validation pipeline. The full payload is run through
+   * `validateValues` BEFORE any persistence so the admin UI gets every
+   * field error in one 422 response instead of an early-abort on the
+   * first bad key. Validation rules: required+empty, type-mismatch
+   * (number / boolean / url / regex / select / snowflake), min/max
+   * (numeric value bounds or string length bounds per type),
+   * configured regex pattern, secret sentinel skip.
    */
   server.put<{
     Params: { id: string };
@@ -974,46 +1021,67 @@ export async function registerPluginRoutes(
     }
     const manifest = safeParse(plugin.manifestJson) as PluginManifest | null;
     const schema = manifest?.config_schema ?? [];
-    const schemaByKey = new Map(schema.map((f) => [f.key, f]));
     const body = request.body ?? {};
     if (!body.values || typeof body.values !== "object") {
       reply.code(400).send({ error: "values object required" });
       return;
     }
-    const values = body.values as Record<string, unknown>;
+    const incoming = body.values as Record<string, unknown>;
+
+    // Normalise to Record<string,string> for the validator.
+    // null/undefined → empty string (delete intent).
+    // Non-string values → rejected up-front as type_mismatch with
+    // string requirement (admin UI always submits strings).
+    const stringValues: Record<string, string> = {};
+    const earlyErrors: Array<{ key: string; message: string; code: string }> = [];
+    for (const [key, raw] of Object.entries(incoming)) {
+      if (raw === null || raw === undefined) {
+        stringValues[key] = "";
+        continue;
+      }
+      if (typeof raw !== "string") {
+        earlyErrors.push({
+          key,
+          message: `'${key}' must be a string`,
+          code: "type_mismatch",
+        });
+        continue;
+      }
+      stringValues[key] = raw;
+    }
+
+    const { validateValues } = await import("./config-validator.js");
+    const result = validateValues(schema, stringValues, {
+      allowUnknownKeys: false,
+    });
+    if (earlyErrors.length > 0 || !result.ok) {
+      reply.code(422).send({
+        error: "config validation failed",
+        fieldErrors: [...earlyErrors, ...result.errors],
+      });
+      return;
+    }
+
+    // Validation passed — persist. accepted/skipped lists track what
+    // we actually wrote vs left unchanged (secret sentinel).
     const accepted: string[] = [];
     const skipped: string[] = [];
-    for (const [key, raw] of Object.entries(values)) {
+    const schemaByKey = new Map(schema.map((f) => [f.key, f]));
+    for (const [key, raw] of Object.entries(stringValues)) {
       const field = schemaByKey.get(key);
-      if (!field) {
-        reply
-          .code(400)
-          .send({ error: `'${key}' not declared in plugin config_schema` });
-        return;
-      }
-      // Sentinel "********" on a secret = leave unchanged.
+      if (!field) continue; // already rejected by validator above
       if (field.type === "secret" && raw === "********") {
         skipped.push(key);
         continue;
       }
-      if (raw === null || raw === undefined) {
-        // Delete by setting empty string — keep schema consistent;
-        // operator can re-set later. (Hard delete via DELETE endpoint
-        // is overkill for v1.)
+      if (raw.length === 0) {
+        // Empty string = clear / delete. Same semantics as before.
         await upsertConfigKey(pluginId, key, "", "admin");
         accepted.push(key);
         continue;
       }
-      let stored: string;
-      if (typeof raw !== "string") {
-        reply.code(400).send({ error: `'${key}' must be string` });
-        return;
-      }
-      if (field.type === "secret" && raw.length > 0) {
-        stored = encryptSecret(raw);
-      } else {
-        stored = raw;
-      }
+      const stored =
+        field.type === "secret" && raw.length > 0 ? encryptSecret(raw) : raw;
       await upsertConfigKey(pluginId, key, stored, "admin");
       accepted.push(key);
     }

@@ -21,8 +21,37 @@ export interface ManifestConfigField {
   label: string;
   description?: string;
   required?: boolean;
-  default?: unknown;
+  /**
+   * Narrowed from `unknown` in Workpack D — the bot's register-time
+   * `validateManifest` rejects manifests where `default`'s runtime type
+   * doesn't match `type` (e.g. `default: 42` on a `type: "text"` field).
+   * Caught at register time, not after admins start saving values.
+   */
+  default?: string | number | boolean | null;
   options?: Array<{ value: string; label: string }>;
+
+  // ─── Workpack D constraint fields ──────────────────────────────────
+  // All optional; ignored for inapplicable types. The bot's
+  // `validateConfigValue` runs these on every save and returns
+  // per-field errors in a 422 response.
+
+  /**
+   * Number type: inclusive minimum value.
+   * Text/textarea/url/regex/secret types: minimum character length.
+   * Overloaded by type intentionally — keeps the surface tight without
+   * a parallel `min`/`minLength` proliferation.
+   */
+  min?: number;
+  /** Number: inclusive maximum value. String types: maximum length. */
+  max?: number;
+  /** Number type: UI step attribute. Ignored on save. */
+  step?: number;
+  /**
+   * ECMAScript regex source string. Applied to text/textarea/url/regex
+   * field values. Compiled with `new RegExp(pattern)`; an invalid
+   * pattern is rejected at register-time, not silently dropped.
+   */
+  pattern?: string;
 }
 
 /**
@@ -133,6 +162,16 @@ export interface PluginManifest {
   };
   /** Plugin 級 admin config。 */
   config_schema?: ManifestConfigField[];
+  /**
+   * Workpack D: monotonically-incrementing integer on the manifest's
+   * `config_schema` block. When the bot reads a persisted config row
+   * whose stored schema version is lower than the manifest's declared
+   * `config_schema_version`, it surfaces a stale-config warning in
+   * the admin UI rather than auto-clearing or rejecting the value.
+   * No migration is performed automatically — the plugin author owns
+   * any data shape change. Default 1 when absent.
+   */
+  config_schema_version?: number;
 
   /** 軌一：Guild features。 */
   guild_features?: ManifestGuildFeature[];

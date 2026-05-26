@@ -83,8 +83,20 @@ export interface ManifestConfigField {
   label: string;
   description?: string;
   required?: boolean;
-  default?: unknown;
+  /** Workpack D: narrowed; register-time validator rejects type/default mismatch. */
+  default?: string | number | boolean | null;
   options?: Array<{ value: string; label: string }>;
+  /** Workpack D: numeric value bound OR string length bound (per `type`). */
+  min?: number;
+  /** Workpack D: numeric value bound OR string length bound (per `type`). */
+  max?: number;
+  /** Workpack D: UI step attribute for number fields. Ignored on save. */
+  step?: number;
+  /**
+   * Workpack D: ECMAScript regex source. Compiled at register-time
+   * (invalid pattern → manifest rejected) and applied at every save.
+   */
+  pattern?: string;
 }
 
 export interface ManifestGuildFeature {
@@ -163,6 +175,14 @@ export interface PluginManifest {
    * Values persist in the `plugin_configs` table.
    */
   config_schema?: ManifestConfigField[];
+  /**
+   * Workpack D: monotonically-incrementing integer on the
+   * `config_schema` block. When the bot reads a config row whose
+   * stored schema version is lower than this value, it surfaces a
+   * stale-config warning in the admin UI without auto-migrating or
+   * rejecting the value. Default 1 when absent.
+   */
+  config_schema_version?: number;
   guild_features?: ManifestGuildFeature[];
   /** 軌三：plugin 自訂指令（三軸寫死）。 */
   plugin_commands?: ManifestPluginCommand[];
