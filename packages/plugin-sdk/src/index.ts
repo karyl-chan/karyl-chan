@@ -18,6 +18,7 @@ export type {
   PluginInstance,
   StartedPlugin,
   StartOptions,
+  EventHandler,
 } from "./plugin.js";
 
 export type {

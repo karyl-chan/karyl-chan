@@ -45,14 +45,31 @@ function hasAutocompleteHandler(cfg: PluginConfig): boolean {
  * True iff the plugin declares any lifecycle hooks the SDK needs to
  * dispatch (`onEnable` / `onDisable`). When set, manifest carries an
  * `endpoints.plugin_lifecycle` field the bot uses to POST synthetic
- * `plugin.guild.enabled` / `plugin.guild.disabled` events on a path
- * separate from `endpoints.events` (so plugins that own their own
- * `/events` route — e.g. xiangqi — don't collide).
+ * `plugin.guild.enabled` / `plugin.guild.disabled` events on its own
+ * path — `/_kc/lifecycle` — distinct from Discord-side event dispatch
+ * at `/events` so the two routes never collide.
  */
 function hasLifecycleHooks(cfg: PluginConfig): boolean {
   return (
     typeof cfg.onEnable === "function" || typeof cfg.onDisable === "function"
   );
+}
+
+/**
+ * Lockdown L-1: collect every Discord-side event type the plugin has a
+ * handler for. Used to auto-fill `events_subscribed_global` so plugin
+ * authors don't have to keep a parallel list in sync with their
+ * `eventHandlers` object — the keys ARE the subscription set.
+ */
+function collectEventHandlerKeys(cfg: PluginConfig): string[] {
+  if (!cfg.eventHandlers || typeof cfg.eventHandlers !== "object") return [];
+  return Object.keys(cfg.eventHandlers).filter(
+    (k) => typeof k === "string" && k.length > 0,
+  );
+}
+
+function hasAnyEventHandler(cfg: PluginConfig): boolean {
+  return collectEventHandlerKeys(cfg).length > 0;
 }
 
 /**
@@ -223,6 +240,12 @@ export function buildManifest(
       ...(hasLifecycleHooks(cfg)
         ? { plugin_lifecycle: "/_kc/lifecycle" }
         : {}),
+      // Discord-side events. SDK mounts /events only when at least
+      // one `eventHandlers` entry is declared; without handlers the
+      // route is absent and the bot's `resolveEventsUrl` falls back
+      // to the default but the dispatch returns 404 (which the bot
+      // surfaces in its event log so the misconfig is visible).
+      ...(hasAnyEventHandler(cfg) ? { events: "/events" } : {}),
       ...((cfg.components ?? []).length > 0
         ? { plugin_component: "/components" }
         : {}),
@@ -239,6 +262,19 @@ export function buildManifest(
         : {}),
     },
   };
+
+  // Merge `eventHandlers` keys into `events_subscribed_global` so the
+  // bot's event-index rebuild picks up the subscription set without
+  // the author having to keep two lists in sync. Feature-scoped
+  // subscriptions on guildFeatures[].eventsSubscribed still flow
+  // through the feature path (admin-UI visibility), so this merge
+  // is set-union, not replace.
+  const handlerKeys = collectEventHandlerKeys(cfg);
+  if (handlerKeys.length > 0) {
+    const existing = new Set<string>(manifest.events_subscribed_global ?? []);
+    for (const k of handlerKeys) existing.add(k);
+    manifest.events_subscribed_global = [...existing];
+  }
 
   return manifest;
 }

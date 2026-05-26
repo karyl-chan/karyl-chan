@@ -60,6 +60,20 @@ export interface PluginServerOptions {
   dispatchLifecycle?: (eventType: string, data: unknown) => Promise<void>;
   /** When false, the SDK does NOT mount `/_kc/lifecycle`. */
   hasLifecycleHandler?: boolean;
+  /**
+   * Called by the SDK-mounted `/events` route on each HMAC-verified
+   * inbound bot event dispatch. Receives the event type and raw data;
+   * `plugin.ts` resolves the handler by type and runs it inside a
+   * try/catch so a single throw can't take the process down.
+   *
+   * When `hasEventHandlers` is false, the `/events` route is not
+   * mounted — the bot still emits the event but we 404 on receipt,
+   * which surfaces a "no events endpoint" in the bot event log to
+   * prompt the plugin author.
+   */
+  dispatchEvent?: (eventType: string, data: unknown) => Promise<void>;
+  /** When false, the SDK does NOT mount `/events`. */
+  hasEventHandlers?: boolean;
 }
 
 interface InteractionPayload {
@@ -536,6 +550,54 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
     }
     return await opts.getHealthReport();
   });
+
+  // Discord-side event dispatch. Only mounted when the plugin declared
+  // at least one entry in `eventHandlers`. HMAC-verified with the same
+  // dispatch key as /commands, /components, /modals, /_kc/lifecycle —
+  // the bot signs every outbound event POST with this key.
+  //
+  // Lockdown L-1: SDK owns this route so plugins don't re-implement
+  // HMAC verification per-plugin. Pre-0.6 plugins (e.g. xiangqi) used
+  // to mount their own /events; the bot's transport-swap roadmap (Phase
+  // 2.2 Redis Streams) is opaque from the plugin side as long as
+  // handlers live here.
+  if (opts.hasEventHandlers && opts.dispatchEvent) {
+    server.post(
+      "/events",
+      async (request: FastifyRequest, reply: FastifyReply) => {
+        const signingKey = opts.getDispatchHmacKey?.() ?? null;
+        if (!signingKey) {
+          return reply.code(503).send({
+            error: "dispatch HMAC key not available; plugin must re-register",
+          });
+        }
+        const rawBody = typeof request.body === "string" ? request.body : "";
+        const auth = verifyDispatchAuth(request, rawBody, signingKey);
+        if (!auth.ok) return reply.code(401).send({ error: auth.reason });
+        let payload: { type: unknown; data?: unknown };
+        try {
+          payload = JSON.parse(rawBody);
+        } catch {
+          return reply.code(400).send({ error: "invalid JSON" });
+        }
+        if (typeof payload.type !== "string" || payload.type.length === 0) {
+          return reply.code(400).send({ error: "missing event type" });
+        }
+        // ACK before running the handler so the bot's per-event
+        // dispatch timeout (~5 s) never bites a slow handler. Handler
+        // errors are caught and surfaced via `ctx.log` only.
+        reply.code(204).send();
+        try {
+          await opts.dispatchEvent!(payload.type, payload.data ?? {});
+        } catch (err) {
+          server.log.error(
+            { err, type: payload.type },
+            "event handler threw",
+          );
+        }
+      },
+    );
+  }
 
   // Lifecycle dispatch. Only mounted when the plugin declared onEnable
   // or onDisable. HMAC-verified like /commands and /components — the

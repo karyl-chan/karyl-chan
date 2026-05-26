@@ -14,6 +14,29 @@ import type {
 import type { ManifestConfigField } from "./manifest.js";
 import type { HealthProducer, PluginContext } from "./context.js";
 
+/**
+ * Handler for one Discord-side event the plugin subscribed to.
+ *
+ * The SDK mounts the `/events` route, verifies the bot's HMAC headers,
+ * parses the JSON body, and looks up the handler by `type`. Authors do
+ * not need to re-implement HMAC verification per plugin — this used to
+ * be a copy-pasted boilerplate route in every plugin that consumed
+ * `guild.message_create` etc.
+ *
+ * Receives the long-lived `PluginContext` plus the event-specific data
+ * payload as `unknown` — narrow with a type guard inside the handler,
+ * since the bot's wire shape per event type is documented separately.
+ *
+ * The bot dispatches fire-and-forget; the SDK ACKs with HTTP 204
+ * immediately and runs the handler in the background. Throws from the
+ * handler are caught and logged via `ctx.log`; they do NOT propagate
+ * to the bot (which has already moved on).
+ */
+export type EventHandler = (
+  ctx: PluginContext,
+  data: unknown,
+) => void | Promise<void>;
+
 // ── 共用型別 ─────────────────────────────────────────────────────────────────
 
 /**
@@ -370,6 +393,28 @@ export interface PluginConfig {
    * records the plugin as `unhealthy` on timeout.
    */
   healthCheck?: HealthProducer;
+
+  /**
+   * Discord-side events the plugin wants to receive. Keys are event
+   * types (`guild.message_create`, `guild.message_reaction_add`,
+   * `dm.message_create`, `guild.voice_state_update`, …); values are
+   * the handlers.
+   *
+   * The SDK auto-mounts `/events`, verifies the HMAC, parses JSON, and
+   * dispatches to the matching handler. Authors do NOT mount their own
+   * `/events` route — that pattern is the L-1 lockdown deprecation.
+   *
+   * Manifest-side wiring is also automatic: declared event-type keys
+   * are merged into `events_subscribed_global` and `endpoints.events`
+   * is set to `/events`, so the bot's event-index rebuild picks them
+   * up at register time. Feature-scoped subscriptions
+   * (`guildFeatures[].eventsSubscribed`) still work for admin-UI
+   * visibility, but the handler must live here.
+   *
+   * Future transport swap (e.g. Phase 2.2 Redis Streams) only changes
+   * the SDK's internal wiring — handlers stay stable.
+   */
+  eventHandlers?: Record<string, EventHandler>;
 }
 
 /** The object returned by definePlugin. */
@@ -675,6 +720,20 @@ export function definePlugin(config: PluginConfig): PluginInstance {
         hasLifecycleHandler:
           typeof config.onEnable === "function" ||
           typeof config.onDisable === "function",
+        // Lockdown L-1: SDK-managed event dispatch. Resolver lives in
+        // this closure so the long-lived `ctx` (built after first
+        // register) is captured; handlers run with the same context
+        // shape as command handlers / lifecycle hooks.
+        dispatchEvent: async (eventType, data) => {
+          if (!ctx) return;
+          const handler = config.eventHandlers?.[eventType];
+          if (!handler) return;
+          await handler(ctx, data);
+        },
+        hasEventHandlers:
+          typeof config.eventHandlers === "object" &&
+          config.eventHandlers !== null &&
+          Object.keys(config.eventHandlers).length > 0,
       });
 
       // Push helpers reference `client` via the closure so they pick up
