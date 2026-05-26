@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.4.0...plugin-sdk-v0.5.0) (2026-05-26)
+
+
+### Features
+
+* **plugin-sdk:** `bootstrapPluginSession` accepts `surfaceFromClaims` to derive the surface from the JWT instead of the URL `?surface=` param. Plugins whose link URLs only carry `?token=` (and embed the manage-vs-session distinction in the token's capabilities) can now drop their hand-rolled `decodeJwt` / `exchangeManageJwt` / `loadStored*` plumbing without forcing the bot side to also start emitting `?surface=` query params. URL `?surface=` still wins when present, so existing call sites keep working unchanged.
+
 ## [0.4.0](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.3.0...plugin-sdk-v0.4.0) (2026-05-26)
 
 

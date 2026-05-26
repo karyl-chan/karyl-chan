@@ -51,6 +51,22 @@ export interface BootstrapOptions {
    */
   surfaces?: Record<string, AuthSurface>;
   /**
+   * Optional resolver for plugins whose link URLs do NOT carry a
+   * `?surface=` query param — typical when the JWT itself is the
+   * single source of truth for "which view should I mount?" (e.g. a
+   * token whose `capabilities` includes `plugin:<key>:manage` always
+   * means the manage UI, and a token without it always means the
+   * session UI). Receives the decoded boot-token claims and returns
+   * the surface name to look up in `surfaces` — or null to fall back
+   * to the default "session" mode.
+   *
+   * Precedence: explicit URL `?surface=` always wins over the
+   * resolver. The resolver only fires when the URL has none. The
+   * derived value also lands on `handle.surface` so the caller can
+   * branch on it just like the URL-driven path.
+   */
+  surfaceFromClaims?: (claims: JwtClaims) => string | null | undefined;
+  /**
    * Additional URL params to read-and-strip at boot. Values land in
    * `SessionHandle.urlParams`. Use for plugin-specific bootstrap state
    * (`c`, `s`, etc.) that should be cleaned out of the address bar
@@ -96,9 +112,10 @@ export interface SessionHandle {
    */
   readonly claims: JwtClaims | null;
   /**
-   * `?surface=...` URL param value, after read-and-strip. Surface
-   * routing is the plugin's concern — the SDK only normalises and
-   * returns it.
+   * The surface chosen by the bootstrap, after read-and-strip of the
+   * URL `?surface=` param AND any `surfaceFromClaims` fallback. Null
+   * means neither path produced a value (the SDK then defaulted to
+   * "session" mode internally).
    */
   readonly surface: string | null;
   /** guildId from the bootstrap claims (or null). */
@@ -143,7 +160,7 @@ export async function bootstrapPluginSession(
   // "surface" are reserved (consumed by the SDK itself); silently
   // drop them from extraUrlParams to avoid a race where the caller's
   // strip beats the SDK's.
-  const surface = readQueryParamAndStrip("surface");
+  const urlSurface = readQueryParamAndStrip("surface");
   const extraUrlParams: Record<string, string | null> = {};
   const RESERVED_PARAMS = new Set(["token", "surface"]);
   for (const k of opts.extraUrlParams ?? []) {
@@ -156,6 +173,13 @@ export async function bootstrapPluginSession(
   let requestedMode: AuthSurface | null = null;
   let denied = false;
   let deniedReason: string | null = null;
+  /**
+   * The final surface used for policy lookup — starts as the URL
+   * `?surface=` value, then defers to `surfaceFromClaims` when the URL
+   * carried no surface. Exposed on `handle.surface` so the caller can
+   * branch on whatever route the SDK picked.
+   */
+  let resolvedSurface: string | null = urlSurface;
   const recordDenial = (msg: string): void => {
     denied = true;
     deniedReason = msg;
@@ -167,10 +191,25 @@ export async function bootstrapPluginSession(
     if (!claims) {
       recordDenial("URL token is malformed");
     } else {
+      // URL `?surface=` takes precedence — when the bot explicitly
+      // names a surface it overrides any token-derived guess. Only
+      // when the URL has none do we ask the optional claims-based
+      // resolver. The resolver is wrapped so a buggy implementation
+      // doesn't take the whole bootstrap down.
+      if (!resolvedSurface && opts.surfaceFromClaims) {
+        try {
+          resolvedSurface = opts.surfaceFromClaims(claims) ?? null;
+        } catch {
+          resolvedSurface = null;
+        }
+      }
       // Decide intended mode from the surfaces map; fall back to
-      // "session" when not listed. A surface absent from the URL also
-      // defaults to "session" — the historically-common case.
-      const surfacePolicy = surface ? opts.surfaces?.[surface] : undefined;
+      // "session" when not listed. A surface absent from the URL +
+      // resolver also defaults to "session" — the historically-common
+      // case.
+      const surfacePolicy = resolvedSurface
+        ? opts.surfaces?.[resolvedSurface]
+        : undefined;
       requestedMode = surfacePolicy ?? "session";
 
       if (requestedMode === "manage") {
@@ -216,7 +255,7 @@ export async function bootstrapPluginSession(
     denied,
     deniedReason,
     claims,
-    surface,
+    surface: resolvedSurface,
     guildId,
     urlParams: extraUrlParams,
     auth,
