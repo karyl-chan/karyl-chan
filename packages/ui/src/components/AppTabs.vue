@@ -165,6 +165,11 @@ const subOptions = computed<SelectOption<string>[]>(() =>
     flex-direction: column;
     gap: 0.7rem;
     min-height: 0;
+    /* Span the parent's cross-axis. Without this, a parent that uses
+       `align-items: flex-start` (a common pattern when other siblings
+       are bare buttons that shouldn't stretch) collapses the tabs
+       strip to its own content width. */
+    width: 100%;
     flex: 1;
 }
 
@@ -173,7 +178,14 @@ const subOptions = computed<SelectOption<string>[]>(() =>
     gap: 0.4rem;
     border-bottom: 1px solid var(--border);
     padding-bottom: 0.5rem;
+    /* Horizontal scroll when tabs don't fit; never vertical. The
+       browser implicitly upgrades the other axis to `auto` whenever
+       one axis is non-visible, so `overflow-y: hidden` is required —
+       otherwise an unwanted vertical scrollbar appears whenever the
+       border-bottom / focus ring nudges the box past its parent's
+       computed height (which it does for sub-row's active underline). */
     overflow-x: auto;
+    overflow-y: hidden;
     scrollbar-width: thin;
     flex-shrink: 0;
 }
@@ -206,6 +218,7 @@ const subOptions = computed<SelectOption<string>[]>(() =>
     gap: 0.6rem;
     border-bottom: 1px solid var(--border);
     overflow-x: auto;
+    overflow-y: hidden;
     scrollbar-width: thin;
     margin-top: -0.3rem;
     flex-shrink: 0;
