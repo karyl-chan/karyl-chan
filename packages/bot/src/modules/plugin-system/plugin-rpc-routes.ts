@@ -1045,17 +1045,27 @@ export async function registerPluginRpcRoutes(
   // ─── interactions.respond ─────────────────────────────────────────
   /**
    * POST /api/plugin/interactions.respond
-   * Body: { interaction_token, content?, embeds?, ephemeral? }
+   * Body: { interaction_token, content?, embeds?, ephemeral?, flags? }
    *
-   * Completes a deferred interaction reply. The bot defers immediately
-   * on receipt; the plugin processes the command, then calls this to
-   * fill in the placeholder reply within Discord's 15-minute window.
+   * Completes a deferred interaction reply. The bot defers ephemerally
+   * for every plugin command (modal-kind commands skip defer); the
+   * plugin processes the command, then calls this to fill in the
+   * placeholder reply within Discord's 15-minute window.
    *
-   * `ephemeral` flips the message visible-to-others bit. If the
-   * plugin doesn't pass it, we keep whatever ephemeral state the
-   * defer already used (Discord won't let you change ephemerality
-   * after defer anyway — the flag here is informational for follow
-   * ups).
+   * Because the bot's defer locked the original reply to ephemeral,
+   * `ephemeral: false` here can't change the ephemerality of @original.
+   * Instead we treat `ephemeral: false` as "post this publicly":
+   *   - POST a fresh public follow-up message with the content
+   *   - PATCH the ephemeral @original placeholder with a brief notice
+   *     so the user's "thinking…" message resolves
+   * `ephemeral: true` (or unset — default true) PATCHes @original in
+   * place, matching the original pre-refactor behaviour.
+   *
+   * `flags` (optional, integer bitmask) lets the plugin set additional
+   * MessageFlags Discord supports on this surface (SuppressEmbeds,
+   * SuppressNotifications). Ephemeral cannot be flipped this way — the
+   * dedicated `ephemeral` field is the only path that affects message
+   * visibility.
    */
   server.post<{
     Body: {
@@ -1064,6 +1074,7 @@ export async function registerPluginRpcRoutes(
       embeds?: unknown;
       components?: unknown;
       ephemeral?: unknown;
+      flags?: unknown;
       attachments?: unknown;
     };
   }>("/api/plugin/interactions.respond", async (request, reply) => {
@@ -1110,14 +1121,57 @@ export async function registerPluginRpcRoutes(
       reply.code(400).send({ error: `attachment error: ${m}` });
       return;
     }
-    const ephemeral = body.ephemeral === true;
+    // Public path: ephemeral explicitly === false. The deferred reply
+    // was ephemeral-locked at defer time, so we POST a new public
+    // follow-up with the real content, then dismiss the @original
+    // ephemeral placeholder so the user's "thinking…" message
+    // resolves rather than hanging until timeout.
+    const wantsPublic = body.ephemeral === false;
     try {
-      // Edit the original (deferred) interaction reply via Discord
-      // REST. Discord's webhook-message-edit endpoint accepts the
-      // same shape as initial response except flags is read-only;
-      // the ephemeral state was locked at defer time. `components` is
-      // forwarded verbatim (Discord component-v1 action rows) — used
-      // e.g. for link buttons that open a plugin WebUI.
+      if (wantsPublic) {
+        await bot.rest.post(
+          Routes.webhook(bot.application.id, body.interaction_token),
+          {
+            body: {
+              content,
+              embeds,
+              components,
+              allowed_mentions: { parse: [] },
+            },
+            ...(attachments.length > 0
+              ? {
+                  files: attachments.map((a) => ({
+                    name: a.name,
+                    data: a.data,
+                  })),
+                }
+              : {}),
+          },
+        );
+        // Best-effort placeholder resolve — failure here is non-fatal
+        // (the public message already landed). content-only PATCH
+        // keeps the message ephemeral (flags read-only on edit).
+        await bot.rest
+          .patch(
+            Routes.webhookMessage(
+              bot.application.id,
+              body.interaction_token,
+              "@original",
+            ),
+            {
+              body: {
+                content: "↑ 已發送至頻道",
+                embeds: [],
+                components: [],
+                allowed_mentions: { parse: [] },
+              },
+            },
+          )
+          .catch(() => {});
+        return { ok: true };
+      }
+      // Ephemeral path (default): PATCH @original. `flags` is read-only
+      // on edit so the bit set at defer (Ephemeral) is what sticks.
       await bot.rest.patch(
         Routes.webhookMessage(
           bot.application.id,
@@ -1129,10 +1183,6 @@ export async function registerPluginRpcRoutes(
             content,
             embeds,
             components,
-            // Honor `ephemeral` only as a signal — if defer was
-            // public, Discord rejects this flag. Pass through and
-            // let Discord ignore on mismatch.
-            flags: ephemeral ? MessageFlags.Ephemeral : undefined,
             allowed_mentions: { parse: [] },
           },
           ...(attachments.length > 0

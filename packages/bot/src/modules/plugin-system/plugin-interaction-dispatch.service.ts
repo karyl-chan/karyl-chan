@@ -131,10 +131,13 @@ async function dispatchChatInputCommand(
   // Look up the command's manifest entry to decide:
   //  (a) response_kind: "modal" → skip defer entirely (Discord rejects
   //      modal-after-defer); plugin will send_modal via RPC within 3 s.
-  //  (b) default_ephemeral: false → defer non-ephemeral so the
-  //      "thinking…" + final reply are publicly visible. Otherwise
-  //      default to ephemeral so a crashing plugin doesn't leave a
-  //      stuck public message.
+  //  (b) all other commands defer EPHEMERAL. Discord locks ephemerality
+  //      at defer time — a plugin that later wants a public reply uses
+  //      a followup with ephemeral=false. Deferring ephemeral by default
+  //      means a plugin that crashes mid-handler leaves a private
+  //      "thinking…" message instead of a public stuck one, and removes
+  //      a footgun where `default_ephemeral=false` would silently
+  //      downgrade subsequent ephemeral respond()s to public.
   const cmdName = interaction.commandName;
   const allCmds = [
     ...(manifest.plugin_commands ?? []),
@@ -142,11 +145,10 @@ async function dispatchChatInputCommand(
   ];
   const cmdDef = allCmds.find((c) => c.name === cmdName);
   const responseKind = cmdDef?.response_kind ?? "deferred";
-  const ephemeralDefault = cmdDef?.default_ephemeral !== false;
 
   if (responseKind !== "modal") {
     try {
-      await interaction.deferReply({ ephemeral: ephemeralDefault });
+      await interaction.deferReply({ ephemeral: true });
     } catch (err) {
       // Already acknowledged or token expired — nothing else we can do.
       botEventLog.record(

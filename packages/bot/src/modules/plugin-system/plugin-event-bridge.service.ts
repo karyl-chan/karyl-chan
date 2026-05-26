@@ -220,17 +220,30 @@ export function dispatchEventToPlugins(eventType: string, data: unknown): void {
   const ids = index.subscribers(eventType);
   // Fire all dispatches in parallel; we do not await. Errors per
   // plugin are logged inside postEventToPlugin and do not propagate.
+  // The outer findPluginsByIds (a DB read) is wrapped in try/catch so
+  // a transient SQLITE_BUSY cannot escape this fire-and-forget IIFE as
+  // an unhandled rejection — Node would otherwise terminate the bot
+  // process under --unhandled-rejections=throw.
   void (async () => {
-    const pluginMap = await findPluginsByIds(ids);
-    await Promise.allSettled(
-      ids.map(async (id) => {
-        const plugin = pluginMap.get(id);
-        if (!plugin || !plugin.enabled || plugin.status !== "active") return;
-        const signingKey = plugin.dispatchHmacKey;
-        if (!signingKey) return;
-        await postEventToPlugin(plugin, eventType, data, signingKey);
-      }),
-    );
+    try {
+      const pluginMap = await findPluginsByIds(ids);
+      await Promise.allSettled(
+        ids.map(async (id) => {
+          const plugin = pluginMap.get(id);
+          if (!plugin || !plugin.enabled || plugin.status !== "active") return;
+          const signingKey = plugin.dispatchHmacKey;
+          if (!signingKey) return;
+          await postEventToPlugin(plugin, eventType, data, signingKey);
+        }),
+      );
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      botEventLog.record(
+        "error",
+        "bot",
+        `dispatchEventToPlugins(${eventType}) failed: ${m}`,
+      );
+    }
   })();
 }
 
