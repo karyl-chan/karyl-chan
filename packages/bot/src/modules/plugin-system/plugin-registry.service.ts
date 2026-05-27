@@ -15,6 +15,7 @@ import { botEventLog } from "../bot-events/bot-event-log.js";
 import { moduleLogger } from "../../logger.js";
 import {
   applyPluginChange,
+  dropDispatchPoolForPlugin,
   rebuildEventIndex,
   removePluginFromIndex,
 } from "./plugin-event-bridge.service.js";
@@ -648,6 +649,11 @@ export class PluginRegistry {
     // Phase 0.5: invalidate the proxy/lookup cache so the fresh row
     // is read on the next request (e.g. URL change on re-register).
     invalidatePluginByKey(manifest.plugin.id);
+    // Same reasoning: drop any cached PoolEntry so a previously-
+    // tripped breaker doesn't carry over into the freshly-registered
+    // plugin. Even when the URL is unchanged (operator restarts a bad
+    // plugin and re-registers), the breaker should start fresh.
+    dropDispatchPoolForPlugin(manifest.plugin.id);
     // Phase 0.4: incremental index update. The freshly-registered
     // plugin's manifest has been persisted to `persisted.manifestJson`,
     // so applyPluginChange computes the new subscription set from it

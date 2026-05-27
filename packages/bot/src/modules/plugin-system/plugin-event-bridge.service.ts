@@ -76,6 +76,16 @@ export async function stopDispatchPool(): Promise<void> {
   await dispatchPool.stop();
 }
 
+/**
+ * Drop the per-plugin dispatch pool entry (closes keep-alive sockets,
+ * resets breaker state). Call on plugin delete / URL change /
+ * re-register so a previously-tripped breaker doesn't survive the
+ * operator's recovery action.
+ */
+export function dropDispatchPoolForPlugin(pluginKey: string): void {
+  dispatchPool.drop(pluginKey);
+}
+
 const index = new EventIndex();
 
 function parseManifest(plugin: PluginRow): PluginManifest | null {
