@@ -42,7 +42,7 @@ import {
 import { botEventLog, startBotEventLogPruner } from "./modules/bot-events/bot-event-log.js";
 import { ensureSystemBehaviors } from "./modules/behavior/system-seed.service.js";
 import { ensureFixedScopeTabs } from "./modules/behavior/scope-tab-seed.service.js";
-import { migrateLegacyExpiresAt } from "./modules/behavior/models/behavior-session.model.js";
+import { runMigrations } from "./db-migrations.js";
 import { shouldRecord } from "./modules/bot-events/bot-event-dedup.js";
 import { initJwtSigningAuthority } from "./modules/web-core/jwt.service.js";
 // M1-C2: CommandReconciler / InteractionDispatcher / MessagePatternMatcher 接線。
@@ -602,14 +602,9 @@ async function run() {
     bootstrapEventHandlers(bot);
     bootstrapInProcessFeatures();
     // sync() is the single source of truth for the DB schema — the
-    // Sequelize models fully express every table, column and index
-    // (including partial indexes via the `indexes` option). The old
-    // Umzug migration layer has been removed.
-    //
-    // TODO(schema-evolution): sync() only CREATEs missing tables; it
-    // never ALTERs an existing one. Once a long-lived DB exists, model
-    // schema changes won't reach it — a migration/ALTER strategy is
-    // still undecided (deferred). See docs/operations.md「升級時的 schema 變動」.
+    // sync() handles fresh-DB initial table creation. It CREATEs
+    // missing tables but never ALTERs an existing one, so schema
+    // evolution on long-lived DBs has to go through umzug below.
     await sequelize.sync();
     // Phase 0.7: bot_events lives in its own SQLite file (when the
     // main DB is SQLite) so its high-rate writes don't fight the main
@@ -619,6 +614,11 @@ async function run() {
     if (!botEventsSharesMainDb) {
       await botEventsSequelize.sync();
     }
+    // Incremental schema/data migrations (src/migrations/). Runs
+    // every boot; already-applied migrations are skipped via the
+    // SequelizeMeta record. See src/migrations/README.md for the
+    // workflow when adding new schema changes.
+    await runMigrations(sequelize, "main");
     setReady("db", true);
     dbReady = true;
     // Load (or, on a fresh DB, generate + persist) the JWT signing key
@@ -634,16 +634,10 @@ async function run() {
     await ensureSystemBehaviors().catch((err: unknown) => {
       log.error({ err }, "ensureSystemBehaviors failed");
     });
-    // One-shot data migration for behavior_sessions.expiresAt: the L-2
-    // patch flipped the column from DataTypes.DATE to STRING, but
-    // Sequelize's SQLite DATE adapter stored the value as a space-
-    // separated string that lexicographically sorts BEFORE any ISO
-    // 8601 'T'-separated string. Without this fixup every legacy
-    // session row would be silently destroyed on first findActiveSession
-    // preflight cleanup.
-    await migrateLegacyExpiresAt().catch((err: unknown) => {
-      log.error({ err }, "migrateLegacyExpiresAt failed");
-    });
+    // behavior_session.expiresAt legacy fixup now lives in
+    // src/migrations/000-migrate-legacy-expires-at.ts — applied via
+    // runMigrations() above and recorded in SequelizeMeta so future
+    // boots skip the scan entirely.
     await seedDefaultRoles();
     await auditStoredCapabilities();
 
