@@ -271,6 +271,18 @@ function loadConfig(): AppConfig {
     },
   };
 
+  // Fail-fast: SHARD_ID must be inside the [0, TOTAL_SHARDS) range that
+  // Discord's gateway expects. Misconfigurations like SHARD_ID=5
+  // TOTAL_SHARDS=2 connect fine but receive zero guild events
+  // ((guild_id >> 22) % totalShards is always < totalShards), so the
+  // shard sits silently in a black hole.
+  if (cfg.bot.shardId >= cfg.bot.totalShards) {
+    throw new Error(
+      `Config error: SHARD_ID (${cfg.bot.shardId}) must be < TOTAL_SHARDS (${cfg.bot.totalShards}); ` +
+        `Discord routes guilds via (guild_id >> 22) % TOTAL_SHARDS, so a higher SHARD_ID receives no events.`,
+    );
+  }
+
   // Fail-fast: PLUGIN_DM_PER_SEC=0 makes every request 429; PLUGIN_DM_WINDOW_MS=0
   // makes the bucket always-empty and silently disables the limiter. Reject both
   // at boot so a misconfigured deployment can't quietly lose the SSRF / DM-spam

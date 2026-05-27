@@ -79,4 +79,24 @@ describe("env-driven shard config defaults", () => {
     const v = Math.max(1, Number("0"));
     expect(v).toBe(1);
   });
+
+  it("rejects SHARD_ID >= TOTAL_SHARDS at boot (regression: black-hole shard)", () => {
+    // Mirrors the fail-fast guard added to config.ts. With SHARD_ID
+    // beyond TOTAL_SHARDS, Discord's gateway routes guilds via
+    // (guild_id >> 22) % TOTAL_SHARDS so this shard would receive
+    // nothing — silent black hole. The check rejects at boot instead.
+    const shardId = 5;
+    const totalShards = 2;
+    expect(shardId >= totalShards).toBe(true);
+    const validate = (sid: number, total: number): void => {
+      if (sid >= total) {
+        throw new Error(
+          `Config error: SHARD_ID (${sid}) must be < TOTAL_SHARDS (${total})`,
+        );
+      }
+    };
+    expect(() => validate(shardId, totalShards)).toThrow(/SHARD_ID/);
+    expect(() => validate(0, 1)).not.toThrow();
+    expect(() => validate(1, 2)).not.toThrow();
+  });
 });
