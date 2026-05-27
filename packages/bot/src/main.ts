@@ -633,7 +633,19 @@ async function run() {
     // no heartbeat (their own cadence is 30s, so a single dropped
     // beat doesn't trigger). Runs in-process; unref'd so it doesn't
     // hold the event loop alive on shutdown.
-    pluginRegistry.startReaper();
+    //
+    // Multi-shard: only shard 0 runs the reaper. The DB update is
+    // idempotent but every shard would otherwise emit one
+    // `Plugin marked inactive` bot-event log per expiry — same pattern
+    // as the global slash-command reconcile gate above.
+    if (config.bot.shardId === 0) {
+      pluginRegistry.startReaper();
+    } else {
+      log.info(
+        { shardId: config.bot.shardId },
+        "skipping plugin reaper (only shard 0 runs)",
+      );
+    }
     // Bound the bot_events table — see bot-event-log.ts for the
     // rationale + caps. Runs in-process every 10 minutes, unref'd.
     startBotEventLogPruner();
