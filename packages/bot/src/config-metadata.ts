@@ -210,6 +210,14 @@ export const CONFIG_METADATA: Record<string, ConfigFieldMeta> = {
     productionRequired: false,
     descriptionKey: "config.db.sqlitePath",
   },
+  "db.botEventsSqlitePath": {
+    group: "db",
+    envVar: "BOT_EVENTS_SQLITE_DB_PATH",
+    sensitivity: "public",
+    editability: "env-only",
+    productionRequired: false,
+    descriptionKey: "config.db.botEventsSqlitePath",
+  },
 
   // ── crypto ───────────────────────────────────────────────────────────────
   "crypto.encryptionKey": {
