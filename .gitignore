@@ -17,6 +17,8 @@ token
 # (non-existent) repo-root data/ directory.
 **/data/database.sqlite
 **/data/database.sqlite-*
+**/data/bot-events.sqlite
+**/data/bot-events.sqlite-*
 **/data/*.bak
 
 # misc

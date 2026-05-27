@@ -363,16 +363,26 @@ bot.once("ready", async () => {
   // distributed lock so a future Redis-backed lock keeps the same
   // invariant in flaky-restart scenarios.
   if (config.bot.shardId === 0) {
-    await getDistributedLock().run(
-      "global-command-reconcile",
-      async () => {
-        await pluginCommandRegistry.reconcileAll();
-        await commandReconciler.reconcileAll().catch((err: unknown) => {
-          log.error({ err }, "commandReconciler.reconcileAll failed");
-        });
-      },
-      { timeoutMs: 60_000 },
-    );
+    // Reconcile can legitimately exceed the lock timeout when Discord
+    // rate-limits PUT /applications/.../commands hard — happens often
+    // on a cold-start. Catch the outer rejection so the timeout
+    // surfaces as a log + bot-event rather than an unhandledRejection
+    // that crashes the bot 4 s later. The reconcile keeps running in
+    // the background and usually completes the next cycle.
+    await getDistributedLock()
+      .run(
+        "global-command-reconcile",
+        async () => {
+          await pluginCommandRegistry.reconcileAll();
+          await commandReconciler.reconcileAll().catch((err: unknown) => {
+            log.error({ err }, "commandReconciler.reconcileAll failed");
+          });
+        },
+        { timeoutMs: 5 * 60_000 },
+      )
+      .catch((err: unknown) => {
+        log.error({ err }, "global-command-reconcile timed out / errored");
+      });
   } else {
     log.info(
       { shardId: config.bot.shardId },
