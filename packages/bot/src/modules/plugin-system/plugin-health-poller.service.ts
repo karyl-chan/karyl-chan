@@ -74,7 +74,7 @@ async function probeOne(plugin: PluginRow): Promise<void> {
     if (!(err instanceof HostPolicyError)) throw err;
     // Treat host-policy refusal as unhealthy — operators see this in
     // the UI badge instead of silently stale data.
-    setHealth(plugin.pluginKey, {
+    await setHealth(plugin.pluginKey, {
       status: "unhealthy",
       message: `host policy: ${err.message}`,
       checkedAt: Date.now(),
@@ -87,7 +87,7 @@ async function probeOne(plugin: PluginRow): Promise<void> {
   try {
     const res = await fetch(url, { method: "GET", signal: ctrl.signal });
     if (!res.ok) {
-      setHealth(plugin.pluginKey, {
+      await setHealth(plugin.pluginKey, {
         status: "unhealthy",
         message: `HTTP ${res.status}`,
         checkedAt: Date.now(),
@@ -99,7 +99,7 @@ async function probeOne(plugin: PluginRow): Promise<void> {
       | Record<string, unknown>
       | null;
     if (!raw) {
-      setHealth(plugin.pluginKey, {
+      await setHealth(plugin.pluginKey, {
         status: "unhealthy",
         message: "invalid JSON",
         checkedAt: Date.now(),
@@ -126,7 +126,7 @@ async function probeOne(plugin: PluginRow): Promise<void> {
     }
     const checkedAt =
       typeof raw.checkedAt === "number" ? raw.checkedAt : Date.now();
-    setHealth(plugin.pluginKey, {
+    await setHealth(plugin.pluginKey, {
       status,
       ...(message !== undefined ? { message } : {}),
       ...(checks.length > 0 ? { checks } : {}),
@@ -134,7 +134,7 @@ async function probeOne(plugin: PluginRow): Promise<void> {
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    setHealth(plugin.pluginKey, {
+    await setHealth(plugin.pluginKey, {
       status: "unhealthy",
       message: msg,
       checkedAt: Date.now(),
