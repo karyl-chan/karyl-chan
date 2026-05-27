@@ -1,6 +1,6 @@
 {
   "name": "@karyl-chan/ui",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Shared Vue UI primitives, composables, and design tokens used by karyl-chan's bot frontend and plugin webuis.",
   "type": "module",
   "license": "MIT",
@@ -22,7 +22,9 @@
     "./use-drawer.css": "./src/composables/use-drawer.css",
     "./use-popover.css": "./src/composables/use-popover.css"
   },
-  "files": ["src"],
+  "files": [
+    "src"
+  ],
   "engines": {
     "node": ">=22"
   },
@@ -38,7 +40,9 @@
     "vue-router": ">=4"
   },
   "peerDependenciesMeta": {
-    "vue-router": { "optional": true }
+    "vue-router": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@iconify/vue": "^5.0.0",
