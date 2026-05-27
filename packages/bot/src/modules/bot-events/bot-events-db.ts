@@ -27,9 +27,14 @@ import { dbDialect, sequelize as mainSequelize } from "../../db.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+// __dirname in build/ is `build/modules/bot-events`; in src/ it's
+// `src/modules/bot-events`. Walk two levels up to the package root,
+// then into ./data. The previous calc walked one extra `dirname` and
+// resolved to `/usr/src/data` (outside the container's writable app
+// dir) — bot crashed on first heartbeat under a clean image.
 const DEFAULT_EVENTS_DB_PATH = resolve(
   dirname(dirname(dirname(__dirname))),
-  "../data/bot-events.sqlite",
+  "data/bot-events.sqlite",
 );
 
 // SQLite is the case where splitting bot_events off matters: a single

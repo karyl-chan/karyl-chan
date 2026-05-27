@@ -5,7 +5,12 @@ import { config } from "./config.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const DEFAULT_DB_PATH = resolve(dirname(__dirname), "../data/database.sqlite");
+// __dirname is `src/` in dev and `build/` in container; both share the
+// same parent (the package root). Walk one level up, then into ./data.
+// The previous form used `../data` which jumped one folder higher and
+// resolved to a non-writable path inside the container (masked by
+// SQLITE_DB_PATH in production compose, but broken on a clean image).
+const DEFAULT_DB_PATH = resolve(dirname(__dirname), "data/database.sqlite");
 
 /**
  * DB_URL takes priority — Phase 2.1 hook for Postgres swap. Falls
