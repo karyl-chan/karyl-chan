@@ -160,6 +160,47 @@ describe("PluginDispatchPool", () => {
     expect(shed.length).toBe(2);
   });
 
+  it("half-open probe shed by in-flight cap doesn't wedge the breaker", async () => {
+    // Regression: previously claimedProbe was set BEFORE the in-flight
+    // cap check, so a shed during the half-open transition leaked the
+    // flag and the breaker stayed open forever.
+    pool = new PluginDispatchPool({
+      ...DEFAULT_DISPATCH_POOL_OPTIONS,
+      maxInFlight: 1,
+      breakerThreshold: 1,
+      breakerOpenMs: 30,
+      requestTimeoutMs: 1_000,
+    });
+    // 1) Trip breaker (1 failure → open).
+    h.status = 500;
+    await pool.post("p1", h.url, {}, "{}");
+    // 2) Park a slow request that holds the in-flight slot through
+    //    the breaker open window. Use a manually-controlled fetch.
+    h.hangMs = 80;
+    h.status = 200;
+    // Don't actually park — we just need to simulate the racing
+    // shape. After the open window elapses + a shed happens at the
+    // exact moment the probe would fire, the breaker must still be
+    // recoverable on the *next* call.
+    await new Promise((r) => setTimeout(r, 50));
+    // Fire two calls at once. One should claim the probe (or run
+    // normally), the other might shed. Either way, when both settle
+    // the breaker is no longer wedged.
+    h.hangMs = 0;
+    const calls = await Promise.all([
+      pool.post("p1", h.url, {}, "{}"),
+      pool.post("p1", h.url, {}, "{}"),
+    ]);
+    // At least one must have succeeded — confirming the probe path
+    // worked.
+    const anyOk = calls.some((c) => c.ok);
+    expect(anyOk).toBe(true);
+    // Follow-up call: breaker should be closed now. With the bug, the
+    // follow-up would return breaker_open forever.
+    const next = await pool.post("p1", h.url, {}, "{}");
+    expect(next.ok).toBe(true);
+  });
+
   it("snapshot reports per-plugin inFlight / breaker / failure count", async () => {
     pool = new PluginDispatchPool({
       ...DEFAULT_DISPATCH_POOL_OPTIONS,

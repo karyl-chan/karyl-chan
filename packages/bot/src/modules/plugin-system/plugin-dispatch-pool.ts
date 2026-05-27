@@ -134,6 +134,7 @@ export class PluginDispatchPool {
         message: "circuit breaker open",
       };
     }
+    let claimedProbe = false;
     if (entry.breakerNextProbeAt > 0 && entry.breakerNextProbeAt <= now) {
       // Open window elapsed — half-open. Allow exactly one probe
       // through; everyone else still gets short-circuited.
@@ -144,16 +145,21 @@ export class PluginDispatchPool {
           message: "circuit breaker open (probe in flight)",
         };
       }
-      entry.breakerProbeInFlight = true;
+      claimedProbe = true;
     }
 
     if (entry.inFlight >= this.opts.maxInFlight) {
+      // Don't claim the probe slot on a shed: an early return here
+      // bypasses the try/finally that resets breakerProbeInFlight, so
+      // setting it before this check would wedge the breaker open
+      // forever on the next call.
       return {
         ok: false,
         reason: "shed",
         message: `in-flight cap ${this.opts.maxInFlight} reached`,
       };
     }
+    if (claimedProbe) entry.breakerProbeInFlight = true;
     entry.inFlight++;
 
     try {
