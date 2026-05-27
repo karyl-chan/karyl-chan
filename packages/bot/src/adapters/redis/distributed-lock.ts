@@ -60,15 +60,25 @@ export class RedisDistributedLock implements DistributedLock {
         : DEFAULT_LOCK_TTL_MS;
     const owner = randomBytes(16).toString("hex");
 
-    // Acquire loop.
+    // Acquire loop. Treat a rejected SET (Redis network blip) the
+    // same as "lock not acquired" — back off and retry until the
+    // caller's timeout. Without this, a transient ETIMEDOUT escapes
+    // `run()` as an unhandled rejection; main.ts's unhandledRejection
+    // handler then schedules process.exit(1), which kills the bot on
+    // a Redis hiccup mid-ready.
     while (true) {
-      const acquired = await this.redis.set(
-        lockKey(key),
-        owner,
-        "PX",
-        ttlMs,
-        "NX",
-      );
+      let acquired: string | null = null;
+      try {
+        acquired = await this.redis.set(
+          lockKey(key),
+          owner,
+          "PX",
+          ttlMs,
+          "NX",
+        );
+      } catch {
+        acquired = null;
+      }
       if (acquired === "OK") break;
       if (Date.now() >= deadline) {
         throw new Error(`lock '${key}' acquire timed out`);

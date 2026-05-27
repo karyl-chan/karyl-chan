@@ -154,4 +154,34 @@ describe("RedisDistributedLock", () => {
     const lock = new RedisDistributedLock();
     expect(await lock.isLeader("anything")).toBe(true);
   });
+
+  it("transient SET rejection retries instead of escaping", async () => {
+    // Simulate a Redis network blip: the first SET rejects, the
+    // second succeeds. The lock should treat the rejection as
+    // "not acquired" and retry, not surface it as unhandled.
+    let attempts = 0;
+    const flaky = makeStub();
+    const realSet = flaky.set.bind(flaky);
+    flaky.set = (async (...args: Parameters<typeof realSet>) => {
+      attempts++;
+      if (attempts === 1) throw new Error("ETIMEDOUT");
+      return realSet(...args);
+    }) as typeof flaky.set;
+    setRedisClientForTests(flaky);
+    const lock = new RedisDistributedLock(flaky);
+    const r = await lock.run("k", async () => "ok");
+    expect(r).toBe("ok");
+    expect(attempts).toBeGreaterThanOrEqual(2);
+  });
+
+  it("repeated SET rejections still respect timeoutMs", async () => {
+    const stub = makeStub();
+    stub.set = (async () => {
+      throw new Error("ECONNRESET");
+    }) as typeof stub.set;
+    const lock = new RedisDistributedLock(stub);
+    await expect(
+      lock.run("k", async () => "never", { timeoutMs: 50 }),
+    ).rejects.toThrow(/timed out/);
+  });
 });
