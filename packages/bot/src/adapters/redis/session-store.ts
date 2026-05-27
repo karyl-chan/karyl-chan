@@ -35,6 +35,26 @@ import { getRedisClient, type RedisLike } from "./client.js";
 
 const REFRESH_REUSE_WINDOW_MS = 5 * 60 * 1000;
 
+// Atomic rotateRefresh: GETDEL the refresh key in a single round-trip
+// so two concurrent rotations of the same token can't both succeed.
+// Result tagging:
+//   "R<json>" — caller is the one true rotator, raw refresh record
+//   "U<json>" — refresh was already consumed and is in the rotated set
+//                (i.e. a replay was detected; caller should revokeOwner)
+//   ""       — nothing matched
+const ROTATE_SCRIPT =
+  `local raw = redis.call("GET", KEYS[1]) ` +
+  `if raw then ` +
+  `  redis.call("DEL", KEYS[1]) ` +
+  `  return "R" .. raw ` +
+  `end ` +
+  `local reused = redis.call("GET", KEYS[2]) ` +
+  `if reused then ` +
+  `  redis.call("DEL", KEYS[2]) ` +
+  `  return "U" .. reused ` +
+  `end ` +
+  `return ""`;
+
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
@@ -161,25 +181,38 @@ export class RedisSessionStore implements SessionStore {
     now: number = Date.now(),
   ): Promise<IssuedTokens | null> {
     const hash = hashToken(token);
-    const raw = await this.redis.get(refreshKey(hash));
-    if (!raw) {
-      // Check the rotated set for replay detection.
-      const reusedRaw = await this.redis.get(rotatedKey(hash));
-      const reused = decodeRecord(reusedRaw);
+    // Atomic GETDEL — only one concurrent rotation gets "R<raw>". The
+    // others see "" (refresh already consumed) or "U<raw>" (replay
+    // detected, the rotated marker had not yet expired).
+    const tagged = (await this.redis.eval(
+      ROTATE_SCRIPT,
+      2,
+      refreshKey(hash),
+      rotatedKey(hash),
+    )) as string | null;
+    if (!tagged) return null;
+    const tag = tagged.charAt(0);
+    const payload = tagged.slice(1);
+    if (tag === "U") {
+      const reused = decodeRecord(payload);
       if (reused && reused.expiresAt > now) {
-        await this.redis.del(rotatedKey(hash));
         await this.revokeOwner(reused.ownerId);
       }
       return null;
     }
-    const rec = decodeRecord(raw);
+    if (tag !== "R") return null;
+    const rec = decodeRecord(payload);
     if (!rec) return null;
-    await this.redis.del(refreshKey(hash));
+    // Don't arm reuse-detection on an already-expired token: it can't
+    // be "replayed" in any meaningful sense, and the refresh key is
+    // gone now anyway.
     if (rec.expiresAt <= now) return null;
-    // Stash the rotated hash for reuse-detection.
     await this.redis.set(
       rotatedKey(hash),
-      encodeRecord({ ownerId: rec.ownerId, expiresAt: now + REFRESH_REUSE_WINDOW_MS }),
+      encodeRecord({
+        ownerId: rec.ownerId,
+        expiresAt: now + REFRESH_REUSE_WINDOW_MS,
+      }),
       "PX",
       REFRESH_REUSE_WINDOW_MS,
     );

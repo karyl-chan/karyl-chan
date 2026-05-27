@@ -122,7 +122,24 @@ function makeStub(): RedisLike {
       if (v.expiresAt === null) return -1;
       return Math.max(0, v.expiresAt - now());
     },
-    async eval() {
+    async eval(script, _numKeys, ...args) {
+      // Emulate the rotateRefresh script: GETDEL refreshKey, else GETDEL
+      // rotatedKey. Tagged result matches production semantics.
+      if (typeof script === "string" && script.includes("redis.call(\"DEL\", KEYS[1])")) {
+        const refreshK = String(args[0]);
+        const rotatedK = String(args[1]);
+        if (isAlive(refreshK)) {
+          const raw = data.get(refreshK)!.value;
+          data.delete(refreshK);
+          return `R${raw}`;
+        }
+        if (isAlive(rotatedK)) {
+          const raw = data.get(rotatedK)!.value;
+          data.delete(rotatedK);
+          return `U${raw}`;
+        }
+        return "";
+      }
       return null;
     },
     async scan() {
@@ -180,6 +197,18 @@ describe("RedisSessionStore", () => {
     expect(replay).toBeNull();
     // Both old + rotated tokens are now invalid.
     expect(await store.verifyAccessTokenAsync(a.accessToken)).toBeNull();
+  });
+
+  it("concurrent rotateRefresh of the same token: only one succeeds", async () => {
+    const store = new RedisSessionStore();
+    const { refreshToken } = await store.issueTokens("user-1");
+    const results = await Promise.all([
+      store.rotateRefresh(refreshToken),
+      store.rotateRefresh(refreshToken),
+      store.rotateRefresh(refreshToken),
+    ]);
+    const succeeded = results.filter((r) => r !== null);
+    expect(succeeded.length).toBe(1);
   });
 
   it("revokeRefresh returns true on first call, false on the second", async () => {
