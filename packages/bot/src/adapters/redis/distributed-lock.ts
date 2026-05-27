@@ -20,12 +20,16 @@
  */
 
 import { randomBytes } from "crypto";
+import { config } from "../../config.js";
 import type { DistributedLock } from "../distributed-lock.js";
 import { getRedisClient, type RedisLike } from "./client.js";
 
 const PREFIX = "karyl:lock:";
+const LEADER_PREFIX = "karyl:leader:";
 const lockKey = (key: string) => `${PREFIX}${key}`;
+const leaderKey = (key: string) => `${LEADER_PREFIX}${key}`;
 const DEFAULT_LOCK_TTL_MS = 60_000;
+const LEADER_TTL_MS = 30_000;
 const ACQUIRE_POLL_MIN_MS = 50;
 const ACQUIRE_POLL_MAX_MS = 500;
 
@@ -41,7 +45,21 @@ function jitterDelay(): number {
 }
 
 export class RedisDistributedLock implements DistributedLock {
-  constructor(private readonly redis: RedisLike = getRedisClient()) {}
+  /**
+   * `identity` is what we write into the leader key so isLeader() can
+   * recognise our own claim across calls. Defaults to the shard id;
+   * tests inject a stable string. Different shards naturally have
+   * different identities so the election is deterministic per-key
+   * (whoever races to SET NX first holds it; the others drop out).
+   */
+  private readonly identity: string;
+
+  constructor(
+    private readonly redis: RedisLike = getRedisClient(),
+    identity?: string,
+  ) {
+    this.identity = identity ?? `shard:${config.bot.shardId}`;
+  }
 
   async run<T>(
     key: string,
@@ -98,13 +116,39 @@ export class RedisDistributedLock implements DistributedLock {
     }
   }
 
-  async isLeader(_key: string): Promise<boolean> {
-    // Conservative — we don't try to elect a leader without a
-    // running operation. Callers that need a leader should use
-    // `run()` directly. Returning true keeps the in-process
-    // contract: "yes there's at most one process serving this
-    // request right now".
-    return true;
+  async isLeader(key: string): Promise<boolean> {
+    // Best-effort leader election: try to claim leadership with our
+    // identity; if someone else (other shard) already holds it, fail.
+    // If WE hold it from a prior check, refresh the TTL so we stay
+    // elected as long as the caller keeps polling.
+    const k = leaderKey(key);
+    let claim: string | null = null;
+    try {
+      claim = await this.redis.set(k, this.identity, "PX", LEADER_TTL_MS, "NX");
+    } catch {
+      // Network blip: be conservative and return false rather than
+      // letting two shards both think they're leader.
+      return false;
+    }
+    if (claim === "OK") return true;
+    let current: string | null = null;
+    try {
+      current = await this.redis.get(k);
+    } catch {
+      return false;
+    }
+    if (current === this.identity) {
+      // We're still the leader — refresh the TTL so we don't lose
+      // election just because the caller's polling interval is near
+      // the TTL boundary.
+      try {
+        await this.redis.pexpire(k, LEADER_TTL_MS);
+      } catch {
+        /* best-effort */
+      }
+      return true;
+    }
+    return false;
   }
 }
 

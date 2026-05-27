@@ -150,9 +150,18 @@ describe("RedisDistributedLock", () => {
     await slow;
   });
 
-  it("isLeader returns true (conservative)", async () => {
-    const lock = new RedisDistributedLock();
-    expect(await lock.isLeader("anything")).toBe(true);
+  it("isLeader elects the first claimant per key", async () => {
+    const stub = makeStub();
+    const a = new RedisDistributedLock(stub, "shard:A");
+    const b = new RedisDistributedLock(stub, "shard:B");
+    // A claims first → leader. B is then locked out for the TTL.
+    expect(await a.isLeader("daily-cleanup")).toBe(true);
+    expect(await b.isLeader("daily-cleanup")).toBe(false);
+    // A polling again refreshes its lease and stays leader.
+    expect(await a.isLeader("daily-cleanup")).toBe(true);
+    // Different keys are independent.
+    expect(await b.isLeader("other-task")).toBe(true);
+    expect(await a.isLeader("other-task")).toBe(false);
   });
 
   it("transient SET rejection retries instead of escaping", async () => {
