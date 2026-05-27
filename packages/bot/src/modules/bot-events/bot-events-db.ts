@@ -23,6 +23,7 @@ import { Sequelize, Transaction } from "sequelize";
 import { fileURLToPath } from "url";
 import { dirname, resolve } from "path";
 import { config } from "../../config.js";
+import { dbDialect, sequelize as mainSequelize } from "../../db.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -31,34 +32,51 @@ const DEFAULT_EVENTS_DB_PATH = resolve(
   "../data/bot-events.sqlite",
 );
 
-const storage =
-  config.db.botEventsSqlitePath ?? DEFAULT_EVENTS_DB_PATH;
+// SQLite is the case where splitting bot_events off matters: a single
+// writer lock for the whole file means high-rate event log INSERTs
+// fight with interactive writes. Postgres has per-row write locks +
+// MVCC; the contention isn't a concern, so we collapse back to the
+// main connection. Otherwise Phase 2.1 would silently leave bot_events
+// on a private SQLite file (split-brain: main DB on Postgres, audit
+// log invisible to other shards).
+function buildBotEventsSequelize(): { seq: Sequelize; path: string } {
+  if (dbDialect === "sqlite") {
+    const storage = config.db.botEventsSqlitePath ?? DEFAULT_EVENTS_DB_PATH;
+    return {
+      path: storage,
+      seq: new Sequelize({
+        storage,
+        dialect: "sqlite",
+        logging: false,
+        transactionType: Transaction.TYPES.IMMEDIATE,
+        hooks: {
+          afterConnect: async (connection: unknown) => {
+            const conn = connection as {
+              run?: (sql: string, cb?: (err: Error | null) => void) => void;
+            };
+            if (typeof conn.run !== "function") return;
+            const exec = (sql: string) =>
+              new Promise<void>((resolveHook, reject) => {
+                conn.run!(sql, (err) => (err ? reject(err) : resolveHook()));
+              });
+            await exec("PRAGMA foreign_keys = ON;");
+            await exec("PRAGMA journal_mode = WAL;");
+            await exec("PRAGMA busy_timeout = 3000;");
+            await exec("PRAGMA synchronous = NORMAL;");
+          },
+        },
+      }),
+    };
+  }
+  // Non-SQLite (Postgres today) — share the main connection. The
+  // bot_events table lives alongside everything else with no write-
+  // lock fight to worry about, and every shard sees the same rows.
+  return { seq: mainSequelize, path: `<shared:${dbDialect}>` };
+}
 
-export const botEventsSequelize = new Sequelize({
-  storage,
-  dialect: "sqlite",
-  logging: false,
-  transactionType: Transaction.TYPES.IMMEDIATE,
-  hooks: {
-    afterConnect: async (connection: unknown) => {
-      const conn = connection as {
-        run?: (sql: string, cb?: (err: Error | null) => void) => void;
-      };
-      if (typeof conn.run !== "function") return;
-      const exec = (sql: string) =>
-        new Promise<void>((resolveHook, reject) => {
-          conn.run!(sql, (err) => (err ? reject(err) : resolveHook()));
-        });
-      // foreign_keys is moot here (the log has no FKs) but stays on for
-      // consistency with the main DB. journal_mode + busy_timeout are
-      // the load-bearing pragmas.
-      await exec("PRAGMA foreign_keys = ON;");
-      await exec("PRAGMA journal_mode = WAL;");
-      await exec("PRAGMA busy_timeout = 3000;");
-      await exec("PRAGMA synchronous = NORMAL;");
-    },
-  },
-});
-
+const built = buildBotEventsSequelize();
+export const botEventsSequelize = built.seq;
 /** Resolved storage path, exposed for ops / health endpoints. */
-export const botEventsDbPath = storage;
+export const botEventsDbPath = built.path;
+/** True when bot_events shares the main DB connection (Postgres). */
+export const botEventsSharesMainDb = botEventsSequelize === mainSequelize;

@@ -15,7 +15,10 @@ import type {
 import { ChannelType, Events, IntentsBitField, Partials } from "discord.js";
 import { Client } from "discord.js";
 import { sequelize } from "./db.js";
-import { botEventsSequelize } from "./modules/bot-events/bot-events-db.js";
+import {
+  botEventsSequelize,
+  botEventsSharesMainDb,
+} from "./modules/bot-events/bot-events-db.js";
 import { getDistributedLock } from "./adapters/registry.js";
 import { closeRedisClient } from "./adapters/redis/client.js";
 import { config } from "./config.js";
@@ -236,8 +239,12 @@ async function gracefulShutdown(signal: string): Promise<void> {
     await bot.destroy();
     // 5. Close DB last — earlier steps may still be writing.
     await sequelize.close();
-    // 5'. Close the bot_events DB (Phase 0.7) — independent file.
-    await botEventsSequelize.close();
+    // 5'. Close the bot_events DB (Phase 0.7) — separate file when the
+    //     main DB is SQLite. Under Postgres bot_events shares the main
+    //     connection (#14 fix), so the close above already covered it.
+    if (!botEventsSharesMainDb) {
+      await botEventsSequelize.close();
+    }
     // 5''. Close the shared Redis client (Phase 1.1+) if one was
     //      opened. Safe no-op when no adapter ever requested Redis.
     await closeRedisClient();
@@ -594,10 +601,14 @@ async function run() {
     // schema changes won't reach it — a migration/ALTER strategy is
     // still undecided (deferred). See docs/operations.md「升級時的 schema 變動」.
     await sequelize.sync();
-    // Phase 0.7: bot_events lives in its own SQLite file. Sync it
-    // separately so its high-rate writes don't fight the main DB's
-    // write lock.
-    await botEventsSequelize.sync();
+    // Phase 0.7: bot_events lives in its own SQLite file (when the
+    // main DB is SQLite) so its high-rate writes don't fight the main
+    // DB's write lock. Under Postgres the model is registered on the
+    // main sequelize instance, so the sync() above already created
+    // the table — skip the redundant call.
+    if (!botEventsSharesMainDb) {
+      await botEventsSequelize.sync();
+    }
     setReady("db", true);
     dbReady = true;
     // Load (or, on a fresh DB, generate + persist) the JWT signing key
