@@ -12,7 +12,14 @@ import {
 // ---------------------------------------------------------------------------
 const stubConfig: AppConfig = {
   env: "test",
-  bot: { token: "tok", ownerId: null, ownerIds: [], enableTyping: false },
+  bot: {
+    token: "tok",
+    ownerId: null,
+    ownerIds: [],
+    enableTyping: false,
+    shardId: 0,
+    totalShards: 1,
+  },
   web: {
     port: 3000,
     host: "0.0.0.0",
@@ -27,7 +34,7 @@ const stubConfig: AppConfig = {
     multipartFieldSizeBytes: 1_048_576,
     multipartFieldsLimit: 50,
   },
-  db: { sqlitePath: null },
+  db: { sqlitePath: null, botEventsSqlitePath: null },
   crypto: { encryptionKey: null },
   jwt: {
     loginLinkTtlMs: 300_000,
