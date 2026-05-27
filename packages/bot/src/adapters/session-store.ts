@@ -39,14 +39,28 @@ export interface SessionStore {
   init(now?: number): Promise<void>;
 
   issueTokens(ownerId: string, now?: number): Promise<IssuedTokens>;
-  verifyAccessToken(token: string, now?: number): string | null;
+  /**
+   * Sync for the InProcess default; async for any cross-shard
+   * implementation (Redis). Callers should `await` defensively — an
+   * `await` on a non-Promise resolves on the next microtask.
+   */
+  verifyAccessToken(
+    token: string,
+    now?: number,
+  ): (string | null) | Promise<string | null>;
   rotateRefresh(token: string, now?: number): Promise<IssuedTokens | null>;
   revokeRefresh(token: string): Promise<boolean>;
-  revokeAccess(token: string): boolean;
+  revokeAccess(token: string): boolean | Promise<boolean>;
   revokeOwner(ownerId: string): Promise<void>;
 
-  issueSseTicket(ownerId: string, now?: number): SseTicket;
-  consumeSseTicket(ticket: string, now?: number): string | null;
+  issueSseTicket(
+    ownerId: string,
+    now?: number,
+  ): SseTicket | Promise<SseTicket>;
+  consumeSseTicket(
+    ticket: string,
+    now?: number,
+  ): (string | null) | Promise<string | null>;
 
   /** Stop background timers. Called on graceful shutdown. */
   stop(): void;

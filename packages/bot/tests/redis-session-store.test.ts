@@ -169,20 +169,20 @@ describe("RedisSessionStore", () => {
     await expect(store.init()).resolves.toBeUndefined();
   });
 
-  it("issueTokens then verifyAccessTokenAsync resolves to ownerId", async () => {
+  it("issueTokens then verifyAccessToken resolves to ownerId", async () => {
     const store = new RedisSessionStore();
     const { accessToken } = await store.issueTokens("user-1");
-    const owner = await store.verifyAccessTokenAsync(accessToken);
+    const owner = await store.verifyAccessToken(accessToken);
     expect(owner).toBe("user-1");
   });
 
-  it("verifyAccessTokenAsync returns null for unknown / expired tokens", async () => {
+  it("verifyAccessToken returns null for unknown / expired tokens", async () => {
     const store = new RedisSessionStore();
-    expect(await store.verifyAccessTokenAsync("nope")).toBeNull();
+    expect(await store.verifyAccessToken("nope")).toBeNull();
     const { accessToken } = await store.issueTokens("user-1");
     // Force expiry by passing a future `now`.
     expect(
-      await store.verifyAccessTokenAsync(accessToken, Date.now() + 1e9),
+      await store.verifyAccessToken(accessToken, Date.now() + 1e9),
     ).toBeNull();
   });
 
@@ -196,7 +196,7 @@ describe("RedisSessionStore", () => {
     const replay = await store.rotateRefresh(a.refreshToken);
     expect(replay).toBeNull();
     // Both old + rotated tokens are now invalid.
-    expect(await store.verifyAccessTokenAsync(a.accessToken)).toBeNull();
+    expect(await store.verifyAccessToken(a.accessToken)).toBeNull();
   });
 
   it("concurrent rotateRefresh of the same token: only one succeeds", async () => {
@@ -223,8 +223,8 @@ describe("RedisSessionStore", () => {
     const a = await store.issueTokens("user-1");
     const b = await store.issueTokens("user-1");
     await store.revokeOwner("user-1");
-    expect(await store.verifyAccessTokenAsync(a.accessToken)).toBeNull();
-    expect(await store.verifyAccessTokenAsync(b.accessToken)).toBeNull();
+    expect(await store.verifyAccessToken(a.accessToken)).toBeNull();
+    expect(await store.verifyAccessToken(b.accessToken)).toBeNull();
   });
 
   it("issuing a short-lived SSE ticket doesn't shrink the owner-index TTL", async () => {
@@ -236,8 +236,7 @@ describe("RedisSessionStore", () => {
     const { refreshToken } = await store.issueTokens("user-1");
     // Advance to issue an SSE ticket "later" — the bug shows up when
     // the SSE TTL is much smaller than the refresh TTL.
-    store.issueSseTicket("user-1");
-    await new Promise((r) => setTimeout(r, 5));
+    await store.issueSseTicket("user-1");
     // Wait past the SSE TTL window we'd have shrunk to. Simulate by
     // checking PTTL is still long via revokeOwner working.
     await store.revokeOwner("user-1");
@@ -245,22 +244,10 @@ describe("RedisSessionStore", () => {
     expect(await store.rotateRefresh(refreshToken)).toBeNull();
   });
 
-  it("consumeSseTicketAsync is one-shot", async () => {
+  it("consumeSseTicket is one-shot", async () => {
     const store = new RedisSessionStore();
-    const { ticket } = store.issueSseTicket("user-1");
-    // Issue is fire-and-forget; await a tick so the SET lands.
-    await new Promise((r) => setTimeout(r, 5));
-    expect(await store.consumeSseTicketAsync(ticket)).toBe("user-1");
-    expect(await store.consumeSseTicketAsync(ticket)).toBeNull();
-  });
-
-  it("sync verifyAccessToken throws (sync API is the in-process legacy)", () => {
-    const store = new RedisSessionStore();
-    expect(() => store.verifyAccessToken("x")).toThrow(/async/i);
-  });
-
-  it("sync consumeSseTicket throws", () => {
-    const store = new RedisSessionStore();
-    expect(() => store.consumeSseTicket("x")).toThrow(/async/i);
+    const { ticket } = await store.issueSseTicket("user-1");
+    expect(await store.consumeSseTicket(ticket)).toBe("user-1");
+    expect(await store.consumeSseTicket(ticket)).toBeNull();
   });
 });

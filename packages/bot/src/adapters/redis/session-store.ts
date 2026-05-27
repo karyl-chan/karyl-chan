@@ -137,31 +137,12 @@ export class RedisSessionStore implements SessionStore {
     };
   }
 
-  // Phase 1.1 leaves verifyAccessToken sync to match the in-process
-  // signature; Redis lookup is awaited via a microtask shim. Callers
-  // that care about back-pressure should still feel free to await
-  // through the SessionStore methods, but we don't break the existing
-  // sync API.
-  verifyAccessToken(token: string, now: number = Date.now()): string | null {
-    // Synchronous SessionStore.verifyAccessToken is a legacy shape
-    // from the in-process AuthStore. With Redis we lose the
-    // synchronicity guarantee — we MUST go async. Throwing here keeps
-    // a misuse (sync call to a Redis store) loud rather than silent.
-    void token;
-    void now;
-    throw new Error(
-      "RedisSessionStore.verifyAccessToken is async — call verifyAccessTokenAsync(token).",
-    );
-  }
-
   /**
-   * Phase 1.1 — async access verification. The existing callers in
-   * web-core/server.ts that hold the in-process `AuthStore` need a
-   * thin shim updated to await this; that's a one-line change at the
-   * auth-hook level (planned alongside the SESSION_STORE env switch
-   * docs).
+   * SessionStore.verifyAccessToken returns string | null sync for the
+   * InProcess default, Promise<string|null> for Redis. The interface
+   * is `T | Promise<T>` — callers must await.
    */
-  async verifyAccessTokenAsync(
+  async verifyAccessToken(
     token: string,
     now: number = Date.now(),
   ): Promise<string | null> {
@@ -174,6 +155,19 @@ export class RedisSessionStore implements SessionStore {
       return null;
     }
     return rec.ownerId;
+  }
+
+  /**
+   * Deprecated — use `verifyAccessToken()` (now async on this impl).
+   * Kept as a thin alias for any external caller that imported the
+   * pre-fix name directly.
+   * @deprecated
+   */
+  verifyAccessTokenAsync(
+    token: string,
+    now: number = Date.now(),
+  ): Promise<string | null> {
+    return this.verifyAccessToken(token, now);
   }
 
   async rotateRefresh(
@@ -224,13 +218,9 @@ export class RedisSessionStore implements SessionStore {
     return n > 0;
   }
 
-  revokeAccess(token: string): boolean {
-    // Same async-vs-sync caveat as verifyAccessToken — fire-and-forget
-    // delete keeps the existing sync contract from the in-process store.
-    // The downside (a momentary race where the token still validates)
-    // is acceptable; logout pages don't poll the access token.
-    void this.redis.del(accessKey(hashToken(token))).catch(() => undefined);
-    return true;
+  async revokeAccess(token: string): Promise<boolean> {
+    const n = await this.redis.del(accessKey(hashToken(token)));
+    return n > 0;
   }
 
   async revokeOwner(ownerId: string): Promise<void> {
@@ -243,17 +233,14 @@ export class RedisSessionStore implements SessionStore {
     await this.redis.del(indexKey);
   }
 
-  issueSseTicket(
+  async issueSseTicket(
     ownerId: string,
     now: number = Date.now(),
-  ): SseTicket {
+  ): Promise<SseTicket> {
     const ticket = newToken();
     const expiresAt = now + config.jwt.sseTicketTtlMs;
     const hash = hashToken(ticket);
-    // Fire-and-forget; the sync interface predates Redis. A consumer
-    // that races and consumes before the SET lands gets back null,
-    // which is the same as "expired" — caller retries.
-    void Promise.all([
+    await Promise.all([
       this.redis.set(
         sseKey(hash),
         encodeRecord({ ownerId, expiresAt }),
@@ -261,22 +248,11 @@ export class RedisSessionStore implements SessionStore {
         config.jwt.sseTicketTtlMs,
       ),
       this.indexAdd(ownerId, sseKey(hash), config.jwt.sseTicketTtlMs),
-    ]).catch(() => undefined);
+    ]);
     return { ticket, expiresAt };
   }
 
-  consumeSseTicket(ticket: string, now: number = Date.now()): string | null {
-    // Same sync caveat. We do a GET-then-DEL pipeline rather than
-    // GETDEL because GETDEL needs Redis 6.2+ and we don't want a
-    // hard version pin.
-    void ticket;
-    void now;
-    throw new Error(
-      "RedisSessionStore.consumeSseTicket is async — call consumeSseTicketAsync(ticket).",
-    );
-  }
-
-  async consumeSseTicketAsync(
+  async consumeSseTicket(
     ticket: string,
     now: number = Date.now(),
   ): Promise<string | null> {
@@ -287,6 +263,17 @@ export class RedisSessionStore implements SessionStore {
     if (!rec) return null;
     if (rec.expiresAt <= now) return null;
     return rec.ownerId;
+  }
+
+  /**
+   * Deprecated — use `consumeSseTicket()` (now async on this impl).
+   * @deprecated
+   */
+  consumeSseTicketAsync(
+    ticket: string,
+    now: number = Date.now(),
+  ): Promise<string | null> {
+    return this.consumeSseTicket(ticket, now);
   }
 
   stop(): void {
