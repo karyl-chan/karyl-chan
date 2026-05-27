@@ -35,6 +35,12 @@ import {
 import { type SessionStore } from "./session-store.js";
 import { InProcessSessionStore } from "./in-process-session-store.js";
 import { type PluginEventBus } from "./plugin-event-bus.js";
+import { RedisPluginMetricsStore } from "./redis/plugin-metrics-store.js";
+import { RedisPluginHealthStore } from "./redis/plugin-health-store.js";
+import { RedisDistributedLock } from "./redis/distributed-lock.js";
+import { RedisRateLimitStoreFactory } from "./redis/rate-limit-store.js";
+import { RedisSessionStore } from "./redis/session-store.js";
+import { RedisStreamsPluginEventBus } from "./redis/plugin-event-bus.js";
 
 interface AdapterCache {
   pluginMetricsStore?: PluginMetricsStore;
@@ -47,6 +53,12 @@ interface AdapterCache {
 }
 
 const cache: AdapterCache = {};
+
+// Static imports of the Redis impls are intentional: loading the JS
+// module is cheap, and the actual Redis TCP connection only opens on
+// first `getRedisClient()` call (see redis/client.ts). The original
+// dynamic-require pattern broke under ESM (ReferenceError: require is
+// not defined) and silently sank Phase 1 in production.
 
 function envChoice(envVar: string): string {
   return (process.env[envVar] ?? "").trim().toLowerCase();
@@ -66,10 +78,6 @@ export function getPluginMetricsStore(): PluginMetricsStore {
   if (choice === "" || choice === "inprocess") {
     cache.pluginMetricsStore = new InProcessPluginMetricsStore();
   } else if (choice === "redis") {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { RedisPluginMetricsStore } = require(
-      "./redis/plugin-metrics-store.js",
-    ) as { RedisPluginMetricsStore: new () => PluginMetricsStore };
     cache.pluginMetricsStore = new RedisPluginMetricsStore();
   } else {
     unknownImpl("PLUGIN_METRICS_STORE", choice);
@@ -83,10 +91,6 @@ export function getPluginHealthStore(): PluginHealthStore {
   if (choice === "" || choice === "inprocess") {
     cache.pluginHealthStore = new InProcessPluginHealthStore();
   } else if (choice === "redis") {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { RedisPluginHealthStore } = require(
-      "./redis/plugin-health-store.js",
-    ) as { RedisPluginHealthStore: new () => PluginHealthStore };
     cache.pluginHealthStore = new RedisPluginHealthStore();
   } else {
     unknownImpl("PLUGIN_HEALTH_STORE", choice);
@@ -100,10 +104,6 @@ export function getDistributedLock(): DistributedLock {
   if (choice === "" || choice === "inprocess") {
     cache.distributedLock = new InProcessDistributedLock();
   } else if (choice === "redis") {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { RedisDistributedLock } = require(
-      "./redis/distributed-lock.js",
-    ) as { RedisDistributedLock: new () => DistributedLock };
     cache.distributedLock = new RedisDistributedLock();
   } else {
     unknownImpl("DISTRIBUTED_LOCK", choice);
@@ -117,10 +117,6 @@ export function getRateLimitStoreFactory(): RateLimitStoreFactory {
   if (choice === "" || choice === "inprocess") {
     cache.rateLimitStoreFactory = new InProcessRateLimitStoreFactory();
   } else if (choice === "redis") {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { RedisRateLimitStoreFactory } = require(
-      "./redis/rate-limit-store.js",
-    ) as { RedisRateLimitStoreFactory: new () => RateLimitStoreFactory };
     cache.rateLimitStoreFactory = new RedisRateLimitStoreFactory();
   } else {
     unknownImpl("RATE_LIMIT_STORE", choice);
@@ -134,13 +130,6 @@ export function getSessionStore(): SessionStore {
   if (choice === "" || choice === "inprocess") {
     cache.sessionStore = new InProcessSessionStore();
   } else if (choice === "redis") {
-    // Dynamic require to avoid pulling ioredis into a process that
-    // never asks for Redis. Top-level import would always load the
-    // module at boot.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { RedisSessionStore } = require("./redis/session-store.js") as {
-      RedisSessionStore: new () => SessionStore;
-    };
     cache.sessionStore = new RedisSessionStore();
   } else {
     unknownImpl("SESSION_STORE", choice);
@@ -181,10 +170,6 @@ export function getPluginEventBus(): PluginEventBus | null {
     return null;
   }
   if (choice === "redis-streams") {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { RedisStreamsPluginEventBus } = require(
-      "./redis/plugin-event-bus.js",
-    ) as { RedisStreamsPluginEventBus: new () => PluginEventBus };
     cache.pluginEventBus = new RedisStreamsPluginEventBus();
     return cache.pluginEventBus;
   }
