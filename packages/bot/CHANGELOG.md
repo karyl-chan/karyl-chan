@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.4.1](https://github.com/karyl-chan/karyl-chan/compare/bot-v1.4.0...bot-v1.4.1) (2026-05-27)
+
+
+### Bug Fixes
+
+* **bot:** mock new plugin-event-bridge exports + drop umzug smoke test ([638b05e](https://github.com/karyl-chan/karyl-chan/commit/638b05e9ca1d639aff1a62be343221185cd8c33a))
+* **bot:** reorder plugin-proxy test setup so sync() sees every model ([7233192](https://github.com/karyl-chan/karyl-chan/commit/7233192d14c256e46458f69ccfba9e38c487afba))
+* **bot:** update config-metadata.test stub for new AppConfig fields ([8669254](https://github.com/karyl-chan/karyl-chan/commit/8669254ea663549d60dcf0bc84046372cb725272))
+
 ## [1.4.0](https://github.com/karyl-chan/karyl-chan/compare/bot-v1.3.0...bot-v1.4.0) (2026-05-28)
 
 
