@@ -86,6 +86,22 @@ export const CONFIG_METADATA: Record<string, ConfigFieldMeta> = {
     productionRequired: false,
     descriptionKey: "config.bot.enableTyping",
   },
+  "bot.shardId": {
+    group: "bot",
+    envVar: "SHARD_ID",
+    sensitivity: "public",
+    editability: "env-only",
+    productionRequired: false,
+    descriptionKey: "config.bot.shardId",
+  },
+  "bot.totalShards": {
+    group: "bot",
+    envVar: "TOTAL_SHARDS",
+    sensitivity: "public",
+    editability: "env-only",
+    productionRequired: false,
+    descriptionKey: "config.bot.totalShards",
+  },
 
   // ── web ──────────────────────────────────────────────────────────────────
   "web.port": {
