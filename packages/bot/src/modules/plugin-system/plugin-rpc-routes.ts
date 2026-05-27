@@ -2727,7 +2727,7 @@ export async function registerPluginRpcRoutes(
         return;
       }
       const { setSnapshot } = await import("./plugin-metrics-store.js");
-      setSnapshot(ctx.pluginKey, {
+      await setSnapshot(ctx.pluginKey, {
         ts,
         counters: counters as Array<{
           name: string;
