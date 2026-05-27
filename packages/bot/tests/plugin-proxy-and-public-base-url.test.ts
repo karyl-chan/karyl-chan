@@ -120,8 +120,14 @@ async function buildServer() {
 }
 
 beforeAll(async () => {
-  await sequelize.sync({ force: true });
+  // Build the server first so every model imported transitively by
+  // plugin-routes / plugin-registry (admin-audit-log, plugin-
+  // capability, etc.) gets registered on `sequelize` before sync().
+  // Otherwise sync() only creates the tables for models loaded by
+  // this file's own imports, and the first query against a
+  // late-registered model hits "no such table".
   server = await buildServer();
+  await sequelize.sync({ force: true });
 });
 
 beforeEach(async () => {
