@@ -301,8 +301,16 @@ export class RedisSessionStore implements SessionStore {
   ): Promise<void> {
     const indexKey = ownerIndexKey(ownerId);
     await this.redis.hset(indexKey, tokenKey, "1");
-    // Refresh the index TTL to the longest-lived token in the set —
-    // approximated by always bumping to the new entry's TTL.
-    await this.redis.pexpire(indexKey, ttlMs);
+    // Only extend the index TTL if the new entry outlives the current
+    // remaining TTL. Otherwise adding a short-lived SSE ticket (60 s)
+    // on top of a 7-day refresh entry would shrink the index window
+    // to 60 s, after which revokeOwner finds an empty hash and the
+    // still-valid refresh token survives revocation.
+    const currentPtl = await this.redis.pttl(indexKey);
+    // PTTL: -2 = no key, -1 = no TTL, >=0 = remaining ms. Anything
+    // shorter than the new entry → extend; otherwise leave alone.
+    if (currentPtl === -2 || (currentPtl >= 0 && currentPtl < ttlMs)) {
+      await this.redis.pexpire(indexKey, ttlMs);
+    }
   }
 }

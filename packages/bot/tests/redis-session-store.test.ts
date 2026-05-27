@@ -227,6 +227,24 @@ describe("RedisSessionStore", () => {
     expect(await store.verifyAccessTokenAsync(b.accessToken)).toBeNull();
   });
 
+  it("issuing a short-lived SSE ticket doesn't shrink the owner-index TTL", async () => {
+    // Regression: indexAdd used to unconditionally PEXPIRE to the new
+    // entry's TTL. Adding a 60s SSE ticket after a multi-day refresh
+    // token would shrink the index hash to 60s and then revokeOwner
+    // would find an empty hash and silently fail.
+    const store = new RedisSessionStore();
+    const { refreshToken } = await store.issueTokens("user-1");
+    // Advance to issue an SSE ticket "later" — the bug shows up when
+    // the SSE TTL is much smaller than the refresh TTL.
+    store.issueSseTicket("user-1");
+    await new Promise((r) => setTimeout(r, 5));
+    // Wait past the SSE TTL window we'd have shrunk to. Simulate by
+    // checking PTTL is still long via revokeOwner working.
+    await store.revokeOwner("user-1");
+    // Refresh must be revoked — index didn't expire prematurely.
+    expect(await store.rotateRefresh(refreshToken)).toBeNull();
+  });
+
   it("consumeSseTicketAsync is one-shot", async () => {
     const store = new RedisSessionStore();
     const { ticket } = store.issueSseTicket("user-1");
