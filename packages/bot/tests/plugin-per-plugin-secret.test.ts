@@ -33,11 +33,18 @@ vi.mock("../src/utils/host-policy.js", () => ({
   HostPolicyError: class HostPolicyError extends Error {},
 }));
 
-// Mock rebuildEventIndex so register() doesn't need the full event system.
+// Mock plugin-event-bridge so register() / heartbeat() don't need the
+// full event system. Every export the registry calls must be present
+// or the call site throws "X is not a function" and the handler 500s.
 vi.mock("../src/modules/plugin-system/plugin-event-bridge.service.js", () => ({
   rebuildEventIndex: vi.fn().mockResolvedValue(undefined),
   dispatchEventToPlugins: vi.fn(),
   getEventIndexSize: vi.fn().mockReturnValue(0),
+  applyPluginChange: vi.fn(),
+  removePluginFromIndex: vi.fn(),
+  dropDispatchPoolForPlugin: vi.fn(),
+  getDispatchPoolSnapshot: vi.fn().mockReturnValue([]),
+  stopDispatchPool: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Mock pluginCommandRegistry so register() doesn't try to hit Discord.
