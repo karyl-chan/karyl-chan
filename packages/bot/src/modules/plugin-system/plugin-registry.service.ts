@@ -729,10 +729,31 @@ export class PluginRegistry {
    * Heartbeat from a plugin: stamp lastHeartbeatAt, ensure status is
    * active, slide token expiry. Called only from the route handler
    * which has already verified the bearer token.
+   *
+   * If the row had been marked inactive by the reaper, the heartbeat
+   * "revives" it — the event-dispatch index and proxy lookup cache
+   * still pin the inactive state, so we have to invalidate them here
+   * or the plugin will keep getting 404s and dropped events for up to
+   * the cache TTL after recovery.
    */
   async heartbeat(pluginId: number, token: string): Promise<void> {
-    await touchHeartbeat(pluginId);
+    const touched = await touchHeartbeat(pluginId);
     this.auth.refresh(token);
+    if (touched?.revived) {
+      try {
+        applyPluginChange(touched.row);
+      } catch (err) {
+        log.error({ err }, "applyPluginChange after heartbeat revive failed");
+      }
+      invalidatePluginByKey(touched.row.pluginKey);
+      dropDispatchPoolForPlugin(touched.row.pluginKey);
+      botEventLog.record(
+        "info",
+        "bot",
+        `Plugin ${touched.row.pluginKey} revived via heartbeat (was inactive)`,
+        { pluginId, pluginKey: touched.row.pluginKey },
+      );
+    }
   }
 
   /**

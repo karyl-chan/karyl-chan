@@ -213,14 +213,23 @@ export const setPluginDispatchHmacKey = async (
   return rowOf(row);
 };
 
+/**
+ * Stamp lastHeartbeatAt + flip status to 'active'. Returns
+ * `revived: true` when the row's prior status was something other
+ * than 'active' (i.e. the reaper had already marked it inactive and
+ * this heartbeat just woke it back up) so the caller can refresh
+ * caches that pin the inactive state. Returns null if the row is
+ * missing entirely.
+ */
 export const touchHeartbeat = async (
   id: number,
   now: Date = new Date(),
-): Promise<void> => {
-  await Plugin.update(
-    { lastHeartbeatAt: now, status: "active" },
-    { where: { id } },
-  );
+): Promise<{ revived: boolean; row: PluginRow } | null> => {
+  const inst = await Plugin.findByPk(id);
+  if (!inst) return null;
+  const wasActive = inst.getDataValue("status") === "active";
+  await inst.update({ lastHeartbeatAt: now, status: "active" });
+  return { revived: !wasActive, row: rowOf(inst) };
 };
 
 export const setPluginEnabled = async (
