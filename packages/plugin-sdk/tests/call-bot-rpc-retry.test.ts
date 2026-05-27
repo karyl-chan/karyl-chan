@@ -1,5 +1,5 @@
 /**
- * Retry contract for `callBotRpc` (Lockdown L-4):
+ * Retry contract for `callBotRpc`:
  *
  *   - 503 / 429 / network failures: retried up to MAX_RPC_RETRIES (3)
  *     with exponential backoff + jitter. Honours Retry-After when set.

@@ -39,14 +39,14 @@ export interface PluginContext {
    * yet registered".
    *
    * Escape hatch for RPC methods not yet covered by `discord` / `voice`.
-   * Prefer the typed namespaces (Lockdown L-2) for messages, members,
-   * interactions, and voice — they survive future renames / batching /
-   * shard-aware routing transparently.
+   * Prefer the typed namespaces for messages, members, interactions,
+   * and voice — they survive future renames / batching / shard-aware
+   * routing transparently.
    */
   readonly botRpc: (path: string, body?: unknown) => Promise<unknown>;
   /**
    * Typed Discord RPC facade. `ctx.discord.messages.send({...})`,
-   * `ctx.discord.interactions.respond({...})`, etc. (Lockdown L-2.)
+   * `ctx.discord.interactions.respond({...})`, etc.
    */
   readonly discord: Discord;
   /** Typed Voice RPC facade. `ctx.voice.play({ guildId, url })`, etc. */

@@ -11,10 +11,10 @@
  *   - !draining:  graceful shutdown has NOT been triggered yet
  *
  * The `draining` flag is set BEFORE the HTTP server closes during
- * `gracefulShutdown` (SCALING_PLAN Phase 0.6). Health probes flip to
- * 503 immediately so an upstream reverse proxy / load balancer can
- * stop routing new traffic to this instance before fastify starts
- * closing sockets — closing this gap is what [[bot-plugin-proxy-recreate-race]]
+ * `gracefulShutdown`. Health probes flip to 503 immediately so an
+ * upstream reverse proxy / load balancer can stop routing new
+ * traffic to this instance before fastify starts closing sockets —
+ * closing this gap is what [[bot-plugin-proxy-recreate-race]]
  * documented as the dropped-traffic window during a rolling restart.
  *
  * Each boot signal is set once during boot. The drain signal is

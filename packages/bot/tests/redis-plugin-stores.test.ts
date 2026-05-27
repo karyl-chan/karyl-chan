@@ -1,6 +1,6 @@
 /**
- * Phase 1.3 — Redis-backed PluginMetricsStore + PluginHealthStore
- * against the in-memory RedisLike stub from redis-session-store test.
+ * Redis-backed PluginMetricsStore + PluginHealthStore against the
+ * in-memory RedisLike stub from redis-session-store test.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";

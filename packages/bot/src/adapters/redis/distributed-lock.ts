@@ -1,5 +1,5 @@
 /**
- * Redis-backed DistributedLock — Phase 1.4.
+ * Redis-backed DistributedLock.
  *
  * Uses Redis SETNX + PX TTL for atomic acquisition, plus an owner-
  * tagged Lua release script so only the holder can delete the key.

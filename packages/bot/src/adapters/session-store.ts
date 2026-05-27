@@ -4,11 +4,10 @@
  *
  * The InProcess default IS the existing `AuthStore` class in
  * `modules/web-core/auth-store.service.ts` — these methods name the
- * subset of its API the rest of the bot relies on. Phase 1.1 of
- * SCALING_PLAN swaps in a Redis-backed implementation so two shard
- * processes can validate each other's sessions (today an admin's
- * login dies the moment their next request lands on a different
- * shard).
+ * subset of its API the rest of the bot relies on. A Redis-backed
+ * implementation can swap in so two shard processes can validate
+ * each other's sessions (in single-shard mode an admin's login dies
+ * the moment their next request lands on a different shard).
  *
  * The interface intentionally mirrors `AuthStore` 1-for-1; the
  * RefreshStoreAdapter pattern that already exists on `AuthStore` is

@@ -1,5 +1,5 @@
 /**
- * Phase 0.5 — proxy/lookup cache for findPluginByKey.
+ * Proxy/lookup cache for findPluginByKey.
  *
  * Tests the loader-driven read-through + invalidate contract. No DB —
  * the loader stub records calls so we can assert hit/miss directly.

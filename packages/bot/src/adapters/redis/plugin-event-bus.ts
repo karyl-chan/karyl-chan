@@ -1,5 +1,5 @@
 /**
- * Redis Streams PluginEventBus — Phase 2.2 (producer side).
+ * Redis Streams PluginEventBus — producer side.
  *
  * Replaces the synchronous HTTP fan-out (per-plugin POST to /events)
  * with `XADD plugin-events:<pluginKey> * type <eventType> data <json>`.
@@ -8,20 +8,19 @@
  * plugin restarts the events queue in Redis until it picks them up
  * again.
  *
- * **Producer-only in this commit.** The SDK-side stream consumer
- * (the half of 2.2 that lets plugins actually receive events from
- * Streams) ships in a follow-up SDK release. Until that lands,
- * setting `EVENT_BUS=redis-streams` produces a deployment where the
- * bot writes events into Redis but plugins still need HTTP fan-out
- * to actually receive them — i.e. don't flip the env until SDK
- * 0.8+ is in place.
+ * **Producer-only.** The SDK-side stream consumer (the half that lets
+ * plugins actually receive events from Streams) ships in a follow-up
+ * SDK release. Until that lands, setting `EVENT_BUS=redis-streams`
+ * produces a deployment where the bot writes events into Redis but
+ * plugins still need HTTP fan-out to actually receive them — i.e.
+ * don't flip the env until the SDK consumer ships.
  *
  * Stream shape:
  *   key: karyl:events:<pluginKey>
  *   fields:
  *     type    → event type string (e.g. "guild.message_create")
  *     data    → JSON-encoded payload (verbatim from the dispatcher)
- *     trace   → traceparent header value (Phase 0.9)
+ *     trace   → traceparent header value
  *
  * Retention is configured via Redis MAXLEN at write time so a
  * never-consumed stream doesn't grow unbounded.

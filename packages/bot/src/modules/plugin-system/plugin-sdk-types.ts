@@ -81,17 +81,17 @@ export interface ManifestConfigField {
   label: string;
   description?: string;
   required?: boolean;
-  /** Workpack D: narrowed; register-time validator rejects type/default mismatch. */
+  /** Narrowed; register-time validator rejects type/default mismatch. */
   default?: string | number | boolean | null;
   options?: Array<{ value: string; label: string }>;
-  /** Workpack D: numeric value bound OR string length bound (per `type`). */
+  /** Numeric value bound OR string length bound (per `type`). */
   min?: number;
-  /** Workpack D: numeric value bound OR string length bound (per `type`). */
+  /** Numeric value bound OR string length bound (per `type`). */
   max?: number;
-  /** Workpack D: UI step attribute for number fields. Ignored on save. */
+  /** UI step attribute for number fields. Ignored on save. */
   step?: number;
   /**
-   * Workpack D: ECMAScript regex source. Compiled at register-time
+   * ECMAScript regex source. Compiled at register-time
    * (invalid pattern → manifest rejected) and applied at every save.
    */
   pattern?: string;
@@ -185,11 +185,11 @@ export interface PluginManifest {
    */
   config_schema?: ManifestConfigField[];
   /**
-   * Workpack D: monotonically-incrementing integer on the
-   * `config_schema` block. When the bot reads a config row whose
-   * stored schema version is lower than this value, it surfaces a
-   * stale-config warning in the admin UI without auto-migrating or
-   * rejecting the value. Default 1 when absent.
+   * Monotonically-incrementing integer on the `config_schema` block.
+   * When the bot reads a config row whose stored schema version is
+   * lower than this value, it surfaces a stale-config warning in the
+   * admin UI without auto-migrating or rejecting the value. Default
+   * 1 when absent.
    */
   config_schema_version?: number;
   guild_features?: ManifestGuildFeature[];
@@ -219,13 +219,13 @@ export interface PluginManifest {
     plugin_modal?: string;
     guild_feature_action?: string;
     /**
-     * 富 health 探針路徑（Workpack C）。SDK 永遠在 `/health/detail`
+     * 富 health 探針路徑。SDK 永遠在 `/health/detail`
      * 掛載；bot 每 60 s + 後台管理 UI 點按時 GET 此 endpoint 取得
      * `HealthReport`（status / message / checks）。
      */
     health?: string;
     /**
-     * Bot → plugin 生命週期事件分派路徑（Workpack C）。當 plugin 宣告
+     * Bot → plugin 生命週期事件分派路徑。當 plugin 宣告
      * `onEnable` / `onDisable` 時 SDK 才掛載 `/_kc/lifecycle`；bot 在
      * admin 切換 guild feature 開關時對此 endpoint 發 HMAC 簽過的 POST
      * `{ type: "plugin.guild.enabled" | "plugin.guild.disabled",

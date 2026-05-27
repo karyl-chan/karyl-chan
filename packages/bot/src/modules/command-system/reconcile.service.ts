@@ -1,19 +1,10 @@
 /**
- * command-system/reconcile.service.ts — M1-C1 骨架實作
+ * command-system/reconcile.service.ts
  *
  * CommandReconciler：軌二（behaviors）+ 軌三（plugin_commands）Discord 指令
  * 統一 reconcile 入口。對齊 C-runtime §2.2 介面定義 + §3.2 流程 2 + §3.3 三軸表。
  *
- * 狀態：dormant（M1-C1）。
- *   - 所有真實邏輯已實作（可供 M1-C2 接線）。
- *   - 不從 main.ts import，不掛任何 bot event listener。
- *
- * M1-C2 接線時：
- *   1. 在 bot ready handler 中呼叫 commandReconciler.reconcileAll()
- *   2. behavior-routes.ts 的 resync hook 改呼叫 reconcileForBehavior(id)
- *   3. 刪除舊 dm-slash-rebind.service.ts + rebindDmOnlyCommandsAsGlobal 呼叫
- *
- * 「軌一不動」保證（C-runtime §1 / M0-FROZEN §8）：
+ * 「軌一不動」保證（C-runtime §1）：
  *   - 本服務只認領 reconciler_owned_commands 名冊 + desired set 中的指令
  *   - 任何 featureKey 非 null 的 plugin_commands 由 PluginCommandRegistry 管，不觸碰
  *   - in-process 指令（picture-only-channel 等）不在 desired set，不動
@@ -820,7 +811,7 @@ export class CommandReconciler {
     if (!plugin.enabled) return null;
     if (plugin.status !== "active") return null;
 
-    // 確認 adminEnabled（M1-A2 加欄，M1-C2 接線）：admin 可停用個別指令
+    // 確認 adminEnabled：admin 可停用個別指令
     if (!row.adminEnabled) return null;
 
     const integrationTypes = cmdManifest.integration_types.filter(

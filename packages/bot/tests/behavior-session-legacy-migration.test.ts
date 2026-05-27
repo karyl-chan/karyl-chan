@@ -1,5 +1,5 @@
 /**
- * Regression: behavior_sessions.expiresAt under the pre-L-2 DATE column
+ * Regression: behavior_sessions.expiresAt under the legacy DATE column
  * type stored as "YYYY-MM-DD HH:MM:SS.sss +00:00" (space-separated).
  * After flipping the column to STRING and the writer to toISOString(),
  * lexicographic compare against new ISO ('YYYY-MM-DDTHH:MM:SS.sssZ')

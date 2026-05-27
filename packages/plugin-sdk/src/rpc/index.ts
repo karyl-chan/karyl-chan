@@ -1,5 +1,5 @@
 /**
- * Typed RPC facade (Lockdown L-2).
+ * Typed RPC facade.
  *
  * Plugin authors call `ctx.discord.messages.send(...)` and
  * `ctx.voice.play(...)` instead of `ctx.botRpc("/api/plugin/...")`.

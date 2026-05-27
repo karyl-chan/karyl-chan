@@ -1,11 +1,11 @@
 /**
- * Phase 1.2 — RedisRateLimitStoreFactory smoke test.
+ * RedisRateLimitStoreFactory smoke test.
  *
  * The factory just hands the shared Redis client back to whoever
  * configures a rate limiter. Production: pass through to a Redis-
  * backed sliding-window counter. The in-memory bot-wide `RateLimiter`
- * utility class is NOT swapped in this phase — that's a sync→async
- * refactor of every rate-limited route, tracked as a 1.2 follow-up.
+ * utility class is NOT swapped here — that's a sync→async refactor
+ * of every rate-limited route, tracked separately.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";

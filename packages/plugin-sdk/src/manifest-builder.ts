@@ -56,8 +56,8 @@ function hasLifecycleHooks(cfg: PluginConfig): boolean {
 }
 
 /**
- * Lockdown L-1: collect every Discord-side event type the plugin has a
- * handler for. Used to auto-fill `events_subscribed_global` so plugin
+ * Collect every Discord-side event type the plugin has a handler
+ * for. Used to auto-fill `events_subscribed_global` so plugin
  * authors don't have to keep a parallel list in sync with their
  * `eventHandlers` object — the keys ARE the subscription set.
  */

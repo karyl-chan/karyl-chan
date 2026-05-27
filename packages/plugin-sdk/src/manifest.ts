@@ -22,7 +22,7 @@ export interface ManifestConfigField {
   description?: string;
   required?: boolean;
   /**
-   * Narrowed from `unknown` in Workpack D — the bot's register-time
+   * Narrowed from `unknown` — the bot's register-time
    * `validateManifest` rejects manifests where `default`'s runtime type
    * doesn't match `type` (e.g. `default: 42` on a `type: "text"` field).
    * Caught at register time, not after admins start saving values.
@@ -30,7 +30,7 @@ export interface ManifestConfigField {
   default?: string | number | boolean | null;
   options?: Array<{ value: string; label: string }>;
 
-  // ─── Workpack D constraint fields ──────────────────────────────────
+  // ─── Constraint fields ─────────────────────────────────────────────
   // All optional; ignored for inapplicable types. The bot's
   // `validateConfigValue` runs these on every save and returns
   // per-field errors in a 422 response.
@@ -183,7 +183,7 @@ export interface PluginManifest {
   /** Plugin 級 admin config。 */
   config_schema?: ManifestConfigField[];
   /**
-   * Workpack D: monotonically-incrementing integer on the manifest's
+   * Monotonically-incrementing integer on the manifest's
    * `config_schema` block. When the bot reads a persisted config row
    * whose stored schema version is lower than the manifest's declared
    * `config_schema_version`, it surfaces a stale-config warning in

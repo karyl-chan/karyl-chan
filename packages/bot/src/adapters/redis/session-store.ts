@@ -1,5 +1,5 @@
 /**
- * Redis-backed SessionStore — Phase 1.1.
+ * Redis-backed SessionStore.
  *
  * Replaces the in-process AuthStore Map for deployments where two
  * shard processes need to validate each other's admin sessions.

@@ -51,7 +51,7 @@ const DEFAULT_EVENTS_PATH = "/events";
 
 /**
  * Per-plugin outbound dispatch pool: HTTP keep-alive + concurrency
- * cap + circuit breaker + connect-refused retry. Phase 0.3.
+ * cap + circuit breaker + connect-refused retry.
  * Singleton because pools are keyed by pluginKey internally.
  */
 const dispatchPool = new PluginDispatchPool({
@@ -95,8 +95,8 @@ function parseManifest(plugin: PluginRow): PluginManifest | null {
 /**
  * Walk the plugins table and rebuild the in-memory event subscription
  * index. Called once at startup. Subsequent mutations should call
- * `applyPluginChange` / `removePluginFromIndex` instead — Phase 0.4
- * replaced the post-write full rebuild with O(|prev ∪ next|) deltas.
+ * `applyPluginChange` / `removePluginFromIndex` instead — those apply
+ * O(|prev ∪ next|) deltas without rescanning the whole table.
  */
 export async function rebuildEventIndex(): Promise<void> {
   const all = await findAllPlugins();
@@ -122,7 +122,7 @@ export async function rebuildEventIndex(): Promise<void> {
 }
 
 /**
- * Phase 0.4 incremental update — call after register / setEnabled /
+ * Incremental update — call after register / setEnabled /
  * heartbeat-expire to keep the event index in sync without a full
  * table walk.
  *
@@ -208,8 +208,8 @@ async function postEventToPlugin(
     body,
   );
 
-  // Phase 0.9: stamp a fresh W3C trace context onto every outbound
-  // event dispatch. Discord events arriving at the bot don't carry a
+  // Stamp a fresh W3C trace context onto every outbound event
+  // dispatch. Discord events arriving at the bot don't carry a
   // parent traceparent, so this is the root span for the
   // bot→plugin→reaction chain. Plugins read this off the SDK's
   // `ctx.traceparent` and forward it on any RPC they make back.
@@ -226,8 +226,9 @@ async function postEventToPlugin(
     body,
   );
   const elapsedSeconds = (Date.now() - startedAt) / 1000;
-  // Phase 0.8: per-(plugin, event_type) latency + outcome counters.
-  // `shard_id` is reserved as "0" until Phase 0.1 wires real sharding.
+  // Per-(plugin, event_type) latency + outcome counters.
+  // `shard_id` carries this process's shard label (defaults to "0" in
+  // single-shard deployments).
   pluginEventDispatchDuration.observe(
     { event_type: eventType, plugin_id: plugin.pluginKey, shard_id: String(config.bot.shardId) },
     elapsedSeconds,
@@ -268,7 +269,7 @@ async function postEventToPlugin(
  * registers successfully but never receives the event with no
  * diagnostic. We should keep a canonical KNOWN_EVENT_TYPES set and
  * surface a soft-warn from validateManifest on unknown subscriptions.
- * Pre-existing design gap; flagged during Workpack A code review.
+ * Pre-existing design gap.
  */
 export function dispatchEventToPlugins(eventType: string, data: unknown): void {
   if (!index.hasSubscribers(eventType)) return;

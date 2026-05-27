@@ -1,6 +1,6 @@
 /**
- * Typed RPC facade (Lockdown L-2): unit test the wire-path + body
- * translation for each typed method. We don't need a live HTTP server —
+ * Typed RPC facade: unit test the wire-path + body translation for
+ * each typed method. We don't need a live HTTP server —
  * the namespace factories take a `RpcCaller` directly, so a stub
  * captures (path, body) for assertion.
  */

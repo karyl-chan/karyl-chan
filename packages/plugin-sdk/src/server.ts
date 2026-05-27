@@ -207,7 +207,7 @@ export class BotRpcError extends Error {
  * fire-and-forget callers must wrap in `.catch(() => {})` if they want
  * to swallow.
  *
- * Retry policy (Lockdown L-4): on a 503 / 429 / network failure we
+ * Retry policy: on a 503 / 429 / network failure we
  * retry up to MAX_RPC_RETRIES times with exponential backoff + jitter,
  * honouring a server-supplied `Retry-After` header when present. These
  * three failure modes share the same invariant: the bot has NOT yet
@@ -557,11 +557,11 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
   // dispatch key as /commands, /components, /modals, /_kc/lifecycle —
   // the bot signs every outbound event POST with this key.
   //
-  // Lockdown L-1: SDK owns this route so plugins don't re-implement
-  // HMAC verification per-plugin. Pre-0.6 plugins (e.g. xiangqi) used
-  // to mount their own /events; the bot's transport-swap roadmap (Phase
-  // 2.2 Redis Streams) is opaque from the plugin side as long as
-  // handlers live here.
+  // The SDK owns this route so plugins don't re-implement HMAC
+  // verification per-plugin. Older plugins (e.g. xiangqi) used to
+  // mount their own /events; a future transport swap (e.g. Redis
+  // Streams) stays opaque from the plugin side as long as handlers
+  // live here.
   if (opts.hasEventHandlers && opts.dispatchEvent) {
     server.post(
       "/events",

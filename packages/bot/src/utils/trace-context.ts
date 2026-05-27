@@ -1,16 +1,15 @@
 /**
- * W3C Trace Context propagation (Phase 0.9 pre-wiring).
+ * W3C Trace Context propagation (pre-wiring).
  *
  * Generates and forwards `traceparent` headers across the bot's
  * dispatch surface so that an OpenTelemetry SDK init (Jaeger / Tempo
  * / Honeycomb exporter — any OTLP receiver) can be added later as a
  * single bootstrap call without re-touching every dispatch path.
  *
- * We deliberately do NOT add the OTel SDK as a dependency in this
- * commit:
+ * We deliberately do NOT add the OTel SDK as a dependency yet:
  *   1. It auto-instruments http / fetch / sqlite at process start
  *      with default settings; bringing that in alongside a graceful-
- *      drain refactor is too much surface area for one phase.
+ *      drain refactor is too much surface area for one change.
  *   2. Header propagation works fine without an SDK — the trace ids
  *      are valid W3C Trace Context and a downstream system that
  *      DOES have an SDK can stitch them. A later commit will add

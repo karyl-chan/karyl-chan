@@ -1,5 +1,5 @@
 /**
- * Phase 3.3 — `targetShardForGuild` correctness.
+ * `targetShardForGuild` correctness.
  *
  * Discord's shard formula is `(BigInt(guild_id) >> 22n) %
  * BigInt(shard_count)`. We pin a handful of known guild IDs against

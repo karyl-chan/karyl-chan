@@ -1,5 +1,5 @@
 /**
- * Redis-backed RateLimitStoreFactory — Phase 1.2.
+ * Redis-backed RateLimitStoreFactory.
  *
  * `@fastify/rate-limit` accepts a `redis: <ioredis-like-client>`
  * option. With it, every limit counter lives in Redis instead of

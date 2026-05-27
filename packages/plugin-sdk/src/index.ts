@@ -47,7 +47,7 @@ export type {
   ModalData,
   ModalReply,
   WebhookPayload,
-  // Typed RPC facade (Lockdown L-2)
+  // Typed RPC facade
   Discord,
   Voice,
   // discord-api-types primitives re-exported for plugin authors
@@ -103,7 +103,7 @@ export {
 } from "./verify-plugin-session.js";
 export type { PluginSessionClaims } from "./verify-plugin-session.js";
 
-// Lifecycle + observability types (Workpack C).
+// Lifecycle + observability types.
 export type {
   PluginContext,
   PluginLogger,

@@ -11,14 +11,13 @@
  *  - admin UI sitting on a non-voice shard can render the right
  *    "now playing" badge;
  *  - a plugin asking `voice.status` on the wrong shard can be
- *    redirected to the shard that owns the connection (Phase 3.3
+ *    redirected to the shard that owns the connection (via
  *    shard-aware routing).
  *
  * The InProcess default is a thin wrapper over voice-manager's own
- * in-memory state. Phase 1+ swaps in Redis hash with the same
- * key shape, so a multi-shard deployment shares the read side
- * without trying (and failing) to share the underlying
- * VoiceConnection.
+ * in-memory state. A Redis hash with the same key shape can swap
+ * in, so a multi-shard deployment shares the read side without
+ * trying (and failing) to share the underlying VoiceConnection.
  */
 
 export interface VoiceStatusRecord {

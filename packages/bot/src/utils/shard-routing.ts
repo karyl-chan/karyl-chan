@@ -1,5 +1,5 @@
 /**
- * Phase 3.3 — shard routing helpers.
+ * Shard routing helpers.
  *
  * Discord's gateway routes every event for a guild to a specific
  * shard determined by:

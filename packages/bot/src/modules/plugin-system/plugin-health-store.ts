@@ -1,10 +1,9 @@
 /**
  * Plugin health store — thin re-export over the adapter registry.
  *
- * Mirror of `plugin-metrics-store.ts`. Phase 1.3 widened the
- * interface to async so a Redis-backed implementation can plug in
- * uniformly; sync callers (health poller) already run inside async
- * functions.
+ * Mirror of `plugin-metrics-store.ts`. The interface is async so a
+ * Redis-backed implementation can plug in uniformly; sync callers
+ * (health poller) already run inside async functions.
  *
  * Swap implementation: `PLUGIN_HEALTH_STORE=redis`.
  */

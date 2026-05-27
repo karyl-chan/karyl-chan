@@ -1,5 +1,5 @@
 /**
- * Phase 0.4 — incremental event-index updates without a full table scan.
+ * Incremental event-index updates without a full table scan.
  *
  * Tests the pure `EventIndex` + `collectSubscribedEvents` /
  * `parseManifestJson` helpers in plugin-event-index.ts. The bridge

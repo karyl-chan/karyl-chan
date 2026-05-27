@@ -17,9 +17,9 @@ export interface AppConfig {
     ownerIds: string[];
     /** When true, GuildMessageTyping and DirectMessageTyping intents are registered. */
     enableTyping: boolean;
-    /** Phase 0.1 — discord.js sharding. `shardId` is THIS process's shard
+    /** discord.js sharding. `shardId` is THIS process's shard
      *  (0-indexed); `totalShards` is the full deployment shard count.
-     *  Default 0/1 = single-shard, behaviour matches pre-0.1. */
+     *  Default 0/1 = single-shard. */
     shardId: number;
     totalShards: number;
   };
@@ -42,8 +42,8 @@ export interface AppConfig {
   };
   db: {
     sqlitePath: string | null;
-    /** Phase 0.7 — separate SQLite file for bot_events. Null = default
-     *  path next to the main DB. */
+    /** Separate SQLite file for bot_events. Null = default path next
+     *  to the main DB. */
     botEventsSqlitePath: string | null;
   };
   crypto: {

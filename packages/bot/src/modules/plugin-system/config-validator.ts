@@ -1,7 +1,7 @@
 import type { ManifestConfigField } from "./plugin-sdk-types.js";
 
 /**
- * Single canonical validator for plugin config values (Workpack D).
+ * Single canonical validator for plugin config values.
  *
  * Two consumer call sites:
  *  - register-time: `validateSchema(schema)` checks that field

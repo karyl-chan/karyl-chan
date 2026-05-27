@@ -294,9 +294,9 @@ export async function registerPluginRpcRoutes(
    * Returns: { id, channel_id }
    *
    * The plugin can target any text channel the bot has access to in
-   * any guild it's in, plus DM channels of any user. Phase 2 may
-   * narrow this to the plugin's own guild_features scope; Phase 1.5
-   * trusts the operator-installed plugins to behave.
+   * any guild it's in, plus DM channels of any user. A future revision
+   * may narrow this to the plugin's own guild_features scope; today
+   * we trust operator-installed plugins to behave.
    */
   server.post<{
     Body: {

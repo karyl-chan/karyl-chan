@@ -490,10 +490,10 @@ export async function validateManifest(
     }
   }
 
-  // Workpack D: register-time config_schema validation. Reject
-  // manifests with malformed defaults / invalid regex / inverted
-  // ranges so the bug surfaces at plugin startup instead of after an
-  // admin opens the config editor and gets an unhelpful save error.
+  // Register-time config_schema validation. Reject manifests with
+  // malformed defaults / invalid regex / inverted ranges so the bug
+  // surfaces at plugin startup instead of after an admin opens the
+  // config editor and gets an unhelpful save error.
   const { validateSchema } = await import("./config-validator.js");
   if (Array.isArray(m.config_schema)) {
     const fail = validateSchema(m.config_schema as ManifestConfigField[]);
@@ -646,18 +646,18 @@ export class PluginRegistry {
         `reconcilePluginCapabilities failed for ${manifest.plugin.id}`,
       );
     }
-    // Phase 0.5: invalidate the proxy/lookup cache so the fresh row
-    // is read on the next request (e.g. URL change on re-register).
+    // Invalidate the proxy/lookup cache so the fresh row is read on
+    // the next request (e.g. URL change on re-register).
     invalidatePluginByKey(manifest.plugin.id);
     // Same reasoning: drop any cached PoolEntry so a previously-
     // tripped breaker doesn't carry over into the freshly-registered
     // plugin. Even when the URL is unchanged (operator restarts a bad
     // plugin and re-registers), the breaker should start fresh.
     dropDispatchPoolForPlugin(manifest.plugin.id);
-    // Phase 0.4: incremental index update. The freshly-registered
-    // plugin's manifest has been persisted to `persisted.manifestJson`,
-    // so applyPluginChange computes the new subscription set from it
-    // — no full table scan.
+    // Incremental index update. The freshly-registered plugin's
+    // manifest has been persisted to `persisted.manifestJson`, so
+    // applyPluginChange computes the new subscription set from it —
+    // no full table scan.
     try {
       applyPluginChange(persisted);
     } catch (err) {
@@ -794,16 +794,16 @@ export class PluginRegistry {
       }
     }
     // Toggling enabled flips whether this plugin appears in event
-    // dispatch fan-out. Phase 0.4: apply the delta directly from
-    // the post-mutation row instead of walking every plugin.
+    // dispatch fan-out. Apply the delta directly from the post-
+    // mutation row instead of walking every plugin.
     if (row) {
       try {
         applyPluginChange(row);
       } catch {
         /* shape is in-memory only; nothing to do besides log */
       }
-      // Phase 0.5: invalidate proxy/lookup cache so the next request
-      // sees the new enabled / status.
+      // Invalidate proxy/lookup cache so the next request sees the
+      // new enabled / status.
       invalidatePluginByKey(row.pluginKey);
     }
     return row;
@@ -841,9 +841,9 @@ export class PluginRegistry {
           );
         }
         // If we just expired anything, drop the dead plugins from the
-        // index so dispatch stops fanning out events to them. Phase
-        // 0.4: O(|expired|) per-id removal instead of a full rebuild.
-        // Phase 0.5: also drop them from the proxy/lookup cache.
+        // index so dispatch stops fanning out events to them: O(|expired|)
+        // per-id removal instead of a full rebuild. Also drop them from
+        // the proxy/lookup cache.
         for (const id of ids) {
           removePluginFromIndex(id);
           invalidatePluginById(id);

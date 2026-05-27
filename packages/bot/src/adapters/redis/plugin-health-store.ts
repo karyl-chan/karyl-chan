@@ -1,5 +1,5 @@
 /**
- * Redis-backed PluginHealthStore — Phase 1.3. Mirror of
+ * Redis-backed PluginHealthStore. Mirror of
  * `redis/plugin-metrics-store.ts`.
  */
 

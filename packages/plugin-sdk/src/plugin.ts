@@ -67,7 +67,7 @@ export interface StartedPlugin {
    * Typed Discord RPC facade — same surface as `PluginContext.discord`
    * but bound to the plugin token (not a per-interaction one). Use from
    * background timers, WebUI route handlers, or anywhere outside a
-   * command/component/modal dispatch. (Lockdown L-2.)
+   * command/component/modal dispatch.
    */
   discord: Discord;
   /** Typed Voice RPC facade, plugin-token-bound counterpart of `discord`. */
@@ -415,7 +415,7 @@ export interface PluginConfig {
    *
    * The SDK auto-mounts `/events`, verifies the HMAC, parses JSON, and
    * dispatches to the matching handler. Authors do NOT mount their own
-   * `/events` route — that pattern is the L-1 lockdown deprecation.
+   * `/events` route — the SDK owns this surface.
    *
    * Manifest-side wiring is also automatic: declared event-type keys
    * are merged into `events_subscribed_global` and `endpoints.events`
@@ -424,8 +424,8 @@ export interface PluginConfig {
    * (`guildFeatures[].eventsSubscribed`) still work for admin-UI
    * visibility, but the handler must live here.
    *
-   * Future transport swap (e.g. Phase 2.2 Redis Streams) only changes
-   * the SDK's internal wiring — handlers stay stable.
+   * A future transport swap (e.g. Redis Streams) only changes the
+   * SDK's internal wiring — handlers stay stable.
    */
   eventHandlers?: Record<string, EventHandler>;
 }
@@ -733,10 +733,10 @@ export function definePlugin(config: PluginConfig): PluginInstance {
         hasLifecycleHandler:
           typeof config.onEnable === "function" ||
           typeof config.onDisable === "function",
-        // Lockdown L-1: SDK-managed event dispatch. Resolver lives in
-        // this closure so the long-lived `ctx` (built after first
-        // register) is captured; handlers run with the same context
-        // shape as command handlers / lifecycle hooks.
+        // SDK-managed event dispatch. Resolver lives in this closure
+        // so the long-lived `ctx` (built after first register) is
+        // captured; handlers run with the same context shape as
+        // command handlers / lifecycle hooks.
         dispatchEvent: async (eventType, data) => {
           if (!ctx) return;
           const handler = config.eventHandlers?.[eventType];

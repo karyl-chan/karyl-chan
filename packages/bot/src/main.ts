@@ -45,9 +45,9 @@ import { ensureFixedScopeTabs } from "./modules/behavior/scope-tab-seed.service.
 import { runMigrations } from "./db-migrations.js";
 import { shouldRecord } from "./modules/bot-events/bot-event-dedup.js";
 import { initJwtSigningAuthority } from "./modules/web-core/jwt.service.js";
-// M1-C2: CommandReconciler / InteractionDispatcher / MessagePatternMatcher 接線。
+// CommandReconciler / InteractionDispatcher / MessagePatternMatcher：
 // system slash command（admin-login / manual / break）+ user-defined slash trigger
-// + DM message_pattern 由這三個模組接管（取代 v1 stub 路徑）。
+// + DM message_pattern 由這三個模組接管。
 import { pluginRegistry } from "./modules/plugin-system/plugin-registry.service.js";
 import {
   dispatchEventToPlugins,
@@ -67,7 +67,7 @@ import { bootstrapInProcessFeatures } from "./bootstrap-in-process.js";
 import { bootstrapEventHandlers } from "./bootstrap-events.js";
 import { shutdownAllRconConnections } from "./modules/builtin-features/rcon-forward/rcon-forward-channel.events.js";
 import { validateMetadataCoverage } from "./config-metadata.js";
-// M1-C2 新增：command-system 三模組
+// command-system 三模組
 import { CommandReconciler } from "./modules/command-system/reconcile.service.js";
 import { InteractionDispatcher } from "./modules/command-system/interaction-dispatcher.service.js";
 import { WebhookForwarder } from "./modules/command-system/webhook-forwarder.service.js";
@@ -127,11 +127,10 @@ process.on("uncaughtException", (error) => {
 
 let webServer: Awaited<ReturnType<typeof startWebServer>> | null = null;
 
-// Phase 0.1 — sharding-ready Client construction. Single-shard
-// deployments (default) set shardId=0, totalShards=1 and behave
-// exactly as pre-0.1. Multi-shard deployments wire SHARD_ID +
-// TOTAL_SHARDS env vars (one container per shard) and discord.js
-// connects to only the shard's slice of the gateway.
+// Sharding-ready Client construction. Single-shard deployments
+// (default) set shardId=0, totalShards=1. Multi-shard deployments
+// wire SHARD_ID + TOTAL_SHARDS env vars (one container per shard)
+// and discord.js connects to only the shard's slice of the gateway.
 export const bot = new Client({
   shards: [config.bot.shardId],
   shardCount: config.bot.totalShards,
@@ -163,7 +162,7 @@ export const bot = new Client({
   partials: [Partials.Message, Partials.Channel, Partials.Reaction],
 });
 
-// M1-C2：command-system 三模組 singleton 初始化。
+// command-system 三模組 singleton 初始化。
 // bot 已宣告，使用閉包安全存取（CommandReconciler.getBot 在 ready 後才被呼叫）。
 const webhookForwarder = new WebhookForwarder();
 const interactionDispatcher = new InteractionDispatcher(webhookForwarder);
@@ -175,8 +174,8 @@ const messageMatcher = new MessagePatternMatcher(webhookForwarder);
 let shuttingDown = false;
 const SHUTDOWN_TIMEOUT_MS = 30_000;
 /**
- * SCALING_PLAN Phase 0.6 — how long to advertise 503 on /api/health/ready
- * before we actually start closing sockets. Gives an upstream reverse
+ * How long to advertise 503 on /api/health/ready before we actually
+ * start closing sockets. Gives an upstream reverse
  * proxy / load balancer a window to notice the drain and stop routing
  * new traffic to this instance. Container orchestrators typically
  * recheck health every 5-10s, so a 2s grace handles the most-common
@@ -239,14 +238,14 @@ async function gracefulShutdown(signal: string): Promise<void> {
     await bot.destroy();
     // 5. Close DB last — earlier steps may still be writing.
     await sequelize.close();
-    // 5'. Close the bot_events DB (Phase 0.7) — separate file when the
-    //     main DB is SQLite. Under Postgres bot_events shares the main
-    //     connection (#14 fix), so the close above already covered it.
+    // 5'. Close the bot_events DB — separate file when the main DB is
+    //     SQLite. Under Postgres bot_events shares the main connection
+    //     (#14 fix), so the close above already covered it.
     if (!botEventsSharesMainDb) {
       await botEventsSequelize.close();
     }
-    // 5''. Close the shared Redis client (Phase 1.1+) if one was
-    //      opened. Safe no-op when no adapter ever requested Redis.
+    // 5''. Close the shared Redis client if one was opened. Safe no-op
+    //      when no adapter ever requested Redis.
     await closeRedisClient();
     clearTimeout(timeout);
     log.info({ signal }, "graceful shutdown complete");
@@ -322,10 +321,10 @@ bot.once("ready", async () => {
   setReady("bot", true);
   // discordx's initApplicationCommands previously registered the four
   // in-process commands (picture-only / role-emoji / todo-channel /
-  // rcon-forward). Phase 2 of the discordx removal moved those onto
-  // our own registry — discordx no longer owns any @Slash classes,
-  // so calling initApplicationCommands now would just delete-then-
-  // we-recreate the commands. Skip it; the registry handles sync.
+  // rcon-forward). The discordx removal moved those onto our own
+  // registry — discordx no longer owns any @Slash classes, so calling
+  // initApplicationCommands now would just delete-then-recreate the
+  // commands. Skip it; the registry handles sync.
   await syncInProcessCommandsToDiscord(bot);
 
   // Pre-cache each owner's DM channel. Originally a correctness fix
@@ -354,14 +353,14 @@ bot.once("ready", async () => {
   // discordx initApplicationCommands above so we don't fight over
   // the global command registry. Failures are logged inside the
   // registry, so we just await and move on.
-  // M1-C2 注：pluginCommandRegistry.reconcileAll() 已改為 DB-only（不呼叫 Discord API）
-  // 軌三 global 指令改由下方 commandReconciler.reconcileAll() 接管。
+  // 注：pluginCommandRegistry.reconcileAll() 是 DB-only（不呼叫 Discord API）
+  // 軌三 global 指令由下方 commandReconciler.reconcileAll() 接管。
   //
-  // Phase 0.1: in a multi-shard deployment, only one process can
-  // call Discord's global-application-commands set — otherwise N
-  // shards stomp each other. We pick shard 0 *and* take a
-  // distributed lock so a future Redis-backed lock keeps the same
-  // invariant in flaky-restart scenarios.
+  // In a multi-shard deployment, only one process can call Discord's
+  // global-application-commands set — otherwise N shards stomp each
+  // other. We pick shard 0 *and* take a distributed lock so a
+  // Redis-backed lock keeps the same invariant in flaky-restart
+  // scenarios.
   if (config.bot.shardId === 0) {
     // Reconcile can legitimately exceed the lock timeout when Discord
     // rate-limits PUT /applications/.../commands hard — happens often
@@ -390,7 +389,7 @@ bot.once("ready", async () => {
     );
   }
 
-  // M1-C2：MessagePatternMatcher 掛載 messageCreate listener（DM behaviors）。
+  // MessagePatternMatcher 掛載 messageCreate listener（DM behaviors）。
   messageMatcher.register(bot);
 
   log.info({ stage: "boot" }, "bot started");
@@ -433,7 +432,7 @@ bot.on("guildDelete", (guild) => {
 });
 
 bot.on("interactionCreate", async (interaction: Interaction) => {
-  // M1-C2：統一的 InteractionDispatcher 接管所有 interaction dispatch。
+  // 統一的 InteractionDispatcher 接管所有 interaction dispatch。
   // 派發順序（C-runtime §4.1）：
   //   [1] behaviors 表 slash_command trigger（source: system / custom / plugin）
   //   [2] plugin_commands（軌三）── plugin-interaction-dispatch.service.ts
@@ -606,11 +605,11 @@ async function run() {
     // missing tables but never ALTERs an existing one, so schema
     // evolution on long-lived DBs has to go through umzug below.
     await sequelize.sync();
-    // Phase 0.7: bot_events lives in its own SQLite file (when the
-    // main DB is SQLite) so its high-rate writes don't fight the main
-    // DB's write lock. Under Postgres the model is registered on the
-    // main sequelize instance, so the sync() above already created
-    // the table — skip the redundant call.
+    // bot_events lives in its own SQLite file (when the main DB is
+    // SQLite) so its high-rate writes don't fight the main DB's write
+    // lock. Under Postgres the model is registered on the main
+    // sequelize instance, so the sync() above already created the
+    // table — skip the redundant call.
     if (!botEventsSharesMainDb) {
       await botEventsSequelize.sync();
     }
@@ -625,11 +624,10 @@ async function run() {
     // before any route is served. Routes (login exchange, plugin
     // register/heartbeat) call jwtService.{sign,verify,publicKeyPem}.
     await initJwtSigningAuthority();
-    // v2 system behavior seed（admin-login / manual / break）。
-    // v1 → v2 重構期間 ensureSystem* helpers 被改成 no-op 但 main.ts 也不再
-    // 呼叫，導致 behaviors 表沒 source='system' row → CommandReconciler 的
-    // desired set 不含 /login，Discord 不註冊。這裡 idempotent 補建，
-    // 必須在 reconcileAll（bot ready handler 內）之前完成。
+    // System behavior seed（admin-login / manual / break）：idempotent
+    // 補建 source='system' rows，必須在 reconcileAll（bot ready handler
+    // 內）之前完成，否則 CommandReconciler 的 desired set 不含 /login，
+    // Discord 不會註冊。
     await ensureFixedScopeTabs();
     await ensureSystemBehaviors().catch((err: unknown) => {
       log.error({ err }, "ensureSystemBehaviors failed");
@@ -664,9 +662,9 @@ async function run() {
     // Bound the bot_events table — see bot-event-log.ts for the
     // rationale + caps. Runs in-process every 10 minutes, unref'd.
     startBotEventLogPruner();
-    // Workpack C: probe each plugin's /health/detail endpoint every
-    // 60 s and stash the result in plugin-health-store for the admin
-    // UI to read. Runs in-process; unref'd timer.
+    // Probe each plugin's /health/detail endpoint every 60 s and stash
+    // the result in plugin-health-store for the admin UI to read. Runs
+    // in-process; unref'd timer.
     startPluginHealthPoller();
     // Build the in-memory event subscription index from rows already
     // in the plugins table. Without this, plugins that registered

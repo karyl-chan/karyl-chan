@@ -1,7 +1,7 @@
 /**
- * command-system/message-pattern-matcher.service.ts — M1-C1 骨架實作
+ * command-system/message-pattern-matcher.service.ts
  *
- * MessagePatternMatcher：取代 webhook-behavior.events.ts 的 messageCreate handler。
+ * MessagePatternMatcher：DM messageCreate handler。
  *
  * 對齊 C-runtime §5（DM-only，§5.1 決策）：
  *   1. DM-only gate（channel.type !== ChannelType.DM 直接 return）
@@ -11,15 +11,7 @@
  *   5. 呼叫 WebhookForwarder.forward
  *   6. session 管理（startSession/endSession，[BEHAVIOR:END] sentinel）
  *
- * 狀態：dormant（M1-C1）。
- *   - 所有真實邏輯已實作。
- *   - register(client) 不真的 hookup（dormant 階段）。
- *   - onMessage(djsMessage) 暴露給 testing。
- *
- * M1-C2 接線時：
- *   1. 在 main.ts 中呼叫 messageMatcher.register(bot)（替代 registerWebhookBehaviorEvents）
- *   2. 移除舊 registerWebhookBehaviorEvents 呼叫
- *   3. system behavior message handler（/manual、/break 的 DM 觸發）補在此處
+ * onMessage(djsMessage) 暴露給 testing。
  */
 
 import {
@@ -85,8 +77,7 @@ export class MessagePatternMatcher {
   }
 
   /**
-   * 掛載到 bot client（替代 registerWebhookBehaviorEvents(client)）。
-   * M1-C2 接線：真實掛載 messageCreate listener。
+   * 掛載到 bot client：真實掛載 messageCreate listener。
    *
    * 注意（C-runtime §5.1）：DM-only gate。guild channel 訊息一律丟棄。
    *
@@ -108,12 +99,12 @@ export class MessagePatternMatcher {
     botEventLog.record(
       "info",
       "bot",
-      "message-pattern-matcher: messageCreate listener 已掛載（M1-C2）",
+      "message-pattern-matcher: messageCreate listener 已掛載",
     );
   }
 
   /**
-   * 處理一條 DjsMessage（供 testing 直接呼叫；M1-C2 後由 register 的 listener 呼叫）。
+   * 處理一條 DjsMessage（供 testing 直接呼叫；production 由 register 的 listener 呼叫）。
    */
   async onMessage(djsMessage: DjsMessage): Promise<MessageMatchOutcome> {
     // ─ DM-only gate（C-runtime §5.1）

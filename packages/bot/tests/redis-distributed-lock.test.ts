@@ -1,8 +1,8 @@
 /**
- * Phase 1.4 — Redis DistributedLock against an in-memory RedisLike
- * stub. The stub honours NX, PX, and the Lua "del if value matches"
- * release script enough that the lock's exclusion + auto-expiry
- * behaviour is exercised end-to-end.
+ * Redis DistributedLock against an in-memory RedisLike stub. The stub
+ * honours NX, PX, and the Lua "del if value matches" release script
+ * enough that the lock's exclusion + auto-expiry behaviour is
+ * exercised end-to-end.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";

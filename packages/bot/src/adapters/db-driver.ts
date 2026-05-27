@@ -2,9 +2,9 @@
  * DbDriver — abstraction over the relational store.
  *
  * The InProcess default is the existing `db.ts` Sequelize+SQLite stack.
- * Phase 2.1 of SCALING_PLAN swaps in a Postgres-backed driver behind
- * this same interface — same Sequelize dialect family, same migration
- * tooling (umzug), different connection string.
+ * A Postgres-backed driver can swap in behind this same interface —
+ * same Sequelize dialect family, same migration tooling (umzug),
+ * different connection string.
  *
  * We deliberately keep the surface tiny: anything that wants to talk
  * to the DB still imports the model classes; this interface only

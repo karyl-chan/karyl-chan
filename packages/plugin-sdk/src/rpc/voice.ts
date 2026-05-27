@@ -1,11 +1,11 @@
 /**
  * Typed Voice RPC namespace.
  *
- * Wraps the bot's `/api/plugin/voice.*` family. The plan calls for
- * voice to be split into its own service in Phase 3.1; this namespace
- * is the seam — when that ships, the SDK swaps the underlying RPC
- * routing without changing this surface, and plugins that already use
- * `ctx.voice.*` see no breakage.
+ * Wraps the bot's `/api/plugin/voice.*` family. This namespace is the
+ * seam for a future split of voice into its own service — when that
+ * lands, the SDK can swap the underlying RPC routing without changing
+ * this surface, and plugins that already use `ctx.voice.*` see no
+ * breakage.
  */
 
 import type { RpcCaller } from "./index.js";

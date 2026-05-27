@@ -1,5 +1,5 @@
 /**
- * Phase 1.1 — RedisSessionStore against an in-memory RedisLike stub.
+ * RedisSessionStore against an in-memory RedisLike stub.
  *
  * We don't run a real Redis in tests (the WSL dev host can't); the
  * stub implements just enough of the ioredis surface that the store

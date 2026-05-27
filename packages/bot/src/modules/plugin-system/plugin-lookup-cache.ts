@@ -1,5 +1,5 @@
 /**
- * Hot-path cache for `findPluginByKey` (Phase 0.5).
+ * Hot-path cache for `findPluginByKey`.
  *
  * Plugin reverse proxy + dispatch lookups hit the plugins table on
  * every request. At single-digit-guild scale the SQLite query cost

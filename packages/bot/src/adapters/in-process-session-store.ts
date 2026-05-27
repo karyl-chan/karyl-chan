@@ -1,7 +1,6 @@
 /**
- * InProcessSessionStore — Phase 0.2 documented the interface; this
- * commit (Phase 1.1) ships the concrete InProcess wrapper around
- * the existing `AuthStore` class. The wrapper exists so the registry
+ * InProcessSessionStore — concrete InProcess wrapper around the
+ * existing `AuthStore` class. The wrapper exists so the registry
  * factory can return a uniformly-typed `SessionStore` regardless of
  * `SESSION_STORE` env — the rest of the bot reads `getSessionStore()`
  * and the implementation difference is invisible.

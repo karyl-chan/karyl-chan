@@ -1,13 +1,8 @@
 /**
- * command-system/types.ts — M1-C1 骨架型別定義
+ * command-system/types.ts
  *
  * 對齊 C-runtime §2.1 介面定義。
  * 所有型別在此集中宣告，四個 service 共用。
- *
- * 狀態：dormant（M1-C1），不從 main.ts import，不接線。
- * M1-C2 接線時：
- *   - 從 main.ts import CommandReconciler / InteractionDispatcher / MessagePatternMatcher
- *   - 移除舊 stub：dm-slash-rebind / user-slash-behavior / webhook-behavior.events
  */
 
 import type {

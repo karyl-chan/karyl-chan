@@ -1,9 +1,8 @@
 /**
- * Independent SQLite file for the bot event log (Phase 0.7).
+ * Independent SQLite file for the bot event log.
  *
- * Pre-0.7, `bot_events` lived in the same SQLite database as every
- * other table. The log is a high-rate writer (plugin sends, reaction
- * events, gateway connects, heartbeat reaper, …) and SQLite is a
+ * The log is a high-rate writer (plugin sends, reaction events,
+ * gateway connects, heartbeat reaper, …) and SQLite is a
  * single-writer engine — at high traffic the log's INSERTs would
  * back up behind the same write lock as plugin-command upserts and
  * audit writes, raising interactive write latency for unrelated
@@ -14,9 +13,7 @@
  * traffic stops fighting the main DB's interactive writes.
  *
  * Same dialect / driver / Sequelize abstraction as the main DB; the
- * only difference is the file path and the pool. The Phase 1+ Redis
- * migration leaves this layer alone — Postgres / Redis swap targets
- * the main DB (Phase 2.1) and the in-memory stores (Phase 1).
+ * only difference is the file path and the pool.
  */
 
 import { Sequelize, Transaction } from "sequelize";
@@ -41,9 +38,9 @@ const DEFAULT_EVENTS_DB_PATH = resolve(
 // writer lock for the whole file means high-rate event log INSERTs
 // fight with interactive writes. Postgres has per-row write locks +
 // MVCC; the contention isn't a concern, so we collapse back to the
-// main connection. Otherwise Phase 2.1 would silently leave bot_events
-// on a private SQLite file (split-brain: main DB on Postgres, audit
-// log invisible to other shards).
+// main connection. Otherwise a Postgres deployment would silently
+// leave bot_events on a private SQLite file (split-brain: main DB on
+// Postgres, audit log invisible to other shards).
 function buildBotEventsSequelize(): { seq: Sequelize; path: string } {
   if (dbDialect === "sqlite") {
     const storage = config.db.botEventsSqlitePath ?? DEFAULT_EVENTS_DB_PATH;

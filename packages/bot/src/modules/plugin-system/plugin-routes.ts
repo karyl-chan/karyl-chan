@@ -339,8 +339,8 @@ export async function registerPluginRoutes(
         reply.code(404).send({ error: "plugin not found" });
         return;
       }
-      // Workpack C: surface latest health probe + metrics snapshot inline
-      // so the admin UI doesn't need a second round-trip per plugin card.
+      // Surface latest health probe + metrics snapshot inline so the
+      // admin UI doesn't need a second round-trip per plugin card.
       const { getHealth } = await import("./plugin-health-store.js");
       const { getSnapshot } = await import("./plugin-metrics-store.js");
       const health = await getHealth(p.pluginKey);
@@ -366,7 +366,7 @@ export async function registerPluginRoutes(
   /**
    * GET /api/plugins/by-key/:pluginKey
    *
-   * Plugin 詳情頁（M1-D2）。依 pluginKey 查詢單一 plugin，額外回傳：
+   * Plugin 詳情頁。依 pluginKey 查詢單一 plugin，額外回傳：
    *   - pluginCommands[]：DB 中的 plugin_commands 行（featureKey=null 的軌三指令）
    *   - 其他欄位與 GET /api/plugins/:id 相同，加上 rpcMethods（manifest 宣告的 RPC 方法，唯讀）
    *
@@ -394,8 +394,8 @@ export async function registerPluginRoutes(
       const thirdTrackCommands = pluginCommands.filter(
         (c) => c.featureKey === null,
       );
-      // Workpack C: surface latest health + metrics inline for the
-      // overview tab. Both fields are optional — a plugin that hasn't
+      // Surface latest health + metrics inline for the overview tab.
+      // Both fields are optional — a plugin that hasn't
       // pushed a metrics snapshot yet (just registered) or hasn't been
       // probed yet (admin opened the page before the first 60 s poll)
       // gets the field omitted.
@@ -433,7 +433,7 @@ export async function registerPluginRoutes(
   /**
    * PATCH /api/plugin-commands/:id/admin-enabled
    *
-   * 軌三指令 on/off toggle（M1-D2）。
+   * 軌三指令 on/off toggle。
    * Body: { enabled: boolean }
    * 成功後觸發 CommandReconciler.reconcileForPluginCommand(id)（非同步，不 await）。
    *
@@ -665,8 +665,8 @@ export async function registerPluginRoutes(
           return;
         }
         const incomingObj = body.config as Record<string, unknown>;
-        // Workpack D: validate every per-guild config value through the
-        // shared validator before persisting. Same 422 + fieldErrors
+        // Validate every per-guild config value through the shared
+        // validator before persisting. Same 422 + fieldErrors
         // shape as the plugin-level PUT so the admin UI can render
         // both panels identically.
         //
@@ -1030,7 +1030,7 @@ export async function registerPluginRoutes(
    * PUT /api/plugins/:id/config
    * Body: { values: Record<string, string | null> }
    *
-   * Workpack D: validation pipeline. The full payload is run through
+   * Validation pipeline. The full payload is run through
    * `validateValues` BEFORE any persistence so the admin UI gets every
    * field error in one 422 response instead of an early-abort on the
    * first bad key. Validation rules: required+empty, type-mismatch
@@ -1273,10 +1273,9 @@ export async function registerPluginRoutes(
         });
 
       // 4. Drop the deleted plugin from the event-dispatch index
-      //    (Phase 0.4 — O(1) instead of a full rebuild), the proxy/
-      //    lookup cache (Phase 0.5), and the dispatch pool (so a
-      //    previously-tripped breaker doesn't survive a same-URL
-      //    re-register).
+      //    (O(1) instead of a full rebuild), the proxy/lookup cache,
+      //    and the dispatch pool (so a previously-tripped breaker
+      //    doesn't survive a same-URL re-register).
       removePluginFromIndex(pluginId);
       invalidatePluginById(pluginId);
       dropDispatchPoolForPlugin(plugin.pluginKey);

@@ -1,10 +1,10 @@
 /**
  * Rewrite legacy `behavior_session.expiresAt` values into ISO 8601.
  *
- * Pre-L-2 the column was declared `DataTypes.DATE` and Sequelize's
- * SQLite adapter wrote `"YYYY-MM-DD HH:MM:SS.sss +00:00"`. After L-2
- * the column became STRING with `new Date().toISOString()` writers
- * (`"YYYY-MM-DDTHH:MM:SS.sssZ"`). New `Op.lt` / `Op.gt` queries
+ * The legacy column was declared `DataTypes.DATE` and Sequelize's
+ * SQLite adapter wrote `"YYYY-MM-DD HH:MM:SS.sss +00:00"`. The column
+ * is now STRING with `new Date().toISOString()` writers
+ * (`"YYYY-MM-DDTHH:MM:SS.sssZ"`). `Op.lt` / `Op.gt` queries
  * lexicographically compare ISO strings; the legacy format sorts
  * differently and silently mis-orders.
  *

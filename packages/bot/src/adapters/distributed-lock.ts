@@ -13,8 +13,7 @@
  * In single-shard mode the lock is a noop — there's nothing to
  * serialise against. The interface exists today so call sites can
  * code defensively (`await lock.run('global-cmd-reconcile', …)`)
- * and Phase 1.4 of SCALING_PLAN swaps in a Redis-SETNX
- * implementation without touching them.
+ * and a Redis-SETNX implementation can swap in without touching them.
  */
 
 export interface DistributedLock {

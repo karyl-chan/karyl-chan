@@ -1,6 +1,6 @@
 import { DataTypes } from "sequelize";
-// Phase 0.7: bot_events lives in its own SQLite file so its
-// high-rate writes don't fight the main DB's write lock.
+// bot_events lives in its own SQLite file so its high-rate writes
+// don't fight the main DB's write lock.
 import { botEventsSequelize } from "../bot-events-db.js";
 
 /**

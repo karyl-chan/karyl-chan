@@ -1,6 +1,6 @@
 /**
- * Phase 0.1 — sharding-aware bot config + DistributedLock-gated
- * global command reconcile.
+ * Sharding-aware bot config + DistributedLock-gated global command
+ * reconcile.
  *
  * The config layer reads SHARD_ID / TOTAL_SHARDS from env with safe
  * defaults; the orchestration of "only shard 0 runs global tasks"

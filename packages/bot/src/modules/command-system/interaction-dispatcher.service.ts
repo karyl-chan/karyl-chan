@@ -14,8 +14,6 @@
  *         custom_id 同 `kc:` prefix 規則
  *   [3]   in-process registry（builtin-features）── 保留
  *   fallback：claimed=false，由 main.ts log warn
- *
- * 狀態：live (M1-C2 完成接線；M1-C1 文字已過時)
  */
 
 import {
@@ -283,14 +281,11 @@ export class InteractionDispatcher {
    * system behavior（admin-login/manual/break）dispatch。
    *
    * 對齊 C-runtime §4.1：source=system 分支由此處理，不流到 WebhookForwarder。
-   * v2 system seed 已暫關（M1-C2 前，behaviors 表通常沒有 source='system' 的 row）。
-   * 若 admin 透過 M1-D 後的 admin/behaviors 建立 source='system' row，此路徑啟動。
    *
    * systemKey 對應：
    *   admin-login → issueLoginLinkForInteraction（admin-login.service.ts）
-   *   manual      → 目前 v2 system seed 暫關，無 manual behavior row；若有，
-   *                 v2 manual 語意為「開始 continuous forward session 到特定 behavior」，
-   *                 但需要 behaviorRow 提供目標 behavior id（v2 設計 M1-D 後補），
+   *   manual      → manual 語意為「開始 continuous forward session 到特定 behavior」，
+   *                 但需要 behaviorRow 提供目標 behavior id（admin/behaviors UI 補），
    *                 此版本回 ephemeral 說明暫不支援。
    *   break       → endSession(userId)（清除 active session）
    */
@@ -345,8 +340,6 @@ export class InteractionDispatcher {
    * 列出此 user 在 DM 觸發時 match 的所有 behaviors（依 audienceKind 過濾）。
    * 回 ephemeral embed，顯示 title / triggerType / trigger preview。
    * 若 0 條 → 「目前在私訊沒有可用行為」。
-   *
-   * 對齊 M1-COMPLETION.md §5 與任務 Batch 1 #2 補強。
    */
   private async dispatchManualBehavior(
     interaction: ChatInputCommandInteraction,

@@ -1,5 +1,5 @@
 /**
- * Redis-backed PluginMetricsStore — Phase 1.3.
+ * Redis-backed PluginMetricsStore.
  *
  * One key per plugin: `karyl:plugin:metrics:<pluginKey>` → JSON
  * snapshot. PX TTL set to the in-memory FRESHNESS_TTL so an offline

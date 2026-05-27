@@ -135,10 +135,10 @@ export interface CommandContext {
   /**
    * Typed Discord RPC facade — `ctx.discord.messages.send({...})` etc.
    * Wraps the same underlying RPC surface as `botRpc` but with
-   * camelCase params, typed args, and typed return values. Lockdown
-   * L-2: prefer this over raw `botRpc("/api/plugin/messages.send", ...)`.
-   * Future renames / batching / shard-aware routing happen inside the
-   * SDK without touching plugin code.
+   * camelCase params, typed args, and typed return values. Prefer this
+   * over raw `botRpc("/api/plugin/messages.send", ...)`. Future
+   * renames / batching / shard-aware routing happen inside the SDK
+   * without touching plugin code.
    */
   discord: Discord;
   /** Typed Voice RPC facade. See `Discord` notes. */
@@ -372,7 +372,7 @@ export interface ComponentContext {
    * `{ ephemeral: true }` for a nudge that doesn't touch the message.
    */
   botRpc(path: string, body?: unknown): Promise<unknown>;
-  /** Typed Discord RPC facade (Lockdown L-2). See CommandContext.discord. */
+  /** Typed Discord RPC facade. See CommandContext.discord. */
   discord: Discord;
   /** Typed Voice RPC facade. */
   voice: Voice;
@@ -439,7 +439,7 @@ export interface ModalContext {
   publicBaseUrl?: string;
   /** Call a bot-side plugin RPC (same shape as command/component context). */
   botRpc(path: string, body?: unknown): Promise<unknown>;
-  /** Typed Discord RPC facade (Lockdown L-2). */
+  /** Typed Discord RPC facade. */
   discord: Discord;
   /** Typed Voice RPC facade. */
   voice: Voice;

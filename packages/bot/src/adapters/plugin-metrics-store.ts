@@ -5,10 +5,9 @@
  * reads the latest. Bounded by FRESHNESS_TTL — older snapshots are
  * dropped on read so an offline plugin doesn't render stale numbers.
  *
- * InProcess default keeps the snapshots in a `Map<pluginKey, …>` (the
- * pre-Phase-0 behaviour). Phase 1.3 of SCALING_PLAN swaps in a Redis
- * hash so the admin UI on shard B can read snapshots a plugin pushed
- * to shard A.
+ * InProcess default keeps the snapshots in a `Map<pluginKey, …>`. A
+ * Redis hash implementation can swap in so the admin UI on shard B
+ * can read snapshots a plugin pushed to shard A.
  */
 
 export interface StoredMetricsSnapshot {

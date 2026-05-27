@@ -12,7 +12,7 @@ export type BehaviorAudienceKind = "all" | "user" | "group";
 export type BehaviorWebhookAuthMode = "token" | "hmac";
 export type BehaviorSystemKey = "admin-login" | "manual" | "break";
 
-// ── system behavior 常數（供 main.ts + dispatcher 用，M1-C 接管後移除）────────
+// ── system behavior 常數（供 main.ts + dispatcher 用）─────────────────────────
 
 export const SYSTEM_BEHAVIOR_KEY_LOGIN = "admin-login" as const;
 export const SYSTEM_BEHAVIOR_KEY_MANUAL = "manual" as const;
@@ -36,8 +36,6 @@ export const SYSTEM_BEHAVIOR_KEYS = [
  *
  * 注意：integrationTypes / contexts 為 lexicographically-sorted comma-joined string，
  * 應用層在 INSERT/UPDATE 前必須強制 sort+dedup 後才寫入。
- *
- * M1-C 接管前，dispatcher / routes 全部 stub（回 503 或 throw）。
  */
 export const Behavior = sequelize.define(
   "Behavior",
@@ -499,7 +497,7 @@ export const findBehaviorById = async (
 
 /**
  * 查詢所有 source='system' 的 behavior rows。
- * M1-C 接管前供 main.ts interactionCreate dispatcher 使用。
+ * 供 main.ts interactionCreate dispatcher 使用。
  */
 export const findAllSystemBehaviors = async (): Promise<BehaviorRow[]> => {
   const rows = await Behavior.findAll({ where: { source: "system" } });

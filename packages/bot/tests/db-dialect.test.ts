@@ -1,5 +1,5 @@
 /**
- * Phase 2.1 — db.ts dialect dispatch.
+ * db.ts dialect dispatch.
  *
  * Validates DB_URL parsing without actually opening a connection.
  * We can't import db.ts directly here because doing so triggers the

@@ -67,7 +67,7 @@ export type DispatchOutcome =
 
 /**
  * Per-plugin runtime knobs. Defaults are tuned for the single-host
- * baseline; SCALING_PLAN Phase 1+ pushes them up.
+ * baseline; multi-host deployments will push them up.
  */
 export interface DispatchPoolOptions {
   /** Max concurrent in-flight requests per plugin. Drop incoming when hit. */

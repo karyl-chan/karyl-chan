@@ -1,13 +1,11 @@
 /**
  * Plugin metrics store — thin re-export over the adapter registry.
  *
- * Phase 1.3 widened the interface so a Redis-backed implementation
- * can be hot-swapped. Sync callers (admin UI handler in plugin-routes)
- * already run inside async handlers; the only change is one
- * `await`.
+ * The interface is async so a Redis-backed implementation can be
+ * hot-swapped. Sync callers (admin UI handler in plugin-routes)
+ * already run inside async handlers; the only change is one `await`.
  *
- * Swap implementation: `PLUGIN_METRICS_STORE=redis` (Phase 1.3) +
- * `REDIS_URL=redis://...`.
+ * Swap implementation: `PLUGIN_METRICS_STORE=redis` + `REDIS_URL=...`.
  */
 
 import { getPluginMetricsStore } from "../../adapters/registry.js";

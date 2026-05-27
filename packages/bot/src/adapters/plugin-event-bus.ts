@@ -4,11 +4,11 @@
  *
  * The InProcess default is HTTP fan-out via the existing
  * `plugin-event-bridge.service.ts` — the bot POSTs to each plugin's
- * `/events` directly. Phase 2.2 of SCALING_PLAN swaps in a Redis
- * Streams implementation: the bot does `XADD plugin-events:<id> …`
- * and the SDK side consumes via a consumer group. Plugin authors
- * see no difference — `eventHandlers` is the same surface either
- * way (this is exactly why L-1 took `/events` away from plugins).
+ * `/events` directly. A Redis Streams implementation can swap in: the
+ * bot does `XADD plugin-events:<id> …` and the SDK side consumes via
+ * a consumer group. Plugin authors see no difference — `eventHandlers`
+ * is the same surface either way (this is exactly why `/events` is
+ * SDK-owned and not exposed to plugins).
  *
  * `dispatch` is fire-and-forget. Errors per plugin land in the bot
  * event log inside the implementation; they do not propagate to the

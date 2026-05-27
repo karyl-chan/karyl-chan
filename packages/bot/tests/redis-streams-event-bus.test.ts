@@ -1,5 +1,5 @@
 /**
- * Phase 2.2 — RedisStreamsPluginEventBus producer.
+ * RedisStreamsPluginEventBus producer.
  *
  * The bus is fire-and-forget; we capture XADD calls via a stub
  * that exposes an `xadd` method (the RedisLike interface doesn't

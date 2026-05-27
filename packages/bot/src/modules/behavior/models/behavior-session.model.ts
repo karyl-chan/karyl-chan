@@ -43,10 +43,10 @@ export const BehaviorSession = sequelize.define(
       type: DataTypes.STRING,
       allowNull: false,
     },
-    // L-2 修：用 STRING 儲存 ISO 8601 字串。SQLite 無原生 DATE 型別，
-    // 之前宣告為 DataTypes.DATE 但 startSession 寫入 toISOString()，
-    // Sequelize 在不同情境會回 Date 或 string，rowOf 不得不防禦兩種型別。
-    // 改成 STRING 後 in/out 都是 ISO 字串，lexicographic 比較與 Op.lt/gt
+    // 用 STRING 儲存 ISO 8601 字串。SQLite 無原生 DATE 型別，
+    // 用 DataTypes.DATE 配 startSession 寫入 toISOString() 時，
+    // Sequelize 在不同情境會回 Date 或 string，rowOf 必須防禦兩種型別。
+    // 用 STRING 則 in/out 都是 ISO 字串，lexicographic 比較與 Op.lt/gt
     // 仍正確（ISO 8601 排序語意一致）。
     expiresAt: {
       type: DataTypes.STRING,
@@ -149,14 +149,14 @@ export const endSessionsForBehavior = async (
 };
 
 /**
- * One-shot migration: rewrite legacy `expiresAt` values stored under the
- * pre-L-2 `DataTypes.DATE` column type.
+ * One-shot migration: rewrite legacy `expiresAt` values stored under
+ * the previous `DataTypes.DATE` column type.
  *
  * Why this exists: Sequelize's SQLite DATE adapter stored timestamps as
  * `"YYYY-MM-DD HH:MM:SS.sss +00:00"` (space-separated, explicit offset).
- * The L-2 patch flipped the column type to STRING and the writer to
- * `new Date().toISOString()` (`"YYYY-MM-DDTHH:MM:SS.sssZ"`, T-separated,
- * Zulu suffix). Empirically (verified via a probe test):
+ * The column is now STRING with `new Date().toISOString()` writers
+ * (`"YYYY-MM-DDTHH:MM:SS.sssZ"`, T-separated, Zulu suffix). Empirically
+ * (verified via a probe test):
  *   ' ' (0x20) < 'T' (0x54)
  * so legacy rows lexicographically compare as ALWAYS LESS than any new
  * `nowIso`. findActiveSession's preflight `Op.lt` cleanup would silently

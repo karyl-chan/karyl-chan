@@ -1,14 +1,14 @@
 /**
  * RateLimitStoreFactory — adapter for `@fastify/rate-limit` so the
  * write / login / plugin-RPC limiters can share state across shard
- * processes once Phase 1.2 of SCALING_PLAN lands.
+ * processes.
  *
  * Today every Fastify-rate-limit rule uses the library's built-in
  * in-memory store. That's fine for one shard, broken for two — a
  * limiter that allows N writes/min counts each shard's N
  * independently, so a 2-shard deployment doubles the effective
- * limit. The Redis implementation in Phase 1.2 will use the library's
- * own `redis: { client }` option; this adapter just centralises the
+ * limit. The Redis implementation uses the library's own
+ * `redis: { client }` option; this adapter just centralises the
  * decision point so the four `@fastify/rate-limit` registrations
  * don't each have to know the connection string.
  *

@@ -13,8 +13,8 @@ const __dirname = dirname(__filename);
 const DEFAULT_DB_PATH = resolve(dirname(__dirname), "data/database.sqlite");
 
 /**
- * DB_URL takes priority — Phase 2.1 hook for Postgres swap. Falls
- * back to the legacy `SQLITE_DB_PATH` / hardcoded path so existing
+ * DB_URL takes priority — hook for Postgres connections. Falls back
+ * to the legacy `SQLITE_DB_PATH` / hardcoded path so existing
  * single-host deployments are unchanged.
  *
  * Examples:

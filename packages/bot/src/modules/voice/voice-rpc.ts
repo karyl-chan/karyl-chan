@@ -150,8 +150,8 @@ export async function registerVoiceRpcRoutes(
       });
       return status;
     } catch (err) {
-      // Phase 3.1 — voice capacity cap; surface as 429 so plugins
-      // (radio queue, voice-using plugins) can back off.
+      // Voice capacity cap; surface as 429 so plugins (radio queue,
+      // voice-using plugins) can back off.
       if (err instanceof VoiceCapacityError) {
         reply.code(429).send({
           error: "voice capacity reached",

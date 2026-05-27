@@ -1,5 +1,5 @@
 /**
- * Pure in-memory event subscription index (Phase 0.4).
+ * Pure in-memory event subscription index.
  *
  * Owns `event_type → Set<pluginId>` forward lookup AND `pluginId →
  * Set<event_type>` reverse lookup. The reverse lookup is what lets

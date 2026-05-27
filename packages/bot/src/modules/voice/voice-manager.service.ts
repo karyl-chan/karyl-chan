@@ -102,11 +102,11 @@ export interface JoinOptions {
  * different channel in the same guild, transparently moves.
  */
 /**
- * Phase 3.1 — cap concurrent voice guild connections. Each
- * connection allocates a `VoiceConnection` plus an ffmpeg child
- * process on every `play()`; running unbounded at 2500-guild scale
- * is the primary OOM risk. Reject new joins with a sentinel that
- * the RPC layer translates to HTTP 429.
+ * Cap concurrent voice guild connections. Each connection allocates
+ * a `VoiceConnection` plus an ffmpeg child process on every `play()`;
+ * running unbounded at 2500-guild scale is the primary OOM risk.
+ * Reject new joins with a sentinel that the RPC layer translates to
+ * HTTP 429.
  *
  * Default 50 — comfortably above the radio plugin's typical
  * concurrent guild count today, but a hard ceiling.
@@ -131,8 +131,8 @@ export async function joinVoice(opts: JoinOptions): Promise<VoiceStatus> {
   if (existing && existing.channelId === channelId) {
     return getStatus(guildId);
   }
-  // Phase 3.1: refuse new guilds when the cap is hit. Same-guild
-  // moves (existing != null) bypass the cap — the slot is already
+  // Refuse new guilds when the cap is hit. Same-guild moves
+  // (existing != null) bypass the cap — the slot is already
   // accounted for.
   if (!existing && states.size >= MAX_CONCURRENT_VOICE_GUILDS) {
     throw new VoiceCapacityError(

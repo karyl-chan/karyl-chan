@@ -25,9 +25,9 @@ import { guildChannelEventBus } from "../guild-management/guild-channel-event-bu
 import { pluginRegistry } from "../plugin-system/plugin-registry.service.js";
 import { config } from "../../config.js";
 
-/** Phase 0.1 — this process's shard id as a label value. Stamped on
- *  every per-plugin / per-event metric so a multi-shard Prometheus
- *  scrape can group by it. Single-shard deployments see `"0"`. */
+/** This process's shard id as a label value. Stamped on every
+ *  per-plugin / per-event metric so a multi-shard Prometheus scrape
+ *  can group by it. Single-shard deployments see `"0"`. */
 const SHARD_ID = String(config.bot.shardId);
 
 export const metricsRegistry = new Registry();
@@ -62,8 +62,8 @@ export const httpRequestDuration = new Histogram({
 //   - outcome:    "ok" / "shed" / "breaker_open" / "connect_refused"
 //                  / "network" / "http_error"
 //   - plugin_id:  bounded by registered plugin count (typically ≤30)
-//   - shard_id:   reserved for Phase 0.1; pinned to "0" until sharding
-//                  is wired up
+//   - shard_id:   this process's shard label (defaults to "0" in
+//                  single-shard deployments)
 export const pluginEventDispatchTotal = new Counter({
   name: "karyl_plugin_event_dispatch_total",
   help: "Plugin event dispatches fanned out from plugin-event-bridge",
@@ -188,9 +188,9 @@ export const pluginActiveCountGauge = new Gauge({
   },
 });
 
-// Per-plugin dispatch pool stats (Phase 0.8). Read from the pool's
-// snapshot at scrape time so the gauge is always fresh and we don't
-// have to remember to .set() on every transition.
+// Per-plugin dispatch pool stats. Read from the pool's snapshot at
+// scrape time so the gauge is always fresh and we don't have to
+// remember to .set() on every transition.
 export const pluginDispatchInFlightGauge = new Gauge({
   name: "karyl_plugin_dispatch_in_flight",
   help: "Concurrent in-flight bot→plugin dispatches per plugin",

@@ -19,7 +19,7 @@ export const PluginCommand = sequelize.define(
     featureKey: { type: DataTypes.STRING, allowNull: true },
     manifestJson: { type: DataTypes.TEXT, allowNull: false },
     /**
-     * Admin on/off toggle for this command (M1-A2 欄位，M1-C2 接線）。
+     * Admin on/off toggle for this command.
      * true = admin 啟用（預設），false = admin 停用（CommandReconciler 不登記此指令）。
      * DB column: adminEnabled INTEGER NOT NULL DEFAULT 1（added in 20260501020000-plugin-commands-tri-axis.ts）。
      */
@@ -63,7 +63,7 @@ export interface PluginCommandRow {
   featureKey: string | null;
   manifestJson: string;
   /**
-   * Admin on/off toggle（M1-A2 欄位，M1-C2 接線）。
+   * Admin on/off toggle.
    * false 時 CommandReconciler 不登記此指令到 Discord。
    */
   adminEnabled: boolean;
