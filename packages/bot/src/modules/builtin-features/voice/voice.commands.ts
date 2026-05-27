@@ -12,6 +12,7 @@ import {
   playUrl,
   stopPlayback,
   getStatus,
+  VoiceCapacityError,
 } from "../../voice/voice-manager.service.js";
 import { FAILED_COLOR, SUCCEEDED_COLOR } from "../../../utils/constant.js";
 
@@ -47,11 +48,27 @@ async function handleJoin(command: ChatInputCommandInteraction): Promise<void> {
     return;
   }
   await command.deferReply({ flags: "Ephemeral" });
-  const status = await joinVoice({
-    guildId: command.guildId,
-    channelId: voiceChannelId,
-    adapterCreator: command.guild.voiceAdapterCreator,
-  });
+  let status;
+  try {
+    status = await joinVoice({
+      guildId: command.guildId,
+      channelId: voiceChannelId,
+      adapterCreator: command.guild.voiceAdapterCreator,
+    });
+  } catch (err) {
+    if (err instanceof VoiceCapacityError) {
+      await command.editReply({
+        embeds: [
+          {
+            description: "⚠ 此 bot 已達語音同時連線上限,請稍後再試",
+            color: FAILED_COLOR,
+          },
+        ],
+      });
+      return;
+    }
+    throw err;
+  }
   await command.editReply({
     embeds: [
       {
