@@ -1,0 +1,23 @@
+{
+  "name": "@karyl-chan/plugin-reminder",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Reference featureless background plugin: schedule reminders with /remind-add.",
+  "type": "module",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "rm -rf dist && tsc",
+    "start": "node dist/index.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@karyl-chan/plugin-sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.3"
+  }
+}
