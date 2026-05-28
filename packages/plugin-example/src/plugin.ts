@@ -30,6 +30,7 @@ import {
   defineGuildFeature,
   definePluginCapability,
   definePluginCommand,
+  Events,
   type CommandContext,
   type CommandReply,
   type MetricsCounter,
@@ -89,12 +90,12 @@ async function withSessionLink(
       ephemeral: true,
     };
   }
-  const result = (await ctx.botRpc("/api/plugin/auth.session", {
-    user_id: ctx.userId,
-    guild_id: ctx.guildId,
+  const session = await ctx.auth.mintSession({
+    userId: ctx.userId,
+    guildId: ctx.guildId,
     kind,
-  })) as { allowed?: boolean; token?: string } | null;
-  if (!result || result.allowed === false || !result.token) {
+  });
+  if (!session.allowed) {
     return { content: noPermissionLabel, ephemeral: true };
   }
   return {
@@ -108,7 +109,7 @@ async function withSessionLink(
             type: 2,
             style: 5,
             label: "Open WebUI",
-            url: buildLink(ctx.publicBaseUrl, result.token),
+            url: buildLink(ctx.publicBaseUrl, session.token),
           },
         ],
       },
@@ -219,8 +220,10 @@ const exampleFeature = defineGuildFeature({
   enabledByDefault: false,
   // Subscribe to plain-text messages so /example-chat's webui can
   // mirror Discord-side replies live. Bot delivers events to /events
-  // (HMAC-signed); plugin.onReady wires the handler below.
-  eventsSubscribed: ["MESSAGE_CREATE"],
+  // (HMAC-signed by the SDK); the actual handler is wired below via
+  // `definePlugin.eventHandlers` so the SDK owns dispatch + HMAC and
+  // we don't roll our own /events route.
+  eventsSubscribed: [Events.GuildMessageCreate],
   commands: [
     manageCommand,
     chatCommand,
@@ -238,11 +241,10 @@ export const plugin = definePlugin({
     "Reference plugin demonstrating manage UI, user-bound chat, sticky notes, and component showcase.",
 
   rpcMethodsUsed: [
-    // Required by every command handler that returns a reply — the SDK
-    // POSTs the reply back through this endpoint to edit Discord's
-    // deferred ack. Without the scope the bot returns 403 and the
-    // Discord interaction stays stuck on "thinking…".
-    "interactions.respond",
+    // `interactions.respond` / `interactions.followup` / `me.log` /
+    // `me.metrics` are auto-derived by the manifest builder (one
+    // command ⇒ those scopes are guaranteed needed). We list the rest
+    // that the auto-deriver can't see from declarative signals:
     "auth.session",
     "messages.send",
     // members.get gives us per-guild nickname + per-guild avatar
@@ -311,56 +313,49 @@ export const plugin = definePlugin({
     };
   },
 
+  // Discord → WebUI message relay. The bot signs every outbound
+  // dispatch with the plugin's HMAC key; the SDK auto-mounts
+  // `/events`, verifies the HMAC, parses the envelope, and routes by
+  // `type` to the handler keyed by `Events.GuildMessageCreate`. The
+  // plugin doesn't roll its own `/events` route, doesn't re-verify
+  // HMAC, and can't accidentally subscribe to a non-canonical name —
+  // the build-time check warns on dead subscriptions.
+  eventHandlers: {
+    [Events.GuildMessageCreate]: async (_ctx, raw) => {
+      const data = raw as
+        | {
+            channel_id?: string;
+            author?: {
+              id?: string;
+              username?: string;
+              global_name?: string;
+              bot?: boolean;
+            };
+            content?: string;
+          }
+        | undefined;
+      if (
+        !data?.channel_id ||
+        !data?.author?.id ||
+        typeof data.content !== "string" ||
+        data.author.bot
+      ) {
+        return;
+      }
+      const event: ChatEvent = {
+        ts: Date.now(),
+        source: "discord",
+        authorId: data.author.id,
+        authorName:
+          data.author.global_name || data.author.username || data.author.id,
+        content: data.content,
+      };
+      publish(data.channel_id, event);
+    },
+  },
+
   async onReady(server) {
     await registerWebRoutes(server, PLUGIN_KEY, MANAGE_CAP);
-
-    // Discord → WebUI message relay. The bot signs every outbound
-    // dispatch with the plugin's HMAC key (returned at register
-    // time). The SDK wires HMAC verification onto /commands and
-    // /components automatically, but /events is plugin-provided —
-    // we must verify the headers ourselves.
-    //
-    // For simplicity in this reference plugin we trust the body
-    // implicitly: in a real plugin, import `verifyDispatchHmac` from
-    // the SDK and call it here on the raw body bytes. Documented
-    // limitation; flagged in the README.
-    server.post<{ Body: { type?: string; data?: unknown } }>(
-      "/events",
-      async (request, reply) => {
-        const body = request.body;
-        if (body?.type !== "MESSAGE_CREATE") return reply.code(204).send();
-        const data = body.data as
-          | {
-              channel_id?: string;
-              author?: {
-                id?: string;
-                username?: string;
-                global_name?: string;
-                bot?: boolean;
-              };
-              content?: string;
-            }
-          | undefined;
-        if (
-          !data?.channel_id ||
-          !data?.author?.id ||
-          typeof data.content !== "string" ||
-          data.author.bot
-        ) {
-          return reply.code(204).send();
-        }
-        const event: ChatEvent = {
-          ts: Date.now(),
-          source: "discord",
-          authorId: data.author.id,
-          authorName:
-            data.author.global_name || data.author.username || data.author.id,
-          content: data.content,
-        };
-        publish(data.channel_id, event);
-        return reply.code(204).send();
-      },
-    );
   },
 });
 
