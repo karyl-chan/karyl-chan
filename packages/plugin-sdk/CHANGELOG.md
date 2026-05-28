@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.9.0](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.8.0...plugin-sdk-v0.9.0) (2026-05-28)
+
+
+### Features
+
+* **sdk:** me/kv/auth typed facades + auto-derived scopes + sub-reasons ([5c757e2](https://github.com/karyl-chan/karyl-chan/commit/5c757e28ea15272012d93930fbd4e1ab7eb10c5e))
+
+
+### Bug Fixes
+
+* **sdk, bot:** accept both snake_case + camelCase localization fields ([0e88ae1](https://github.com/karyl-chan/karyl-chan/commit/0e88ae1ad8ed41c9f0d615e6719551067431d9f8))
+
 ## [0.8.0](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.7.0...plugin-sdk-v0.8.0) (2026-05-28)
 
 
