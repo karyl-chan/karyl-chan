@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.6.1...plugin-sdk-v0.7.0) (2026-05-28)
+
+
+### Features
+
+* **bot/i18n, sdk:** convert voice/rcon/todo/picture-only + add ctx.locale ([8180df1](https://github.com/karyl-chan/karyl-chan/commit/8180df11cfc3a6e104399f1e9d3f2463a94655a8))
+
 ## [0.6.1](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.6.0...plugin-sdk-v0.6.1) (2026-05-26)
 
 
