@@ -174,6 +174,22 @@
       "player": "**player:** {{status}}",
       "yes": "✓",
       "no": "✗"
+    },
+    "connection-state": {
+      "signalling": "signalling",
+      "connecting": "connecting",
+      "ready": "ready",
+      "disconnected": "disconnected",
+      "destroyed": "destroyed",
+      "unknown": "unknown"
+    },
+    "player-state": {
+      "idle": "idle",
+      "buffering": "buffering",
+      "paused": "paused",
+      "playing": "playing",
+      "autopaused": "auto-paused",
+      "unknown": "unknown"
     }
   }
 }

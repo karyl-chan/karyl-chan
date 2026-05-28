@@ -134,11 +134,14 @@ export function tForInteraction(
  * Discord uses `en-US` (not `en`) as its English key, so we expand on
  * the way out.
  */
-export function localizedDescriptions(key: TranslationKey): LocalizationMap {
+export function localizedDescriptions(
+  key: TranslationKey,
+  vars?: Record<string, string | number>,
+): LocalizationMap {
   return {
-    "en-US": t("en", key),
-    "zh-TW": t("zh-TW", key),
-    "zh-CN": t("zh-CN", key),
+    "en-US": t("en", key, vars),
+    "zh-TW": t("zh-TW", key, vars),
+    "zh-CN": t("zh-CN", key, vars),
   } as LocalizationMap;
 }
 
@@ -148,8 +151,11 @@ export function localizedDescriptions(key: TranslationKey): LocalizationMap {
  * `description` (canonical) and `description_localizations` (map)
  * fields of a Discord ApplicationCommandData.
  */
-export function describeEn(key: TranslationKey): string {
-  return t("en", key);
+export function describeEn(
+  key: TranslationKey,
+  vars?: Record<string, string | number>,
+): string {
+  return t("en", key, vars);
 }
 
 // Re-export the TFunction type for handlers that prefer to receive a

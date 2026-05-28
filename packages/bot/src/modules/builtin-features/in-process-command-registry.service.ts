@@ -449,7 +449,7 @@ export async function dispatchInProcessInteraction(
         `in-process modal '${interaction.customId}' threw: ${msg}`,
         { customId: interaction.customId, userId: interaction.user.id },
       );
-      if (!interaction.replied) {
+      if (!interaction.replied && !interaction.deferred) {
         await interaction
           .reply({
             content: tForInteraction(interaction, "common.modal-failed"),

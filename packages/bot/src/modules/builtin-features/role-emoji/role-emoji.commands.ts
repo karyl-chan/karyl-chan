@@ -678,9 +678,12 @@ export function registerRoleEmojiCommands(): void {
             {
               type: ApplicationCommandOptionType.String,
               name: "group",
-              description: describeEn("role-emoji.option.group-with-default"),
+              description: describeEn("role-emoji.option.group-with-default", {
+                default: DEFAULT_GROUP_NAME,
+              }),
               descriptionLocalizations: localizedDescriptions(
                 "role-emoji.option.group-with-default",
+                { default: DEFAULT_GROUP_NAME },
               ),
               required: false,
             },
@@ -734,9 +737,12 @@ export function registerRoleEmojiCommands(): void {
             {
               type: ApplicationCommandOptionType.String,
               name: "group",
-              description: describeEn("role-emoji.option.group-watch"),
+              description: describeEn("role-emoji.option.group-watch", {
+                default: DEFAULT_GROUP_NAME,
+              }),
               descriptionLocalizations: localizedDescriptions(
                 "role-emoji.option.group-watch",
+                { default: DEFAULT_GROUP_NAME },
               ),
               required: false,
             },

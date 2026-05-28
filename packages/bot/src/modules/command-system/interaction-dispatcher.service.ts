@@ -423,6 +423,9 @@ export class InteractionDispatcher {
                 result.error ??
                 tForInteraction(interaction, "common.unknown-error"),
             }),
+            // webhook error text is operator-controlled but may contain
+            // @everyone / role mentions; suppress like the success path
+            allowedMentions: { parse: [] },
           })
           .catch(() => {});
         return { claimed: true, claimedBy: "behavior_custom" };
@@ -480,6 +483,9 @@ export class InteractionDispatcher {
           content: tForInteraction(interaction, "common.internal-error", {
             msg,
           }),
+          // exception messages can include user/role mention strings;
+          // strip them like the success / webhook-failed paths
+          allowedMentions: { parse: [] },
         })
         .catch(() => {});
       botEventLog.record(

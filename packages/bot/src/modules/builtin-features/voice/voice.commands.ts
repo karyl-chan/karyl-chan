@@ -18,8 +18,42 @@ import { FAILED_COLOR, SUCCEEDED_COLOR } from "../../../utils/constant.js";
 import {
   describeEn,
   localizedDescriptions,
+  resolveLocale,
+  t,
   tForInteraction,
 } from "../../../i18n/index.js";
+
+// Translate a discord.js VoiceConnectionStatus / AudioPlayerStatus
+// enum value into the user's locale. Falls back to the enum string
+// itself if the bot hasn't mapped that state yet (forward-compatible
+// with future discord.js additions).
+function localizeConnectionState(
+  interaction: { locale?: string | null; guildLocale?: string | null },
+  state: string | null | undefined,
+): string {
+  const locale = resolveLocale(interaction);
+  if (!state) return t(locale, "voice.connection-state.unknown");
+  const key = `voice.connection-state.${state.toLowerCase()}` as Parameters<
+    typeof t
+  >[1];
+  // i18next falls back to the key string on miss; the fallback we
+  // actually want is the raw enum value, so re-check and return it.
+  const translated = t(locale, key);
+  return translated === key ? state : translated;
+}
+
+function localizePlayerState(
+  interaction: { locale?: string | null; guildLocale?: string | null },
+  state: string | null | undefined,
+): string {
+  const locale = resolveLocale(interaction);
+  if (!state) return t(locale, "voice.player-state.unknown");
+  const key = `voice.player-state.${state.toLowerCase()}` as Parameters<
+    typeof t
+  >[1];
+  const translated = t(locale, key);
+  return translated === key ? state : translated;
+}
 
 function ephemeralReplyError(
   command: ChatInputCommandInteraction,
@@ -88,7 +122,7 @@ async function handleJoin(command: ChatInputCommandInteraction): Promise<void> {
               channelId: voiceChannelId,
             })
           : tForInteraction(command, "voice.connection-status", {
-              status: status.connectionStatus ?? "unknown",
+              status: localizeConnectionState(command, status.connectionStatus),
             }),
         color: status.connected ? SUCCEEDED_COLOR : FAILED_COLOR,
       },
@@ -146,7 +180,7 @@ async function handlePlay(command: ChatInputCommandInteraction): Promise<void> {
       command,
       tForInteraction(command, "voice.playing", {
         url,
-        playerStatus: status.playerStatus ?? "",
+        playerStatus: localizePlayerState(command, status.playerStatus),
       }),
     );
   } catch (err) {
@@ -210,10 +244,10 @@ async function handleStatus(
         })
       : null,
     tForInteraction(command, "voice.status-lines.connection", {
-      status: status.connectionStatus ?? noneLabel,
+      status: localizeConnectionState(command, status.connectionStatus),
     }),
     tForInteraction(command, "voice.status-lines.player", {
-      status: status.playerStatus ?? noneLabel,
+      status: localizePlayerState(command, status.playerStatus),
     }),
   ].filter(Boolean);
   await command.reply({
