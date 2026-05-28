@@ -35,8 +35,13 @@ import {
   tForInteraction,
 } from "../../../i18n/index.js";
 
+// BMP emoji + symbol range. Lower bound MUST be   (General
+// Punctuation), not   (ASCII space) — using literal chars in
+// this character class is fragile because tools can normalise
+// invisible-but-distinct codepoints during file writes. Keep the
+// escape syntax permanent.
 const EMOJI_REGEX =
-  /(©|®|[ -㌀]|\ud83c[퀀-\udfff]|\ud83d[퀀-\udfff]|\ud83e[퀀-\udfff])|^<(a?:[^:>]+:)([^>]+)>$/;
+  /(©|®|[ -㌀]|\ud83c[\udc00-\udfff]|\ud83d[\udc00-\udfff]|\ud83e[\udc00-\udfff])|^<(a?:[^:>]+:)([^>]+)>$/;
 const DEFAULT_GROUP_NAME = "default";
 
 /**
