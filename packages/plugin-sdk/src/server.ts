@@ -93,6 +93,10 @@ interface InteractionPayload {
   user: { id: string; username?: string; global_name?: string | null };
   /** Bot-resolved subset of the invoker's RBAC tokens: `admin` + this plugin's `plugin:<key>:*`. */
   member?: { capabilities?: string[] };
+  /** BCP-47 locale of the user (from Discord's interaction.locale). May be absent on older bots. */
+  locale?: string | null;
+  /** BCP-47 locale of the server (Discord's interaction.guildLocale). */
+  guild_locale?: string | null;
 }
 
 /** Body the bot POSTs to `/components` on a button click / select submit. */
@@ -115,6 +119,8 @@ interface ComponentPayload {
     voice_channel_id?: string | null;
     capabilities?: string[];
   } | null;
+  locale?: string | null;
+  guild_locale?: string | null;
 }
 
 /** Body the bot POSTs to `/commands/:name/autocomplete`. */
@@ -126,6 +132,8 @@ interface AutocompletePayload {
   focused: { name: string; value: string; type: number };
   guild_id: string | null;
   user: { id: string; username?: string; global_name?: string | null };
+  locale?: string | null;
+  guild_locale?: string | null;
 }
 
 /** Body the bot POSTs to `/modals/:modalId` on MODAL_SUBMIT. */
@@ -139,6 +147,8 @@ interface ModalPayload {
   member?: { capabilities?: string[] } | null;
   /** Submitted text-input values, keyed by each text input's custom_id. */
   components: Array<{ custom_id: string; value: string }>;
+  locale?: string | null;
+  guild_locale?: string | null;
 }
 
 function verifyDispatchAuth(
@@ -748,6 +758,8 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
         publicBaseUrl: opts.getPublicBaseUrl?.(),
         interactionId: payload.interaction_id,
         interactionToken: payload.interaction_token,
+        locale: payload.locale ?? null,
+        guildLocale: payload.guild_locale ?? null,
         log: {
           info: (msg, meta) => server.log.info(meta ?? {}, msg),
           warn: (msg, meta) => server.log.warn(meta ?? {}, msg),
@@ -967,6 +979,8 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
         botRpc: callRpc,
         discord: rpc.discord,
         voice: rpc.voice,
+        locale: payload.locale ?? null,
+        guildLocale: payload.guild_locale ?? null,
       };
 
       try {
@@ -1054,6 +1068,8 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
           warn: (msg, meta) => server.log.warn(meta ?? {}, msg),
           error: (msg, meta) => server.log.error(meta ?? {}, msg),
         },
+        locale: payload.locale ?? null,
+        guildLocale: payload.guild_locale ?? null,
       };
 
       try {
@@ -1176,6 +1192,8 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
         botRpc: callRpc,
         discord: rpc.discord,
         voice: rpc.voice,
+        locale: payload.locale ?? null,
+        guildLocale: payload.guild_locale ?? null,
       };
 
       try {

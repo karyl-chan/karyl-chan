@@ -17,6 +17,14 @@ import {
 import { encryptSecret } from "../../../utils/crypto.js";
 import { FAILED_COLOR, SUCCEEDED_COLOR } from "../../../utils/constant.js";
 import { moduleLogger } from "../../../logger.js";
+import {
+  describeEn,
+  localizedDescriptions,
+  resolveLocale,
+  t,
+  tForInteraction,
+  type SupportedLocale,
+} from "../../../i18n/index.js";
 
 const log = moduleLogger("rcon-forward-commands");
 
@@ -30,50 +38,55 @@ const MODAL_CUSTOM_ID = "NewRconForwardChannelForm";
  * in-process modal registry (customId prefix = MODAL_CUSTOM_ID).
  */
 
-function buildModal(prefill?: {
-  host: string;
-  port: string;
-  triggerPrefix: string;
-  commandPrefix: string;
-  passwordOptional?: boolean;
-}): ModalBuilder {
+function buildModal(
+  locale: SupportedLocale,
+  prefill?: {
+    host: string;
+    port: string;
+    triggerPrefix: string;
+    commandPrefix: string;
+    passwordOptional?: boolean;
+  },
+): ModalBuilder {
   const modal = new ModalBuilder()
-    .setTitle("Rcon forward channel")
+    .setTitle(t(locale, "rcon.modal.title"))
     .setCustomId(MODAL_CUSTOM_ID);
   const host = new TextInputBuilder()
     .setCustomId("fieldHost")
-    .setLabel("Host")
+    .setLabel(t(locale, "rcon.modal.host-label"))
     .setStyle(TextInputStyle.Short)
     .setMinLength(1)
     .setMaxLength(300);
   if (prefill?.host) host.setValue(prefill.host);
   const password = new TextInputBuilder()
     .setCustomId("fieldPassword")
-    .setLabel("Password")
+    .setLabel(t(locale, "rcon.modal.password-label"))
     .setStyle(TextInputStyle.Short)
     .setMaxLength(300);
   if (prefill?.passwordOptional) {
-    password.setPlaceholder("留空以保持原密碼").setRequired(false);
+    password
+      .setPlaceholder(t(locale, "rcon.modal.password-placeholder"))
+      .setRequired(false);
   } else {
     password.setMinLength(1);
   }
   const port = new TextInputBuilder()
     .setCustomId("fieldPort")
-    .setLabel("Port")
+    .setLabel(t(locale, "rcon.modal.port-label"))
     .setStyle(TextInputStyle.Short)
     .setMinLength(1)
     .setMaxLength(5)
     .setValue(prefill?.port ?? "25575");
   const triggerPrefix = new TextInputBuilder()
     .setCustomId("fieldTriggerPrefix")
-    .setLabel("Trigger prefix")
+    .setLabel(t(locale, "rcon.modal.trigger-prefix-label"))
     .setStyle(TextInputStyle.Short)
     .setMinLength(1)
     .setMaxLength(10)
     .setValue(prefill?.triggerPrefix ?? "/");
   const commandPrefix = new TextInputBuilder()
     .setCustomId("fieldCommandPrefix")
-    .setLabel("Command prefix")
+    .setLabel(t(locale, "rcon.modal.command-prefix-label"))
     .setStyle(TextInputStyle.Short)
     .setMaxLength(10)
     .setRequired(false)
@@ -95,14 +108,14 @@ async function watchChannel(
     where: { channelId: command.channelId, guildId: command.guildId },
   });
   if (!existingRecord) {
-    await command.showModal(buildModal());
+    await command.showModal(buildModal(resolveLocale(command)));
   } else {
     await command.reply({
       embeds: [
         {
           color: SUCCEEDED_COLOR,
-          title: "No action",
-          description: "Current channel is already in the watch list.",
+          title: tForInteraction(command, "common.status.no-action"),
+          description: tForInteraction(command, "rcon.watch.already"),
         },
       ],
       flags: "Ephemeral",
@@ -122,8 +135,8 @@ async function stopWatchChannel(
       embeds: [
         {
           color: SUCCEEDED_COLOR,
-          title: "Succeeded",
-          description: "Current channel is no longer being watched.",
+          title: tForInteraction(command, "common.status.succeeded"),
+          description: tForInteraction(command, "rcon.watch.removed"),
         },
       ],
       flags: "Ephemeral",
@@ -133,8 +146,8 @@ async function stopWatchChannel(
       embeds: [
         {
           color: SUCCEEDED_COLOR,
-          title: "No action",
-          description: "Current channel is not being watched.",
+          title: tForInteraction(command, "common.status.no-action"),
+          description: tForInteraction(command, "rcon.watch.not-watched"),
         },
       ],
       flags: "Ephemeral",
@@ -157,7 +170,10 @@ async function status(command: ChatInputCommandInteraction): Promise<void> {
   } else {
     await command.reply({
       embeds: [
-        { color: FAILED_COLOR, title: "Current channel is not being watched." },
+        {
+          color: FAILED_COLOR,
+          title: tForInteraction(command, "rcon.watch.not-watched"),
+        },
       ],
       flags: "Ephemeral",
     });
@@ -170,7 +186,7 @@ async function edit(command: ChatInputCommandInteraction): Promise<void> {
   });
   if (existingRecord) {
     await command.showModal(
-      buildModal({
+      buildModal(resolveLocale(command), {
         host: existingRecord.getDataValue("host"),
         port: existingRecord.getDataValue("port").toString(),
         triggerPrefix: existingRecord.getDataValue("triggerPrefix"),
@@ -181,7 +197,10 @@ async function edit(command: ChatInputCommandInteraction): Promise<void> {
   } else {
     await command.reply({
       embeds: [
-        { color: FAILED_COLOR, title: "Current channel is not being watched." },
+        {
+          color: FAILED_COLOR,
+          title: tForInteraction(command, "rcon.watch.not-watched"),
+        },
       ],
       flags: "Ephemeral",
     });
@@ -201,11 +220,26 @@ async function replyStatus(
       {
         color: SUCCEEDED_COLOR,
         fields: [
-          { name: "Trigger prefix", value: triggerPrefix },
-          { name: "Command prefix", value: commandPrefix },
-          { name: "Host", value: host },
-          { name: "Port", value: port },
-          { name: "Password", value: "••••••••" },
+          {
+            name: tForInteraction(interaction, "rcon.status.trigger-prefix"),
+            value: triggerPrefix,
+          },
+          {
+            name: tForInteraction(interaction, "rcon.status.command-prefix"),
+            value: commandPrefix,
+          },
+          {
+            name: tForInteraction(interaction, "rcon.status.host"),
+            value: host,
+          },
+          {
+            name: tForInteraction(interaction, "rcon.status.port"),
+            value: port,
+          },
+          {
+            name: tForInteraction(interaction, "rcon.status.password"),
+            value: "••••••••",
+          },
         ],
       },
     ],
@@ -271,28 +305,41 @@ export function registerRconForwardChannelCommands(): void {
     data: {
       type: ApplicationCommandType.ChatInput,
       name: "rcon-forward-channel",
-      description: "Manage rcon forward channel",
+      description: describeEn("rcon.command.description"),
+      descriptionLocalizations: localizedDescriptions("rcon.command.description"),
       defaultMemberPermissions: PermissionFlagsBits.ManageChannels,
       options: [
         {
           type: ApplicationCommandOptionType.Subcommand,
           name: "watch",
-          description: "Watch this channel as a rcon forward channel",
+          description: describeEn("rcon.command.watch-description"),
+          descriptionLocalizations: localizedDescriptions(
+            "rcon.command.watch-description",
+          ),
         },
         {
           type: ApplicationCommandOptionType.Subcommand,
           name: "stop-watch",
-          description: "Stop watching this channel as a rcon forward channel",
+          description: describeEn("rcon.command.stop-watch-description"),
+          descriptionLocalizations: localizedDescriptions(
+            "rcon.command.stop-watch-description",
+          ),
         },
         {
           type: ApplicationCommandOptionType.Subcommand,
           name: "status",
-          description: "Check this channel status",
+          description: describeEn("rcon.command.status-description"),
+          descriptionLocalizations: localizedDescriptions(
+            "rcon.command.status-description",
+          ),
         },
         {
           type: ApplicationCommandOptionType.Subcommand,
           name: "edit",
-          description: "Edit rcon forward parameter",
+          description: describeEn("rcon.command.edit-description"),
+          descriptionLocalizations: localizedDescriptions(
+            "rcon.command.edit-description",
+          ),
         },
       ],
     },
@@ -305,7 +352,9 @@ export function registerRconForwardChannelCommands(): void {
       if (sub === "status") return status(interaction);
       if (sub === "edit") return edit(interaction);
       await interaction.reply({
-        content: `⚠ unknown subcommand '${sub}'`,
+        content: tForInteraction(interaction, "common.unknown-subcommand", {
+          sub,
+        }),
         flags: "Ephemeral",
       });
     },

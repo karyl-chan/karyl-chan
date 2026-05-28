@@ -10,6 +10,11 @@ import { addTodoChannel, findTodoChannel } from "./todo-channel.model.js";
 import { addTodoMessage } from "./todo-message.model.js";
 import { registerInProcessCommand } from "../in-process-command-registry.service.js";
 import { SUCCEEDED_COLOR } from "../../../utils/constant.js";
+import {
+  describeEn,
+  localizedDescriptions,
+  tForInteraction,
+} from "../../../i18n/index.js";
 
 /**
  * `/todo-channel <watch|stop-watch|check-cache>`
@@ -33,8 +38,8 @@ async function watchChannel(
       embeds: [
         {
           color: SUCCEEDED_COLOR,
-          title: "Succeeded",
-          description: "Current channel is being watched.",
+          title: tForInteraction(command, "common.status.succeeded"),
+          description: tForInteraction(command, "todo-channel.watch.added"),
         },
       ],
       flags: "Ephemeral",
@@ -44,8 +49,8 @@ async function watchChannel(
       embeds: [
         {
           color: SUCCEEDED_COLOR,
-          title: "No action",
-          description: "Current channel has been watched.",
+          title: tForInteraction(command, "common.status.no-action"),
+          description: tForInteraction(command, "todo-channel.watch.already"),
         },
       ],
       flags: "Ephemeral",
@@ -66,8 +71,8 @@ async function stopWatchChannel(
       embeds: [
         {
           color: SUCCEEDED_COLOR,
-          title: "Succeeded",
-          description: "Current channel is no longer being watched.",
+          title: tForInteraction(command, "common.status.succeeded"),
+          description: tForInteraction(command, "todo-channel.watch.removed"),
         },
       ],
       flags: "Ephemeral",
@@ -77,8 +82,11 @@ async function stopWatchChannel(
       embeds: [
         {
           color: SUCCEEDED_COLOR,
-          title: "No action",
-          description: "Current channel is not being watched.",
+          title: tForInteraction(command, "common.status.no-action"),
+          description: tForInteraction(
+            command,
+            "todo-channel.watch.not-watched",
+          ),
         },
       ],
       flags: "Ephemeral",
@@ -108,7 +116,12 @@ async function checkCacheMessage(
     await addTodoMessage(eachMessage);
   }
   await command.reply({
-    embeds: [{ color: SUCCEEDED_COLOR, title: "Checked" }],
+    embeds: [
+      {
+        color: SUCCEEDED_COLOR,
+        title: tForInteraction(command, "todo-channel.cache-checked"),
+      },
+    ],
     flags: "Ephemeral",
   });
 }
@@ -118,23 +131,37 @@ export function registerTodoChannelCommands(): void {
     data: {
       type: ApplicationCommandType.ChatInput,
       name: "todo-channel",
-      description: "Manage todo list channel",
+      description: describeEn("todo-channel.command.description"),
+      descriptionLocalizations: localizedDescriptions(
+        "todo-channel.command.description",
+      ),
       defaultMemberPermissions: PermissionFlagsBits.ManageChannels,
       options: [
         {
           type: ApplicationCommandOptionType.Subcommand,
           name: "watch",
-          description: "Watch this channel as a todo list",
+          description: describeEn("todo-channel.command.watch-description"),
+          descriptionLocalizations: localizedDescriptions(
+            "todo-channel.command.watch-description",
+          ),
         },
         {
           type: ApplicationCommandOptionType.Subcommand,
           name: "stop-watch",
-          description: "Stop watching this channel as a todo list",
+          description: describeEn("todo-channel.command.stop-watch-description"),
+          descriptionLocalizations: localizedDescriptions(
+            "todo-channel.command.stop-watch-description",
+          ),
         },
         {
           type: ApplicationCommandOptionType.Subcommand,
           name: "check-cache",
-          description: "Check the cache for todo messages",
+          description: describeEn(
+            "todo-channel.command.check-cache-description",
+          ),
+          descriptionLocalizations: localizedDescriptions(
+            "todo-channel.command.check-cache-description",
+          ),
         },
       ],
     },
@@ -146,7 +173,9 @@ export function registerTodoChannelCommands(): void {
       if (sub === "stop-watch") return stopWatchChannel(interaction);
       if (sub === "check-cache") return checkCacheMessage(interaction);
       await interaction.reply({
-        content: `⚠ unknown subcommand '${sub}'`,
+        content: tForInteraction(interaction, "common.unknown-subcommand", {
+          sub,
+        }),
         flags: "Ephemeral",
       });
     },

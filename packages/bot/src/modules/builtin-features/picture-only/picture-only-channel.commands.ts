@@ -7,6 +7,11 @@ import {
 import { PictureOnlyChannel } from "./picture-only-channel.model.js";
 import { registerInProcessCommand } from "../in-process-command-registry.service.js";
 import { SUCCEEDED_COLOR } from "../../../utils/constant.js";
+import {
+  describeEn,
+  localizedDescriptions,
+  tForInteraction,
+} from "../../../i18n/index.js";
 
 /**
  * `/picture-only-channel <watch|stop-watch>`
@@ -35,8 +40,8 @@ async function watchChannel(
       embeds: [
         {
           color: SUCCEEDED_COLOR,
-          title: "Succeeded",
-          description: "The current channel is being watched.",
+          title: tForInteraction(command, "common.status.succeeded"),
+          description: tForInteraction(command, "picture-only.watch.added"),
         },
       ],
       flags: "Ephemeral",
@@ -46,8 +51,8 @@ async function watchChannel(
       embeds: [
         {
           color: SUCCEEDED_COLOR,
-          title: "No action",
-          description: "Current channel is already in the watch list.",
+          title: tForInteraction(command, "common.status.no-action"),
+          description: tForInteraction(command, "picture-only.watch.already"),
         },
       ],
       flags: "Ephemeral",
@@ -70,8 +75,8 @@ async function stopWatchChannel(
       embeds: [
         {
           color: SUCCEEDED_COLOR,
-          title: "Succeeded",
-          description: "Current channel is no longer being watched.",
+          title: tForInteraction(command, "common.status.succeeded"),
+          description: tForInteraction(command, "picture-only.watch.removed"),
         },
       ],
       flags: "Ephemeral",
@@ -81,8 +86,8 @@ async function stopWatchChannel(
       embeds: [
         {
           color: SUCCEEDED_COLOR,
-          title: "No action",
-          description: "Current channel is not being watched.",
+          title: tForInteraction(command, "common.status.no-action"),
+          description: tForInteraction(command, "picture-only.watch.not-watched"),
         },
       ],
       flags: "Ephemeral",
@@ -95,18 +100,29 @@ export function registerPictureOnlyChannelCommands(): void {
     data: {
       type: ApplicationCommandType.ChatInput,
       name: "picture-only-channel",
-      description: "Manage picture only channel",
+      description: describeEn("picture-only.command.description"),
+      descriptionLocalizations: localizedDescriptions(
+        "picture-only.command.description",
+      ),
       defaultMemberPermissions: PermissionFlagsBits.ManageChannels,
       options: [
         {
           type: ApplicationCommandOptionType.Subcommand,
           name: "watch",
-          description: "Watch this channel as a rcon forward channel",
+          description: describeEn("picture-only.command.watch-description"),
+          descriptionLocalizations: localizedDescriptions(
+            "picture-only.command.watch-description",
+          ),
         },
         {
           type: ApplicationCommandOptionType.Subcommand,
           name: "stop-watch",
-          description: "Stop watching this channel as a rcon forward channel",
+          description: describeEn(
+            "picture-only.command.stop-watch-description",
+          ),
+          descriptionLocalizations: localizedDescriptions(
+            "picture-only.command.stop-watch-description",
+          ),
         },
       ],
     },
@@ -123,7 +139,9 @@ export function registerPictureOnlyChannelCommands(): void {
         return;
       }
       await interaction.reply({
-        content: `⚠ unknown subcommand '${sub}'`,
+        content: tForInteraction(interaction, "common.unknown-subcommand", {
+          sub,
+        }),
         flags: "Ephemeral",
       });
     },

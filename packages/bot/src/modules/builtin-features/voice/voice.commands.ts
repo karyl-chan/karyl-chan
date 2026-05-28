@@ -15,6 +15,11 @@ import {
   VoiceCapacityError,
 } from "../../voice/voice-manager.service.js";
 import { FAILED_COLOR, SUCCEEDED_COLOR } from "../../../utils/constant.js";
+import {
+  describeEn,
+  localizedDescriptions,
+  tForInteraction,
+} from "../../../i18n/index.js";
 
 function ephemeralReplyError(
   command: ChatInputCommandInteraction,
@@ -38,13 +43,19 @@ function ephemeralReplyOk(
 
 async function handleJoin(command: ChatInputCommandInteraction): Promise<void> {
   if (!command.guildId || !command.guild) {
-    await ephemeralReplyError(command, "此指令僅能在公會中使用");
+    await ephemeralReplyError(
+      command,
+      tForInteraction(command, "voice.guild-only"),
+    );
     return;
   }
   const member = command.member as GuildMember | null;
   const voiceChannelId = member?.voice.channelId ?? null;
   if (!voiceChannelId) {
-    await ephemeralReplyError(command, "請先加入一個語音頻道再呼叫此指令");
+    await ephemeralReplyError(
+      command,
+      tForInteraction(command, "voice.no-voice-channel"),
+    );
     return;
   }
   await command.deferReply({ flags: "Ephemeral" });
@@ -60,7 +71,7 @@ async function handleJoin(command: ChatInputCommandInteraction): Promise<void> {
       await command.editReply({
         embeds: [
           {
-            description: "⚠ 此 bot 已達語音同時連線上限,請稍後再試",
+            description: tForInteraction(command, "voice.cap-reached"),
             color: FAILED_COLOR,
           },
         ],
@@ -73,8 +84,12 @@ async function handleJoin(command: ChatInputCommandInteraction): Promise<void> {
     embeds: [
       {
         description: status.connected
-          ? `✓ 已加入語音頻道 <#${voiceChannelId}>`
-          : `⚠ 連線狀態:${status.connectionStatus ?? "未知"}`,
+          ? tForInteraction(command, "voice.joined", {
+              channelId: voiceChannelId,
+            })
+          : tForInteraction(command, "voice.connection-status", {
+              status: status.connectionStatus ?? "unknown",
+            }),
         color: status.connected ? SUCCEEDED_COLOR : FAILED_COLOR,
       },
     ],
@@ -85,16 +100,22 @@ async function handleLeave(
   command: ChatInputCommandInteraction,
 ): Promise<void> {
   if (!command.guildId) {
-    await ephemeralReplyError(command, "此指令僅能在公會中使用");
+    await ephemeralReplyError(
+      command,
+      tForInteraction(command, "voice.guild-only"),
+    );
     return;
   }
   leaveVoice(command.guildId);
-  await ephemeralReplyOk(command, "✓ 已離開語音頻道");
+  await ephemeralReplyOk(command, tForInteraction(command, "voice.left"));
 }
 
 async function handlePlay(command: ChatInputCommandInteraction): Promise<void> {
   if (!command.guildId) {
-    await ephemeralReplyError(command, "此指令僅能在公會中使用");
+    await ephemeralReplyError(
+      command,
+      tForInteraction(command, "voice.guild-only"),
+    );
     return;
   }
   const url = command.options.getString("url", true).trim();
@@ -106,26 +127,41 @@ async function handlePlay(command: ChatInputCommandInteraction): Promise<void> {
   try {
     parsed = new URL(url);
   } catch {
-    await ephemeralReplyError(command, "URL 格式不正確");
+    await ephemeralReplyError(
+      command,
+      tForInteraction(command, "voice.bad-url"),
+    );
     return;
   }
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-    await ephemeralReplyError(command, "僅接受 http(s) URL");
+    await ephemeralReplyError(
+      command,
+      tForInteraction(command, "voice.http-only"),
+    );
     return;
   }
   try {
     const status = playUrl(command.guildId, url);
     await ephemeralReplyOk(
       command,
-      `✓ 開始播放 \`${url}\`（player:${status.playerStatus}）`,
+      tForInteraction(command, "voice.playing", {
+        url,
+        playerStatus: status.playerStatus ?? "",
+      }),
     );
   } catch (err) {
     if (err instanceof Error && err.message === "not_joined") {
-      await ephemeralReplyError(command, "尚未加入語音頻道,請先 `/voice join`");
+      await ephemeralReplyError(
+        command,
+        tForInteraction(command, "voice.not-joined"),
+      );
       return;
     }
     if (err instanceof Error && err.message === "ffmpeg_not_available") {
-      await ephemeralReplyError(command, "ffmpeg 不可用,語音播放停用");
+      await ephemeralReplyError(
+        command,
+        tForInteraction(command, "voice.ffmpeg-missing"),
+      );
       return;
     }
     throw err;
@@ -134,28 +170,51 @@ async function handlePlay(command: ChatInputCommandInteraction): Promise<void> {
 
 async function handleStop(command: ChatInputCommandInteraction): Promise<void> {
   if (!command.guildId) {
-    await ephemeralReplyError(command, "此指令僅能在公會中使用");
+    await ephemeralReplyError(
+      command,
+      tForInteraction(command, "voice.guild-only"),
+    );
     return;
   }
   stopPlayback(command.guildId);
-  await ephemeralReplyOk(command, "✓ 已停止播放");
+  await ephemeralReplyOk(command, tForInteraction(command, "voice.stopped"));
 }
 
 async function handleStatus(
   command: ChatInputCommandInteraction,
 ): Promise<void> {
   if (!command.guildId) {
-    await ephemeralReplyError(command, "此指令僅能在公會中使用");
+    await ephemeralReplyError(
+      command,
+      tForInteraction(command, "voice.guild-only"),
+    );
     return;
   }
   const status = getStatus(command.guildId);
+  const yes = tForInteraction(command, "voice.status-lines.yes");
+  const no = tForInteraction(command, "voice.status-lines.no");
+  const noneLabel = tForInteraction(command, "voice.status-lines.channel-none");
   const lines = [
-    `**已連線:** ${status.connected ? "✓" : "✗"}`,
-    `**頻道:** ${status.channelId ? `<#${status.channelId}>` : "(無)"}`,
-    `**播放中:** ${status.playing ? "✓" : "✗"}`,
-    status.playingUrl ? `**URL:** \`${status.playingUrl}\`` : null,
-    `**connection:** ${status.connectionStatus ?? "(無)"}`,
-    `**player:** ${status.playerStatus ?? "(無)"}`,
+    tForInteraction(command, "voice.status-lines.connected", {
+      connected: status.connected ? yes : no,
+    }),
+    tForInteraction(command, "voice.status-lines.channel", {
+      channel: status.channelId ? `<#${status.channelId}>` : noneLabel,
+    }),
+    tForInteraction(command, "voice.status-lines.playing", {
+      playing: status.playing ? yes : no,
+    }),
+    status.playingUrl
+      ? tForInteraction(command, "voice.status-lines.playing-url", {
+          url: status.playingUrl,
+        })
+      : null,
+    tForInteraction(command, "voice.status-lines.connection", {
+      status: status.connectionStatus ?? noneLabel,
+    }),
+    tForInteraction(command, "voice.status-lines.player", {
+      status: status.playerStatus ?? noneLabel,
+    }),
   ].filter(Boolean);
   await command.reply({
     embeds: [{ description: lines.join("\n"), color: SUCCEEDED_COLOR }],
@@ -168,29 +227,43 @@ export function registerVoiceCommands(): void {
     data: {
       type: ApplicationCommandType.ChatInput,
       name: "voice",
-      description: "Bot 語音控制",
+      description: describeEn("voice.command.description"),
+      descriptionLocalizations: localizedDescriptions(
+        "voice.command.description",
+      ),
       defaultMemberPermissions: PermissionFlagsBits.ManageGuild,
       options: [
         {
           type: ApplicationCommandOptionType.Subcommand,
           name: "join",
-          description: "讓 bot 加入你目前所在的語音頻道",
+          description: describeEn("voice.command.join-description"),
+          descriptionLocalizations: localizedDescriptions(
+            "voice.command.join-description",
+          ),
         },
         {
           type: ApplicationCommandOptionType.Subcommand,
           name: "leave",
-          description: "讓 bot 離開語音頻道",
+          description: describeEn("voice.command.leave-description"),
+          descriptionLocalizations: localizedDescriptions(
+            "voice.command.leave-description",
+          ),
         },
         {
           type: ApplicationCommandOptionType.Subcommand,
           name: "play",
-          description:
-            "播放音訊 URL(直連 mp3 / opus / HLS 等 ffmpeg 可解的格式)",
+          description: describeEn("voice.command.play-description"),
+          descriptionLocalizations: localizedDescriptions(
+            "voice.command.play-description",
+          ),
           options: [
             {
               type: ApplicationCommandOptionType.String,
               name: "url",
-              description: "音訊 URL(http/https)",
+              description: describeEn("voice.option.play-url"),
+              descriptionLocalizations: localizedDescriptions(
+                "voice.option.play-url",
+              ),
               required: true,
             },
           ],
@@ -198,12 +271,18 @@ export function registerVoiceCommands(): void {
         {
           type: ApplicationCommandOptionType.Subcommand,
           name: "stop",
-          description: "停止當前播放",
+          description: describeEn("voice.command.stop-description"),
+          descriptionLocalizations: localizedDescriptions(
+            "voice.command.stop-description",
+          ),
         },
         {
           type: ApplicationCommandOptionType.Subcommand,
           name: "status",
-          description: "查看 bot 語音狀態",
+          description: describeEn("voice.command.status-description"),
+          descriptionLocalizations: localizedDescriptions(
+            "voice.command.status-description",
+          ),
         },
       ],
     },
@@ -217,7 +296,9 @@ export function registerVoiceCommands(): void {
       if (sub === "stop") return handleStop(interaction);
       if (sub === "status") return handleStatus(interaction);
       await interaction.reply({
-        content: `⚠ unknown subcommand '${sub}'`,
+        content: tForInteraction(interaction, "common.unknown-subcommand", {
+          sub,
+        }),
         flags: "Ephemeral",
       });
     },

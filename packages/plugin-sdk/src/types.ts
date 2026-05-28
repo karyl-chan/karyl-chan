@@ -119,6 +119,17 @@ export interface CommandContext {
    */
   interactionToken: string;
   /**
+   * BCP-47 locale tag the user has set in their Discord client (e.g.
+   * `"zh-TW"`, `"en-US"`). Forwarded from `interaction.locale`. Null
+   * when the bot is too old to send it.
+   */
+  locale: string | null;
+  /**
+   * BCP-47 locale tag the guild owner picked as preferred server
+   * language. Null in DM contexts or when the bot doesn't forward it.
+   */
+  guildLocale: string | null;
+  /**
    * Call a bot-side plugin RPC endpoint (e.g. `/api/plugin/voice.play`).
    * Authorization header and base URL are filled in automatically.
    * Resolves with the parsed JSON body on 2xx (or `{}` for 204).
@@ -376,6 +387,10 @@ export interface ComponentContext {
   discord: Discord;
   /** Typed Voice RPC facade. */
   voice: Voice;
+  /** BCP-47 locale from `interaction.locale`; null if not forwarded. */
+  locale: string | null;
+  /** BCP-47 server locale from `interaction.guildLocale`; null in DM. */
+  guildLocale: string | null;
 }
 
 /**
@@ -443,6 +458,10 @@ export interface ModalContext {
   discord: Discord;
   /** Typed Voice RPC facade. */
   voice: Voice;
+  /** BCP-47 locale from `interaction.locale`; null if not forwarded. */
+  locale: string | null;
+  /** BCP-47 server locale; null in DM. */
+  guildLocale: string | null;
 }
 
 /**
@@ -498,4 +517,8 @@ export interface AutocompleteContext {
   /** All current option values (those the user has filled so far). */
   options: Record<string, unknown>;
   log: Logger;
+  /** BCP-47 locale from `interaction.locale`; null if not forwarded. */
+  locale: string | null;
+  /** BCP-47 server locale; null in DM. */
+  guildLocale: string | null;
 }

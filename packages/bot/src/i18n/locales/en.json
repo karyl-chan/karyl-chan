@@ -58,5 +58,99 @@
       "stopped": "Message `{{messageId}}` is no longer being watched.",
       "not-watched": "Message `{{messageId}}` is not being watched."
     }
+  },
+  "picture-only": {
+    "command": {
+      "description": "Manage picture-only channel",
+      "watch-description": "Watch this channel as a picture-only channel",
+      "stop-watch-description": "Stop watching this channel as a picture-only channel"
+    },
+    "watch": {
+      "added": "The current channel is being watched.",
+      "already": "Current channel is already in the watch list.",
+      "removed": "Current channel is no longer being watched.",
+      "not-watched": "Current channel is not being watched."
+    }
+  },
+  "todo-channel": {
+    "command": {
+      "description": "Manage todo-list channel",
+      "watch-description": "Watch this channel as a todo list",
+      "stop-watch-description": "Stop watching this channel as a todo list",
+      "check-cache-description": "Check the cache for todo messages"
+    },
+    "watch": {
+      "added": "Current channel is being watched.",
+      "already": "Current channel is already being watched.",
+      "removed": "Current channel is no longer being watched.",
+      "not-watched": "Current channel is not being watched."
+    },
+    "cache-checked": "Checked"
+  },
+  "rcon": {
+    "command": {
+      "description": "Manage RCON forward channel",
+      "watch-description": "Watch this channel as a RCON forward channel",
+      "stop-watch-description": "Stop watching this channel as a RCON forward channel",
+      "status-description": "Show this channel's RCON status",
+      "edit-description": "Edit RCON forward parameters"
+    },
+    "modal": {
+      "title": "RCON forward channel",
+      "host-label": "Host",
+      "password-label": "Password",
+      "password-placeholder": "Leave blank to keep the current password",
+      "port-label": "Port",
+      "trigger-prefix-label": "Trigger prefix",
+      "command-prefix-label": "Command prefix"
+    },
+    "watch": {
+      "already": "Current channel is already in the watch list.",
+      "removed": "Current channel is no longer being watched.",
+      "not-watched": "Current channel is not being watched."
+    },
+    "status": {
+      "trigger-prefix": "Trigger prefix",
+      "command-prefix": "Command prefix",
+      "host": "Host",
+      "port": "Port",
+      "password": "Password"
+    }
+  },
+  "voice": {
+    "command": {
+      "description": "Bot voice controls",
+      "join-description": "Have the bot join your current voice channel",
+      "leave-description": "Have the bot leave the voice channel",
+      "play-description": "Play an audio URL (direct mp3/opus/HLS or other ffmpeg-decodable formats)",
+      "stop-description": "Stop current playback",
+      "status-description": "Show bot voice status"
+    },
+    "option": {
+      "play-url": "Audio URL (http/https)"
+    },
+    "guild-only": "This command can only be used in a server.",
+    "no-voice-channel": "Please join a voice channel first.",
+    "cap-reached": "⚠ This bot has reached its voice-connection limit; please try again later.",
+    "joined": "✓ Joined voice channel <#{{channelId}}>",
+    "connection-status": "⚠ Connection status: {{status}}",
+    "left": "✓ Left voice channel.",
+    "bad-url": "URL format is invalid.",
+    "http-only": "Only http(s) URLs are accepted.",
+    "playing": "✓ Now playing `{{url}}` (player:{{playerStatus}})",
+    "not-joined": "Not in a voice channel — use `/voice join` first.",
+    "ffmpeg-missing": "ffmpeg is unavailable; voice playback disabled.",
+    "stopped": "✓ Playback stopped.",
+    "status-lines": {
+      "connected": "**Connected:** {{connected}}",
+      "channel": "**Channel:** {{channel}}",
+      "channel-none": "(none)",
+      "playing": "**Playing:** {{playing}}",
+      "playing-url": "**URL:** `{{url}}`",
+      "connection": "**connection:** {{status}}",
+      "player": "**player:** {{status}}",
+      "yes": "✓",
+      "no": "✗"
+    }
   }
 }

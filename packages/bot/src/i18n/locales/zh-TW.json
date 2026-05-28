@@ -58,5 +58,99 @@
       "stopped": "已停止監看訊息 `{{messageId}}`。",
       "not-watched": "訊息 `{{messageId}}` 不在監看清單中。"
     }
+  },
+  "picture-only": {
+    "command": {
+      "description": "管理純圖片頻道",
+      "watch-description": "將此頻道設為純圖片頻道",
+      "stop-watch-description": "停止將此頻道視為純圖片頻道"
+    },
+    "watch": {
+      "added": "已開始監看本頻道。",
+      "already": "本頻道已在監看清單中。",
+      "removed": "已停止監看本頻道。",
+      "not-watched": "本頻道不在監看清單中。"
+    }
+  },
+  "todo-channel": {
+    "command": {
+      "description": "管理 todo 清單頻道",
+      "watch-description": "將此頻道設為 todo 清單",
+      "stop-watch-description": "停止將此頻道視為 todo 清單",
+      "check-cache-description": "檢查訊息快取補建 todo"
+    },
+    "watch": {
+      "added": "已開始監看本頻道。",
+      "already": "本頻道已在監看清單中。",
+      "removed": "已停止監看本頻道。",
+      "not-watched": "本頻道不在監看清單中。"
+    },
+    "cache-checked": "已檢查"
+  },
+  "rcon": {
+    "command": {
+      "description": "管理 RCON 轉發頻道",
+      "watch-description": "將此頻道設為 RCON 轉發頻道",
+      "stop-watch-description": "停止將此頻道視為 RCON 轉發頻道",
+      "status-description": "顯示此頻道的 RCON 狀態",
+      "edit-description": "編輯 RCON 轉發參數"
+    },
+    "modal": {
+      "title": "RCON 轉發頻道",
+      "host-label": "主機",
+      "password-label": "密碼",
+      "password-placeholder": "留空以保持原密碼",
+      "port-label": "連接埠",
+      "trigger-prefix-label": "觸發字首",
+      "command-prefix-label": "指令字首"
+    },
+    "watch": {
+      "already": "本頻道已在監看清單中。",
+      "removed": "已停止監看本頻道。",
+      "not-watched": "本頻道不在監看清單中。"
+    },
+    "status": {
+      "trigger-prefix": "觸發字首",
+      "command-prefix": "指令字首",
+      "host": "主機",
+      "port": "連接埠",
+      "password": "密碼"
+    }
+  },
+  "voice": {
+    "command": {
+      "description": "Bot 語音控制",
+      "join-description": "讓 bot 加入你目前所在的語音頻道",
+      "leave-description": "讓 bot 離開語音頻道",
+      "play-description": "播放音訊 URL（直連 mp3 / opus / HLS 等 ffmpeg 可解的格式）",
+      "stop-description": "停止當前播放",
+      "status-description": "查看 bot 語音狀態"
+    },
+    "option": {
+      "play-url": "音訊 URL（http/https）"
+    },
+    "guild-only": "此指令僅能在公會中使用。",
+    "no-voice-channel": "請先加入一個語音頻道再呼叫此指令。",
+    "cap-reached": "⚠ 此 bot 已達語音同時連線上限，請稍後再試。",
+    "joined": "✓ 已加入語音頻道 <#{{channelId}}>",
+    "connection-status": "⚠ 連線狀態：{{status}}",
+    "left": "✓ 已離開語音頻道。",
+    "bad-url": "URL 格式不正確。",
+    "http-only": "僅接受 http(s) URL。",
+    "playing": "✓ 開始播放 `{{url}}`（player:{{playerStatus}}）",
+    "not-joined": "尚未加入語音頻道，請先 `/voice join`。",
+    "ffmpeg-missing": "ffmpeg 不可用，語音播放停用。",
+    "stopped": "✓ 已停止播放。",
+    "status-lines": {
+      "connected": "**已連線：** {{connected}}",
+      "channel": "**頻道：** {{channel}}",
+      "channel-none": "（無）",
+      "playing": "**播放中：** {{playing}}",
+      "playing-url": "**URL：** `{{url}}`",
+      "connection": "**connection：** {{status}}",
+      "player": "**player：** {{status}}",
+      "yes": "✓",
+      "no": "✗"
+    }
   }
 }

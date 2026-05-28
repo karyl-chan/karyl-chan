@@ -248,6 +248,7 @@ async function dispatchChatInputCommand(
         }
       : null,
     locale: interaction.locale ?? null,
+    guild_locale: interaction.guildLocale ?? null,
   };
   const body = JSON.stringify(payload);
   const headers = buildHeaders(dispatchKey, url, body);
@@ -353,6 +354,8 @@ async function dispatchAutocomplete(
     focused: { name: focused.name, value: focused.value, type: focused.type },
     guild_id: interaction.guildId,
     user: { id: interaction.user.id },
+    locale: interaction.locale ?? null,
+    guild_locale: interaction.guildLocale ?? null,
   };
   const body = JSON.stringify(payload);
   const headers = buildHeaders(dispatchKey, url, body);

@@ -268,6 +268,7 @@ export async function dispatchComponentToPlugin(
         }
       : null,
     locale: interaction.locale ?? null,
+    guild_locale: interaction.guildLocale ?? null,
   };
   const body = JSON.stringify(payload);
   const headers = buildHeaders(dispatchKey, url, body);

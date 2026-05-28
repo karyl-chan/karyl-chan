@@ -46,7 +46,7 @@
     "mapping": {
       "not-emoji": "`{{emoji}}` 不是 emoji。",
       "already": "{{emoji}} 在此群组中已对应到 `{{roleName}}`。",
-      "added": "{{emoji}} = `{{roleName}}`（群组:`{{group}}`）",
+      "added": "{{emoji}} = `{{roleName}}`（群组：`{{group}}`）",
       "not-found": "在群组 `{{group}}` 中找不到 {{emoji}} 的对应。",
       "removed": "已从 `{{group}}` 移除 {{emoji}}。"
     },
@@ -54,9 +54,103 @@
       "message-not-found": "消息 `{{messageId}}` 不存在，或本频道无法访问。",
       "bound": "消息 `{{messageId}}` 已绑定到群组 `{{group}}`。",
       "watching": "已开始监听消息 `{{messageId}}`，套用群组 `{{group}}`。",
-      "cannot-react-prefix": "无法加上以下表情:",
+      "cannot-react-prefix": "无法加上以下表情：",
       "stopped": "已停止监听消息 `{{messageId}}`。",
       "not-watched": "消息 `{{messageId}}` 不在监听列表中。"
+    }
+  },
+  "picture-only": {
+    "command": {
+      "description": "管理纯图片频道",
+      "watch-description": "将此频道设为纯图片频道",
+      "stop-watch-description": "停止将此频道视为纯图片频道"
+    },
+    "watch": {
+      "added": "已开始监听本频道。",
+      "already": "本频道已在监听列表中。",
+      "removed": "已停止监听本频道。",
+      "not-watched": "本频道不在监听列表中。"
+    }
+  },
+  "todo-channel": {
+    "command": {
+      "description": "管理 todo 列表频道",
+      "watch-description": "将此频道设为 todo 列表",
+      "stop-watch-description": "停止将此频道视为 todo 列表",
+      "check-cache-description": "检查消息缓存补建 todo"
+    },
+    "watch": {
+      "added": "已开始监听本频道。",
+      "already": "本频道已在监听列表中。",
+      "removed": "已停止监听本频道。",
+      "not-watched": "本频道不在监听列表中。"
+    },
+    "cache-checked": "已检查"
+  },
+  "rcon": {
+    "command": {
+      "description": "管理 RCON 转发频道",
+      "watch-description": "将此频道设为 RCON 转发频道",
+      "stop-watch-description": "停止将此频道视为 RCON 转发频道",
+      "status-description": "显示此频道的 RCON 状态",
+      "edit-description": "编辑 RCON 转发参数"
+    },
+    "modal": {
+      "title": "RCON 转发频道",
+      "host-label": "主机",
+      "password-label": "密码",
+      "password-placeholder": "留空以保持原密码",
+      "port-label": "端口",
+      "trigger-prefix-label": "触发前缀",
+      "command-prefix-label": "指令前缀"
+    },
+    "watch": {
+      "already": "本频道已在监听列表中。",
+      "removed": "已停止监听本频道。",
+      "not-watched": "本频道不在监听列表中。"
+    },
+    "status": {
+      "trigger-prefix": "触发前缀",
+      "command-prefix": "指令前缀",
+      "host": "主机",
+      "port": "端口",
+      "password": "密码"
+    }
+  },
+  "voice": {
+    "command": {
+      "description": "Bot 语音控制",
+      "join-description": "让 bot 加入你目前所在的语音频道",
+      "leave-description": "让 bot 离开语音频道",
+      "play-description": "播放音频 URL（直连 mp3 / opus / HLS 等 ffmpeg 可解的格式）",
+      "stop-description": "停止当前播放",
+      "status-description": "查看 bot 语音状态"
+    },
+    "option": {
+      "play-url": "音频 URL（http/https）"
+    },
+    "guild-only": "此指令仅能在公会中使用。",
+    "no-voice-channel": "请先加入一个语音频道再呼叫此指令。",
+    "cap-reached": "⚠ 此 bot 已达语音同时连接上限，请稍后再试。",
+    "joined": "✓ 已加入语音频道 <#{{channelId}}>",
+    "connection-status": "⚠ 连接状态：{{status}}",
+    "left": "✓ 已离开语音频道。",
+    "bad-url": "URL 格式不正确。",
+    "http-only": "仅接受 http(s) URL。",
+    "playing": "✓ 开始播放 `{{url}}`（player:{{playerStatus}}）",
+    "not-joined": "尚未加入语音频道，请先 `/voice join`。",
+    "ffmpeg-missing": "ffmpeg 不可用，语音播放停用。",
+    "stopped": "✓ 已停止播放。",
+    "status-lines": {
+      "connected": "**已连接：** {{connected}}",
+      "channel": "**频道：** {{channel}}",
+      "channel-none": "（无）",
+      "playing": "**播放中：** {{playing}}",
+      "playing-url": "**URL：** `{{url}}`",
+      "connection": "**connection：** {{status}}",
+      "player": "**player：** {{status}}",
+      "yes": "✓",
+      "no": "✗"
     }
   }
 }
