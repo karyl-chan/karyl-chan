@@ -110,6 +110,12 @@ export function buildManifest(
       integration_types: cmd.integrationTypes,
       contexts: cmd.contexts,
       ...(cmd.options ? { options: cmd.options } : {}),
+      ...(cmd.descriptionLocalizations
+        ? { description_localizations: cmd.descriptionLocalizations }
+        : {}),
+      ...(cmd.nameLocalizations
+        ? { name_localizations: cmd.nameLocalizations }
+        : {}),
       ...(cmd.defaultMemberPermissions
         ? { default_member_permissions: cmd.defaultMemberPermissions }
         : {}),
@@ -166,6 +172,12 @@ export function buildManifest(
                 integration_types: cmd.integrationTypes,
                 contexts: cmd.contexts,
                 ...(cmd.options ? { options: cmd.options } : {}),
+                ...(cmd.descriptionLocalizations
+                  ? { description_localizations: cmd.descriptionLocalizations }
+                  : {}),
+                ...(cmd.nameLocalizations
+                  ? { name_localizations: cmd.nameLocalizations }
+                  : {}),
                 ...(cmd.defaultMemberPermissions
                   ? { default_member_permissions: cmd.defaultMemberPermissions }
                   : {}),

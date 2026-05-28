@@ -121,6 +121,16 @@ export interface PluginCommandDefinition {
   name: string;
   /** 指令說明文字。必填且必須是非空字串。 */
   description: string;
+  /**
+   * Per-locale description overrides keyed by Discord locale tag
+   * (`en-US`, `zh-TW`, `zh-CN`, etc.). Forwarded to Discord's
+   * `description_localizations` field at command registration so the
+   * slash-command picker UI renders in the user's Discord client
+   * locale. Use the plugin's i18n helper (e.g. `localizedDescriptions`).
+   */
+  descriptionLocalizations?: Record<string, string>;
+  /** Per-locale name overrides (same shape). */
+  nameLocalizations?: Record<string, string>;
   /** 三軸：manifest 寫死，admin 不可改。 */
   scope: "guild" | "global";
   integrationTypes: Array<"guild_install" | "user_install">;

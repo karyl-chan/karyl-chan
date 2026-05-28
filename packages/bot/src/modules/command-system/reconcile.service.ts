@@ -110,8 +110,21 @@ function canonicalOptions(options: any[]): string {
     min_value?: number | null;
     max_value?: number | null;
     autocomplete?: boolean;
+    description_localizations?: Record<string, string>;
+    name_localizations?: Record<string, string>;
     options?: CanonicalOption[];
   };
+  // Discord returns localization maps under snake_case (REST shape) but
+  // discord.js camelCases them on `ApplicationCommandOption`. Read both
+  // so the diff catches localization-only changes whether the desired
+  // side originated from a JS literal (camelCase) or the wire (snake).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function sortedLocalizationMap(raw: any): Record<string, string> | undefined {
+    if (!raw || typeof raw !== "object") return undefined;
+    const entries = Object.entries(raw as Record<string, string>);
+    if (entries.length === 0) return undefined;
+    return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)));
+  }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function project(o: any): CanonicalOption {
     const node: CanonicalOption = {
@@ -125,6 +138,14 @@ function canonicalOptions(options: any[]): string {
       max_value: o.max_value ?? o.maxValue ?? null,
       autocomplete: o.autocomplete ?? false,
     };
+    const descLoc = sortedLocalizationMap(
+      o.description_localizations ?? o.descriptionLocalizations,
+    );
+    if (descLoc) node.description_localizations = descLoc;
+    const nameLoc = sortedLocalizationMap(
+      o.name_localizations ?? o.nameLocalizations,
+    );
+    if (nameLoc) node.name_localizations = nameLoc;
     if (Array.isArray(o.options) && o.options.length > 0) {
       node.options = (o.options as unknown[])
         .map(project)
@@ -148,6 +169,26 @@ function commandNeedsPatch(
       ? ((desired as { description?: string }).description ?? "")
       : "";
   if (existDesc !== desiredDesc) return true;
+
+  // 比對 top-level description_localizations / name_localizations.
+  // discord.js's ApplicationCommand carries them as camelCase
+  // (`descriptionLocalizations`); the desired side (our manifest data)
+  // uses camelCase too. Compare via sorted-keys canonical JSON.
+  const canonLocMap = (raw: unknown): string => {
+    if (!raw || typeof raw !== "object") return "";
+    const entries = Object.entries(raw as Record<string, string>);
+    return JSON.stringify(entries.sort(([a], [b]) => a.localeCompare(b)));
+  };
+  const existDescLoc = (existing as { descriptionLocalizations?: unknown })
+    .descriptionLocalizations;
+  const desiredDescLoc = (desired as { descriptionLocalizations?: unknown })
+    .descriptionLocalizations;
+  if (canonLocMap(existDescLoc) !== canonLocMap(desiredDescLoc)) return true;
+  const existNameLoc = (existing as { nameLocalizations?: unknown })
+    .nameLocalizations;
+  const desiredNameLoc = (desired as { nameLocalizations?: unknown })
+    .nameLocalizations;
+  if (canonLocMap(existNameLoc) !== canonLocMap(desiredNameLoc)) return true;
 
   // 比對 contexts — numeric enum values, so sort numerically (both sides
   // identically) before joining, otherwise the canonical strings can
@@ -264,6 +305,10 @@ export function deriveRegistrationCall(
   integrationTypes: DiscordIntegrationType[],
   contexts: DiscordContext[],
   options?: ManifestCommandOption[],
+  localizations?: {
+    description_localizations?: Record<string, string>;
+    name_localizations?: Record<string, string>;
+  },
 ): DiscordRegistrationSpec {
   // 非法組合檢查（C-runtime §3.3 底部非法清單）
   if (integrationTypes.length === 0) {
@@ -302,6 +347,15 @@ export function deriveRegistrationCall(
     name,
     description,
   };
+
+  // Discord's per-locale picker overrides. Map snake_case (manifest /
+  // wire shape) → camelCase (discord.js ApplicationCommandData).
+  if (localizations?.description_localizations) {
+    data["descriptionLocalizations"] = localizations.description_localizations;
+  }
+  if (localizations?.name_localizations) {
+    data["nameLocalizations"] = localizations.name_localizations;
+  }
 
   if (discordContexts.length > 0) {
     data["contexts"] = discordContexts;
@@ -834,6 +888,14 @@ export class CommandReconciler {
         integrationTypes,
         contexts,
         cmdManifest.options,
+        {
+          ...(cmdManifest.description_localizations
+            ? { description_localizations: cmdManifest.description_localizations }
+            : {}),
+          ...(cmdManifest.name_localizations
+            ? { name_localizations: cmdManifest.name_localizations }
+            : {}),
+        },
       );
     } catch (err) {
       if (err instanceof RejectionError) {

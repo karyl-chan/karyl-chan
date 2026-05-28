@@ -101,6 +101,15 @@ export function manifestOptionToData(
     description: o.description ?? o.name,
     required: o.required ?? false,
   } as Record<string, unknown>;
+  // Discord per-locale overrides for the picker UI. SDK 0.7+ ships
+  // these via snake_case on the manifest wire shape; discord.js wants
+  // camelCase on the registration payload, so map here.
+  if (o.description_localizations) {
+    base.descriptionLocalizations = o.description_localizations;
+  }
+  if (o.name_localizations) {
+    base.nameLocalizations = o.name_localizations;
+  }
   // Sub-commands can carry nested options; flat options can't.
   if (
     o.options &&

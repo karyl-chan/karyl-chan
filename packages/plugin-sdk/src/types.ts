@@ -256,6 +256,17 @@ export interface CommandOption {
     | "sub_command_group";
   name: string;
   description: string;
+  /**
+   * Per-locale `description` overrides keyed by Discord locale tag
+   * (`en-US` / `zh-TW` / `zh-CN` / `ja` / etc.). Use the plugin's
+   * own i18n module's helper to populate these — the bot forwards
+   * them to Discord's `description_localizations` field at command
+   * registration so the slash-command picker UI renders in the
+   * user's Discord client locale.
+   */
+  description_localizations?: Record<string, string>;
+  /** Per-locale `name` overrides (same shape as `description_localizations`). */
+  name_localizations?: Record<string, string>;
   required?: boolean;
   choices?: APIApplicationCommandOptionChoice[];
   /** Restrict channel option to specific channel types (e.g. "GUILD_TEXT"). */

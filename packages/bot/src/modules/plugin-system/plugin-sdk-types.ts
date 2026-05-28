@@ -16,6 +16,16 @@ export interface ManifestCommandOption {
   type: string;
   name: string;
   description?: string;
+  /**
+   * Discord per-locale `description` overrides keyed by locale tag
+   * (`en-US`, `zh-TW`, `zh-CN`, …). Forwarded into the registration
+   * payload's `descriptionLocalizations` field by `manifestOptionToData`
+   * so Discord's slash-command picker renders in the user's client
+   * locale.
+   */
+  description_localizations?: Record<string, string>;
+  /** Per-locale `name` overrides (same shape). */
+  name_localizations?: Record<string, string>;
   required?: boolean;
   channel_types?: string[];
   options?: ManifestCommandOption[];
@@ -33,6 +43,10 @@ export interface ManifestCommandOption {
 export interface ManifestCommand {
   name: string;
   description: string;
+  /** Per-locale `description` overrides for Discord's command picker. */
+  description_localizations?: Record<string, string>;
+  /** Per-locale `name` overrides for Discord's command picker. */
+  name_localizations?: Record<string, string>;
   scope?: "guild" | "global";
   default_member_permissions?: string;
   default_ephemeral?: boolean;
@@ -129,6 +143,10 @@ export interface ManifestPluginCommand {
   name: string;
   /** 必填，非空字串（V-05）。 */
   description: string;
+  /** Per-locale `description` overrides for Discord's command picker. */
+  description_localizations?: Record<string, string>;
+  /** Per-locale `name` overrides for Discord's command picker. */
+  name_localizations?: Record<string, string>;
   /** V-06：必須是 "guild" 或 "global"。 */
   scope: "guild" | "global";
   /** V-07：必須是合法子集。 */

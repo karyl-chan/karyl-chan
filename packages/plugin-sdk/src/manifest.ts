@@ -83,6 +83,10 @@ export interface ManifestGuildFeature {
 export interface ManifestCommand {
   name: string;
   description: string;
+  /** Per-locale description overrides for Discord's command picker. */
+  description_localizations?: Record<string, string>;
+  /** Per-locale name overrides (Discord allows localized command names). */
+  name_localizations?: Record<string, string>;
   scope?: "guild" | "global";
   default_member_permissions?: string;
   /**
@@ -118,6 +122,10 @@ export interface ManifestPluginCommand {
   name: string;
   /** 指令說明文字。必填且必須是非空字串。 */
   description: string;
+  /** Per-locale description overrides for Discord's command picker. */
+  description_localizations?: Record<string, string>;
+  /** Per-locale name overrides (Discord allows localized command names). */
+  name_localizations?: Record<string, string>;
   /** 三軸：plugin manifest 寫死，admin 不可改。 */
   scope: "guild" | "global";
   integration_types: Array<"guild_install" | "user_install">;
