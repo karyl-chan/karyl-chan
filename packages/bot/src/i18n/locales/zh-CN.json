@@ -1,0 +1,62 @@
+{
+  "common": {
+    "status": {
+      "succeeded": "成功",
+      "failed": "失败",
+      "no-action": "未变更",
+      "partial": "部分成功"
+    },
+    "feature-disabled": "⚠ 此服务器已停用 `{{featureKey}}` 功能。",
+    "command-failed": "⚠ 指令处理失败。",
+    "modal-failed": "⚠ 表单处理失败。",
+    "unknown-subcommand": "⚠ 未知子指令 '{{sub}}'"
+  },
+  "role-emoji": {
+    "command": {
+      "description": "管理 role-emoji",
+      "group": {
+        "description": "管理 emoji 群组",
+        "add-description": "新建 emoji 群组",
+        "remove-description": "删除 emoji 群组（含群组内所有对应）",
+        "list-description": "列出 emoji 群组与其对应"
+      },
+      "add-description": "在群组中新增 emoji→身份组对应",
+      "remove-description": "从群组中移除 emoji→身份组对应",
+      "watch-description": "监听一条消息，将群组的 emoji→身份组对应套用到该消息",
+      "stop-watch-description": "停止监听消息的表情反应"
+    },
+    "option": {
+      "name": "群组名称",
+      "emoji": "emoji",
+      "role": "身份组",
+      "message-id": "消息 ID",
+      "group-with-default": "群组名称（默认为「{{default}}」，缺少时自动建立）",
+      "group": "群组名称",
+      "group-watch": "要套用的群组名称（默认为「{{default}}」）"
+    },
+    "group": {
+      "name-empty": "群组名称不能为空。",
+      "already-exists": "群组 `{{name}}` 已存在。",
+      "not-found": "群组 `{{name}}` 不存在。",
+      "created": "已建立群组 `{{name}}`。",
+      "deleted": "已删除群组 `{{name}}`。",
+      "none": "尚未定义任何群组。",
+      "no-mappings": "_尚无对应_"
+    },
+    "mapping": {
+      "not-emoji": "`{{emoji}}` 不是 emoji。",
+      "already": "{{emoji}} 在此群组中已对应到 `{{roleName}}`。",
+      "added": "{{emoji}} = `{{roleName}}`（群组:`{{group}}`）",
+      "not-found": "在群组 `{{group}}` 中找不到 {{emoji}} 的对应。",
+      "removed": "已从 `{{group}}` 移除 {{emoji}}。"
+    },
+    "watch": {
+      "message-not-found": "消息 `{{messageId}}` 不存在，或本频道无法访问。",
+      "bound": "消息 `{{messageId}}` 已绑定到群组 `{{group}}`。",
+      "watching": "已开始监听消息 `{{messageId}}`，套用群组 `{{group}}`。",
+      "cannot-react-prefix": "无法加上以下表情:",
+      "stopped": "已停止监听消息 `{{messageId}}`。",
+      "not-watched": "消息 `{{messageId}}` 不在监听列表中。"
+    }
+  }
+}

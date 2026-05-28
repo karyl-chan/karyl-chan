@@ -1,0 +1,62 @@
+{
+  "common": {
+    "status": {
+      "succeeded": "Succeeded",
+      "failed": "Failed",
+      "no-action": "No action",
+      "partial": "Partial"
+    },
+    "feature-disabled": "⚠ The `{{featureKey}}` feature is disabled in this server.",
+    "command-failed": "⚠ Command processing failed.",
+    "modal-failed": "⚠ Form submission failed.",
+    "unknown-subcommand": "⚠ Unknown subcommand '{{sub}}'"
+  },
+  "role-emoji": {
+    "command": {
+      "description": "Manage role-emoji",
+      "group": {
+        "description": "Manage emoji groups",
+        "add-description": "Create a new emoji group",
+        "remove-description": "Delete an emoji group (and its mappings)",
+        "list-description": "List emoji groups and their mappings"
+      },
+      "add-description": "Add an emoji→role mapping into a group",
+      "remove-description": "Remove an emoji→role mapping from a group",
+      "watch-description": "Watch a message and apply a group's emoji→role mappings to it",
+      "stop-watch-description": "Stop watching a message's reactions"
+    },
+    "option": {
+      "name": "group name",
+      "emoji": "emoji",
+      "role": "role",
+      "message-id": "Message ID",
+      "group-with-default": "group name (defaults to \"{{default}}\", auto-created if missing)",
+      "group": "group name",
+      "group-watch": "group name to apply (defaults to \"{{default}}\")"
+    },
+    "group": {
+      "name-empty": "Group name cannot be empty.",
+      "already-exists": "Group `{{name}}` already exists.",
+      "not-found": "Group `{{name}}` does not exist.",
+      "created": "Group `{{name}}` created.",
+      "deleted": "Group `{{name}}` deleted.",
+      "none": "No groups defined.",
+      "no-mappings": "_no mappings_"
+    },
+    "mapping": {
+      "not-emoji": "`{{emoji}}` is not an emoji.",
+      "already": "{{emoji}} is already mapped to `{{roleName}}` in this group.",
+      "added": "{{emoji}} = `{{roleName}}` (group: `{{group}}`)",
+      "not-found": "No mapping found for {{emoji}} in `{{group}}`.",
+      "removed": "{{emoji}} removed from `{{group}}`."
+    },
+    "watch": {
+      "message-not-found": "Message `{{messageId}}` does not exist or isn't accessible in this channel.",
+      "bound": "Message `{{messageId}}` is now bound to group `{{group}}`.",
+      "watching": "Message `{{messageId}}` is being watched with group `{{group}}`.",
+      "cannot-react-prefix": "Could not react with: ",
+      "stopped": "Message `{{messageId}}` is no longer being watched.",
+      "not-watched": "Message `{{messageId}}` is not being watched."
+    }
+  }
+}

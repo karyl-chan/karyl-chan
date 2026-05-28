@@ -8,6 +8,7 @@ import {
 } from "discord.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { shouldRecord } from "../bot-events/bot-event-dedup.js";
+import { tForInteraction } from "../../i18n/index.js";
 import {
   findAllStateRows,
   resolveBuiltinFeatureEnabled,
@@ -403,7 +404,9 @@ export async function dispatchInProcessInteraction(
       if (!enabled) {
         await interaction
           .reply({
-            content: `⚠ 此伺服器已停用 \`${spec.featureKey}\` 功能。`,
+            content: tForInteraction(interaction, "common.feature-disabled", {
+              featureKey: spec.featureKey,
+            }),
             flags: "Ephemeral",
           })
           .catch(() => {});
@@ -424,7 +427,10 @@ export async function dispatchInProcessInteraction(
       // the interaction from hanging on "loading…".
       if (!interaction.replied && !interaction.deferred) {
         await interaction
-          .reply({ content: "⚠ 指令處理失敗", flags: "Ephemeral" })
+          .reply({
+            content: tForInteraction(interaction, "common.command-failed"),
+            flags: "Ephemeral",
+          })
           .catch(() => {});
       }
     }
@@ -445,7 +451,10 @@ export async function dispatchInProcessInteraction(
       );
       if (!interaction.replied) {
         await interaction
-          .reply({ content: "⚠ 表單處理失敗", flags: "Ephemeral" })
+          .reply({
+            content: tForInteraction(interaction, "common.modal-failed"),
+            flags: "Ephemeral",
+          })
           .catch(() => {});
       }
     }

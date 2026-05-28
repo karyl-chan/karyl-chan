@@ -29,9 +29,14 @@ import {
 } from "./role-emoji-group.model.js";
 import { registerInProcessCommand } from "../in-process-command-registry.service.js";
 import { FAILED_COLOR, SUCCEEDED_COLOR } from "../../../utils/constant.js";
+import {
+  describeEn,
+  localizedDescriptions,
+  tForInteraction,
+} from "../../../i18n/index.js";
 
 const EMOJI_REGEX =
-  /(©|®|[ -㌀]|\ud83c[퀀-\udfff]|\ud83d[퀀-\udfff]|\ud83e[퀀-\udfff])|^<(a?:[^:>]+:)([^>]+)>$/;
+  /(©|®|[ -㌀]|\ud83c[퀀-\udfff]|\ud83d[퀀-\udfff]|\ud83e[퀀-\udfff])|^<(a?:[^:>]+:)([^>]+)>$/;
 const DEFAULT_GROUP_NAME = "default";
 
 /**
@@ -49,7 +54,7 @@ async function groupAdd(command: ChatInputCommandInteraction): Promise<void> {
   const name = command.options.getString("name", true).trim();
   if (!name) {
     await command.reply({
-      content: "Group name cannot be empty.",
+      content: tForInteraction(command, "role-emoji.group.name-empty"),
       flags: "Ephemeral",
     });
     return;
@@ -62,8 +67,12 @@ async function groupAdd(command: ChatInputCommandInteraction): Promise<void> {
         embeds: [
           {
             color: FAILED_COLOR,
-            title: "Failed",
-            description: `Group \`\`${name}\`\` already exists.`,
+            title: tForInteraction(command, "common.status.failed"),
+            description: tForInteraction(
+              command,
+              "role-emoji.group.already-exists",
+              { name },
+            ),
           },
         ],
         flags: "Ephemeral",
@@ -75,8 +84,10 @@ async function groupAdd(command: ChatInputCommandInteraction): Promise<void> {
       embeds: [
         {
           color: SUCCEEDED_COLOR,
-          title: "Succeeded",
-          description: `Group \`\`${name}\`\` created.`,
+          title: tForInteraction(command, "common.status.succeeded"),
+          description: tForInteraction(command, "role-emoji.group.created", {
+            name,
+          }),
         },
       ],
       flags: "Ephemeral",
@@ -98,8 +109,10 @@ async function groupRemove(
         embeds: [
           {
             color: FAILED_COLOR,
-            title: "Failed",
-            description: `Group \`\`${name}\`\` does not exist.`,
+            title: tForInteraction(command, "common.status.failed"),
+            description: tForInteraction(command, "role-emoji.group.not-found", {
+              name,
+            }),
           },
         ],
         flags: "Ephemeral",
@@ -111,8 +124,10 @@ async function groupRemove(
       embeds: [
         {
           color: SUCCEEDED_COLOR,
-          title: "Succeeded",
-          description: `Group \`\`${name}\`\` deleted.`,
+          title: tForInteraction(command, "common.status.succeeded"),
+          description: tForInteraction(command, "role-emoji.group.deleted", {
+            name,
+          }),
         },
       ],
       flags: "Ephemeral",
@@ -128,11 +143,20 @@ async function groupList(command: ChatInputCommandInteraction): Promise<void> {
     const groups = await findAllRoleEmojiGroups(guildId);
     if (groups.length === 0) {
       await command.reply({
-        embeds: [{ color: SUCCEEDED_COLOR, description: "No groups defined." }],
+        embeds: [
+          {
+            color: SUCCEEDED_COLOR,
+            description: tForInteraction(command, "role-emoji.group.none"),
+          },
+        ],
         flags: "Ephemeral",
       });
       return;
     }
+    const noMappingsLabel = tForInteraction(
+      command,
+      "role-emoji.group.no-mappings",
+    );
     const fields = await Promise.all(
       groups.map(async (g) => {
         const groupId = g.getDataValue("id") as number;
@@ -150,7 +174,7 @@ async function groupList(command: ChatInputCommandInteraction): Promise<void> {
         });
         return {
           name: groupName,
-          value: lines.length ? lines.join("\n") : "_no mappings_",
+          value: lines.length ? lines.join("\n") : noMappingsLabel,
         };
       }),
     );
@@ -181,8 +205,12 @@ async function mappingAdd(command: ChatInputCommandInteraction): Promise<void> {
           embeds: [
             {
               color: FAILED_COLOR,
-              title: "Failed",
-              description: `Group \`\`${resolvedName}\`\` does not exist.`,
+              title: tForInteraction(command, "common.status.failed"),
+              description: tForInteraction(
+                command,
+                "role-emoji.group.not-found",
+                { name: resolvedName },
+              ),
             },
           ],
           flags: "Ephemeral",
@@ -194,7 +222,9 @@ async function mappingAdd(command: ChatInputCommandInteraction): Promise<void> {
     const emojiMatch = EMOJI_REGEX.exec(emoji);
     if (!emojiMatch) {
       await command.reply({
-        content: `\`\`${emoji}\`\` is not an emoji.`,
+        content: tForInteraction(command, "role-emoji.mapping.not-emoji", {
+          emoji,
+        }),
         flags: "Ephemeral",
       });
       return;
@@ -211,8 +241,12 @@ async function mappingAdd(command: ChatInputCommandInteraction): Promise<void> {
         embeds: [
           {
             color: FAILED_COLOR,
-            title: "Failed",
-            description: `${emoji} is already mapped to \`\`${mappedRole?.name ?? recorded.getDataValue("roleId")}\`\` in this group.`,
+            title: tForInteraction(command, "common.status.failed"),
+            description: tForInteraction(command, "role-emoji.mapping.already", {
+              emoji,
+              roleName:
+                mappedRole?.name ?? (recorded.getDataValue("roleId") as string),
+            }),
           },
         ],
         flags: "Ephemeral",
@@ -224,8 +258,12 @@ async function mappingAdd(command: ChatInputCommandInteraction): Promise<void> {
       embeds: [
         {
           color: SUCCEEDED_COLOR,
-          title: "Succeeded",
-          description: `${emoji} = \`\`${role.name}\`\` (group: \`${resolvedName}\`)`,
+          title: tForInteraction(command, "common.status.succeeded"),
+          description: tForInteraction(command, "role-emoji.mapping.added", {
+            emoji,
+            roleName: role.name,
+            group: resolvedName,
+          }),
         },
       ],
       flags: "Ephemeral",
@@ -248,8 +286,10 @@ async function mappingRemove(
         embeds: [
           {
             color: FAILED_COLOR,
-            title: "Failed",
-            description: `Group \`\`${groupName}\`\` does not exist.`,
+            title: tForInteraction(command, "common.status.failed"),
+            description: tForInteraction(command, "role-emoji.group.not-found", {
+              name: groupName,
+            }),
           },
         ],
         flags: "Ephemeral",
@@ -260,7 +300,9 @@ async function mappingRemove(
     const emojiMatch = EMOJI_REGEX.exec(emoji);
     if (!emojiMatch) {
       await command.reply({
-        content: `\`\`${emoji}\`\` is not an emoji.`,
+        content: tForInteraction(command, "role-emoji.mapping.not-emoji", {
+          emoji,
+        }),
         flags: "Ephemeral",
       });
       return;
@@ -273,8 +315,11 @@ async function mappingRemove(
         embeds: [
           {
             color: FAILED_COLOR,
-            title: "Failed",
-            description: `No mapping found for ${emoji} in \`${groupName}\`.`,
+            title: tForInteraction(command, "common.status.failed"),
+            description: tForInteraction(command, "role-emoji.mapping.not-found", {
+              emoji,
+              group: groupName,
+            }),
           },
         ],
         flags: "Ephemeral",
@@ -286,8 +331,11 @@ async function mappingRemove(
       embeds: [
         {
           color: SUCCEEDED_COLOR,
-          title: "Succeeded",
-          description: `${emoji} removed from \`${groupName}\`.`,
+          title: tForInteraction(command, "common.status.succeeded"),
+          description: tForInteraction(command, "role-emoji.mapping.removed", {
+            emoji,
+            group: groupName,
+          }),
         },
       ],
       flags: "Ephemeral",
@@ -315,8 +363,10 @@ async function watch(command: ChatInputCommandInteraction): Promise<void> {
         embeds: [
           {
             color: FAILED_COLOR,
-            title: "Failed",
-            description: `Group \`\`${resolvedName}\`\` does not exist.`,
+            title: tForInteraction(command, "common.status.failed"),
+            description: tForInteraction(command, "role-emoji.group.not-found", {
+              name: resolvedName,
+            }),
           },
         ],
       });
@@ -336,8 +386,12 @@ async function watch(command: ChatInputCommandInteraction): Promise<void> {
         embeds: [
           {
             color: FAILED_COLOR,
-            title: "Failed",
-            description: `Message \`\`${messageId}\`\` does not exist or isn't accessible in this channel.`,
+            title: tForInteraction(command, "common.status.failed"),
+            description: tForInteraction(
+              command,
+              "role-emoji.watch.message-not-found",
+              { messageId },
+            ),
           },
         ],
       });
@@ -401,17 +455,26 @@ async function watch(command: ChatInputCommandInteraction): Promise<void> {
       }
     }
 
-    const baseDesc = previouslyWatched
-      ? `Message \`\`${messageId}\`\` is now bound to group \`${resolvedName}\`.`
-      : `Message \`\`${messageId}\`\` is being watched with group \`${resolvedName}\`.`;
+    const baseDescKey = previouslyWatched
+      ? "role-emoji.watch.bound"
+      : "role-emoji.watch.watching";
+    const baseDesc = tForInteraction(command, baseDescKey, {
+      messageId,
+      group: resolvedName,
+    });
     const failedSuffix = failed.length
-      ? `\n\nCould not react with: ${failed.map((f) => `\`${f}\``).join(", ")}`
+      ? `\n\n${tForInteraction(command, "role-emoji.watch.cannot-react-prefix")}${failed
+          .map((f) => `\`${f}\``)
+          .join(", ")}`
       : "";
     await command.editReply({
       embeds: [
         {
           color: failed.length ? FAILED_COLOR : SUCCEEDED_COLOR,
-          title: failed.length ? "Partial" : "Succeeded",
+          title: tForInteraction(
+            command,
+            failed.length ? "common.status.partial" : "common.status.succeeded",
+          ),
           description: baseDesc + failedSuffix,
         },
       ],
@@ -423,7 +486,7 @@ async function watch(command: ChatInputCommandInteraction): Promise<void> {
         embeds: [
           {
             color: FAILED_COLOR,
-            title: "Failed",
+            title: tForInteraction(command, "common.status.failed"),
             description: ex instanceof Error ? ex.message : String(ex),
           },
         ],
@@ -448,8 +511,10 @@ async function stopWatch(command: ChatInputCommandInteraction): Promise<void> {
         embeds: [
           {
             color: SUCCEEDED_COLOR,
-            title: "Succeeded",
-            description: `Message \`\`${messageId}\`\` is no longer being watched.`,
+            title: tForInteraction(command, "common.status.succeeded"),
+            description: tForInteraction(command, "role-emoji.watch.stopped", {
+              messageId,
+            }),
           },
         ],
       });
@@ -458,8 +523,10 @@ async function stopWatch(command: ChatInputCommandInteraction): Promise<void> {
         embeds: [
           {
             color: SUCCEEDED_COLOR,
-            title: "No action",
-            description: `Message \`\`${messageId}\`\` is not being watched.`,
+            title: tForInteraction(command, "common.status.no-action"),
+            description: tForInteraction(command, "role-emoji.watch.not-watched", {
+              messageId,
+            }),
           },
         ],
       });
@@ -471,7 +538,7 @@ async function stopWatch(command: ChatInputCommandInteraction): Promise<void> {
         embeds: [
           {
             color: FAILED_COLOR,
-            title: "Failed",
+            title: tForInteraction(command, "common.status.failed"),
             description: ex instanceof Error ? ex.message : String(ex),
           },
         ],
@@ -507,7 +574,10 @@ export function registerRoleEmojiCommands(): void {
     data: {
       type: ApplicationCommandType.ChatInput,
       name: "role-emoji",
-      description: "Manage role-emoji",
+      description: describeEn("role-emoji.command.description"),
+      descriptionLocalizations: localizedDescriptions(
+        "role-emoji.command.description",
+      ),
       // Discord ManageRoles bit. Same as `'268435456'` in the old
       // SlashGroup decorator (1 << 28 = 268_435_456).
       defaultMemberPermissions: PermissionFlagsBits.ManageRoles,
@@ -516,17 +586,26 @@ export function registerRoleEmojiCommands(): void {
         {
           type: ApplicationCommandOptionType.SubcommandGroup,
           name: "group",
-          description: "Manage emoji groups",
+          description: describeEn("role-emoji.command.group.description"),
+          descriptionLocalizations: localizedDescriptions(
+            "role-emoji.command.group.description",
+          ),
           options: [
             {
               type: ApplicationCommandOptionType.Subcommand,
               name: "add",
-              description: "Create a new emoji group",
+              description: describeEn("role-emoji.command.group.add-description"),
+              descriptionLocalizations: localizedDescriptions(
+                "role-emoji.command.group.add-description",
+              ),
               options: [
                 {
                   type: ApplicationCommandOptionType.String,
                   name: "name",
-                  description: "group name",
+                  description: describeEn("role-emoji.option.name"),
+                  descriptionLocalizations: localizedDescriptions(
+                    "role-emoji.option.name",
+                  ),
                   required: true,
                 },
               ],
@@ -534,12 +613,20 @@ export function registerRoleEmojiCommands(): void {
             {
               type: ApplicationCommandOptionType.Subcommand,
               name: "remove",
-              description: "Delete an emoji group (and its mappings)",
+              description: describeEn(
+                "role-emoji.command.group.remove-description",
+              ),
+              descriptionLocalizations: localizedDescriptions(
+                "role-emoji.command.group.remove-description",
+              ),
               options: [
                 {
                   type: ApplicationCommandOptionType.String,
                   name: "name",
-                  description: "group name",
+                  description: describeEn("role-emoji.option.name"),
+                  descriptionLocalizations: localizedDescriptions(
+                    "role-emoji.option.name",
+                  ),
                   required: true,
                 },
               ],
@@ -547,7 +634,12 @@ export function registerRoleEmojiCommands(): void {
             {
               type: ApplicationCommandOptionType.Subcommand,
               name: "list",
-              description: "List emoji groups and their mappings",
+              description: describeEn(
+                "role-emoji.command.group.list-description",
+              ),
+              descriptionLocalizations: localizedDescriptions(
+                "role-emoji.command.group.list-description",
+              ),
             },
           ],
         },
@@ -555,24 +647,36 @@ export function registerRoleEmojiCommands(): void {
         {
           type: ApplicationCommandOptionType.Subcommand,
           name: "add",
-          description: "Add an emoji→role mapping into a group",
+          description: describeEn("role-emoji.command.add-description"),
+          descriptionLocalizations: localizedDescriptions(
+            "role-emoji.command.add-description",
+          ),
           options: [
             {
               type: ApplicationCommandOptionType.String,
               name: "emoji",
-              description: "emoji",
+              description: describeEn("role-emoji.option.emoji"),
+              descriptionLocalizations: localizedDescriptions(
+                "role-emoji.option.emoji",
+              ),
               required: true,
             },
             {
               type: ApplicationCommandOptionType.Role,
               name: "role",
-              description: "role",
+              description: describeEn("role-emoji.option.role"),
+              descriptionLocalizations: localizedDescriptions(
+                "role-emoji.option.role",
+              ),
               required: true,
             },
             {
               type: ApplicationCommandOptionType.String,
               name: "group",
-              description: `group name (defaults to "${DEFAULT_GROUP_NAME}", auto-created if missing)`,
+              description: describeEn("role-emoji.option.group-with-default"),
+              descriptionLocalizations: localizedDescriptions(
+                "role-emoji.option.group-with-default",
+              ),
               required: false,
             },
           ],
@@ -580,18 +684,27 @@ export function registerRoleEmojiCommands(): void {
         {
           type: ApplicationCommandOptionType.Subcommand,
           name: "remove",
-          description: "Remove an emoji→role mapping from a group",
+          description: describeEn("role-emoji.command.remove-description"),
+          descriptionLocalizations: localizedDescriptions(
+            "role-emoji.command.remove-description",
+          ),
           options: [
             {
               type: ApplicationCommandOptionType.String,
               name: "group",
-              description: "group name",
+              description: describeEn("role-emoji.option.group"),
+              descriptionLocalizations: localizedDescriptions(
+                "role-emoji.option.group",
+              ),
               required: true,
             },
             {
               type: ApplicationCommandOptionType.String,
               name: "emoji",
-              description: "emoji",
+              description: describeEn("role-emoji.option.emoji"),
+              descriptionLocalizations: localizedDescriptions(
+                "role-emoji.option.emoji",
+              ),
               required: true,
             },
           ],
@@ -599,19 +712,27 @@ export function registerRoleEmojiCommands(): void {
         {
           type: ApplicationCommandOptionType.Subcommand,
           name: "watch",
-          description:
-            "Watch a message and apply a group's emoji→role mappings to it",
+          description: describeEn("role-emoji.command.watch-description"),
+          descriptionLocalizations: localizedDescriptions(
+            "role-emoji.command.watch-description",
+          ),
           options: [
             {
               type: ApplicationCommandOptionType.String,
               name: "message-id",
-              description: "Message ID",
+              description: describeEn("role-emoji.option.message-id"),
+              descriptionLocalizations: localizedDescriptions(
+                "role-emoji.option.message-id",
+              ),
               required: true,
             },
             {
               type: ApplicationCommandOptionType.String,
               name: "group",
-              description: `group name to apply (defaults to "${DEFAULT_GROUP_NAME}")`,
+              description: describeEn("role-emoji.option.group-watch"),
+              descriptionLocalizations: localizedDescriptions(
+                "role-emoji.option.group-watch",
+              ),
               required: false,
             },
           ],
@@ -619,12 +740,18 @@ export function registerRoleEmojiCommands(): void {
         {
           type: ApplicationCommandOptionType.Subcommand,
           name: "stop-watch",
-          description: "Stop watching a message's reactions",
+          description: describeEn("role-emoji.command.stop-watch-description"),
+          descriptionLocalizations: localizedDescriptions(
+            "role-emoji.command.stop-watch-description",
+          ),
           options: [
             {
               type: ApplicationCommandOptionType.String,
               name: "message-id",
-              description: "Message ID",
+              description: describeEn("role-emoji.option.message-id"),
+              descriptionLocalizations: localizedDescriptions(
+                "role-emoji.option.message-id",
+              ),
               required: true,
             },
           ],
@@ -647,7 +774,9 @@ export function registerRoleEmojiCommands(): void {
         if (sub === "stop-watch") return stopWatch(interaction);
       }
       await interaction.reply({
-        content: `⚠ unknown subcommand '${group ?? ""}/${sub}'`,
+        content: tForInteraction(interaction, "common.unknown-subcommand", {
+          sub: `${group ?? ""}/${sub}`,
+        }),
         flags: "Ephemeral",
       });
     },
