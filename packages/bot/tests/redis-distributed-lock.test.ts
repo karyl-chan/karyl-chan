@@ -150,6 +150,31 @@ describe("RedisDistributedLock", () => {
     await slow;
   });
 
+  it("does not acquire after deadline even if holder releases mid-wait", async () => {
+    // Regression: the previous polling loop checked the deadline
+    // AFTER each SET attempt. When the holder released the key
+    // during a polling sleep that outran the caller's timeoutMs
+    // (jitterDelay 50–500 ms vs timeoutMs 30 ms), the next iteration
+    // would silently acquire the now-free lock past the deadline,
+    // running fn even though the caller asked us to give up.
+    //
+    // Hold for 100 ms; with timeoutMs 30 ms the second `run` MUST
+    // reject roughly at the deadline, NOT after the holder
+    // happens to release.
+    const lock = new RedisDistributedLock();
+    const slow = lock.run("k", () => new Promise((r) => setTimeout(r, 100)));
+    const start = Date.now();
+    await expect(
+      lock.run("k", async () => "stolen", { timeoutMs: 30 }),
+    ).rejects.toThrow(/timed out/);
+    const elapsed = Date.now() - start;
+    // Upper bound: 30 ms timeout + 70 ms slack for CI scheduling
+    // jitter. Without the fix this would be ≥ 100 ms (waits for
+    // the holder to release).
+    expect(elapsed).toBeLessThan(100);
+    await slow;
+  });
+
   it("isLeader elects the first claimant per key", async () => {
     const stub = makeStub();
     const a = new RedisDistributedLock(stub, "shard:A");

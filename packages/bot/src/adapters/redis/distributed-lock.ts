@@ -84,7 +84,19 @@ export class RedisDistributedLock implements DistributedLock {
     // `run()` as an unhandled rejection; main.ts's unhandledRejection
     // handler then schedules process.exit(1), which kills the bot on
     // a Redis hiccup mid-ready.
+    //
+    // The deadline is checked BEFORE every SET — if the previous
+    // holder released the key while we were sleeping but the
+    // caller's `timeoutMs` window has since elapsed, we must NOT
+    // claim the now-free lock. Caller asked us to give up by the
+    // deadline; acquiring late silently violates that contract and
+    // (more concretely) made the unit-test for `timeoutMs` flaky
+    // depending on whether the polling sleep happened to outrun the
+    // holder's release.
     while (true) {
+      if (Date.now() >= deadline) {
+        throw new Error(`lock '${key}' acquire timed out`);
+      }
       let acquired: string | null = null;
       try {
         acquired = await this.redis.set(
@@ -98,10 +110,15 @@ export class RedisDistributedLock implements DistributedLock {
         acquired = null;
       }
       if (acquired === "OK") break;
-      if (Date.now() >= deadline) {
+      // Cap the polling sleep at the time remaining before the
+      // deadline — otherwise a long jitter window can park us past
+      // the deadline and waste the caller's budget on a guaranteed-
+      // doomed extra SET attempt.
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
         throw new Error(`lock '${key}' acquire timed out`);
       }
-      await sleep(jitterDelay());
+      await sleep(Math.min(jitterDelay(), remaining));
     }
 
     try {
