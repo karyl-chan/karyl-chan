@@ -9,6 +9,7 @@ import {
   getKv,
   incrementKv,
   listKvKeys,
+  listKvWithValues,
   setKv,
   sumGuildBytes,
   withGuildKvLock,
@@ -1067,6 +1068,46 @@ export async function registerPluginRpcRoutes(
       offset,
     });
     return { keys: result.keys, total: result.total };
+  });
+
+  // ─── storage.kv_list_values ───────────────────────────────────────
+  /**
+   * POST /api/plugin/storage.kv_list_values
+   * Body:    { guild_id, prefix?, limit?, offset? }
+   * Returns: { entries: { key, value, bytes }[], total }
+   *
+   * Same predicate as `storage.kv_list` but ships values alongside the
+   * keys. Background workers (schedulers, queues, reminder-style
+   * plugins) that need to inspect every row's payload were forced
+   * into a `kv_list` + N×`kv_get` loop — each plugin re-discovered the
+   * round-trip cost the hard way. Counts against the same scope
+   * (`storage.kv_list_values` so operators can rate-limit batch reads
+   * separately from key-only enumerations).
+   */
+  server.post<{
+    Body: {
+      guild_id?: unknown;
+      prefix?: unknown;
+      limit?: unknown;
+      offset?: unknown;
+    };
+  }>("/api/plugin/storage.kv_list_values", async (request, reply) => {
+    const ctx = await requireScope(request, reply, "storage.kv_list_values");
+    if (!ctx) return;
+    const body = request.body ?? {};
+    if (typeof body.guild_id !== "string") {
+      reply.code(400).send({ error: "guild_id required" });
+      return;
+    }
+    const prefix = typeof body.prefix === "string" ? body.prefix : undefined;
+    const limit = typeof body.limit === "number" ? body.limit : 100;
+    const offset = typeof body.offset === "number" ? body.offset : 0;
+    const result = await listKvWithValues(ctx.pluginId, body.guild_id, {
+      prefix,
+      limit,
+      offset,
+    });
+    return { entries: result.entries, total: result.total };
   });
 
   // ─── interactions.respond ─────────────────────────────────────────
@@ -2524,21 +2565,31 @@ export async function registerPluginRpcRoutes(
 
   // ─── me.enabled_guilds ───────────────────────────────────────────
   /**
-   * GET /api/plugin/me/enabled_guilds
+   * POST /api/plugin/me/enabled_guilds
+   * Body: {} (empty — POST so plugin SDK's botRpc, which only speaks POST,
+   *   can reach it; was GET before 0.9 and unreachable from any in-tree
+   *   plugin)
    * Returns: { guild_ids: string[] }
    *
-   * Guild ids where this plugin has at least one *effectively enabled*
-   * feature. Effective = per-guild row precedence:
-   *   row.enabled (if a row exists) → operator default override →
-   *   manifest's enabled_by_default → false.
+   * Two-mode semantics, picked from the manifest:
+   *   - Plugin declares ≥1 `guild_features`: guild ids where this plugin
+   *     has at least one *effectively enabled* feature. Effective =
+   *     per-guild row precedence:
+   *       row.enabled (if a row exists) → operator default override →
+   *       manifest's enabled_by_default → false.
+   *     Iterating only the rows would miss guilds that are following an
+   *     enabled-by-default feature with no row written yet — background
+   *     workers (e.g. radio's heartbeat loop) need those guilds too.
+   *   - Plugin declares NO `guild_features` (e.g. a featureless background
+   *     worker like reminder): every guild the bot is currently in. The
+   *     plugin opts into "always on" by not declaring a feature toggle.
+   *     Before 0.9 this returned `[]`, forcing authors to declare a dummy
+   *     feature just to enumerate guilds.
    *
-   * Iterating only the rows would miss guilds that are following an
-   * enabled-by-default feature with no row written yet — background
-   * workers (e.g. radio's heartbeat loop) need those guilds too.
-   * Walks bot.guilds.cache once so the result reflects only guilds the
-   * bot is currently in.
+   * Walks bot.guilds.cache once so the result always reflects only
+   * guilds the bot is currently in (no stale rows for left guilds).
    */
-  server.get(
+  server.post(
     "/api/plugin/me/enabled_guilds",
     async (request, reply) => {
       const ctx = await requireScope(request, reply, "me.enabled_guilds");
@@ -2551,7 +2602,7 @@ export async function registerPluginRpcRoutes(
       const manifest = plugin ? getManifest(plugin.manifestJson) : null;
       const manifestFeatures = manifest?.guild_features ?? [];
       if (manifestFeatures.length === 0) {
-        return { guild_ids: [] };
+        return { guild_ids: Array.from(bot.guilds.cache.keys()) };
       }
       const [rows, defaults] = await Promise.all([
         findFeatureRowsByPlugin(ctx.pluginId),
