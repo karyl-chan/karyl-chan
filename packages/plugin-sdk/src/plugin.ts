@@ -15,6 +15,9 @@ import type { ManifestConfigField } from "./manifest.js";
 import type { HealthProducer, PluginContext } from "./context.js";
 import type { Discord } from "./rpc/discord.js";
 import type { Voice } from "./rpc/voice.js";
+import type { Me } from "./rpc/me.js";
+import type { Kv } from "./rpc/kv.js";
+import type { Auth } from "./rpc/auth.js";
 
 /**
  * Handler for one Discord-side event the plugin subscribed to.
@@ -72,6 +75,12 @@ export interface StartedPlugin {
   discord: Discord;
   /** Typed Voice RPC facade, plugin-token-bound counterpart of `discord`. */
   voice: Voice;
+  /** `me.enabledGuilds()` / `me.kvUsage()` — see PluginContext.me. */
+  me: Me;
+  /** Per-guild typed KV — see PluginContext.kv. */
+  kv: Kv;
+  /** Session minting — see PluginContext.auth. */
+  auth: Auth;
   /**
    * Ed25519 public key (SPKI PEM) the bot returned at register, used to
    * verify `plugin-session` JWTs offline (see `verifyPluginSession`).
@@ -851,6 +860,9 @@ export function definePlugin(config: PluginConfig): PluginInstance {
               botRpc: pluginRpc,
               discord: rpcFacade.discord,
               voice: rpcFacade.voice,
+              me: rpcFacade.me,
+              kv: rpcFacade.kv,
+              auth: rpcFacade.auth,
             };
             metricsCollector.start();
             botEventEmitter.start();
@@ -922,6 +934,9 @@ export function definePlugin(config: PluginConfig): PluginInstance {
         botRpc: startedBotRpc,
         discord: startedRpc.discord,
         voice: startedRpc.voice,
+        me: startedRpc.me,
+        kv: startedRpc.kv,
+        auth: startedRpc.auth,
         getSessionVerifyPublicKey() {
           return client?.getSessionVerifyPublicKey() ?? null;
         },

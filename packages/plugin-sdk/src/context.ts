@@ -18,6 +18,9 @@
 import type { PluginManifest } from "./manifest.js";
 import type { Discord } from "./rpc/discord.js";
 import type { Voice } from "./rpc/voice.js";
+import type { Me } from "./rpc/me.js";
+import type { Kv } from "./rpc/kv.js";
+import type { Auth } from "./rpc/auth.js";
 
 export interface PluginContext {
   /** Plugin key (matches `PluginConfig.key`). */
@@ -33,15 +36,16 @@ export interface PluginContext {
   /**
    * Call any `/api/plugin/*` RPC endpoint. Resolves with the parsed
    * response body (or `{}` for 204) on success. Throws a `BotRpcError`
-   * on failure with `reason: 'no_token' | 'network' | 'http_status'`
-   * — wrap in try/catch and discriminate on `reason` to distinguish
-   * "bot unreachable" from "bot rejected my request" from "plugin not
-   * yet registered".
+   * on failure with `reason: 'no_token' | 'network' | 'http_status' |
+   * 'forbidden' | 'quota_exceeded' | 'rate_limited'` — wrap in
+   * try/catch and discriminate on `reason` to distinguish "bot
+   * unreachable" from "bot rejected my request" from "plugin not yet
+   * registered".
    *
-   * Escape hatch for RPC methods not yet covered by `discord` / `voice`.
-   * Prefer the typed namespaces for messages, members, interactions,
-   * and voice — they survive future renames / batching / shard-aware
-   * routing transparently.
+   * Escape hatch for RPC methods not yet covered by `discord` /
+   * `voice` / `me` / `kv` / `auth`. Prefer the typed namespaces —
+   * they survive future renames / batching / shard-aware routing
+   * transparently.
    */
   readonly botRpc: (path: string, body?: unknown) => Promise<unknown>;
   /**
@@ -51,6 +55,23 @@ export interface PluginContext {
   readonly discord: Discord;
   /** Typed Voice RPC facade. `ctx.voice.play({ guildId, url })`, etc. */
   readonly voice: Voice;
+  /**
+   * Plugin-introspection. `ctx.me.enabledGuilds()` for cross-guild
+   * background workers; `ctx.me.kvUsage(...)` for quota probes.
+   */
+  readonly me: Me;
+  /**
+   * Typed per-guild key-value store with built-in JSON codec.
+   * `ctx.kv.guild<T>(guildId).get(key)` / `.set(key, value)` /
+   * `.listValues({ prefix })` / `.delete(key)` / `.increment(key)`.
+   */
+  readonly kv: Kv;
+  /**
+   * `ctx.auth.mintSession({ userId, kind, guildId })` — produce a
+   * `plugin-session` JWT for a WebUI link. Pair with
+   * `verifyPluginSession()` on the WebUI side.
+   */
+  readonly auth: Auth;
 }
 
 // ─── Logger ─────────────────────────────────────────────────────────────

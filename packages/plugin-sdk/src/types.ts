@@ -10,6 +10,9 @@ import type {
 } from "discord-api-types/v10";
 import type { Discord } from "./rpc/discord.js";
 import type { Voice } from "./rpc/voice.js";
+import type { Me } from "./rpc/me.js";
+import type { Kv } from "./rpc/kv.js";
+import type { Auth } from "./rpc/auth.js";
 
 // Re-exported so plugin authors can type their handler bodies against
 // the typed RPC facade without reaching into the `./rpc` subpath.
@@ -155,6 +158,21 @@ export interface CommandContext {
   /** Typed Voice RPC facade. See `Discord` notes. */
   voice: Voice;
   /**
+   * Plugin-introspection. `ctx.me.enabledGuilds()` for cross-guild
+   * background workers; `ctx.me.kvUsage(...)` for quota probes.
+   */
+  me: Me;
+  /**
+   * Typed per-guild key-value store with built-in JSON codec.
+   * `ctx.kv.guild<T>(guildId)`.
+   */
+  kv: Kv;
+  /**
+   * `ctx.auth.mintSession({ userId, kind, guildId })` — produce a
+   * `plugin-session` JWT for a WebUI link.
+   */
+  auth: Auth;
+  /**
    * Open a Discord modal as the response to this command. Wraps the
    * `interactions.send_modal` RPC with the interaction id/token already
    * filled in. Must be called within ~2.5 s of the dispatch — Discord
@@ -241,19 +259,29 @@ export type CommandReply =
  * — we don't enforce that here; Discord rejects mis-applied fields at
  * registration time with a helpful error.
  */
+/**
+ * `CommandOption.type` accepts either the SDK's string-literal form
+ * (`"string"`, `"integer"`, …) or the numeric `ApplicationCommandOptionType`
+ * enum from `discord-api-types` (re-exported from the SDK's index).
+ * Plugin authors picking from the enum keep their code free of magic
+ * numbers; legacy plugins continue working with the string form. The
+ * manifest builder normalises both to the on-wire string form.
+ */
+export type CommandOptionTypeName =
+  | "string"
+  | "integer"
+  | "boolean"
+  | "number"
+  | "channel"
+  | "user"
+  | "role"
+  | "mentionable"
+  | "attachment"
+  | "sub_command"
+  | "sub_command_group";
+
 export interface CommandOption {
-  type:
-    | "string"
-    | "integer"
-    | "boolean"
-    | "number"
-    | "channel"
-    | "user"
-    | "role"
-    | "mentionable"
-    | "attachment"
-    | "sub_command"
-    | "sub_command_group";
+  type: CommandOptionTypeName | number;
   name: string;
   description: string;
   /**
@@ -398,6 +426,12 @@ export interface ComponentContext {
   discord: Discord;
   /** Typed Voice RPC facade. */
   voice: Voice;
+  /** Plugin-introspection facade. See CommandContext.me. */
+  me: Me;
+  /** Typed per-guild KV. See CommandContext.kv. */
+  kv: Kv;
+  /** Session JWT minting. See CommandContext.auth. */
+  auth: Auth;
   /** BCP-47 locale from `interaction.locale`; null if not forwarded. */
   locale: string | null;
   /** BCP-47 server locale from `interaction.guildLocale`; null in DM. */
@@ -469,6 +503,12 @@ export interface ModalContext {
   discord: Discord;
   /** Typed Voice RPC facade. */
   voice: Voice;
+  /** Plugin-introspection facade. See CommandContext.me. */
+  me: Me;
+  /** Typed per-guild KV. See CommandContext.kv. */
+  kv: Kv;
+  /** Session JWT minting. See CommandContext.auth. */
+  auth: Auth;
   /** BCP-47 locale from `interaction.locale`; null if not forwarded. */
   locale: string | null;
   /** BCP-47 server locale; null in DM. */

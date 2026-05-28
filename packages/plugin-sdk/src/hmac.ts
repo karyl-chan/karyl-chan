@@ -54,3 +54,54 @@ export function isFreshTimestamp(ts: string, nowSec: number): boolean {
   if (!Number.isFinite(n)) return false;
   return Math.abs(nowSec - n) <= REPLAY_WINDOW_SECONDS;
 }
+
+/**
+ * One-call verification helper for plugins that mount their own
+ * bot-dispatched routes (custom webhook receivers, debug endpoints,
+ * …). For the built-in `/commands` / `/components` / `/modals` /
+ * `/events` / `/_kc/lifecycle` routes, the SDK already calls this
+ * internally — plugin authors should NOT re-verify those.
+ *
+ * Returns `{ ok: true }` when the signature is valid and the
+ * timestamp is fresh; otherwise `{ ok: false, reason }` with a short
+ * machine-readable string so the caller can map to an HTTP status
+ * (`401` is the common choice).
+ *
+ * Expected to be called with the raw request body bytes — Fastify
+ * authors typically register a content-type parser that hands the
+ * raw string through (see `server.ts`'s `addContentTypeParser`
+ * registration). JSON-parsed-then-re-stringified bodies do NOT
+ * verify; the canonical form is the bytes that crossed the wire.
+ */
+export function verifyDispatchHmac(args: {
+  secret: string;
+  method: string;
+  path: string;
+  body: string;
+  headers: Record<string, string | string[] | undefined>;
+  nowSec?: number;
+}):
+  | { ok: true }
+  | { ok: false; reason: "missing_timestamp" | "missing_signature" | "stale_timestamp" | "signature_mismatch" } {
+  const ts = args.headers[TIMESTAMP_HEADER];
+  const sig = args.headers[SIGNATURE_HEADER];
+  if (typeof ts !== "string") return { ok: false, reason: "missing_timestamp" };
+  if (typeof sig !== "string") return { ok: false, reason: "missing_signature" };
+  const nowSec = args.nowSec ?? Math.floor(Date.now() / 1000);
+  if (!isFreshTimestamp(ts, nowSec)) {
+    return { ok: false, reason: "stale_timestamp" };
+  }
+  if (
+    !verify({
+      secret: args.secret,
+      method: args.method,
+      path: args.path,
+      ts,
+      body: args.body,
+      presented: sig,
+    })
+  ) {
+    return { ok: false, reason: "signature_mismatch" };
+  }
+  return { ok: true };
+}

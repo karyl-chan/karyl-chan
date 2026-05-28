@@ -196,17 +196,46 @@ function verifyDispatchAuth(
  *   - `no_token`: plugin hasn't completed its first successful register
  *     yet (no auth token to send). Mostly a startup-race signal.
  *   - `network`: fetch threw — DNS, connection, abort, etc.
- *   - `http_status`: bot replied 4xx/5xx. `status` carries the HTTP code.
+ *   - `forbidden`: bot replied 403. Usually means the scope this RPC
+ *     needs isn't in the manifest's `rpcMethodsUsed` (auto-derived from
+ *     the typed facade — see `manifest-builder.ts`), OR the plugin row
+ *     is disabled / inactive on the bot, OR the per-guild feature gate
+ *     denied this guild.
+ *   - `quota_exceeded`: bot replied 413. The per-guild KV quota would
+ *     be exceeded by this `kv_set` / `kv_increment`. `status` is 413.
+ *   - `rate_limited`: bot replied 429 and the SDK exhausted its retry
+ *     budget (3 attempts with backoff). Callers should back off harder
+ *     or shed load — the SDK has already done the polite retry.
+ *   - `http_status`: every other 4xx/5xx. `status` carries the HTTP code.
+ *
+ * The narrow reasons (`forbidden` / `quota_exceeded` / `rate_limited`)
+ * always carry `status` set; `http_status` is the catch-all when the
+ * status doesn't map to one of those.
  */
+export type BotRpcErrorReason =
+  | "no_token"
+  | "network"
+  | "forbidden"
+  | "quota_exceeded"
+  | "rate_limited"
+  | "http_status";
+
 export class BotRpcError extends Error {
   constructor(
-    public readonly reason: "no_token" | "network" | "http_status",
+    public readonly reason: BotRpcErrorReason,
     message: string,
     public readonly status?: number,
   ) {
     super(message);
     this.name = "BotRpcError";
   }
+}
+
+function classifyHttpStatus(status: number): BotRpcErrorReason {
+  if (status === 403) return "forbidden";
+  if (status === 413) return "quota_exceeded";
+  if (status === 429) return "rate_limited";
+  return "http_status";
 }
 
 /**
@@ -322,9 +351,16 @@ export async function callBotRpc(
       { path, status: res.status, body: lastHttpText.slice(0, 200) },
       "bot rpc call failed",
     );
+    const reason = classifyHttpStatus(res.status);
+    const hint =
+      reason === "forbidden"
+        ? " (check manifest rpcMethodsUsed / per-guild feature enablement)"
+        : reason === "quota_exceeded"
+          ? " (per-guild KV quota would be exceeded)"
+          : "";
     throw new BotRpcError(
-      "http_status",
-      `bot rpc HTTP ${res.status}: ${lastHttpText.slice(0, 200)}`,
+      reason,
+      `bot rpc HTTP ${res.status}${hint}: ${lastHttpText.slice(0, 200)}`,
       res.status,
     );
   }
@@ -340,8 +376,12 @@ export async function callBotRpc(
       },
       "bot rpc retries exhausted",
     );
+    // Retries only run for 503 / 429 / network. 429 → rate_limited;
+    // 503 falls through as a transient http_status (operator-visible).
+    const reason: BotRpcErrorReason =
+      lastHttpStatus === 429 ? "rate_limited" : classifyHttpStatus(lastHttpStatus);
     throw new BotRpcError(
-      "http_status",
+      reason,
       `bot rpc HTTP ${lastHttpStatus} after ${MAX_RPC_RETRIES + 1} attempts: ${lastHttpText.slice(0, 200)}`,
       lastHttpStatus,
     );
@@ -768,6 +808,9 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
         botRpc: callRpc,
         discord: rpc.discord,
         voice: rpc.voice,
+        me: rpc.me,
+        kv: rpc.kv,
+        auth: rpc.auth,
         async sendModal(modal: ModalData): Promise<boolean> {
           // The command must have declared `modal: true` in its
           // manifest so the bot skipped its defer. If it did defer,
@@ -979,6 +1022,9 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
         botRpc: callRpc,
         discord: rpc.discord,
         voice: rpc.voice,
+        me: rpc.me,
+        kv: rpc.kv,
+        auth: rpc.auth,
         locale: payload.locale ?? null,
         guildLocale: payload.guild_locale ?? null,
       };
@@ -1192,6 +1238,9 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
         botRpc: callRpc,
         discord: rpc.discord,
         voice: rpc.voice,
+        me: rpc.me,
+        kv: rpc.kv,
+        auth: rpc.auth,
         locale: payload.locale ?? null,
         guildLocale: payload.guild_locale ?? null,
       };

@@ -130,13 +130,30 @@ describe("callBotRpc retry contract", () => {
   });
 
   it("does NOT retry on 4xx other than 429", async () => {
+    // 403 maps to the narrow `forbidden` reason (since 0.9), reserving
+    // the bare `http_status` label for codes that don't get a
+    // dedicated narrow reason.
     harness.setScript([{ status: 403, body: { error: "denied" } }]);
     await assert.rejects(
       () => callBotRpc(silentLog, harness.url(), "t", "/test", {}),
       (err: unknown) =>
         err instanceof BotRpcError &&
-        err.reason === "http_status" &&
+        err.reason === "forbidden" &&
         err.status === 403,
+    );
+    assert.equal(harness.attempts(), 1);
+  });
+
+  it("classifies 413 as quota_exceeded", async () => {
+    harness.setScript([
+      { status: 413, body: { error: "would exceed quota" } },
+    ]);
+    await assert.rejects(
+      () => callBotRpc(silentLog, harness.url(), "t", "/test", {}),
+      (err: unknown) =>
+        err instanceof BotRpcError &&
+        err.reason === "quota_exceeded" &&
+        err.status === 413,
     );
     assert.equal(harness.attempts(), 1);
   });
