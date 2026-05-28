@@ -39,6 +39,12 @@ import type { WebhookForwarder } from "./webhook-forwarder.service.js";
 import { findBehaviorById } from "../behavior/models/behavior.model.js";
 import { issueLoginLinkAndReply } from "../admin/admin-login.service.js";
 import { buildManualBehaviorsEmbed } from "./manual-list.js";
+import { t } from "../../i18n/index.js";
+
+// DM Message events from Discord don't carry per-user locale, so DM
+// replies fall back to the bot's default ("en"). A guild-locale lookup
+// isn't possible either — these messages come from a DM channel.
+const DM_LOCALE = "en" as const;
 
 // ── MessagePatternMatcher ─────────────────────────────────────────────────────
 
@@ -375,7 +381,10 @@ export class MessagePatternMatcher {
     const dmChannel = djsMessage.channel as DMChannel;
     await dmChannel
       .send({
-        content: ended ? "Session 已結束。" : "目前沒有活躍的 session。",
+        content: t(
+          DM_LOCALE,
+          ended ? "system.session-ended" : "system.no-session",
+        ),
         allowedMentions: { parse: [] },
       })
       .catch(() => {});
@@ -405,7 +414,10 @@ export class MessagePatternMatcher {
       const ended = await endSession(userId);
       await dmChannel
         .send({
-          content: ended ? "Session 已結束。" : "目前沒有活躍的 session。",
+          content: t(
+            DM_LOCALE,
+            ended ? "system.session-ended" : "system.no-session",
+          ),
           allowedMentions: { parse: [] },
         })
         .catch(() => {});
@@ -418,7 +430,7 @@ export class MessagePatternMatcher {
 
     if (systemKey === "manual") {
       const applicable = await collectApplicableBehaviorsForUser(userId);
-      const embed = buildManualBehaviorsEmbed(applicable);
+      const embed = buildManualBehaviorsEmbed(applicable, DM_LOCALE);
       if (embed) {
         await dmChannel
           .send({ embeds: [embed], allowedMentions: { parse: [] } })
@@ -426,7 +438,7 @@ export class MessagePatternMatcher {
       } else {
         await dmChannel
           .send({
-            content: "目前在私訊沒有可用行為。",
+            content: t(DM_LOCALE, "system.no-manual"),
             allowedMentions: { parse: [] },
           })
           .catch(() => {});

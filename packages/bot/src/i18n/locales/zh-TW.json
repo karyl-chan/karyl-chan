@@ -9,7 +9,30 @@
     "feature-disabled": "⚠ 此伺服器已停用 `{{featureKey}}` 功能。",
     "command-failed": "⚠ 指令處理失敗。",
     "modal-failed": "⚠ 表單處理失敗。",
-    "unknown-subcommand": "⚠ 未知子指令 '{{sub}}'"
+    "unknown-subcommand": "⚠ 未知子指令 '{{sub}}'",
+    "unknown-error": "未知錯誤",
+    "internal-error": "⚠ 內部錯誤：{{msg}}"
+  },
+  "system": {
+    "session-ended": "Session 已結束。",
+    "no-session": "目前沒有活躍的 session。",
+    "no-manual": "目前在私訊沒有可用行為。",
+    "cannot-load-manual": "⚠ 無法取得行為清單，請稍後再試。",
+    "unknown-system-command": "⚙ 未知的系統指令。",
+    "webhook-failed": "⚠ Behavior 轉發失敗：{{error}}",
+    "continuous-dm-warning": "\n\n⚠ 此行為設為持續轉發，但無法開啟與您的私訊頻道。請在 Discord 隱私設定中允許伺服器/應用程式私訊後再試一次。"
+  },
+  "manual": {
+    "embed-title": "私訊可用行為清單",
+    "embed-description": "目前對你適用的行為共 {{count}} 條：",
+    "embed-footer": "（僅顯示前 {{limit}} 條，共 {{total}} 條）",
+    "label-type-slash": "Slash 指令",
+    "label-type-message": "訊息模式",
+    "field-type": "**類型**：{{type}}",
+    "field-trigger": "**觸發**：`{{trigger}}`",
+    "field-description": "**說明**：{{desc}}",
+    "trigger-not-set": "(未設定)",
+    "message-trigger": "訊息觸發（{{kind}}）：{{value}}"
   },
   "role-emoji": {
     "command": {

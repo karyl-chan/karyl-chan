@@ -10,6 +10,7 @@
 
 import { EmbedBuilder } from "discord.js";
 import type { BehaviorRow } from "../behavior/models/behavior.model.js";
+import { t, type SupportedLocale } from "../../i18n/index.js";
 
 const DISCORD_EMBED_FIELD_LIMIT = 25;
 const DISCORD_EMBED_FIELD_NAME_MAX = 256;
@@ -23,23 +24,37 @@ function truncate(s: string, max: number): string {
 
 export function buildManualBehaviorsEmbed(
   behaviors: BehaviorRow[],
+  locale: SupportedLocale,
 ): EmbedBuilder | null {
   if (behaviors.length === 0) return null;
 
   const embed = new EmbedBuilder()
-    .setTitle("私訊可用行為清單")
-    .setDescription(`目前對你適用的行為共 ${behaviors.length} 條：`)
+    .setTitle(t(locale, "manual.embed-title"))
+    .setDescription(
+      t(locale, "manual.embed-description", { count: behaviors.length }),
+    )
     .setColor(0x5865f2);
+
+  const typeSlashLabel = t(locale, "manual.label-type-slash");
+  const typeMessageLabel = t(locale, "manual.label-type-message");
+  const notSetLabel = t(locale, "manual.trigger-not-set");
 
   for (const b of behaviors.slice(0, DISCORD_EMBED_FIELD_LIMIT)) {
     const triggerLabel =
       b.triggerType === "slash_command"
-        ? `/${b.slashCommandName ?? "(未設定)"}`
-        : `訊息觸發（${b.messagePatternKind ?? "?"}）：${b.messagePatternValue ?? ""}`;
+        ? `/${b.slashCommandName ?? notSetLabel}`
+        : t(locale, "manual.message-trigger", {
+            kind: b.messagePatternKind ?? "?",
+            value: b.messagePatternValue ?? "",
+          });
     const rawValue =
-      `**類型**：${b.triggerType === "slash_command" ? "Slash 指令" : "訊息模式"}\n` +
-      `**觸發**：\`${triggerLabel}\`\n` +
-      (b.description ? `**說明**：${b.description}` : "");
+      `${t(locale, "manual.field-type", {
+        type: b.triggerType === "slash_command" ? typeSlashLabel : typeMessageLabel,
+      })}\n` +
+      `${t(locale, "manual.field-trigger", { trigger: triggerLabel })}\n` +
+      (b.description
+        ? t(locale, "manual.field-description", { desc: b.description })
+        : "");
     // behavior.title / description / messagePatternValue 在 DB 是無限長 TEXT；
     // Discord embed 限制 name ≤256, value ≤1024，超界整個訊息會被 reject。
     // 截斷比靜默失敗好。
@@ -52,7 +67,10 @@ export function buildManualBehaviorsEmbed(
 
   if (behaviors.length > DISCORD_EMBED_FIELD_LIMIT) {
     embed.setFooter({
-      text: `（僅顯示前 ${DISCORD_EMBED_FIELD_LIMIT} 條，共 ${behaviors.length} 條）`,
+      text: t(locale, "manual.embed-footer", {
+        limit: DISCORD_EMBED_FIELD_LIMIT,
+        total: behaviors.length,
+      }),
     });
   }
 

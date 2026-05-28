@@ -9,7 +9,30 @@
     "feature-disabled": "⚠ The `{{featureKey}}` feature is disabled in this server.",
     "command-failed": "⚠ Command processing failed.",
     "modal-failed": "⚠ Form submission failed.",
-    "unknown-subcommand": "⚠ Unknown subcommand '{{sub}}'"
+    "unknown-subcommand": "⚠ Unknown subcommand '{{sub}}'",
+    "unknown-error": "Unknown error",
+    "internal-error": "⚠ Internal error: {{msg}}"
+  },
+  "system": {
+    "session-ended": "Session ended.",
+    "no-session": "No active session.",
+    "no-manual": "No behaviors are available via DM.",
+    "cannot-load-manual": "⚠ Could not load behavior list, please try again later.",
+    "unknown-system-command": "⚙ Unknown system command.",
+    "webhook-failed": "⚠ Behavior forward failed: {{error}}",
+    "continuous-dm-warning": "\n\n⚠ This behavior runs as continuous-forward but the bot couldn't open a DM with you. Please allow server / app DMs in your Discord privacy settings and try again."
+  },
+  "manual": {
+    "embed-title": "Available behaviors in DM",
+    "embed-description": "{{count}} behavior(s) currently applicable to you:",
+    "embed-footer": "(Showing the first {{limit}} of {{total}})",
+    "label-type-slash": "Slash command",
+    "label-type-message": "Message pattern",
+    "field-type": "**Type:** {{type}}",
+    "field-trigger": "**Trigger:** `{{trigger}}`",
+    "field-description": "**Description:** {{desc}}",
+    "trigger-not-set": "(not set)",
+    "message-trigger": "Message trigger ({{kind}}): {{value}}"
   },
   "role-emoji": {
     "command": {

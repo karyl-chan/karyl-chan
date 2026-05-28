@@ -9,7 +9,30 @@
     "feature-disabled": "⚠ 此服务器已停用 `{{featureKey}}` 功能。",
     "command-failed": "⚠ 指令处理失败。",
     "modal-failed": "⚠ 表单处理失败。",
-    "unknown-subcommand": "⚠ 未知子指令 '{{sub}}'"
+    "unknown-subcommand": "⚠ 未知子指令 '{{sub}}'",
+    "unknown-error": "未知错误",
+    "internal-error": "⚠ 内部错误:{{msg}}"
+  },
+  "system": {
+    "session-ended": "Session 已结束。",
+    "no-session": "目前没有活跃的 session。",
+    "no-manual": "目前在私聊没有可用行为。",
+    "cannot-load-manual": "⚠ 无法获取行为列表，请稍后再试。",
+    "unknown-system-command": "⚙ 未知的系统指令。",
+    "webhook-failed": "⚠ Behavior 转发失败:{{error}}",
+    "continuous-dm-warning": "\n\n⚠ 此行为设为持续转发，但无法开启与您的私聊频道。请在 Discord 隐私设置中允许服务器/应用私聊后再试一次。"
+  },
+  "manual": {
+    "embed-title": "私聊可用行为列表",
+    "embed-description": "目前对你适用的行为共 {{count}} 条:",
+    "embed-footer": "（仅显示前 {{limit}} 条，共 {{total}} 条）",
+    "label-type-slash": "Slash 指令",
+    "label-type-message": "消息模式",
+    "field-type": "**类型:** {{type}}",
+    "field-trigger": "**触发:** `{{trigger}}`",
+    "field-description": "**说明:** {{desc}}",
+    "trigger-not-set": "(未设置)",
+    "message-trigger": "消息触发（{{kind}}）:{{value}}"
   },
   "role-emoji": {
     "command": {

@@ -38,6 +38,7 @@ import type { DispatchOutcome } from "./types.js";
 import type { WebhookForwarder } from "./webhook-forwarder.service.js";
 import { collectApplicableBehaviorsForUser } from "./message-pattern-matcher.service.js";
 import { buildManualBehaviorsEmbed } from "./manual-list.js";
+import { resolveLocale, tForInteraction } from "../../i18n/index.js";
 
 // ── Discord webhook payload 建構（slash command → webhook body）─────────────
 
@@ -302,15 +303,10 @@ export class InteractionDispatcher {
 
     if (systemKey === "break") {
       const ended = await endSession(interaction.user.id);
-      if (ended) {
-        await interaction
-          .reply({ content: "Session 已結束。", ephemeral: true })
-          .catch(() => {});
-      } else {
-        await interaction
-          .reply({ content: "目前沒有活躍的 session。", ephemeral: true })
-          .catch(() => {});
-      }
+      const key = ended ? "system.session-ended" : "system.no-session";
+      await interaction
+        .reply({ content: tForInteraction(interaction, key), ephemeral: true })
+        .catch(() => {});
       return { claimed: true, claimedBy: "behavior_system" };
     }
 
@@ -327,7 +323,10 @@ export class InteractionDispatcher {
       { commandName: interaction.commandName, systemKey: unknownKey },
     );
     await interaction
-      .reply({ content: "⚙ 未知的系統指令。", ephemeral: true })
+      .reply({
+        content: tForInteraction(interaction, "system.unknown-system-command"),
+        ephemeral: true,
+      })
       .catch(() => {});
     return { claimed: true, claimedBy: "behavior_system" };
   }
@@ -358,18 +357,18 @@ export class InteractionDispatcher {
       );
       await interaction
         .reply({
-          content: "⚠ 無法取得行為清單，請稍後再試。",
+          content: tForInteraction(interaction, "system.cannot-load-manual"),
           ephemeral: true,
         })
         .catch(() => {});
       return { claimed: true, claimedBy: "behavior_system" };
     }
 
-    const embed = buildManualBehaviorsEmbed(behaviors);
+    const embed = buildManualBehaviorsEmbed(behaviors, resolveLocale(interaction));
     if (!embed) {
       await interaction
         .reply({
-          content: "目前在私訊沒有可用行為。",
+          content: tForInteraction(interaction, "system.no-manual"),
           ephemeral: true,
         })
         .catch(() => {});
@@ -419,7 +418,11 @@ export class InteractionDispatcher {
       if (!result.ok) {
         await interaction
           .editReply({
-            content: `⚠ Behavior 轉發失敗：${result.error ?? "未知錯誤"}`,
+            content: tForInteraction(interaction, "system.webhook-failed", {
+              error:
+                result.error ??
+                tForInteraction(interaction, "common.unknown-error"),
+            }),
           })
           .catch(() => {});
         return { claimed: true, claimedBy: "behavior_custom" };
@@ -453,7 +456,7 @@ export class InteractionDispatcher {
       // 原因是隱私設定關閉了 DMs），不然 user 會以為 session 已建立卻無
       // 法後續傳訊息進來。
       const dmWarning = dmStartFailed
-        ? "\n\n⚠ 此行為設為持續轉發，但無法開啟與您的私訊頻道。請在 Discord 隱私設定中允許伺服器/應用程式私訊後再試一次。"
+        ? tForInteraction(interaction, "system.continuous-dm-warning")
         : "";
 
       if (result.relayContent || dmStartFailed) {
@@ -473,7 +476,11 @@ export class InteractionDispatcher {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       await interaction
-        .editReply({ content: `⚠ 內部錯誤：${msg}` })
+        .editReply({
+          content: tForInteraction(interaction, "common.internal-error", {
+            msg,
+          }),
+        })
         .catch(() => {});
       botEventLog.record(
         "error",
