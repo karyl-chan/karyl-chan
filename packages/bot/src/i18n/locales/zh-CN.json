@@ -11,7 +11,7 @@
     "modal-failed": "⚠ 表单处理失败。",
     "unknown-subcommand": "⚠ 未知子指令 '{{sub}}'",
     "unknown-error": "未知错误",
-    "internal-error": "⚠ 内部错误:{{msg}}"
+    "internal-error": "⚠ 内部错误：{{msg}}"
   },
   "system": {
     "session-ended": "Session 已结束。",
@@ -19,20 +19,20 @@
     "no-manual": "目前在私聊没有可用行为。",
     "cannot-load-manual": "⚠ 无法获取行为列表，请稍后再试。",
     "unknown-system-command": "⚙ 未知的系统指令。",
-    "webhook-failed": "⚠ Behavior 转发失败:{{error}}",
+    "webhook-failed": "⚠ Behavior 转发失败：{{error}}",
     "continuous-dm-warning": "\n\n⚠ 此行为设为持续转发，但无法开启与您的私聊频道。请在 Discord 隐私设置中允许服务器/应用私聊后再试一次。"
   },
   "manual": {
     "embed-title": "私聊可用行为列表",
-    "embed-description": "目前对你适用的行为共 {{count}} 条:",
+    "embed-description": "目前对你适用的行为共 {{count}} 条：",
     "embed-footer": "（仅显示前 {{limit}} 条，共 {{total}} 条）",
     "label-type-slash": "Slash 指令",
     "label-type-message": "消息模式",
-    "field-type": "**类型:** {{type}}",
-    "field-trigger": "**触发:** `{{trigger}}`",
-    "field-description": "**说明:** {{desc}}",
+    "field-type": "**类型**：{{type}}",
+    "field-trigger": "**触发**：`{{trigger}}`",
+    "field-description": "**说明**：{{desc}}",
     "trigger-not-set": "(未设置)",
-    "message-trigger": "消息触发（{{kind}}）:{{value}}"
+    "message-trigger": "消息触发（{{kind}}）：{{value}}"
   },
   "role-emoji": {
     "command": {
@@ -59,27 +59,27 @@
     },
     "group": {
       "name-empty": "群组名称不能为空。",
-      "already-exists": "群组 `{{name}}` 已存在。",
-      "not-found": "群组 `{{name}}` 不存在。",
-      "created": "已建立群组 `{{name}}`。",
-      "deleted": "已删除群组 `{{name}}`。",
+      "already-exists": "群组 ``{{name}}`` 已存在。",
+      "not-found": "群组 ``{{name}}`` 不存在。",
+      "created": "已建立群组 ``{{name}}``。",
+      "deleted": "已删除群组 ``{{name}}``。",
       "none": "尚未定义任何群组。",
       "no-mappings": "_尚无对应_"
     },
     "mapping": {
-      "not-emoji": "`{{emoji}}` 不是 emoji。",
-      "already": "{{emoji}} 在此群组中已对应到 `{{roleName}}`。",
-      "added": "{{emoji}} = `{{roleName}}`（群组：`{{group}}`）",
-      "not-found": "在群组 `{{group}}` 中找不到 {{emoji}} 的对应。",
-      "removed": "已从 `{{group}}` 移除 {{emoji}}。"
+      "not-emoji": "``{{emoji}}`` 不是 emoji。",
+      "already": "{{emoji}} 在此群组中已对应到 ``{{roleName}}``。",
+      "added": "{{emoji}} = ``{{roleName}}``（群组：``{{group}}``）",
+      "not-found": "在群组 ``{{group}}`` 中找不到 {{emoji}} 的对应。",
+      "removed": "已从 ``{{group}}`` 移除 {{emoji}}。"
     },
     "watch": {
-      "message-not-found": "消息 `{{messageId}}` 不存在，或本频道无法访问。",
-      "bound": "消息 `{{messageId}}` 已绑定到群组 `{{group}}`。",
-      "watching": "已开始监听消息 `{{messageId}}`，套用群组 `{{group}}`。",
+      "message-not-found": "消息 ``{{messageId}}`` 不存在，或本频道无法访问。",
+      "bound": "消息 ``{{messageId}}`` 已绑定到群组 ``{{group}}``。",
+      "watching": "已开始监听消息 ``{{messageId}}``，套用群组 ``{{group}}``。",
       "cannot-react-prefix": "无法加上以下表情：",
-      "stopped": "已停止监听消息 `{{messageId}}`。",
-      "not-watched": "消息 `{{messageId}}` 不在监听列表中。"
+      "stopped": "已停止监听消息 ``{{messageId}}``。",
+      "not-watched": "消息 ``{{messageId}}`` 不在监听列表中。"
     }
   },
   "picture-only": {
@@ -160,7 +160,7 @@
     "left": "✓ 已离开语音频道。",
     "bad-url": "URL 格式不正确。",
     "http-only": "仅接受 http(s) URL。",
-    "playing": "✓ 开始播放 `{{url}}`（player:{{playerStatus}}）",
+    "playing": "✓ 开始播放 ``{{url}}``（player:{{playerStatus}}）",
     "not-joined": "尚未加入语音频道，请先 `/voice join`。",
     "ffmpeg-missing": "ffmpeg 不可用，语音播放停用。",
     "stopped": "✓ 已停止播放。",
@@ -169,7 +169,7 @@
       "channel": "**频道：** {{channel}}",
       "channel-none": "（无）",
       "playing": "**播放中：** {{playing}}",
-      "playing-url": "**URL：** `{{url}}`",
+      "playing-url": "**URL：** ``{{url}}``",
       "connection": "**connection：** {{status}}",
       "player": "**player：** {{status}}",
       "yes": "✓",

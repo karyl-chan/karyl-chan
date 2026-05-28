@@ -59,27 +59,27 @@
     },
     "group": {
       "name-empty": "Group name cannot be empty.",
-      "already-exists": "Group `{{name}}` already exists.",
-      "not-found": "Group `{{name}}` does not exist.",
-      "created": "Group `{{name}}` created.",
-      "deleted": "Group `{{name}}` deleted.",
+      "already-exists": "Group ``{{name}}`` already exists.",
+      "not-found": "Group ``{{name}}`` does not exist.",
+      "created": "Group ``{{name}}`` created.",
+      "deleted": "Group ``{{name}}`` deleted.",
       "none": "No groups defined.",
       "no-mappings": "_no mappings_"
     },
     "mapping": {
-      "not-emoji": "`{{emoji}}` is not an emoji.",
-      "already": "{{emoji}} is already mapped to `{{roleName}}` in this group.",
-      "added": "{{emoji}} = `{{roleName}}` (group: `{{group}}`)",
-      "not-found": "No mapping found for {{emoji}} in `{{group}}`.",
-      "removed": "{{emoji}} removed from `{{group}}`."
+      "not-emoji": "``{{emoji}}`` is not an emoji.",
+      "already": "{{emoji}} is already mapped to ``{{roleName}}`` in this group.",
+      "added": "{{emoji}} = ``{{roleName}}`` (group: ``{{group}}``)",
+      "not-found": "No mapping found for {{emoji}} in ``{{group}}``.",
+      "removed": "{{emoji}} removed from ``{{group}}``."
     },
     "watch": {
-      "message-not-found": "Message `{{messageId}}` does not exist or isn't accessible in this channel.",
-      "bound": "Message `{{messageId}}` is now bound to group `{{group}}`.",
-      "watching": "Message `{{messageId}}` is being watched with group `{{group}}`.",
+      "message-not-found": "Message ``{{messageId}}`` does not exist or isn't accessible in this channel.",
+      "bound": "Message ``{{messageId}}`` is now bound to group ``{{group}}``.",
+      "watching": "Message ``{{messageId}}`` is being watched with group ``{{group}}``.",
       "cannot-react-prefix": "Could not react with: ",
-      "stopped": "Message `{{messageId}}` is no longer being watched.",
-      "not-watched": "Message `{{messageId}}` is not being watched."
+      "stopped": "Message ``{{messageId}}`` is no longer being watched.",
+      "not-watched": "Message ``{{messageId}}`` is not being watched."
     }
   },
   "picture-only": {
@@ -160,7 +160,7 @@
     "left": "✓ Left voice channel.",
     "bad-url": "URL format is invalid.",
     "http-only": "Only http(s) URLs are accepted.",
-    "playing": "✓ Now playing `{{url}}` (player:{{playerStatus}})",
+    "playing": "✓ Now playing ``{{url}}`` (player:{{playerStatus}})",
     "not-joined": "Not in a voice channel — use `/voice join` first.",
     "ffmpeg-missing": "ffmpeg is unavailable; voice playback disabled.",
     "stopped": "✓ Playback stopped.",
@@ -169,7 +169,7 @@
       "channel": "**Channel:** {{channel}}",
       "channel-none": "(none)",
       "playing": "**Playing:** {{playing}}",
-      "playing-url": "**URL:** `{{url}}`",
+      "playing-url": "**URL:** ``{{url}}``",
       "connection": "**connection:** {{status}}",
       "player": "**player:** {{status}}",
       "yes": "✓",

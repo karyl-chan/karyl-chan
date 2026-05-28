@@ -59,27 +59,27 @@
     },
     "group": {
       "name-empty": "群組名稱不能為空。",
-      "already-exists": "群組 `{{name}}` 已存在。",
-      "not-found": "群組 `{{name}}` 不存在。",
-      "created": "已建立群組 `{{name}}`。",
-      "deleted": "已刪除群組 `{{name}}`。",
+      "already-exists": "群組 ``{{name}}`` 已存在。",
+      "not-found": "群組 ``{{name}}`` 不存在。",
+      "created": "已建立群組 ``{{name}}``。",
+      "deleted": "已刪除群組 ``{{name}}``。",
       "none": "尚未定義任何群組。",
       "no-mappings": "_尚無對應_"
     },
     "mapping": {
-      "not-emoji": "`{{emoji}}` 不是 emoji。",
-      "already": "{{emoji}} 在此群組中已對應到 `{{roleName}}`。",
-      "added": "{{emoji}} = `{{roleName}}`（群組：`{{group}}`）",
-      "not-found": "在群組 `{{group}}` 中找不到 {{emoji}} 的對應。",
-      "removed": "已從 `{{group}}` 移除 {{emoji}}。"
+      "not-emoji": "``{{emoji}}`` 不是 emoji。",
+      "already": "{{emoji}} 在此群組中已對應到 ``{{roleName}}``。",
+      "added": "{{emoji}} = ``{{roleName}}``（群組：``{{group}}``）",
+      "not-found": "在群組 ``{{group}}`` 中找不到 {{emoji}} 的對應。",
+      "removed": "已從 ``{{group}}`` 移除 {{emoji}}。"
     },
     "watch": {
-      "message-not-found": "訊息 `{{messageId}}` 不存在，或本頻道無法存取。",
-      "bound": "訊息 `{{messageId}}` 已綁定到群組 `{{group}}`。",
-      "watching": "已開始監看訊息 `{{messageId}}`，套用群組 `{{group}}`。",
+      "message-not-found": "訊息 ``{{messageId}}`` 不存在，或本頻道無法存取。",
+      "bound": "訊息 ``{{messageId}}`` 已綁定到群組 ``{{group}}``。",
+      "watching": "已開始監看訊息 ``{{messageId}}``，套用群組 ``{{group}}``。",
       "cannot-react-prefix": "無法加上以下表情：",
-      "stopped": "已停止監看訊息 `{{messageId}}`。",
-      "not-watched": "訊息 `{{messageId}}` 不在監看清單中。"
+      "stopped": "已停止監看訊息 ``{{messageId}}``。",
+      "not-watched": "訊息 ``{{messageId}}`` 不在監看清單中。"
     }
   },
   "picture-only": {
@@ -160,7 +160,7 @@
     "left": "✓ 已離開語音頻道。",
     "bad-url": "URL 格式不正確。",
     "http-only": "僅接受 http(s) URL。",
-    "playing": "✓ 開始播放 `{{url}}`（player:{{playerStatus}}）",
+    "playing": "✓ 開始播放 ``{{url}}``（player:{{playerStatus}}）",
     "not-joined": "尚未加入語音頻道，請先 `/voice join`。",
     "ffmpeg-missing": "ffmpeg 不可用，語音播放停用。",
     "stopped": "✓ 已停止播放。",
@@ -169,7 +169,7 @@
       "channel": "**頻道：** {{channel}}",
       "channel-none": "（無）",
       "playing": "**播放中：** {{playing}}",
-      "playing-url": "**URL：** `{{url}}`",
+      "playing-url": "**URL：** ``{{url}}``",
       "connection": "**connection：** {{status}}",
       "player": "**player：** {{status}}",
       "yes": "✓",
