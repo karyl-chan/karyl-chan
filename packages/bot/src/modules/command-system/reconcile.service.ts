@@ -888,14 +888,22 @@ export class CommandReconciler {
         integrationTypes,
         contexts,
         cmdManifest.options,
-        {
-          ...(cmdManifest.description_localizations
-            ? { description_localizations: cmdManifest.description_localizations }
-            : {}),
-          ...(cmdManifest.name_localizations
-            ? { name_localizations: cmdManifest.name_localizations }
-            : {}),
-        },
+        (() => {
+          // Accept either snake_case (SDK 0.8+ canonical) or camelCase
+          // (plugins built against older SDKs that emit camelCase via
+          // module augmentation) so neither shape is silently dropped.
+          const cm = cmdManifest as typeof cmdManifest & {
+            descriptionLocalizations?: Record<string, string>;
+            nameLocalizations?: Record<string, string>;
+          };
+          const descLoc =
+            cm.description_localizations ?? cm.descriptionLocalizations;
+          const nameLoc = cm.name_localizations ?? cm.nameLocalizations;
+          return {
+            ...(descLoc ? { description_localizations: descLoc } : {}),
+            ...(nameLoc ? { name_localizations: nameLoc } : {}),
+          };
+        })(),
       );
     } catch (err) {
       if (err instanceof RejectionError) {

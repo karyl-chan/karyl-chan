@@ -101,15 +101,20 @@ export function manifestOptionToData(
     description: o.description ?? o.name,
     required: o.required ?? false,
   } as Record<string, unknown>;
-  // Discord per-locale overrides for the picker UI. SDK 0.7+ ships
-  // these via snake_case on the manifest wire shape; discord.js wants
-  // camelCase on the registration payload, so map here.
-  if (o.description_localizations) {
-    base.descriptionLocalizations = o.description_localizations;
-  }
-  if (o.name_localizations) {
-    base.nameLocalizations = o.name_localizations;
-  }
+  // Discord per-locale overrides for the picker UI. SDK 0.8+ emits
+  // these in snake_case on the manifest wire shape, but plugins
+  // built against older SDKs (or built with camelCase via module
+  // augmentation) may ship the camelCase form. Accept both so a
+  // plugin downgrade doesn't silently lose the localizations.
+  const descLoc =
+    o.description_localizations ??
+    (o as { descriptionLocalizations?: Record<string, string> })
+      .descriptionLocalizations;
+  if (descLoc) base.descriptionLocalizations = descLoc;
+  const nameLoc =
+    o.name_localizations ??
+    (o as { nameLocalizations?: Record<string, string> }).nameLocalizations;
+  if (nameLoc) base.nameLocalizations = nameLoc;
   // Sub-commands can carry nested options; flat options can't.
   if (
     o.options &&
@@ -151,6 +156,18 @@ function manifestToApplicationCommand(
     dmPermission: cmd.dm_permission ?? undefined,
     options: (cmd.options ?? []).map(manifestOptionToData),
   };
+  // Top-level per-locale picker overrides. Accept both snake_case
+  // (SDK 0.8+ canonical) and camelCase (plugins via module
+  // augmentation against older SDKs).
+  const cmdAny = cmd as ManifestCommand & {
+    descriptionLocalizations?: Record<string, string>;
+    nameLocalizations?: Record<string, string>;
+  };
+  const descLoc =
+    cmd.description_localizations ?? cmdAny.descriptionLocalizations;
+  if (descLoc) data.descriptionLocalizations = descLoc;
+  const nameLoc = cmd.name_localizations ?? cmdAny.nameLocalizations;
+  if (nameLoc) data.nameLocalizations = nameLoc;
   if (cmd.contexts && cmd.contexts.length > 0) {
     const mapped = cmd.contexts
       .map((c) => CONTEXT_MAP[c])

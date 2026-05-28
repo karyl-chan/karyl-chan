@@ -11,7 +11,35 @@ import type {
   PluginCommandDefinition,
   PluginConfig,
 } from "./plugin.js";
+import type { CommandOption } from "./types.js";
 import { createRequire } from "node:module";
+
+/**
+ * Plugin authors writing options may use either snake_case
+ * (`description_localizations`, the SDK type field) or camelCase
+ * (`descriptionLocalizations`, what discord.js itself uses elsewhere
+ * — a tempting copy-paste from raw Discord docs). Normalise both into
+ * the snake_case wire form so the bot's relayer sees a consistent
+ * shape regardless of which form the plugin wrote.
+ */
+function normalizeOption(
+  o: CommandOption & {
+    descriptionLocalizations?: Record<string, string>;
+    nameLocalizations?: Record<string, string>;
+  },
+): CommandOption {
+  const descLoc = o.description_localizations ?? o.descriptionLocalizations;
+  const nameLoc = o.name_localizations ?? o.nameLocalizations;
+  const { descriptionLocalizations, nameLocalizations, ...rest } = o;
+  void descriptionLocalizations;
+  void nameLocalizations;
+  return {
+    ...rest,
+    ...(descLoc ? { description_localizations: descLoc } : {}),
+    ...(nameLoc ? { name_localizations: nameLoc } : {}),
+    ...(o.options ? { options: o.options.map(normalizeOption) } : {}),
+  };
+}
 
 // Pulled in so `buildManifest` can stamp the SDK version onto every
 // manifest. Bot reads this for per-version compat shims. We use
@@ -109,7 +137,7 @@ export function buildManifest(
       scope: cmd.scope,
       integration_types: cmd.integrationTypes,
       contexts: cmd.contexts,
-      ...(cmd.options ? { options: cmd.options } : {}),
+      ...(cmd.options ? { options: cmd.options.map(normalizeOption) } : {}),
       ...(cmd.descriptionLocalizations
         ? { description_localizations: cmd.descriptionLocalizations }
         : {}),
@@ -171,7 +199,7 @@ export function buildManifest(
                 scope: cmd.scope,
                 integration_types: cmd.integrationTypes,
                 contexts: cmd.contexts,
-                ...(cmd.options ? { options: cmd.options } : {}),
+                ...(cmd.options ? { options: cmd.options.map(normalizeOption) } : {}),
                 ...(cmd.descriptionLocalizations
                   ? { description_localizations: cmd.descriptionLocalizations }
                   : {}),
