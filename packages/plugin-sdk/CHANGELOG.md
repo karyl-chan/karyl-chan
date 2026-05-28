@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.7.0...plugin-sdk-v0.8.0) (2026-05-28)
+
+
+### Features
+
+* **sdk, bot:** forward descriptionLocalizations / nameLocalizations end-to-end ([c151367](https://github.com/karyl-chan/karyl-chan/commit/c151367080fd501bd579d74539d0e1b37fa3d279))
+
 ## [0.7.0](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.6.1...plugin-sdk-v0.7.0) (2026-05-28)
 
 
