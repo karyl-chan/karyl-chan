@@ -556,6 +556,13 @@ function serializeMessageForPlugin(message: Message): Record<string, unknown> {
       content_type: a.contentType,
       size: a.size,
     })),
+    // Mentioned user ids + @everyone flag, and the replied-to message reference,
+    // so plugins can detect being addressed / threading without a refetch.
+    mentions: [...message.mentions.users.keys()],
+    mention_everyone: message.mentions.everyone,
+    message_reference: message.reference?.messageId
+      ? { message_id: message.reference.messageId, channel_id: message.reference.channelId ?? null }
+      : null,
     timestamp: message.createdAt.toISOString(),
   };
 }
