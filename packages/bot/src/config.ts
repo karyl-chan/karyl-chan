@@ -4,7 +4,23 @@
  * 所有 env 在此處讀取一次，型別安全地暴露為凍結物件。
  * 其他模組透過 `import { config } from "../config.js"` 取用，
  * 不再直接讀 process.env。
+ *
+ * PR-5.1: the security-relevant secrets (BOT_TOKEN, ENCRYPTION_KEY) are
+ * sourced through the SecretProvider so an external backend (k8s Secret /
+ * Vault Agent files, `SECRET_PROVIDER=file`) can supply them. The default
+ * (`SECRET_PROVIDER` unset) is the in-process env provider, i.e. exactly
+ * the same `process.env` read as before. config.ts builds the provider
+ * directly via `selectSecretProvider` rather than the adapter registry to
+ * avoid a load-time cycle (registry statically imports the Redis adapters,
+ * which import this config module).
  */
+
+import { selectSecretProvider } from "./adapters/secret-provider.js";
+import { FileSecretProvider } from "./adapters/file-secret-provider.js";
+
+// Provider used at config load to source the boot-time secrets. Selected
+// from SECRET_PROVIDER; defaults to the in-process env provider.
+const bootSecrets = selectSecretProvider(() => new FileSecretProvider());
 
 export interface AppConfig {
   env: "production" | "development" | "test";
@@ -160,7 +176,7 @@ function loadConfig(): AppConfig {
         ? "test"
         : "development";
 
-  const botToken = strEnv("BOT_TOKEN");
+  const botToken = bootSecrets.getSecret("BOT_TOKEN");
   // In test environments BOT_TOKEN is intentionally not set (tests mock
   // the bot client or only test HTTP / DB layers). Only enforce in
   // non-test environments so the config module can be imported by tests.
@@ -211,7 +227,7 @@ function loadConfig(): AppConfig {
       botEventsSqlitePath: strEnv("BOT_EVENTS_SQLITE_DB_PATH"),
     },
     crypto: {
-      encryptionKey: strEnv("ENCRYPTION_KEY"),
+      encryptionKey: bootSecrets.getSecret("ENCRYPTION_KEY"),
     },
     jwt: {
       loginLinkTtlMs: parseIntEnv("JWT_LOGIN_LINK_TTL_MS", 5 * 60 * 1000),
@@ -276,7 +292,7 @@ function loadConfig(): AppConfig {
     voice: {
       ffmpegPath: strEnv("FFMPEG_PATH"),
       serviceUrl: strEnv("VOICE_SERVICE_URL"),
-      hmacSecret: strEnv("VOICE_HMAC_SECRET"),
+      hmacSecret: bootSecrets.getSecret("VOICE_HMAC_SECRET"),
     },
   };
 

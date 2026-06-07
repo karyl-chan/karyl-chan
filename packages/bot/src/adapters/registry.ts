@@ -33,6 +33,11 @@ import {
 } from "./voice-state-store.js";
 import { type SessionStore } from "./session-store.js";
 import { InProcessSessionStore } from "./in-process-session-store.js";
+import {
+  type SecretProvider,
+  selectSecretProvider,
+} from "./secret-provider.js";
+import { FileSecretProvider } from "./file-secret-provider.js";
 import { type PluginEventBus } from "./plugin-event-bus.js";
 import { RedisPluginMetricsStore } from "./redis/plugin-metrics-store.js";
 import { RedisPluginHealthStore } from "./redis/plugin-health-store.js";
@@ -49,6 +54,7 @@ interface AdapterCache {
   voiceStateStore?: VoiceStateStore;
   sessionStore?: SessionStore;
   pluginEventBus?: PluginEventBus;
+  secretProvider?: SecretProvider;
 }
 
 const cache: AdapterCache = {};
@@ -177,6 +183,24 @@ export function getPluginEventBus(): PluginEventBus | null {
   unknownImpl("EVENT_BUS", choice);
 }
 
+/**
+ * Central secret source (PR-5.1). `getSecret`/`getRotatable` for the
+ * security-relevant secrets (bot token, encryption key, voice HMAC) flow
+ * through here so an external backend can supply them and a shared key can
+ * be rotated within a verification window.
+ *
+ * Selection mirrors the other adapters:
+ *   unset / `env` / `inprocess` → InProcessSecretProvider (reads
+ *      process.env exactly as before; opt-in `<ENV>_PREVIOUS` rotation).
+ *   `file` → FileSecretProvider (k8s Secret mount / Vault Agent files
+ *      under SECRET_DIR, env fallback per key).
+ */
+export function getSecretProvider(): SecretProvider {
+  if (cache.secretProvider) return cache.secretProvider;
+  cache.secretProvider = selectSecretProvider(() => new FileSecretProvider());
+  return cache.secretProvider;
+}
+
 export function __resetAdaptersForTests(): void {
   cache.pluginMetricsStore = undefined;
   cache.pluginHealthStore = undefined;
@@ -185,4 +209,5 @@ export function __resetAdaptersForTests(): void {
   cache.voiceStateStore = undefined;
   cache.sessionStore = undefined;
   cache.pluginEventBus = undefined;
+  cache.secretProvider = undefined;
 }

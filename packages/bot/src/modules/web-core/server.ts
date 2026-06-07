@@ -111,6 +111,7 @@ import { registerBotFeatureRoutes } from "../feature-toggle/bot-feature-routes.j
 import { registerPluginRpcRoutes } from "../plugin-system/plugin-rpc-routes.js";
 import { registerVoiceRpcRoutes } from "../voice/voice-rpc.js";
 import { registerVoiceInternalRoutes } from "../voice/voice-internal-routes.js";
+import { getVerificationKeys } from "../../utils/secrets.js";
 import {
   pluginAuthStore,
   type PluginAuthRecord,
@@ -725,7 +726,10 @@ export async function createWebServer(
   // (503 when no shared secret), so they're harmless to mount unconditionally.
   await registerVoiceInternalRoutes(server, {
     bot,
-    secret: config.voice.hmacSecret,
+    // Rotation-aware: [current] or [current, previous] from the
+    // SecretProvider so VOICE_HMAC_SECRET can be rolled without a
+    // synchronized bot+voice restart.
+    secrets: getVerificationKeys("VOICE_HMAC_SECRET"),
   });
   await registerBotFeatureRoutes(server, { bot });
 

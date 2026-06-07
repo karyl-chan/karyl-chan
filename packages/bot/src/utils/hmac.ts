@@ -126,6 +126,54 @@ export function verifyInboundSignature(
 }
 
 /**
+ * Rotation-aware inbound verification (PR-5.1).
+ *
+ * Tries each candidate secret in order and accepts the response if ANY of
+ * them validates. This lets a *shared* static secret (e.g. the bot↔voice
+ * VOICE_HMAC_SECRET) be rotated without a synchronized restart: during the
+ * rotation window the verifier holds `[current, previous]`, so it accepts
+ * signatures from a counterpart still on either key.
+ *
+ * The single-key path is preserved exactly: pass a one-element array and
+ * the behaviour is byte-for-byte `verifyInboundSignature`. An empty array
+ * fails closed (no configured secret ⇒ reject).
+ *
+ * Note the timestamp/replay checks are independent of the key, so the
+ * common rejection reasons (missing/expired timestamp) short-circuit
+ * before any key is tried — only a genuine signature mismatch walks the
+ * full candidate list, and the reason returned is the last attempt's.
+ */
+export function verifyInboundSignatureWithKeys(
+  secrets: readonly string[],
+  headers: Headers,
+  rawBody: string,
+  nowSec: number,
+  method: string,
+  urlPath: string,
+): SignatureCheck {
+  if (secrets.length === 0) {
+    return { ok: false, reason: "no verification key configured" };
+  }
+  let last: SignatureCheck = { ok: false, reason: "no verification key configured" };
+  for (const secret of secrets) {
+    last = verifyInboundSignature(
+      secret,
+      headers,
+      rawBody,
+      nowSec,
+      method,
+      urlPath,
+    );
+    if (last.ok) return last;
+    // A timestamp-level failure (missing/malformed/outside-window) is the
+    // same for every key, so stop early rather than re-checking — only a
+    // signature mismatch is worth trying the next key against.
+    if (last.reason !== "response signature mismatch") return last;
+  }
+  return last;
+}
+
+/**
  * Verify HMAC headers on an inbound REQUEST whose headers are a plain record
  * (Fastify `request.headers`) rather than a fetch `Headers`. Same scheme as
  * `verifyInboundSignature` — used by the bot's internal voice routes
@@ -139,9 +187,49 @@ export function verifyInboundSignatureFromHeaders(
   method: string,
   urlPath: string,
 ): SignatureCheck {
-  // Adapt the Fastify record headers to a fetch `Headers` and reuse the
-  // single verified core in `verifyInboundSignature` — the replay-window +
-  // constant-time compare must live in exactly one place, not be cloned.
+  return verifyInboundSignature(
+    secret,
+    recordHeadersToFetch(headers),
+    rawBody,
+    nowSec,
+    method,
+    urlPath,
+  );
+}
+
+/**
+ * Rotation-aware variant of `verifyInboundSignatureFromHeaders` (PR-5.1):
+ * accepts the request if any of `secrets` validates. Used by the bot's
+ * internal voice routes so the shared VOICE_HMAC_SECRET can be rotated
+ * (current + previous) without restarting both bot and voice service at
+ * once. Single-element array == the single-key behaviour.
+ */
+export function verifyInboundSignatureFromHeadersWithKeys(
+  secrets: readonly string[],
+  headers: Record<string, string | string[] | undefined>,
+  rawBody: string,
+  nowSec: number,
+  method: string,
+  urlPath: string,
+): SignatureCheck {
+  return verifyInboundSignatureWithKeys(
+    secrets,
+    recordHeadersToFetch(headers),
+    rawBody,
+    nowSec,
+    method,
+    urlPath,
+  );
+}
+
+/**
+ * Adapt Fastify record headers to a fetch `Headers` carrying just the two
+ * signature headers, so the replay-window + constant-time compare live in
+ * exactly one place (`verifyInboundSignature`) and are never cloned.
+ */
+function recordHeadersToFetch(
+  headers: Record<string, string | string[] | undefined>,
+): Headers {
   const one = (v: string | string[] | undefined): string | undefined =>
     Array.isArray(v) ? v[0] : v;
   const h = new Headers();
@@ -149,7 +237,7 @@ export function verifyInboundSignatureFromHeaders(
   const sig = one(headers[SIGNATURE_HEADER]);
   if (ts) h.set(TIMESTAMP_HEADER, ts);
   if (sig) h.set(SIGNATURE_HEADER, sig);
-  return verifyInboundSignature(secret, h, rawBody, nowSec, method, urlPath);
+  return h;
 }
 
 // ─── Signed POST ──────────────────────────────────────────────────────

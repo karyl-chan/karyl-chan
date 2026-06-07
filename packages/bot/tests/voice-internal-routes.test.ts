@@ -51,7 +51,7 @@ function fakeBot(opts: { hasGuild: boolean; shard: ShardSendSpy }): Client {
 
 async function buildApp(bot: Client | undefined): Promise<FastifyInstance> {
   const app = Fastify();
-  await registerVoiceInternalRoutes(app, { bot, secret: SECRET });
+  await registerVoiceInternalRoutes(app, { bot, secrets: [SECRET] });
   await app.ready();
   return app;
 }
@@ -157,7 +157,7 @@ describe("bot internal voice routes", () => {
     const app = Fastify();
     await registerVoiceInternalRoutes(app, {
       bot: fakeBot({ hasGuild: true, shard: { sent: [] } }),
-      secret: null,
+      secrets: [],
     });
     await app.ready();
     const res = await app.inject({

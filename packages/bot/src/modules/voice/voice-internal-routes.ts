@@ -23,7 +23,7 @@
  */
 import type { Client } from "discord.js";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { verifyInboundSignatureFromHeaders } from "../../utils/hmac.js";
+import { verifyInboundSignatureFromHeadersWithKeys } from "../../utils/hmac.js";
 import { moduleLogger } from "../../logger.js";
 
 const log = moduleLogger("voice-internal-routes");
@@ -42,15 +42,20 @@ export function resetActiveRemoteGuildsForTest(): void {
 
 export interface VoiceInternalRoutesOptions {
   bot?: Client;
-  /** Shared HMAC secret; routes 401 everything if absent (misconfig guard). */
-  secret: string | null;
+  /**
+   * Verification keys for the shared bot↔voice HMAC secret, sourced from
+   * the SecretProvider: `[current]`, or `[current, previous]` during a
+   * rotation window. Empty array ⇒ routes 503 everything (misconfig
+   * guard / no shared secret configured).
+   */
+  secrets: readonly string[];
 }
 
 export async function registerVoiceInternalRoutes(
   server: FastifyInstance,
   options: VoiceInternalRoutesOptions,
 ): Promise<void> {
-  const { bot, secret } = options;
+  const { bot, secrets } = options;
 
   // Encapsulated scope so the raw-string parser doesn't affect the rest of
   // the bot's API (which relies on Fastify's default JSON object parsing).
@@ -62,13 +67,13 @@ export async function registerVoiceInternalRoutes(
     );
 
     function verify(request: FastifyRequest, reply: FastifyReply): boolean {
-      if (!secret) {
+      if (secrets.length === 0) {
         reply.code(503).send({ error: "voice HMAC secret not configured" });
         return false;
       }
       const rawBody = typeof request.body === "string" ? request.body : "";
-      const check = verifyInboundSignatureFromHeaders(
-        secret,
+      const check = verifyInboundSignatureFromHeadersWithKeys(
+        secrets,
         request.headers,
         rawBody,
         Math.floor(Date.now() / 1000),
