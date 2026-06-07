@@ -1,0 +1,137 @@
+{
+  "$comment": [
+    "Canonical bot<->SDK wire-contract fixtures. SINGLE SOURCE OF TRUTH.",
+    "Consumed by BOTH packages' contract tests:",
+    "  - SDK:  packages/plugin-sdk/tests/contract/*.test.ts (imports this JSON directly).",
+    "  - bot:  packages/bot/tests/contract-*.test.ts (reads this file at runtime via fs",
+    "          using a path relative to the test file, so there is exactly ONE copy and",
+    "          the two sides can never silently drift apart).",
+    "If you change the wire contract (HMAC scheme, stream-key convention, RPC paths,",
+    "event names, register/dispatch envelope), update this file AND both sides' code;",
+    "any side that disagrees with these literals goes red.",
+    "",
+    "Regenerate the HMAC expectedHex values with:",
+    "  node -e \"console.log(require('crypto').createHmac('sha256', SECRET).update(METHOD+':'+PATH+':'+TS+':'+BODY).digest('hex'))\""
+  ],
+  "hmac": {
+    "signatureHeader": "x-karyl-signature",
+    "timestampHeader": "x-karyl-timestamp",
+    "replayWindowSeconds": 300,
+    "payloadFormat": "<METHOD>:<path>:<ts>:<body>",
+    "golden": [
+      {
+        "name": "command-dispatch",
+        "secret": "contract-secret-1",
+        "method": "POST",
+        "path": "/commands/uuid",
+        "ts": "1700000000",
+        "body": "{\"command_name\":\"uuid\"}",
+        "expectedHex": "6a166bdc2687da6fd0e6a3860e20fdda31eb3bef8259168f28bcdcf9b3cc8617"
+      },
+      {
+        "name": "events-dispatch",
+        "secret": "contract-secret-1",
+        "method": "POST",
+        "path": "/events",
+        "ts": "1700001234",
+        "body": "{\"type\":\"guild.message_create\",\"data\":{\"id\":\"1\"}}",
+        "expectedHex": "113ab9990c0759ebc5af99625488bb3eef655b1feca88f47cf913536bde750d9"
+      },
+      {
+        "name": "lifecycle-dispatch",
+        "secret": "another-secret",
+        "method": "POST",
+        "path": "/_kc/lifecycle",
+        "ts": "1699999999",
+        "body": "{\"type\":\"plugin.guild.enabled\"}",
+        "expectedHex": "0638f90d23e27b1e08e94c539e651d70e863912d3ddb709190b14e51c9c00db8"
+      },
+      {
+        "name": "empty-body-get",
+        "secret": "another-secret",
+        "method": "GET",
+        "path": "/health",
+        "ts": "1699999999",
+        "body": "",
+        "expectedHex": "2a1fc539d2df463c667b42ed4f9c6777becfa2b4af3d438897a573f502210e7c"
+      }
+    ]
+  },
+  "streams": {
+    "streamPrefix": "karyl:events:",
+    "dlqSuffix": ":dlq",
+    "fields": ["type", "data", "trace", "traceparent"],
+    "samples": [
+      {
+        "eventType": "guild.message_create",
+        "streamKey": "karyl:events:guild.message_create",
+        "dlqKey": "karyl:events:guild.message_create:dlq"
+      },
+      {
+        "eventType": "dm.message_create",
+        "streamKey": "karyl:events:dm.message_create",
+        "dlqKey": "karyl:events:dm.message_create:dlq"
+      },
+      {
+        "eventType": "guild.message_reaction_add",
+        "streamKey": "karyl:events:guild.message_reaction_add",
+        "dlqKey": "karyl:events:guild.message_reaction_add:dlq"
+      }
+    ]
+  },
+  "events": {
+    "$comment": "Canonical Discord-side event type names the bot dispatches as the `type` field. SDK exports these via `Events`; the bot emits these exact strings (see bot main.ts dispatchEventToPlugins calls).",
+    "canonical": [
+      "guild.message_create",
+      "dm.message_create",
+      "guild.message_reaction_add",
+      "guild.message_reaction_remove"
+    ]
+  },
+  "dispatchEnvelope": {
+    "$comment": "Shape the bot POSTs to the SDK-mounted /events and /_kc/lifecycle routes (HTTP fan-out) AND the field layout of the Redis-Streams transport. Both carry { type, data }.",
+    "httpBodyKeys": ["type", "data"]
+  },
+  "rpc": {
+    "$comment": "Every RPC path the SDK typed facade (rpc/*.ts) calls. The bot MUST serve each one (registerPluginRpcRoutes + voice-rpc). Drift = a plugin call that 404s. botRpc escape hatch can reach others not listed here.",
+    "pathsCalledBySdk": [
+      "/api/plugin/messages.send",
+      "/api/plugin/messages.edit",
+      "/api/plugin/messages.delete",
+      "/api/plugin/messages.add_reaction",
+      "/api/plugin/members.get",
+      "/api/plugin/interactions.respond",
+      "/api/plugin/interactions.followup",
+      "/api/plugin/interactions.send_modal",
+      "/api/plugin/storage.kv_get",
+      "/api/plugin/storage.kv_set",
+      "/api/plugin/storage.kv_delete",
+      "/api/plugin/storage.kv_increment",
+      "/api/plugin/storage.kv_list",
+      "/api/plugin/storage.kv_list_values",
+      "/api/plugin/me/enabled_guilds",
+      "/api/plugin/me/kv_usage",
+      "/api/plugin/auth.session",
+      "/api/plugin/voice.join",
+      "/api/plugin/voice.leave",
+      "/api/plugin/voice.play",
+      "/api/plugin/voice.pause",
+      "/api/plugin/voice.stop",
+      "/api/plugin/voice.status"
+    ]
+  },
+  "register": {
+    "$comment": "POST /api/plugins/register response fields the SDK client consumes (client.ts). `token` is required; the rest are optional but the bot currently sends them.",
+    "endpoint": "/api/plugins/register",
+    "setupSecretHeader": "X-Plugin-Setup-Secret",
+    "requiredResponseFields": ["token"],
+    "optionalResponseFields": [
+      "plugin",
+      "dispatchHmacKey",
+      "sessionVerifyPublicKey",
+      "publicBaseUrl",
+      "heartbeat"
+    ],
+    "heartbeatEndpoint": "/api/plugins/heartbeat"
+  }
+}
