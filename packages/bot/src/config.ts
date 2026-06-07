@@ -100,6 +100,13 @@ export interface AppConfig {
   voice: {
     /** Override the resolved ffmpeg path. Empty/unset → resolve from PATH. */
     ffmpegPath: string | null;
+    /**
+     * Base URL of the standalone voice service (PR-2.3 full split). Empty/unset
+     * (the single-machine default) → voice runs in-process, unchanged.
+     */
+    serviceUrl: string | null;
+    /** Shared HMAC secret for the bot↔voice-service internal channel. */
+    hmacSecret: string | null;
   };
 }
 
@@ -268,6 +275,8 @@ function loadConfig(): AppConfig {
     },
     voice: {
       ffmpegPath: strEnv("FFMPEG_PATH"),
+      serviceUrl: strEnv("VOICE_SERVICE_URL"),
+      hmacSecret: strEnv("VOICE_HMAC_SECRET"),
     },
   };
 

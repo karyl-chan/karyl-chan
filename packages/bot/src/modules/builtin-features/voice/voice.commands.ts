@@ -6,14 +6,7 @@ import {
   type GuildMember,
 } from "discord.js";
 import { registerInProcessCommand } from "../in-process-command-registry.service.js";
-import {
-  joinVoice,
-  leaveVoice,
-  playUrl,
-  stopPlayback,
-  getStatus,
-  VoiceCapacityError,
-} from "../../voice/voice-manager.service.js";
+import { getVoiceBackend, VoiceCapacityError } from "../../voice/voice-backend.js";
 import { FAILED_COLOR, SUCCEEDED_COLOR } from "../../../utils/constant.js";
 import {
   describeEn,
@@ -95,10 +88,9 @@ async function handleJoin(command: ChatInputCommandInteraction): Promise<void> {
   await command.deferReply({ flags: "Ephemeral" });
   let status;
   try {
-    status = await joinVoice({
+    status = await getVoiceBackend().join({
       guildId: command.guildId,
       channelId: voiceChannelId,
-      adapterCreator: command.guild.voiceAdapterCreator,
     });
   } catch (err) {
     if (err instanceof VoiceCapacityError) {
@@ -140,7 +132,7 @@ async function handleLeave(
     );
     return;
   }
-  leaveVoice(command.guildId);
+  await getVoiceBackend().leave(command.guildId);
   await ephemeralReplyOk(command, tForInteraction(command, "voice.left"));
 }
 
@@ -175,7 +167,7 @@ async function handlePlay(command: ChatInputCommandInteraction): Promise<void> {
     return;
   }
   try {
-    const status = playUrl(command.guildId, url);
+    const status = await getVoiceBackend().play(command.guildId, url);
     await ephemeralReplyOk(
       command,
       tForInteraction(command, "voice.playing", {
@@ -210,7 +202,7 @@ async function handleStop(command: ChatInputCommandInteraction): Promise<void> {
     );
     return;
   }
-  stopPlayback(command.guildId);
+  await getVoiceBackend().stop(command.guildId);
   await ephemeralReplyOk(command, tForInteraction(command, "voice.stopped"));
 }
 
@@ -224,7 +216,7 @@ async function handleStatus(
     );
     return;
   }
-  const status = getStatus(command.guildId);
+  const status = await getVoiceBackend().status(command.guildId);
   const yes = tForInteraction(command, "voice.status-lines.yes");
   const no = tForInteraction(command, "voice.status-lines.no");
   const noneLabel = tForInteraction(command, "voice.status-lines.channel-none");

@@ -23,15 +23,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Client, Guild } from "discord.js";
 import { ChannelType } from "discord.js";
-import {
-  joinVoice,
-  leaveVoice,
-  playUrl,
-  pausePlayback,
-  stopPlayback,
-  getStatus,
-  VoiceCapacityError,
-} from "./voice-manager.service.js";
+import { getVoiceBackend, VoiceCapacityError } from "./voice-backend.js";
 import { findPluginById } from "../plugin-system/models/plugin.model.js";
 import {
   assertExternalTarget,
@@ -147,10 +139,12 @@ export async function registerVoiceRpcRoutes(
       return;
     }
     try {
-      const status = await joinVoice({
+      // The backend obtains the gateway adapter itself (in-process: from
+      // guild.voiceAdapterCreator; remote: a bridge adapter) — see
+      // voice-backend.ts. We've already validated guild + channel above.
+      const status = await getVoiceBackend().join({
         guildId: body.guild_id,
         channelId: channel.id,
-        adapterCreator: guild.voiceAdapterCreator,
         selfDeaf: typeof body.self_deaf === "boolean" ? body.self_deaf : true,
         selfMute: typeof body.self_mute === "boolean" ? body.self_mute : false,
       });
@@ -179,7 +173,7 @@ export async function registerVoiceRpcRoutes(
         reply.code(400).send({ error: "guild_id required" });
         return;
       }
-      return leaveVoice(body.guild_id);
+      return getVoiceBackend().leave(body.guild_id);
     },
   );
 
@@ -253,7 +247,7 @@ export async function registerVoiceRpcRoutes(
         return;
       }
       try {
-        return playUrl(body.guild_id, body.url);
+        return await getVoiceBackend().play(body.guild_id, body.url);
       } catch (err) {
         if (err instanceof Error && err.message === "not_joined") {
           reply
@@ -285,7 +279,7 @@ export async function registerVoiceRpcRoutes(
       }
       const paused =
         typeof body.paused === "boolean" ? body.paused : undefined;
-      return pausePlayback(body.guild_id, paused);
+      return getVoiceBackend().pause(body.guild_id, paused);
     },
   );
 
@@ -299,7 +293,7 @@ export async function registerVoiceRpcRoutes(
         reply.code(400).send({ error: "guild_id required" });
         return;
       }
-      return stopPlayback(body.guild_id);
+      return getVoiceBackend().stop(body.guild_id);
     },
   );
 
@@ -313,7 +307,7 @@ export async function registerVoiceRpcRoutes(
         reply.code(400).send({ error: "guild_id required" });
         return;
       }
-      const status = getStatus(body.guild_id);
+      const status = await getVoiceBackend().status(body.guild_id);
       // Augment with the non-bot listener count when connected — this
       // service has no Discord client, the RPC layer does. Best-effort:
       // any hiccup leaves `listeners` undefined (callers treat that as

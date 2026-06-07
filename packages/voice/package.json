@@ -1,0 +1,41 @@
+{
+  "name": "@karyl-chan/voice",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Standalone voice service for karyl-chan — owns the @discordjs/voice VoiceConnection + ffmpeg, bridged to the bot's gateway over HTTP (PR-2.3 full split).",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "license": "MIT",
+  "scripts": {
+    "build": "rm -rf dist && tsc",
+    "serve": "node dist/main.js",
+    "dev": "node --loader ts-node/esm/transpile-only src/main.ts",
+    "test": "tsc -p tsconfig.test.json && node --test \"dist-test/tests/**/*.test.js\"",
+    "clean": "rm -rf dist dist-test"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@discordjs/opus": "^0.10.0",
+    "@discordjs/voice": "^0.19.2",
+    "@karyl-chan/plugin-sdk": "workspace:*",
+    "fastify": "^5.8.5",
+    "libsodium-wrappers": "^0.8.4",
+    "opusscript": "^0.0.8",
+    "prism-media": "^1.3.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "discord-api-types": "^0.38.47",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.6.0"
+  }
+}
