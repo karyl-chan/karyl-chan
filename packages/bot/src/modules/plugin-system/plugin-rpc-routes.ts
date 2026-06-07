@@ -42,6 +42,7 @@ import {
   clearPluginDeferState,
   readPluginDeferState,
 } from "./plugin-defer-state.js";
+import { maybeForwardGuildRpc } from "./shard-forward-routes.js";
 
 /**
  * Strip dangerous `parse` entries from a plugin-supplied
@@ -1777,6 +1778,11 @@ export async function registerPluginRpcRoutes(
       return;
     }
     const guildId = body.guild_id;
+    // Cross-shard forward (PR-3.3): if another shard owns this guild and
+    // a forward target is configured, relay the whole RPC there and
+    // return its response. No-op in the single-shard default. Placed
+    // after guild_id validation, before any local guild work.
+    if ((await maybeForwardGuildRpc(request, reply, guildId)).handled) return;
     if (!Array.isArray(body.user_ids)) {
       reply.code(400).send({ error: "user_ids must be an array" });
       return;

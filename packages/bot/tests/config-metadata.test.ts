@@ -20,6 +20,10 @@ const stubConfig: AppConfig = {
     shardId: 0,
     totalShards: 1,
   },
+  shard: {
+    urls: {},
+    hmacSecret: null,
+  },
   web: {
     port: 3000,
     host: "0.0.0.0",
@@ -127,6 +131,7 @@ describe("sensitive field set", () => {
       "bot.token",
       "crypto.encryptionKey",
       "voice.hmacSecret",
+      "shard.hmacSecret",
     ]);
     expect(actualSensitive).toEqual(expected);
   });

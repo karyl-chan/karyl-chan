@@ -23,6 +23,23 @@ export interface AppConfig {
     shardId: number;
     totalShards: number;
   };
+  shard: {
+    /**
+     * Cross-shard forward targets (PR-3.3). Map of shardId → base URL of
+     * that shard's bot HTTP server. Parsed from `SHARD_URLS` as a
+     * comma-separated list of `shardId=baseUrl` pairs (e.g.
+     * `0=http://bot-0:3000,1=http://bot-1:3000`). Empty (the
+     * single-shard default) → no forwarding; a mis-shard op falls through
+     * to the existing "guild not found" path, unchanged.
+     */
+    urls: Record<number, string>;
+    /**
+     * Shared HMAC secret for the inter-shard internal channel. Reuses the
+     * same signing scheme as the bot↔voice channel. Null → forwarding is
+     * disabled even if SHARD_URLS is set (misconfig guard).
+     */
+    hmacSecret: string | null;
+  };
   web: {
     port: number;
     host: string;
@@ -140,6 +157,46 @@ function parseCidrListEnv(name: string): string[] {
     .filter((s) => s.length > 0);
 }
 
+/**
+ * Parse `SHARD_URLS` (PR-3.3) — a comma-separated list of
+ * `shardId=baseUrl` pairs into a `{ [shardId]: baseUrl }` map. Trailing
+ * slashes on the url are stripped. Malformed entries (missing `=`,
+ * non-integer id, non-http(s) url) throw at boot so a typo in a
+ * multi-shard deployment fails fast rather than silently dropping a
+ * forward target. Empty/unset → `{}` (single-shard default).
+ *
+ * Exported for unit testing the parse contract in isolation.
+ */
+export function parseShardUrls(raw: string | undefined): Record<number, string> {
+  if (!raw || raw.trim() === "") return {};
+  const out: Record<number, string> = {};
+  for (const part of raw.split(",")) {
+    const entry = part.trim();
+    if (entry.length === 0) continue;
+    const eq = entry.indexOf("=");
+    if (eq === -1) {
+      throw new Error(
+        `Config error: SHARD_URLS entry "${entry}" must be "shardId=baseUrl"`,
+      );
+    }
+    const idStr = entry.slice(0, eq).trim();
+    const url = entry.slice(eq + 1).trim().replace(/\/+$/, "");
+    const id = parseInt(idStr, 10);
+    if (isNaN(id) || id < 0 || String(id) !== idStr) {
+      throw new Error(
+        `Config error: SHARD_URLS shardId "${idStr}" must be a non-negative integer`,
+      );
+    }
+    if (!/^https?:\/\//.test(url)) {
+      throw new Error(
+        `Config error: SHARD_URLS url for shard ${id} must be http(s) (got "${url}")`,
+      );
+    }
+    out[id] = url;
+  }
+  return out;
+}
+
 // Rough structural check: "host/prefixlen". Full IP validity is left
 // to proxy-addr at runtime; this catches obvious typos at boot time.
 // Exported so tests can assert the boot-time fail-fast contract without
@@ -188,6 +245,10 @@ function loadConfig(): AppConfig {
       enableTyping: parseBoolEnv("BOT_ENABLE_TYPING", false),
       shardId: Math.max(0, parseIntEnv("SHARD_ID", 0)),
       totalShards: Math.max(1, parseIntEnv("TOTAL_SHARDS", 1)),
+    },
+    shard: {
+      urls: parseShardUrls(process.env.SHARD_URLS),
+      hmacSecret: strEnv("SHARD_HMAC_SECRET"),
     },
     web: {
       port: parseIntEnv("WEB_PORT", 3000),
