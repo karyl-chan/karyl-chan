@@ -262,6 +262,56 @@ describe("StreamsConsumer reliability", () => {
   });
 });
 
+describe("StreamsConsumer telemetry callbacks (PR-1.3)", () => {
+  it("reports consumer lag via onLag during the sweep", async () => {
+    const redis = new FakeRedis();
+    const key = streamKeyFor("guild.message_create");
+    const lags: Array<{ eventType: string; lag: number }> = [];
+    // Handler never acks (always throws) so unacked entries accrue lag.
+    const consumer = new StreamsConsumer({
+      redis,
+      pluginKey: "test",
+      eventTypes: ["guild.message_create"],
+      dispatchEvent: async () => {
+        throw new Error("hold the entry unacked");
+      },
+      log: silentLog,
+      blockMs: 10,
+      claimMinIdleMs: 999_999, // don't reclaim/DLQ during this test
+      sweepIntervalMs: 10,
+      onLag: (eventType, lag) => lags.push({ eventType, lag }),
+    });
+    await consumer.ensureGroups();
+    redis.seed(key, ["type", "guild.message_create", "data", "{}"]);
+    consumer.start();
+    await poll(() => (lags.some((l) => l.lag >= 1) ? true : null), 2000);
+    assert.equal(lags[lags.length - 1].eventType, "guild.message_create");
+    await consumer.stop();
+  });
+
+  it("fires onDeadLetter when an entry is poison", async () => {
+    const redis = new FakeRedis();
+    const key = streamKeyFor("guild.message_create");
+    const dlqs: Array<{ eventType: string; reason: string }> = [];
+    const consumer = new StreamsConsumer({
+      redis,
+      pluginKey: "test",
+      eventTypes: ["guild.message_create"],
+      dispatchEvent: async () => {},
+      log: silentLog,
+      blockMs: 10,
+      onDeadLetter: (eventType, reason) => dlqs.push({ eventType, reason }),
+    });
+    await consumer.ensureGroups();
+    redis.seed(key, ["type", "guild.message_create", "data", "{broken"]);
+    consumer.start();
+    await poll(() => (dlqs.length > 0 ? true : null), 2000);
+    assert.equal(dlqs[0].eventType, "guild.message_create");
+    assert.equal(dlqs[0].reason, "parse-failure");
+    await consumer.stop();
+  });
+});
+
 describe("findGroupInfo", () => {
   it("extracts lag + entries-read for the named group", () => {
     const groups = [

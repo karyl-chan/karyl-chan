@@ -86,6 +86,19 @@ export interface StreamsConsumerOptions {
   claimMinIdleMs?: number;
   /** Interval (ms) between reclaim + lag sweeps. Default 30_000. */
   sweepIntervalMs?: number;
+  /**
+   * Optional sink called once per stream per sweep with the freshly
+   * computed consumer-group lag. The SDK wires this to the plugin's
+   * metrics collector (a gauge) so lag reaches the bot's metrics
+   * surface (PR-1.3) — but it's just a callback, so it stays Redis- and
+   * metrics-library-free here and is trivially testable.
+   */
+  onLag?: (eventType: string, lag: number) => void;
+  /**
+   * Optional sink called whenever an entry is dead-lettered. Wired to a
+   * metrics counter by the SDK so a rising DLQ rate is alertable.
+   */
+  onDeadLetter?: (eventType: string, reason: string) => void;
 }
 
 const DEFAULTS = {
@@ -121,6 +134,8 @@ export class StreamsConsumer {
   private readonly maxDeliveries: number;
   private readonly claimMinIdleMs: number;
   private readonly sweepIntervalMs: number;
+  private readonly onLag?: (eventType: string, lag: number) => void;
+  private readonly onDeadLetter?: (eventType: string, reason: string) => void;
 
   private running = false;
   private readLoop: Promise<void> | null = null;
@@ -144,6 +159,8 @@ export class StreamsConsumer {
     this.maxDeliveries = opts.maxDeliveries ?? DEFAULTS.maxDeliveries;
     this.claimMinIdleMs = opts.claimMinIdleMs ?? DEFAULTS.claimMinIdleMs;
     this.sweepIntervalMs = opts.sweepIntervalMs ?? DEFAULTS.sweepIntervalMs;
+    this.onLag = opts.onLag;
+    this.onDeadLetter = opts.onDeadLetter;
   }
 
   /** Create the consumer group on every subscribed stream (idempotent). */
@@ -426,6 +443,7 @@ export class StreamsConsumer {
         id,
       );
       await this.ackSafely(key, id);
+      this.onDeadLetter?.(this.streamEventType(key), reason);
       this.log.warn("event moved to DLQ", { dlqKey, sourceId: id, reason });
     } catch (err) {
       this.log.error("failed to dead-letter event", {
@@ -463,6 +481,9 @@ export class StreamsConsumer {
         entriesRead: mine.entriesRead,
       });
       this.lastLag.set(eventType, lag);
+      // Always surface lag to the metrics sink (even 0) so a gauge that
+      // recovered to zero is reflected, not stuck at its last non-zero.
+      this.onLag?.(eventType, lag);
       if (lag > 0) {
         this.log.info("consumer lag", { eventType, group: this.group, lag });
       }

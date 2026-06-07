@@ -905,6 +905,23 @@ export function definePlugin(config: PluginConfig): PluginInstance {
                       warn: (msg, meta) => server.log.warn(meta ?? {}, msg),
                       error: (msg, meta) => server.log.error(meta ?? {}, msg),
                     },
+                    // Surface consumer-group lag + DLQ rate through the
+                    // existing metrics pipeline (PR-1.3) — the collector
+                    // already pushes snapshots to the bot's metrics
+                    // surface, so no new transport is needed.
+                    onLag: (eventType, lag) => {
+                      metricsCollector
+                        .gauge("kc_event_consumer_lag", { event_type: eventType })
+                        .set(lag);
+                    },
+                    onDeadLetter: (eventType, reason) => {
+                      metricsCollector
+                        .counter("kc_event_dlq_total", {
+                          event_type: eventType,
+                          reason,
+                        })
+                        .inc();
+                    },
                   });
                   await consumer.ensureGroups();
                   consumer.start();
