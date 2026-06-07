@@ -12,6 +12,7 @@
  *   voice.pause    — pause / resume the current track
  *   voice.stop     — stop playback
  *   voice.status   — read connection status
+ *   voice.locate   — find which VC a user is currently in (no guild needed)
  *
  * The plugin must already know the channel id (it gets one via the
  * Discord events bridge or its own discovery). We don't auto-join from
@@ -46,6 +47,11 @@ interface VoiceRpcOptions {
 /** Throttle voice.play per (plugin, guild) — caps `/radio play`+skip spam
  *  / a runaway advance loop. Generous (≈2/s) so a burst of skips is fine. */
 const voicePlayLimiter = new RateLimiter({ max: 20, windowMs: 10_000 });
+
+/** Throttle voice.locate per (plugin, user) — each call scans the guild
+ *  cache, and an external control channel (browser extension) may poll it.
+ *  ≈1/s. */
+const voiceLocateLimiter = new RateLimiter({ max: 10, windowMs: 10_000 });
 
 async function requireScope(
   request: FastifyRequest,
@@ -335,6 +341,67 @@ export async function registerVoiceRpcRoutes(
         }
       }
       return status;
+    },
+  );
+
+  // POST /api/plugin/voice.locate
+  // Body: { user_id: string }
+  //
+  // Reverse-lookup: "which voice channel is this user currently in?" —
+  // without the caller having to know the guild. We scan the guilds this
+  // (shard's) bot shares with the user and read each guild's cached voice
+  // state. This powers an external control channel (e.g. a browser
+  // extension) that says "play wherever I am" with no guild configured.
+  //
+  // Returns:
+  //   200 { guildId, channelId, guildName }     — exactly one match
+  //   404 { error }                             — user not in any VC we see
+  //   409 { error:"ambiguous", candidates:[…] } — in VCs across >1 guild;
+  //         the caller disambiguates by passing guild_id to voice.join.
+  //
+  // Multi-shard caveat: `bot.guilds.cache` only holds guilds owned by this
+  // shard, so a user sitting in a VC on another shard won't be seen here.
+  // Matches the per-shard scope of the voice-state store; fine for the
+  // single-process deployment.
+  server.post<{ Body: { user_id?: unknown } }>(
+    "/api/plugin/voice.locate",
+    async (request, reply) => {
+      const ctx = await requireScope(request, reply, "voice.locate");
+      if (!ctx) return;
+      if (!bot) {
+        reply.code(503).send({ error: "bot client unavailable" });
+        return;
+      }
+      const body = request.body ?? {};
+      if (typeof body.user_id !== "string" || body.user_id.length === 0) {
+        reply.code(400).send({ error: "user_id required" });
+        return;
+      }
+      const userId = body.user_id;
+      if (voiceLocateLimiter.isRateLimited(`voice.locate:${ctx.pluginId}:${userId}`)) {
+        reply.code(429).header("Retry-After", "1").send({
+          error: "voice.locate rate limited for this user",
+        });
+        return;
+      }
+      // Read the cached voice state per guild — no per-guild member fetch,
+      // so this stays a pure in-memory scan even across many guilds.
+      const candidates: { guildId: string; channelId: string; guildName: string }[] = [];
+      for (const guild of bot.guilds.cache.values()) {
+        const channelId = guild.voiceStates.cache.get(userId)?.channelId;
+        if (channelId) {
+          candidates.push({ guildId: guild.id, channelId, guildName: guild.name });
+        }
+      }
+      if (candidates.length === 0) {
+        reply.code(404).send({ error: "that user is not in a voice channel" });
+        return;
+      }
+      if (candidates.length > 1) {
+        reply.code(409).send({ error: "ambiguous", candidates });
+        return;
+      }
+      return candidates[0];
     },
   );
 }
