@@ -18,3 +18,9 @@ allowBuilds:
   better-sqlite3: true
   sqlite3: true
   esbuild: true
+  # protobufjs is pulled in transitively by @opentelemetry/auto-
+  # instrumentations-node (its grpc instrumentation → @grpc/grpc-js).
+  # We export traces over OTLP/HTTP+JSON (@opentelemetry/exporter-trace-
+  # otlp-http), never protobuf/grpc, so protobufjs's postinstall codegen
+  # is dead weight — deny the build.
+  protobufjs: false
