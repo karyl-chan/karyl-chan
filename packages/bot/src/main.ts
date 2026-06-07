@@ -23,6 +23,7 @@ import { getDistributedLock } from "./adapters/registry.js";
 import { closeRedisClient } from "./adapters/redis/client.js";
 import { config } from "./config.js";
 import { moduleLogger } from "./logger.js";
+import { setVoiceClient } from "./modules/voice/voice-backend.js";
 import { startWebServer } from "./modules/web-core/server.js";
 import { setReady, setDraining } from "./modules/web-core/readiness.js";
 import {
@@ -684,6 +685,10 @@ async function run() {
     // ready (deferred to the 'ready' handler below).
     setPluginCommandBotClient(bot);
     setMetricsBotClient(bot);
+    // In-process voice backend resolves each guild's gateway adapter off
+    // this client (see voice-backend.ts). A future remote voice service
+    // ignores it.
+    setVoiceClient(() => bot);
     setBotEventLogMetric(botEventLogWritesTotal);
     setAuditLogMetric(auditLogWritesTotal);
 
