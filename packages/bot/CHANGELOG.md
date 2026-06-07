@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.5.0](https://github.com/karyl-chan/karyl-chan/compare/bot-v1.4.1...bot-v1.5.0) (2026-06-07)
+
+
+### Features
+
+* **bot/i18n, sdk:** convert voice/rcon/todo/picture-only + add ctx.locale ([8180df1](https://github.com/karyl-chan/karyl-chan/commit/8180df11cfc3a6e104399f1e9d3f2463a94655a8))
+* **bot/i18n:** i18next framework + role-emoji conversion ([cc7d767](https://github.com/karyl-chan/karyl-chan/commit/cc7d7671287d1631acd936b6a6e2def42f483974))
+* **bot/i18n:** localize system behaviors + manual list + DM matcher ([6fd394a](https://github.com/karyl-chan/karyl-chan/commit/6fd394a7c66f050714e8b9f122c756a0515844c0))
+* **bot/plugin-rpc:** me.enabled_guilds POST + storage.kv_list_values ([8cf8124](https://github.com/karyl-chan/karyl-chan/commit/8cf81246490fe0470c9022215373906a903437f9))
+* **bot:** forward mentions + reply reference in plugin message events ([ae70340](https://github.com/karyl-chan/karyl-chan/commit/ae70340296b5603b90f995190e6eebe62bde1952))
+* **sdk, bot:** forward descriptionLocalizations / nameLocalizations end-to-end ([c151367](https://github.com/karyl-chan/karyl-chan/commit/c151367080fd501bd579d74539d0e1b37fa3d279))
+* **voice-rpc:** add voice.locate RPC to find a user's current VC ([967cd1a](https://github.com/karyl-chan/karyl-chan/commit/967cd1a0e739cddf7bb8aa946d7345b4ee2fba25))
+
+
+### Bug Fixes
+
+* **bot/i18n:** correctness fixes from extra-high code review ([f1ac2a4](https://github.com/karyl-chan/karyl-chan/commit/f1ac2a47954cc7e5cb866d703acbc4d679ff81a5))
+* **bot/i18n:** locale-string polish — backticks + zh-CN colons ([3ea75a4](https://github.com/karyl-chan/karyl-chan/commit/3ea75a42cdf7b5913ad54fc14c43e7bbb346b870))
+* **bot/redis-lock:** check deadline before SET, cap sleep by remaining ([8635af3](https://github.com/karyl-chan/karyl-chan/commit/8635af3053bfb037502fa530396b5e943b0ede6e))
+* **bot:** restore EMOJI_REGEX lower bound to U+2000 (was U+0020) ([5850388](https://github.com/karyl-chan/karyl-chan/commit/5850388ad999ac463d6f82b7150f46eddf70e230))
+* **sdk, bot:** accept both snake_case + camelCase localization fields ([0e88ae1](https://github.com/karyl-chan/karyl-chan/commit/0e88ae1ad8ed41c9f0d615e6719551067431d9f8))
+
 ## [1.4.1](https://github.com/karyl-chan/karyl-chan/compare/bot-v1.4.0...bot-v1.4.1) (2026-05-27)
 
 
