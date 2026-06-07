@@ -485,6 +485,22 @@ export const CONFIG_METADATA: Record<string, ConfigFieldMeta> = {
     productionRequired: false,
     descriptionKey: "config.voice.ffmpegPath",
   },
+  "voice.serviceUrl": {
+    group: "voice",
+    envVar: "VOICE_SERVICE_URL",
+    sensitivity: "public",
+    editability: "env-only",
+    productionRequired: false,
+    descriptionKey: "config.voice.serviceUrl",
+  },
+  "voice.hmacSecret": {
+    group: "voice",
+    envVar: "VOICE_HMAC_SECRET",
+    sensitivity: "sensitive",
+    editability: "env-only",
+    productionRequired: false,
+    descriptionKey: "config.voice.hmacSecret",
+  },
 };
 
 // ── helpers ──────────────────────────────────────────────────────────────────

@@ -110,6 +110,7 @@ import { registerPluginProxy } from "../plugin-system/plugin-proxy.js";
 import { registerBotFeatureRoutes } from "../feature-toggle/bot-feature-routes.js";
 import { registerPluginRpcRoutes } from "../plugin-system/plugin-rpc-routes.js";
 import { registerVoiceRpcRoutes } from "../voice/voice-rpc.js";
+import { registerVoiceInternalRoutes } from "../voice/voice-internal-routes.js";
 import {
   pluginAuthStore,
   type PluginAuthRecord,
@@ -719,6 +720,13 @@ export async function createWebServer(
   await registerPluginRoutes(server, { bot, reconciler: options.reconciler });
   await registerPluginRpcRoutes(server, { bot, dmLimiter: options.dmLimiter });
   await registerVoiceRpcRoutes(server, { bot });
+  // Reverse channel from the standalone voice service (PR-2.3 full split).
+  // Only meaningful when VOICE_SERVICE_URL is set; the routes self-guard
+  // (503 when no shared secret), so they're harmless to mount unconditionally.
+  await registerVoiceInternalRoutes(server, {
+    bot,
+    secret: config.voice.hmacSecret,
+  });
   await registerBotFeatureRoutes(server, { bot });
 
   if (bot) {

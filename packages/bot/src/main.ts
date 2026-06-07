@@ -24,6 +24,7 @@ import { closeRedisClient } from "./adapters/redis/client.js";
 import { config } from "./config.js";
 import { moduleLogger } from "./logger.js";
 import { setVoiceClient } from "./modules/voice/voice-backend.js";
+import { installVoiceGatewayRelay } from "./modules/voice/voice-gateway-relay.js";
 import { startWebServer } from "./modules/web-core/server.js";
 import { setReady, setDraining } from "./modules/web-core/readiness.js";
 import {
@@ -686,9 +687,13 @@ async function run() {
     setPluginCommandBotClient(bot);
     setMetricsBotClient(bot);
     // In-process voice backend resolves each guild's gateway adapter off
-    // this client (see voice-backend.ts). A future remote voice service
-    // ignores it.
+    // this client (see voice-backend.ts). A remote voice service ignores it.
     setVoiceClient(() => bot);
+    // Full-split only: relay the bot's own VOICE_STATE_UPDATE +
+    // VOICE_SERVER_UPDATE to the standalone voice service so its bridge
+    // adapter can complete the voice handshake. No-op unless
+    // VOICE_SERVICE_URL + VOICE_HMAC_SECRET are set.
+    installVoiceGatewayRelay(bot);
     setBotEventLogMetric(botEventLogWritesTotal);
     setAuditLogMetric(auditLogWritesTotal);
 

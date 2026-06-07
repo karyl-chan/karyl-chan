@@ -70,7 +70,7 @@ const stubConfig: AppConfig = {
     sseMaxListeners: 200,
   },
   logging: { level: "info" },
-  voice: { ffmpegPath: null },
+  voice: { ffmpegPath: null, serviceUrl: null, hmacSecret: null },
 };
 
 // ---------------------------------------------------------------------------
@@ -123,7 +123,11 @@ describe("sensitive field set", () => {
         .filter(([, meta]) => meta.sensitivity === "sensitive")
         .map(([key]) => key),
     );
-    const expected = new Set(["bot.token", "crypto.encryptionKey"]);
+    const expected = new Set([
+      "bot.token",
+      "crypto.encryptionKey",
+      "voice.hmacSecret",
+    ]);
     expect(actualSensitive).toEqual(expected);
   });
 });

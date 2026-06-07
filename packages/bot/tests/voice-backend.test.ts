@@ -18,6 +18,7 @@ const load = () => import("../src/modules/voice/voice-backend.js");
 describe("VoiceBackend registry", () => {
   beforeEach(async () => {
     delete process.env.VOICE_SERVICE_URL;
+    delete process.env.VOICE_HMAC_SECRET;
     (await load()).resetVoiceBackendForTest();
   });
 
@@ -31,11 +32,22 @@ describe("VoiceBackend registry", () => {
     expect(getVoiceBackend()).toBe(getVoiceBackend());
   });
 
-  it("fails loud when VOICE_SERVICE_URL is set (remote backend not yet built)", async () => {
+  it("selects the remote backend when VOICE_SERVICE_URL + VOICE_HMAC_SECRET are set", async () => {
+    const { getVoiceBackend, resetVoiceBackendForTest } = await load();
+    const { RemoteVoiceBackend } = await import(
+      "../src/modules/voice/remote-voice-backend.js"
+    );
+    resetVoiceBackendForTest();
+    process.env.VOICE_SERVICE_URL = "http://voice:4000";
+    process.env.VOICE_HMAC_SECRET = "shared-secret";
+    expect(getVoiceBackend()).toBeInstanceOf(RemoteVoiceBackend);
+  });
+
+  it("fails loud when VOICE_SERVICE_URL is set but VOICE_HMAC_SECRET is missing", async () => {
     const { getVoiceBackend, resetVoiceBackendForTest } = await load();
     resetVoiceBackendForTest();
     process.env.VOICE_SERVICE_URL = "http://voice:4000";
-    expect(() => getVoiceBackend()).toThrow(/not yet implemented/i);
+    expect(() => getVoiceBackend()).toThrow(/VOICE_HMAC_SECRET is missing/i);
   });
 
   it("in-process join rejects when no bot client is wired", async () => {

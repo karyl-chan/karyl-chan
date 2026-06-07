@@ -35,6 +35,7 @@ import {
   type VoiceStatus,
 } from "@karyl-chan/voice";
 import { moduleLogger } from "../../logger.js";
+import { RemoteVoiceBackend } from "./remote-voice-backend.js";
 
 // Route the relocated voice manager's structured logs through the bot's pino
 // logger so in-process voice logging is byte-for-byte what it was before the
@@ -136,14 +137,20 @@ export function getVoiceBackend(): VoiceBackend {
   if (backend) return backend;
   const remoteUrl = (process.env.VOICE_SERVICE_URL ?? "").trim();
   if (remoteUrl) {
-    // The standalone voice service backend lands in a follow-up segment
-    // (RemoteVoiceBackend + the gateway bridge). Until then, fail loud
-    // rather than silently degrade — an operator who set VOICE_SERVICE_URL
-    // expects the split, not a quiet fallback to in-process.
-    throw new Error(
-      "VOICE_SERVICE_URL is set but the remote voice backend is not yet " +
-        "implemented (PR-2.3 follow-up). Unset it to use the in-process backend.",
-    );
+    // Full split (PR-2.3d): drive the standalone voice service over HTTP.
+    // The shared HMAC secret is mandatory — an unauthenticated control
+    // channel to a process that owns ffmpeg + the gateway is a footgun, so
+    // fail loud rather than silently run unsigned.
+    const secret = (process.env.VOICE_HMAC_SECRET ?? "").trim();
+    if (!secret) {
+      throw new Error(
+        "VOICE_SERVICE_URL is set but VOICE_HMAC_SECRET is missing — the " +
+          "bot↔voice-service channel must be signed. Set VOICE_HMAC_SECRET " +
+          "(same value on the voice service) or unset VOICE_SERVICE_URL.",
+      );
+    }
+    backend = new RemoteVoiceBackend({ serviceUrl: remoteUrl, secret });
+    return backend;
   }
   backend = new InProcessVoiceBackend(clientAccessor);
   return backend;

@@ -124,3 +124,37 @@ export function verifyInboundSignature(
   }
   return { ok: true };
 }
+
+/**
+ * Verify HMAC headers on an inbound REQUEST whose headers are a plain record
+ * (Fastify `request.headers`) rather than a fetch `Headers`. Same scheme as
+ * `verifyInboundSignature` — used by the bot's internal voice routes
+ * (voice service → bot) which receive a signed POST with the shared secret.
+ */
+export function verifyInboundSignatureFromHeaders(
+  secret: string,
+  headers: Record<string, string | string[] | undefined>,
+  rawBody: string,
+  nowSec: number,
+  method: string,
+  urlPath: string,
+): SignatureCheck {
+  const one = (v: string | string[] | undefined): string | undefined =>
+    Array.isArray(v) ? v[0] : v;
+  const tsHeader = one(headers[TIMESTAMP_HEADER]);
+  const sigHeader = one(headers[SIGNATURE_HEADER]);
+  if (!tsHeader) return { ok: false, reason: "missing timestamp" };
+  if (!sigHeader) return { ok: false, reason: "missing signature" };
+  const tsNum = Number.parseInt(tsHeader, 10);
+  if (!Number.isFinite(tsNum)) {
+    return { ok: false, reason: "malformed timestamp" };
+  }
+  if (Math.abs(nowSec - tsNum) > REPLAY_WINDOW_SECONDS) {
+    return { ok: false, reason: "timestamp outside replay window" };
+  }
+  const expected = signBody(secret, method, urlPath, tsHeader, rawBody);
+  if (!constantTimeEq(sigHeader, expected)) {
+    return { ok: false, reason: "signature mismatch" };
+  }
+  return { ok: true };
+}
