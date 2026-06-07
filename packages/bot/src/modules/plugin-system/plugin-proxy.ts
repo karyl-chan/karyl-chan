@@ -11,6 +11,33 @@ import {
 const PLUGIN_KEY_RE = /^[a-z0-9][a-z0-9-]*$/;
 
 /**
+ * Transient upstream connection-error codes that are safe to retry once
+ * during a plugin-container recreate window. Kept byte-for-byte in sync
+ * with `isConnectRefused()` in plugin-dispatch-pool.ts so the event-dispatch
+ * path and the HTTP reverse-proxy path treat the recreate race identically.
+ *
+ * These are all pre-send / connection-phase failures: the upstream socket
+ * was never successfully established, so nothing was delivered to the plugin
+ * and a replay cannot double-submit.
+ */
+const TRANSIENT_CONNECT_ERROR_CODES = new Set([
+  "ECONNREFUSED", // container gone, port not yet bound (the recreate race)
+  "ENOTFOUND", // DNS not yet resolvable (compose recreate re-registers the name)
+  "EAI_AGAIN", // transient DNS failure
+  "ETIMEDOUT", // connect timed out
+  "UND_ERR_CONNECT_TIMEOUT", // undici connect-phase timeout
+]);
+
+/**
+ * One-shot retry window for a transient upstream connection failure during a
+ * plugin recreate. Mirrors plugin-dispatch-pool.ts: a single retry after a
+ * short delay turns the [[bot-plugin-proxy-recreate-race]] 502 into a
+ * slightly-delayed success while a genuinely-down plugin still fails fast.
+ */
+const PROXY_CONNECT_RETRY_COUNT = 1;
+const PROXY_CONNECT_RETRY_DELAY_MS = 250;
+
+/**
  * Register the `/plugin/<pluginKey>/*` reverse proxy.
  *
  * Design decisions:
@@ -71,7 +98,73 @@ const PLUGIN_KEY_RE = /^[a-z0-9][a-z0-9-]*$/;
  * 30-second upstream timeout and be dropped. WebSocket Upgrade requests are
  * not proxied by @fastify/reply-from — a future plugin needing real-time
  * transport would require the proxy to be extended.
+ *
+ * Recreate-race retry: when a plugin container is recreated
+ * (`docker compose up --build -d <plugin>`), there is a short window where
+ * the old container is gone and the new one has not yet bound its port. A
+ * request forwarded during that window fails with ECONNREFUSED (or a
+ * transient DNS / connect-timeout error). The event-dispatch path already
+ * mitigates the same window with a one-shot ECONNREFUSED retry
+ * (plugin-dispatch-pool.ts); this proxy mirrors that with a single
+ * `PROXY_CONNECT_RETRY_DELAY_MS` retry, driven by @fastify/reply-from's
+ * `retryDelay` hook. See `proxyConnectRetryDelay` below for the safety
+ * scope (replay-safe, body-less requests only).
  */
+/**
+ * Extract a connection-error code from whatever @fastify/reply-from surfaces
+ * in the `retryDelay` details. The underlying undici error carries `.code`;
+ * some wrapped errors expose the original on `.cause`.
+ */
+function transientConnectCode(err: unknown): string | undefined {
+  const code = (err as { code?: string } | null | undefined)?.code;
+  if (typeof code === "string" && TRANSIENT_CONNECT_ERROR_CODES.has(code)) {
+    return code;
+  }
+  const causeCode = (err as { cause?: { code?: string } } | null | undefined)
+    ?.cause?.code;
+  if (
+    typeof causeCode === "string" &&
+    TRANSIENT_CONNECT_ERROR_CODES.has(causeCode)
+  ) {
+    return causeCode;
+  }
+  return undefined;
+}
+
+/**
+ * `retryDelay` hook for @fastify/reply-from. Returns the delay (ms) before
+ * a single retry, or `null` to give up (which lets `onError` send the 502).
+ *
+ * Body-replay safety: we retry ONLY when the forwarded request carries no
+ * body (`content-length` absent or "0"). A buffered request body would have
+ * to be re-sent on retry, and for a non-idempotent upstream that risks a
+ * double-submit. The connection phase of these refused requests never
+ * reached the plugin, so a body-less replay is safe; a request that DID
+ * carry a body is left to fail fast (the client can retry the whole
+ * operation itself). This mirrors @fastify/reply-from's own built-in
+ * `getDefaultDelay`, which also guards on `!contentLength`.
+ *
+ * The retry is bounded to a single attempt (`attempt` counts retries so far,
+ * 0-based) after `PROXY_CONNECT_RETRY_DELAY_MS`, so a genuinely-down plugin
+ * still fails fast instead of hanging the user.
+ */
+function proxyConnectRetryDelay(
+  details: { err: Error; attempt: number },
+  hasRequestBody: boolean,
+  log: { warn: (obj: unknown, msg: string) => void },
+  pluginKey: string,
+): number | null {
+  if (hasRequestBody) return null;
+  if (details.attempt >= PROXY_CONNECT_RETRY_COUNT) return null;
+  const code = transientConnectCode(details.err);
+  if (!code) return null;
+  log.warn(
+    { code, pluginKey, attempt: details.attempt },
+    "plugin proxy upstream connect failed; retrying once (recreate race)",
+  );
+  return PROXY_CONNECT_RETRY_DELAY_MS;
+}
+
 export async function registerPluginProxy(
   server: FastifyInstance,
 ): Promise<void> {
@@ -179,8 +272,29 @@ export async function registerPluginProxy(
 
       const target = plugin.url.replace(/\/+$/, "") + rest;
 
+      // Only retry the recreate-race window for requests that carry no body —
+      // re-sending a buffered body to a non-idempotent upstream risks a
+      // double-submit. See `proxyConnectRetryDelay`.
+      const cl = request.headers["content-length"];
+      const hasRequestBody =
+        typeof cl === "string" && cl.length > 0 && cl !== "0";
+
       return reply.from(target, {
         timeout: 30_000,
+
+        // Bound the recreate-race retry to a single attempt. The actual
+        // gating (transient connect codes + body-replay safety + delay)
+        // lives in `proxyConnectRetryDelay`; without a non-zero retriesCount
+        // the library's built-in default-delay path never fires for our
+        // undici transport (it only auto-retries UND_ERR_SOCKET).
+        retriesCount: PROXY_CONNECT_RETRY_COUNT,
+        retryDelay: (details) =>
+          proxyConnectRetryDelay(
+            details,
+            hasRequestBody,
+            reply.log ?? server.log,
+            pluginKey,
+          ),
 
         rewriteRequestHeaders(_originalReq, headers) {
           // Strip hop-by-hop and trust-sensitive forwarding headers so a
