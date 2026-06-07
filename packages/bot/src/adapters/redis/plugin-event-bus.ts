@@ -2,25 +2,25 @@
  * Redis Streams PluginEventBus — producer side.
  *
  * Replaces the synchronous HTTP fan-out (per-plugin POST to /events)
- * with `XADD plugin-events:<pluginKey> * type <eventType> data <json>`.
- * Plugins consume their own stream via SDK-side consumer group
- * subscriptions; the bot is decoupled from plugin readiness — if a
- * plugin restarts the events queue in Redis until it picks them up
- * again.
+ * with `XADD karyl:events:<eventType> * type <eventType> data <json>`.
+ * There is ONE shared stream per event type; every plugin that
+ * subscribes to that type joins its own consumer group on the same
+ * stream (SDK `StreamsConsumer`). The bot is decoupled from plugin
+ * readiness — if a plugin restarts, the events queue in Redis until it
+ * picks them up again, instead of being dropped on a failed POST.
  *
- * **Producer-only.** The SDK-side stream consumer (the half that lets
- * plugins actually receive events from Streams) ships in a follow-up
- * SDK release. Until that lands, setting `EVENT_BUS=redis-streams`
- * produces a deployment where the bot writes events into Redis but
- * plugins still need HTTP fan-out to actually receive them — i.e.
- * don't flip the env until the SDK consumer ships.
+ * As of PR-1.1, the SDK-side consumer ships, so `EVENT_BUS=redis-streams`
+ * is a complete loop: producer here + SDK XREADGROUP + XACK + DLQ. The
+ * bot bridge (`plugin-event-bridge.service.ts`) routes to this bus when
+ * the env is set, falling back to HTTP fan-out by default (PR-1.2).
  *
  * Stream shape:
- *   key: karyl:events:<pluginKey>
+ *   key: karyl:events:<eventType>
  *   fields:
- *     type    → event type string (e.g. "guild.message_create")
- *     data    → JSON-encoded payload (verbatim from the dispatcher)
- *     trace   → traceparent header value
+ *     type        → event type string (e.g. "guild.message_create")
+ *     data        → JSON-encoded payload (verbatim from the dispatcher)
+ *     trace       → traceparent header value (legacy field name)
+ *     traceparent → same value under the canonical W3C header name
  *
  * Retention is configured via Redis MAXLEN at write time so a
  * never-consumed stream doesn't grow unbounded.

@@ -172,3 +172,37 @@ export {
 // Canonical event type names. Use these as keys in `eventHandlers`.
 export { Events, isCanonicalEvent } from "./events.js";
 export type { EventName } from "./events.js";
+
+// Redis Streams event transport (PR-1). The SDK wires the consumer
+// automatically inside `definePlugin` when `EVENT_BUS=redis-streams` +
+// `REDIS_URL` are set — plugin authors don't touch these. Exported for
+// advanced runtime wrappers + tooling that needs the stream-key
+// conventions or wants to drive a consumer directly.
+export {
+  STREAM_PREFIX,
+  DLQ_SUFFIX,
+  streamKeyFor,
+  dlqKeyFor,
+  parseStreamEntry,
+  decideRedelivery,
+  computeLag,
+} from "./streams-protocol.js";
+export type {
+  ParsedStreamEntry,
+  RedeliveryDecision,
+} from "./streams-protocol.js";
+export {
+  StreamsConsumer,
+  groupNameFor,
+  findGroupInfo,
+} from "./streams-consumer.js";
+export type {
+  StreamsConsumerOptions,
+  RedisStreamsLike,
+  LagSnapshot,
+} from "./streams-consumer.js";
+export {
+  streamsTransportEnabled,
+  getStreamsClient,
+  closeStreamsClient,
+} from "./redis-streams-client.js";

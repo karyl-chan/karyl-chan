@@ -45,9 +45,13 @@
   },
   "peerDependencies": {
     "discord-api-types": ">=0.38.0 <0.39.0",
+    "ioredis": "^5.4.1",
     "vue": "^3.5.0"
   },
   "peerDependenciesMeta": {
+    "ioredis": {
+      "optional": true
+    },
     "vue": {
       "optional": true
     }
@@ -55,6 +59,7 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "discord-api-types": "^0.38.47",
+    "ioredis": "^5.4.1",
     "typescript": "^5.6.0",
     "vue": "^3.5.0"
   }

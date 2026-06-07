@@ -29,6 +29,8 @@ import {
   collectSubscribedEvents,
   parseManifestJson,
 } from "./plugin-event-index.js";
+import { getPluginEventBus } from "../../adapters/registry.js";
+import type { PluginEventBus } from "../../adapters/plugin-event-bus.js";
 
 /**
  * Bot → Plugin event dispatch. Plugins declare which event types
@@ -87,6 +89,33 @@ export function dropDispatchPoolForPlugin(pluginKey: string): void {
 }
 
 const index = new EventIndex();
+
+/**
+ * Optional out-of-process event bus (PR-1.2). Resolved lazily so tests
+ * that set `EVENT_BUS` after importing this module still pick it up, and
+ * so the default-off path never constructs a Redis client.
+ *
+ *   - `null` (the default — EVENT_BUS unset / http / inprocess): events
+ *     fan out over HTTP via `postEventToPlugin`, byte-for-byte the
+ *     pre-PR-1 behaviour.
+ *   - non-null (EVENT_BUS=redis-streams): the bot XADDs the event to the
+ *     shared per-type stream and the SDK consumer picks it up. The bot
+ *     is then decoupled from plugin readiness — a restarting plugin
+ *     drains its backlog from Redis instead of dropping events.
+ *
+ * `undefined` means "not yet resolved"; `null` is a resolved "no bus".
+ */
+let eventBus: PluginEventBus | null | undefined;
+
+function resolveEventBus(): PluginEventBus | null {
+  if (eventBus === undefined) eventBus = getPluginEventBus();
+  return eventBus;
+}
+
+/** Test-only — drop the cached bus so the next dispatch re-reads EVENT_BUS. */
+export function __resetEventBusForTests(): void {
+  eventBus = undefined;
+}
 
 function parseManifest(plugin: PluginRow): PluginManifest | null {
   return parseManifestJson(plugin.manifestJson);
@@ -272,7 +301,24 @@ async function postEventToPlugin(
  * Pre-existing design gap.
  */
 export function dispatchEventToPlugins(eventType: string, data: unknown): void {
+  // Subscription gate applies to BOTH transports: an event no plugin
+  // subscribes to is dropped here so we never grow a Redis stream for a
+  // type nobody consumes (and the HTTP path has nothing to POST to).
   if (!index.hasSubscribers(eventType)) return;
+
+  // Streams transport (EVENT_BUS=redis-streams): hand the event to the
+  // bus and return. The bus XADDs to the shared per-type stream; the
+  // per-plugin SDK consumers fan it out + ACK on their own cursors, so
+  // the bot no longer walks the plugins table or HMAC-signs per plugin
+  // on the hot path. `dispatch` is fire-and-forget (errors swallowed
+  // inside the impl), same contract as the HTTP path.
+  const bus = resolveEventBus();
+  if (bus) {
+    bus.dispatch(eventType, data);
+    return;
+  }
+
+  // Default / fallback: HTTP fan-out, unchanged from pre-PR-1.
   const ids = index.subscribers(eventType);
   // Fire all dispatches in parallel; we do not await. Errors per
   // plugin are logged inside postEventToPlugin and do not propagate.
