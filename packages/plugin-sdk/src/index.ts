@@ -175,34 +175,12 @@ export type { EventName } from "./events.js";
 
 // Redis Streams event transport (PR-1). The SDK wires the consumer
 // automatically inside `definePlugin` when `EVENT_BUS=redis-streams` +
-// `REDIS_URL` are set — plugin authors don't touch these. Exported for
-// advanced runtime wrappers + tooling that needs the stream-key
-// conventions or wants to drive a consumer directly.
+// `REDIS_URL` are set — plugin authors don't touch the consumer. Only the
+// stream-key naming conventions are exported, for tooling that inspects the
+// streams (the consumer mechanics + client lifecycle are internal).
 export {
   STREAM_PREFIX,
   DLQ_SUFFIX,
   streamKeyFor,
   dlqKeyFor,
-  parseStreamEntry,
-  decideRedelivery,
-  computeLag,
 } from "./streams-protocol.js";
-export type {
-  ParsedStreamEntry,
-  RedeliveryDecision,
-} from "./streams-protocol.js";
-export {
-  StreamsConsumer,
-  groupNameFor,
-  findGroupInfo,
-} from "./streams-consumer.js";
-export type {
-  StreamsConsumerOptions,
-  RedisStreamsLike,
-  LagSnapshot,
-} from "./streams-consumer.js";
-export {
-  streamsTransportEnabled,
-  getStreamsClient,
-  closeStreamsClient,
-} from "./redis-streams-client.js";

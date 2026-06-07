@@ -170,41 +170,4 @@ describe("GatewayBridge", () => {
     );
   });
 
-  it("destroyGuild() drives the library destroy() which triggers cleanup + onDestroy", () => {
-    const { transport, destroys } = makeTransport();
-    const bridge = new GatewayBridge(transport);
-    const { lib, calls } = makeLibRecorder();
-    // Wire the implementer destroy() to the library destroy() the way
-    // @discordjs/voice does: the connection's destroy calls lib.destroy()
-    // which the real lib forwards to the adapter's implementer destroy.
-    const impl = bridge.adapterCreatorFor("guild-1")({
-      ...lib,
-      destroy: () => {
-        calls.push({ method: "destroy", data: undefined });
-        impl.destroy();
-      },
-    } as never);
-
-    bridge.destroyGuild("guild-1");
-
-    assert.deepEqual(calls, [{ method: "destroy", data: undefined }]);
-    assert.equal(bridge.has("guild-1"), false);
-    assert.deepEqual(destroys, ["guild-1"]);
-  });
-
-  it("destroyGuild() for an unknown guild is a no-op", () => {
-    const { transport, destroys } = makeTransport();
-    const bridge = new GatewayBridge(transport);
-    assert.doesNotThrow(() => bridge.destroyGuild("nope"));
-    assert.deepEqual(destroys, []);
-  });
-
-  it("guildIds() reflects live adapters", () => {
-    const { transport } = makeTransport();
-    const bridge = new GatewayBridge(transport);
-    const a = makeLibRecorder();
-    bridge.adapterCreatorFor("A")(a.lib as never);
-    bridge.adapterCreatorFor("B")(makeLibRecorder().lib as never);
-    assert.deepEqual(new Set(bridge.guildIds()), new Set(["A", "B"]));
-  });
 });

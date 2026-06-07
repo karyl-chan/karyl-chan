@@ -14,7 +14,7 @@
  * voice-internal-routes.ts + the bot.on("raw") relay in main.ts — this class
  * is only the control-plane client.
  */
-import { buildOutboundSignatureHeaders } from "../../utils/hmac.js";
+import { signedJsonPost } from "../../utils/hmac.js";
 import { moduleLogger } from "../../logger.js";
 import type {
   VoiceBackend,
@@ -34,16 +34,7 @@ export class RemoteVoiceBackend implements VoiceBackend {
   }
 
   private async call(path: string, body: unknown): Promise<VoiceStatus> {
-    const raw = JSON.stringify(body ?? {});
-    const headers = {
-      "content-type": "application/json",
-      ...buildOutboundSignatureHeaders(this.secret, "POST", path, raw),
-    };
-    const res = await fetch(`${this.base}${path}`, {
-      method: "POST",
-      headers,
-      body: raw,
-    });
+    const res = await signedJsonPost(this.secret, this.base, path, body);
     if (res.status === 429) {
       // Drain the body so the connection can be reused, then surface the cap.
       const detail = await res.text().catch(() => "");

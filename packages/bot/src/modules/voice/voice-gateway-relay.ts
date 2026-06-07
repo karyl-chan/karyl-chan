@@ -20,7 +20,7 @@
  * single-machine default never installs the hook.
  */
 import type { Client } from "discord.js";
-import { buildOutboundSignatureHeaders } from "../../utils/hmac.js";
+import { signedJsonPost } from "../../utils/hmac.js";
 import { moduleLogger } from "../../logger.js";
 import { activeRemoteGuilds } from "./voice-internal-routes.js";
 
@@ -40,16 +40,11 @@ async function relayEvent(
   type: "VOICE_STATE_UPDATE" | "VOICE_SERVER_UPDATE",
   data: unknown,
 ): Promise<void> {
-  const raw = JSON.stringify({ guildId, type, data });
-  const headers = {
-    "content-type": "application/json",
-    ...buildOutboundSignatureHeaders(secret, "POST", GATEWAY_EVENT_PATH, raw),
-  };
   try {
-    const res = await fetch(`${base}${GATEWAY_EVENT_PATH}`, {
-      method: "POST",
-      headers,
-      body: raw,
+    const res = await signedJsonPost(secret, base, GATEWAY_EVENT_PATH, {
+      guildId,
+      type,
+      data,
     });
     if (!res.ok) {
       log.warn({ guildId, type, status: res.status }, "gateway-event relay rejected");

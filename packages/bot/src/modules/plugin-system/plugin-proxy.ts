@@ -116,19 +116,13 @@ const PROXY_CONNECT_RETRY_DELAY_MS = 250;
  * some wrapped errors expose the original on `.cause`.
  */
 function transientConnectCode(err: unknown): string | undefined {
-  const code = (err as { code?: string } | null | undefined)?.code;
-  if (typeof code === "string" && TRANSIENT_CONNECT_ERROR_CODES.has(code)) {
-    return code;
-  }
-  const causeCode = (err as { cause?: { code?: string } } | null | undefined)
-    ?.cause?.code;
-  if (
-    typeof causeCode === "string" &&
-    TRANSIENT_CONNECT_ERROR_CODES.has(causeCode)
-  ) {
-    return causeCode;
-  }
-  return undefined;
+  // undici surfaces the code on `.code`; some wrappers expose the original
+  // on `.cause.code`. Check both, then match against the transient set.
+  const e = err as { code?: string; cause?: { code?: string } } | null | undefined;
+  const code = e?.code ?? e?.cause?.code;
+  return typeof code === "string" && TRANSIENT_CONNECT_ERROR_CODES.has(code)
+    ? code
+    : undefined;
 }
 
 /**

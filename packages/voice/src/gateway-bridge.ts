@@ -138,21 +138,4 @@ export class GatewayBridge {
   has(guildId: string): boolean {
     return this.methods.has(guildId);
   }
-
-  /** Guild ids with a live adapter (used by the relay-gating endpoint). */
-  guildIds(): string[] {
-    return [...this.methods.keys()];
-  }
-
-  /**
-   * Tell @discordjs/voice that a guild's adapter is no longer usable (e.g.
-   * the bot signalled a gateway disconnect for that shard). Calls the
-   * library `destroy()`, which in turn triggers our implementer `destroy()`
-   * (cleanup + onDestroy). No-op for an unknown guild.
-   */
-  destroyGuild(guildId: string): void {
-    const lib = this.methods.get(guildId);
-    if (!lib) return;
-    lib.destroy();
-  }
 }

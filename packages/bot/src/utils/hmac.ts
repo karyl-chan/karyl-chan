@@ -139,22 +139,41 @@ export function verifyInboundSignatureFromHeaders(
   method: string,
   urlPath: string,
 ): SignatureCheck {
+  // Adapt the Fastify record headers to a fetch `Headers` and reuse the
+  // single verified core in `verifyInboundSignature` — the replay-window +
+  // constant-time compare must live in exactly one place, not be cloned.
   const one = (v: string | string[] | undefined): string | undefined =>
     Array.isArray(v) ? v[0] : v;
-  const tsHeader = one(headers[TIMESTAMP_HEADER]);
-  const sigHeader = one(headers[SIGNATURE_HEADER]);
-  if (!tsHeader) return { ok: false, reason: "missing timestamp" };
-  if (!sigHeader) return { ok: false, reason: "missing signature" };
-  const tsNum = Number.parseInt(tsHeader, 10);
-  if (!Number.isFinite(tsNum)) {
-    return { ok: false, reason: "malformed timestamp" };
-  }
-  if (Math.abs(nowSec - tsNum) > REPLAY_WINDOW_SECONDS) {
-    return { ok: false, reason: "timestamp outside replay window" };
-  }
-  const expected = signBody(secret, method, urlPath, tsHeader, rawBody);
-  if (!constantTimeEq(sigHeader, expected)) {
-    return { ok: false, reason: "signature mismatch" };
-  }
-  return { ok: true };
+  const h = new Headers();
+  const ts = one(headers[TIMESTAMP_HEADER]);
+  const sig = one(headers[SIGNATURE_HEADER]);
+  if (ts) h.set(TIMESTAMP_HEADER, ts);
+  if (sig) h.set(SIGNATURE_HEADER, sig);
+  return verifyInboundSignature(secret, h, rawBody, nowSec, method, urlPath);
+}
+
+// ─── Signed POST ──────────────────────────────────────────────────────
+
+/**
+ * Serialise `body` to JSON, attach the HMAC headers, and POST it. Returns
+ * the raw `Response` so each caller applies its own status handling (e.g.
+ * 429 → capacity). The single place the bot→voice internal channel
+ * assembles a signed request, so the on-the-wire bytes stay identical
+ * across callers.
+ */
+export async function signedJsonPost(
+  secret: string,
+  baseUrl: string,
+  path: string,
+  body: unknown,
+): Promise<Response> {
+  const raw = JSON.stringify(body ?? {});
+  return fetch(`${baseUrl}${path}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...buildOutboundSignatureHeaders(secret, "POST", path, raw),
+    },
+    body: raw,
+  });
 }

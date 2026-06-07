@@ -84,7 +84,11 @@ export class InProcessVoiceBackend implements VoiceBackend {
     const client = this.getClient();
     if (!client) throw new Error("bot client unavailable");
     // voiceAdapterCreator is a closure over this guild's gateway shard.
-    const guild = await client.guilds.fetch(req.guildId);
+    // Prefer the cache (the RPC layer already validated+cached the guild)
+    // and only hit the REST API on a cache miss.
+    const guild =
+      client.guilds.cache.get(req.guildId) ??
+      (await client.guilds.fetch(req.guildId));
     return joinVoice({
       guildId: req.guildId,
       channelId: req.channelId,
