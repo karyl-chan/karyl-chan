@@ -22,6 +22,7 @@ import {
 import { getDistributedLock } from "./adapters/registry.js";
 import { closeRedisClient } from "./adapters/redis/client.js";
 import { config } from "./config.js";
+import { shutdownOtel } from "./observability/otel.js";
 import { moduleLogger } from "./logger.js";
 import { startWebServer } from "./modules/web-core/server.js";
 import { setReady, setDraining } from "./modules/web-core/readiness.js";
@@ -247,6 +248,10 @@ async function gracefulShutdown(signal: string): Promise<void> {
     // 5''. Close the shared Redis client if one was opened. Safe no-op
     //      when no adapter ever requested Redis.
     await closeRedisClient();
+    // 6. Flush + shut down the OTel SDK last so spans emitted by the
+    //    teardown steps above still get exported. No-op when OTel is
+    //    disabled (the common single-machine default).
+    await shutdownOtel();
     clearTimeout(timeout);
     log.info({ signal }, "graceful shutdown complete");
     process.exit(0);

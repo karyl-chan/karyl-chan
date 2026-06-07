@@ -107,4 +107,8 @@ USER node
 
 VOLUME ["/usr/src/app/data"]
 
-CMD [ "node", "build/main.js" ]
+# `--import` starts the OpenTelemetry SDK before the app's modules load
+# so auto-instrumentation can patch http/pg/undici/fastify in time. It is
+# a no-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set (default-off), so the
+# single-machine deployment keeps zero observability overhead.
+CMD [ "node", "--import", "./build/observability/register.js", "build/main.js" ]
