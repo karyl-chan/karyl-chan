@@ -32,6 +32,17 @@ const SHARD_ID = String(config.bot.shardId);
 
 export const metricsRegistry = new Registry();
 
+// Stamp `service` on every series (default Node metrics included) so the
+// metrics share one identity with the structured logs (logger.ts) and the
+// OTel resource (observability/otel.ts) — logs/metrics/traces all key off
+// the same service name in the aggregator. Matches the OTel default.
+// shard_id is intentionally NOT a default label: business metrics already
+// carry it explicitly, and for the rest each shard is a distinct Prometheus
+// scrape target, so the target's instance/job label already separates them.
+metricsRegistry.setDefaultLabels({
+  service: (process.env.OTEL_SERVICE_NAME ?? "").trim() || "karyl-bot",
+});
+
 collectDefaultMetrics({
   register: metricsRegistry,
   prefix: "karyl_",
