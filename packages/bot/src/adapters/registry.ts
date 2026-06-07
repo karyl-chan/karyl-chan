@@ -155,10 +155,11 @@ export function getVoiceStateStore(): VoiceStateStore {
 /**
  * Optional event bus — `null` is a valid answer here meaning "use
  * the legacy HTTP fan-out path baked into plugin-event-bridge".
- * The Redis Streams producer ships here; the SDK consumer ships
- * separately. Until the consumer lands, setting EVENT_BUS=redis-streams
- * should be paired with an SDK that knows how to read the streams or
- * events go into the void.
+ * `EVENT_BUS=redis-streams` selects the Redis Streams producer; the
+ * matching SDK consumer (XREADGROUP + XACK + DLQ) ships as of PR-1.1,
+ * so the loop is complete — the bot XADDs and the per-plugin SDK
+ * consumer fans out + acks. The bridge service routes here when the
+ * bus is non-null (PR-1.2).
  */
 export function getPluginEventBus(): PluginEventBus | null {
   if (cache.pluginEventBus) return cache.pluginEventBus;
