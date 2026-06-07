@@ -328,10 +328,14 @@ export async function registerVoiceRpcRoutes(
             // `listenerIds` lets a plugin (e.g. a DJ controller) render
             // which users are in voice without a separate members.get
             // round-trip — both the count and the ids come from the same
-            // membership snapshot.
+            // membership snapshot. `channelName` / `guildName` come from
+            // the same fetched channel so a status panel can label the
+            // connection ("Playing in 🔊 General") without an extra lookup.
             const nonBot = ch.members.filter((m) => !m.user.bot);
             return {
               ...status,
+              channelName: ch.name,
+              guildName: ch.guild?.name ?? null,
               listeners: nonBot.size,
               listenerIds: [...nonBot.keys()],
             };
@@ -347,22 +351,22 @@ export async function registerVoiceRpcRoutes(
   // POST /api/plugin/voice.locate
   // Body: { user_id: string }
   //
-  // Reverse-lookup: "which voice channel is this user currently in?" —
-  // without the caller having to know the guild. We scan the guilds this
-  // (shard's) bot shares with the user and read each guild's cached voice
-  // state. This powers an external control channel (e.g. a browser
-  // extension) that says "play wherever I am" with no guild configured.
+  // Reverse-lookup: "which voice channel(s) is this user currently in?" —
+  // without the caller knowing the guild. Scans the guilds this (shard's)
+  // bot shares with the user and reads each guild's cached voice state.
+  // Powers an external control channel (e.g. a browser extension) that
+  // says "play wherever I am" with no guild configured.
   //
-  // Returns:
-  //   200 { guildId, channelId, guildName }     — exactly one match
-  //   404 { error }                             — user not in any VC we see
-  //   409 { error:"ambiguous", candidates:[…] } — in VCs across >1 guild;
-  //         the caller disambiguates by passing guild_id to voice.join.
+  // Always 200 with a (possibly empty) match list — the caller decides:
+  // 0 = not in a reachable VC, 1 = act there, >1 = ambiguous (let the user
+  // pick). A structured body (rather than 404/409 status codes) lets a
+  // status panel render each candidate's guild / channel name directly.
+  //
+  //   200 { matches: [{ guildId, guildName, channelId, channelName }] }
   //
   // Multi-shard caveat: `bot.guilds.cache` only holds guilds owned by this
-  // shard, so a user sitting in a VC on another shard won't be seen here.
-  // Matches the per-shard scope of the voice-state store; fine for the
-  // single-process deployment.
+  // shard, so a user in a VC on another shard won't appear here. Matches
+  // the per-shard scope of the voice-state store; fine for single-process.
   server.post<{ Body: { user_id?: unknown } }>(
     "/api/plugin/voice.locate",
     async (request, reply) => {
@@ -384,24 +388,27 @@ export async function registerVoiceRpcRoutes(
         });
         return;
       }
-      // Read the cached voice state per guild — no per-guild member fetch,
-      // so this stays a pure in-memory scan even across many guilds.
-      const candidates: { guildId: string; channelId: string; guildName: string }[] = [];
+      // Pure in-memory scan: read the cached voice state per shared guild
+      // and resolve the channel name from the same cache (no member /
+      // channel fetch).
+      const matches: {
+        guildId: string;
+        guildName: string;
+        channelId: string;
+        channelName: string | null;
+      }[] = [];
       for (const guild of bot.guilds.cache.values()) {
         const channelId = guild.voiceStates.cache.get(userId)?.channelId;
         if (channelId) {
-          candidates.push({ guildId: guild.id, channelId, guildName: guild.name });
+          matches.push({
+            guildId: guild.id,
+            guildName: guild.name,
+            channelId,
+            channelName: guild.channels.cache.get(channelId)?.name ?? null,
+          });
         }
       }
-      if (candidates.length === 0) {
-        reply.code(404).send({ error: "that user is not in a voice channel" });
-        return;
-      }
-      if (candidates.length > 1) {
-        reply.code(409).send({ error: "ambiguous", candidates });
-        return;
-      }
-      return candidates[0];
+      return { matches };
     },
   );
 }
