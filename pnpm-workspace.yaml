@@ -3,6 +3,12 @@ packages:
   # frontend is nested inside the bot package but is still a workspace
   # member so a single `pnpm install` at the root resolves its deps too.
   - 'packages/bot/frontend'
+  # Cross-service E2E + chaos harness. A workspace member only so
+  # `pnpm install` resolves its devDeps (@types/node, ioredis, tsc).
+  # It exposes NO `test` script, so `pnpm -r test` never runs it — the
+  # E2E/chaos scenarios are invoked explicitly via `pnpm --dir e2e e2e`
+  # and are themselves env-gated (see e2e/README.md).
+  - 'e2e'
 
 # pnpm 11 no longer reads the `pnpm` field in package.json; settings
 # live here. pnpm 11 also replaced the v10 `onlyBuiltDependencies`

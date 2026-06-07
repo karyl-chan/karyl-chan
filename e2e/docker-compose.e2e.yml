@@ -1,0 +1,63 @@
+# Minimal topology for the karyl-chan cross-service E2E / chaos harness.
+#
+# The current harness (streams-roundtrip.e2e.ts) only needs Redis — it
+# drives the bot producer and SDK consumer in-process against a real
+# broker. The bot + plugin + postgres services below are scaffolded for
+# the fuller WebUI / RPC round-trip and the chaos scenarios (kill a
+# service, partition the network); bring them up only when a scenario
+# needs them.
+#
+#   docker compose -f e2e/docker-compose.e2e.yml up -d redis
+#   TEST_E2E_REDIS_URL=redis://localhost:6390 pnpm --dir e2e e2e
+#   docker compose -f e2e/docker-compose.e2e.yml down -v
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6390:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["full"] # only started with `--profile full`
+    environment:
+      POSTGRES_PASSWORD: e2e
+      POSTGRES_DB: karyl_e2e
+    ports:
+      - "55433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+
+  # The bot, run WITHOUT a Discord login (BOT_SKIP_DISCORD=true) so the
+  # HTTP surface (plugin register + RPC routes + WebUI) comes up for the
+  # RPC/WebUI round-trip and chaos scenarios without real Discord creds.
+  # Built from the in-repo Dockerfile. Enable with `--profile full`.
+  bot:
+    profiles: ["full"]
+    build:
+      context: ..
+      dockerfile: packages/bot/Dockerfile
+    environment:
+      BOT_SKIP_DISCORD: "true"
+      BOT_TOKEN: "e2e-fake-token"
+      ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+      JWT_SECRET: "0000000000000000000000000000000000000000000000000000000000000000"
+      REDIS_URL: "redis://redis:6379"
+      EVENT_BUS: "redis-streams"
+      DB_URL: "postgres://postgres:e2e@postgres:5432/karyl_e2e"
+      PLUGIN_SETUP_SECRET: "e2e-setup-secret"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:80"
