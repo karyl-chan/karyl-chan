@@ -686,11 +686,32 @@ export function definePlugin(config: PluginConfig): PluginInstance {
       ).replace(/\/+$/, "");
 
       let client: ReturnType<typeof startPluginClient> | null = null;
+      // Optional Redis Streams consumer — only constructed when the
+      // transport is enabled (EVENT_BUS=redis-streams + REDIS_URL) and
+      // the plugin actually subscribes to events. Lives across the
+      // process; torn down in `started.stop()`.
+      let streamsConsumer: { stop(): Promise<void> } | null = null;
       // Built once below — captured by closures handed to MetricsCollector
       // / BotEventEmitter / lifecycle hooks. Initialized to a not-yet-
       // registered placeholder; replaced once startPluginClient resolves.
       let ctx: PluginContext | null = null;
       const manifest = buildManifest(config, pluginUrl);
+
+      // Resolve + run one event handler. Shared by BOTH the HTTP
+      // `/events` route (via `dispatchEvent` below) and the Redis Streams
+      // consumer, so flipping `EVENT_BUS` is transparent to the author —
+      // the same handler fires from the same code path either way.
+      const dispatchEventToHandler = async (
+        eventType: string,
+        data: unknown,
+      ): Promise<void> => {
+        if (!ctx) return;
+        const handler = config.eventHandlers?.[eventType];
+        if (!handler) return;
+        await handler(ctx, data);
+      };
+      const eventTypes = Object.keys(config.eventHandlers ?? {});
+      const hasEventHandlers = eventTypes.length > 0;
 
       const server = createPluginServer({
         pluginKey: config.key,
@@ -752,20 +773,14 @@ export function definePlugin(config: PluginConfig): PluginInstance {
         hasLifecycleHandler:
           typeof config.onEnable === "function" ||
           typeof config.onDisable === "function",
-        // SDK-managed event dispatch. Resolver lives in this closure
-        // so the long-lived `ctx` (built after first register) is
-        // captured; handlers run with the same context shape as
-        // command handlers / lifecycle hooks.
-        dispatchEvent: async (eventType, data) => {
-          if (!ctx) return;
-          const handler = config.eventHandlers?.[eventType];
-          if (!handler) return;
-          await handler(ctx, data);
-        },
-        hasEventHandlers:
-          typeof config.eventHandlers === "object" &&
-          config.eventHandlers !== null &&
-          Object.keys(config.eventHandlers).length > 0,
+        // SDK-managed event dispatch. Resolver lives in the shared
+        // `dispatchEventToHandler` closure so the long-lived `ctx`
+        // (built after first register) is captured; handlers run with
+        // the same context shape as command handlers / lifecycle hooks.
+        // The Streams consumer (below) reuses the exact same closure, so
+        // the transport swap is invisible to the handler.
+        dispatchEvent: dispatchEventToHandler,
+        hasEventHandlers,
       });
 
       // Push helpers reference `client` via the closure so they pick up
@@ -866,6 +881,42 @@ export function definePlugin(config: PluginConfig): PluginInstance {
             };
             metricsCollector.start();
             botEventEmitter.start();
+            // Start the Streams consumer now that `ctx` exists, so a
+            // handler never fires against a null context. Gated on the
+            // transport flag + at least one event handler; HTTP-only
+            // plugins skip the ioredis import entirely. Started once —
+            // a 401 re-register doesn't re-fire onFirstRegister.
+            if (hasEventHandlers) {
+              try {
+                const { streamsTransportEnabled, getStreamsClient } =
+                  await import("./redis-streams-client.js");
+                if (streamsTransportEnabled()) {
+                  const { StreamsConsumer } = await import(
+                    "./streams-consumer.js"
+                  );
+                  const redis = await getStreamsClient();
+                  const consumer = new StreamsConsumer({
+                    redis,
+                    pluginKey: config.key,
+                    eventTypes,
+                    dispatchEvent: dispatchEventToHandler,
+                    log: {
+                      info: (msg, meta) => server.log.info(meta ?? {}, msg),
+                      warn: (msg, meta) => server.log.warn(meta ?? {}, msg),
+                      error: (msg, meta) => server.log.error(meta ?? {}, msg),
+                    },
+                  });
+                  await consumer.ensureGroups();
+                  consumer.start();
+                  streamsConsumer = consumer;
+                }
+              } catch (err) {
+                server.log.error(
+                  { err },
+                  "failed to start redis-streams consumer — events will not be received over Streams",
+                );
+              }
+            }
             if (config.onStart) {
               try {
                 await config.onStart(ctx);
@@ -916,6 +967,16 @@ export function definePlugin(config: PluginConfig): PluginInstance {
           }
           await metricsCollector.stop().catch(() => {});
           await botEventEmitter.stop().catch(() => {});
+          // Stop the Streams read loop + sweep before tearing the client
+          // down so an in-flight handler completes and the ioredis socket
+          // closes cleanly.
+          if (streamsConsumer) {
+            await streamsConsumer.stop().catch(() => {});
+            const { closeStreamsClient } = await import(
+              "./redis-streams-client.js"
+            );
+            await closeStreamsClient().catch(() => {});
+          }
           client?.stop();
           try {
             await server.close();
