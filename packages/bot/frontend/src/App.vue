@@ -163,11 +163,10 @@ function navigate() {
 <template>
     <div class="app-shell" :class="{ 'app-shell--public': !showShell }">
         <header v-if="showShell" class="app-header">
-            <RouterLink to="/admin" class="brand brand--link" :title="$t('app.nav.dashboard')">
-                {{ $t('app.brand') }}
-            </RouterLink>
+            <div class="brand">{{ $t('app.brand') }}</div>
             <nav class="desktop-nav">
                 <template v-if="isAuthenticated">
+                    <RouterLink to="/admin">{{ $t('app.nav.dashboard') }}</RouterLink>
                     <RouterLink v-if="canSeeMessages" to="/admin/messages" class="nav-with-dot">
                         {{ $t('app.nav.messages') }}
                         <span v-if="unreadStore.hasAttention" class="nav-dot" aria-hidden="true"></span>
@@ -304,20 +303,6 @@ function navigate() {
 .brand {
     font-weight: 600;
     letter-spacing: 0.05em;
-    color: inherit;
-    text-decoration: none;
-}
-.brand--link {
-    cursor: pointer;
-    border-radius: var(--radius-sm);
-}
-.brand--link:hover {
-    color: var(--text-on-header);
-    opacity: 0.85;
-}
-.brand--link:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 3px;
 }
 .desktop-nav {
     display: flex;

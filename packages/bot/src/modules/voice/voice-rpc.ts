@@ -21,7 +21,7 @@
  * implement it themselves and just hand us a channel_id.
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { Client } from "discord.js";
+import type { Client, Guild } from "discord.js";
 import { ChannelType } from "discord.js";
 import {
   joinVoice,
@@ -388,24 +388,56 @@ export async function registerVoiceRpcRoutes(
         });
         return;
       }
-      // Pure in-memory scan: read the cached voice state per shared guild
-      // and resolve the channel name from the same cache (no member /
-      // channel fetch).
-      const matches: {
+      interface Match {
         guildId: string;
         guildName: string;
         channelId: string;
         channelName: string | null;
-      }[] = [];
+      }
+      const toMatch = (guild: Guild, channelId: string): Match => ({
+        guildId: guild.id,
+        guildName: guild.name,
+        channelId,
+        channelName: guild.channels.cache.get(channelId)?.name ?? null,
+      });
+
+      // Fast path: read the gateway voice-state cache per shared guild.
+      const matches: Match[] = [];
       for (const guild of bot.guilds.cache.values()) {
         const channelId = guild.voiceStates.cache.get(userId)?.channelId;
-        if (channelId) {
-          matches.push({
-            guildId: guild.id,
-            guildName: guild.name,
-            channelId,
-            channelName: guild.channels.cache.get(channelId)?.name ?? null,
-          });
+        if (channelId) matches.push(toMatch(guild, channelId));
+      }
+
+      // Cache-miss recovery. The gateway voice-state cache can drift: a
+      // VOICE_STATE_UPDATE missed across a resume gap isn't replayed, so a
+      // user who joined voice during that window stays absent from the
+      // cache until the next full GUILD_CREATE (bot restart). When the
+      // fast scan finds nothing, confirm against the REST voice-state
+      // endpoint (GET /guilds/{id}/voice-states/{user}) before reporting
+      // "not in voice". Only runs on a miss; the panel polls only while
+      // its popup is open, so the extra REST calls stay bounded.
+      let recovered = false;
+      if (matches.length === 0) {
+        for (const guild of bot.guilds.cache.values()) {
+          // Only probe guilds the user belongs to — skips REST 404s across
+          // unrelated guilds when the user simply isn't in voice anywhere.
+          // An active user (who can drive this RPC) is reliably member-cached
+          // in their guild, so this keeps recovery cheap without losing them.
+          if (!guild.members.cache.has(userId)) continue;
+          const vs = await guild.voiceStates
+            .fetch(userId, { force: true })
+            .catch(() => null);
+          const channelId = vs?.channelId;
+          if (channelId) {
+            recovered = true;
+            matches.push(toMatch(guild, channelId));
+          }
+        }
+        if (recovered) {
+          request.log.info(
+            { userId, matches: matches.length },
+            "voice.locate recovered via REST after cache miss",
+          );
         }
       }
       return { matches };
