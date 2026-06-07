@@ -30,9 +30,17 @@ import {
   stopPlayback,
   getStatus,
   shutdownAllVoice,
+  setVoiceLogger,
   VoiceCapacityError,
   type VoiceStatus,
-} from "./voice-manager.service.js";
+} from "@karyl-chan/voice";
+import { moduleLogger } from "../../logger.js";
+
+// Route the relocated voice manager's structured logs through the bot's pino
+// logger so in-process voice logging is byte-for-byte what it was before the
+// manager moved to @karyl-chan/voice. (The standalone service uses the
+// manager's default console sink.)
+setVoiceLogger(moduleLogger("voice-manager"));
 
 export interface VoiceJoinRequest {
   guildId: string;

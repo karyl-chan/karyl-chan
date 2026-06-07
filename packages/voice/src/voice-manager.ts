@@ -1,18 +1,22 @@
 /**
  * Voice connection manager — one VoiceConnection per guild.
  *
- * @discordjs/voice handles the gateway voice handshake and the UDP
- * audio relay; we just track which guild has an active connection
- * and give a thin facade for join/leave/play/stop. Audio playback
- * uses ffmpeg (via prism-media's FFmpeg transformer) to decode any
- * format the underlying ffmpeg-static binary supports — works for
- * direct .mp3 / .ogg / .opus URLs, HLS streams, etc. YouTube
- * extraction is intentionally out of scope (license + maintenance
- * burden); plugins can add it themselves and feed us a direct URL.
+ * Relocated from the bot (PR-2.3c) so a single implementation backs both the
+ * in-process backend (single-machine default) and the standalone voice
+ * service. Framework-free: no Fastify, no discord.js Client, no bot config /
+ * logger — it takes a `DiscordGatewayAdapterCreator` per join (the in-process
+ * backend passes `guild.voiceAdapterCreator`; the service passes the
+ * GatewayBridge's adapter) and logs via a pluggable sink.
  *
- * Plugin RPC fans out through this module — see voice-rpc.ts. Slash
- * commands fan out through voice.commands.ts. Both paths converge
- * here so the per-guild state stays consistent.
+ * @discordjs/voice handles the gateway voice handshake and the UDP audio
+ * relay; we track which guild has an active connection and give a thin facade
+ * for join/leave/play/stop. Audio playback uses ffmpeg (via prism-media's
+ * FFmpeg transformer) to decode any format the underlying ffmpeg binary
+ * supports — direct .mp3 / .ogg / .opus URLs, HLS streams, etc. YouTube
+ * extraction is intentionally out of scope; plugins feed us a direct URL.
+ *
+ * The admission-control cap (MAX_CONCURRENT_VOICE_GUILDS) lives here so it
+ * applies wherever the manager runs.
  */
 import {
   joinVoiceChannel,
@@ -26,23 +30,43 @@ import {
   type AudioPlayer,
   type DiscordGatewayAdapterCreator,
 } from "@discordjs/voice";
-import { execSync } from "child_process";
-import { PassThrough, pipeline } from "stream";
+import { execSync } from "node:child_process";
+import { PassThrough, pipeline } from "node:stream";
 import prism from "prism-media";
-import { config } from "../../config.js";
-import { moduleLogger } from "../../logger.js";
 
-const log = moduleLogger("voice-manager");
+// ─── Logging ──────────────────────────────────────────────────────────
+//
+// The manager is consumed by the bot (pino) and by the standalone service
+// (console). Rather than hard-wire either, it logs through a small structured
+// sink that defaults to console and can be overridden via `setVoiceLogger`.
+
+export interface VoiceLogger {
+  info(obj: unknown, msg: string): void;
+  warn(obj: unknown, msg: string): void;
+  error(obj: unknown, msg: string): void;
+}
+
+let log: VoiceLogger = {
+  info: (obj, msg) => console.log(JSON.stringify({ level: "info", msg, ...asObj(obj) })),
+  warn: (obj, msg) => console.warn(JSON.stringify({ level: "warn", msg, ...asObj(obj) })),
+  error: (obj, msg) => console.error(JSON.stringify({ level: "error", msg, ...asObj(obj) })),
+};
+
+function asObj(obj: unknown): Record<string, unknown> {
+  return obj && typeof obj === "object" ? (obj as Record<string, unknown>) : { value: obj };
+}
+
+/** Override the manager's log sink (the bot wires its pino module logger). */
+export function setVoiceLogger(logger: VoiceLogger): void {
+  log = logger;
+}
 
 // prism-media 1.3.5 has hardcoded ffmpeg discovery: it tries
-// require('ffmpeg-static') FIRST (ignoring FFMPEG_PATH env entirely),
-// then falls back to PATH lookup. The ffmpeg-static binary segfaults
-// on Debian Trixie, so we removed it from package.json — prism's
-// require() now throws and it falls through to spawn('ffmpeg', ...)
-// which finds the apt-installed binary on PATH.
-//
-// Side effect: dev mode (`npm run dev`) needs the operator to have
-// ffmpeg on PATH. Document this in README.
+// require('ffmpeg-static') FIRST (ignoring FFMPEG_PATH env entirely), then
+// falls back to PATH lookup. We don't ship ffmpeg-static (it segfaults on
+// Debian Trixie), so prism's require() throws and it falls through to
+// spawn('ffmpeg', ...) which finds the apt-installed binary on PATH. Both the
+// bot image and the voice image apt-install ffmpeg.
 {
   let resolved: string | null = null;
   try {
@@ -81,9 +105,9 @@ export interface VoiceStatus {
   playerStatus: string | null;
   /**
    * Non-bot members currently in the bot's voice channel. Filled in by the
-   * `voice.status` RPC (it has the discord.js client; this service doesn't)
-   * — `undefined` when not connected or the channel can't be inspected.
-   * `0` means the bot is alone — a plugin can use this to auto-leave.
+   * `voice.status` RPC in the bot (it has the discord.js client; this manager
+   * does not) — `undefined` when not connected or the channel can't be
+   * inspected. `0` means the bot is alone.
    */
   listeners?: number;
 }
@@ -97,20 +121,12 @@ export interface JoinOptions {
 }
 
 /**
- * Join a guild voice channel. Idempotent: if already connected to
- * the same channel, returns the existing state. If connected to a
- * different channel in the same guild, transparently moves.
- */
-/**
- * Cap concurrent voice guild connections. Each connection allocates
- * a `VoiceConnection` plus an ffmpeg child process on every `play()`;
- * running unbounded at 2500-guild scale is the primary OOM risk.
- * Reject new joins with a sentinel that the RPC layer translates to
- * HTTP 429.
+ * Cap concurrent voice guild connections. Each connection allocates a
+ * `VoiceConnection` plus an ffmpeg child process on every `play()`; running
+ * unbounded at 2500-guild scale is the primary OOM risk. Reject new joins
+ * with a sentinel that the RPC layer / service translates to HTTP 429.
  *
- * Default 50 — comfortably above the radio plugin's typical
- * concurrent guild count today, but a hard ceiling.
- * Override with `MAX_CONCURRENT_VOICE_GUILDS=N`.
+ * Default 50. Override with `MAX_CONCURRENT_VOICE_GUILDS=N`.
  */
 const MAX_CONCURRENT_VOICE_GUILDS = Math.max(
   1,
@@ -124,6 +140,11 @@ export class VoiceCapacityError extends Error {
   }
 }
 
+/**
+ * Join a guild voice channel. Idempotent: if already connected to the same
+ * channel, returns the existing state. If connected to a different channel in
+ * the same guild, transparently moves.
+ */
 export async function joinVoice(opts: JoinOptions): Promise<VoiceStatus> {
   const { guildId, channelId, adapterCreator, selfDeaf, selfMute } = opts;
   log.info({ guildId, channelId, selfDeaf, selfMute }, "joinVoice called");
@@ -131,18 +152,15 @@ export async function joinVoice(opts: JoinOptions): Promise<VoiceStatus> {
   if (existing && existing.channelId === channelId) {
     return getStatus(guildId);
   }
-  // Refuse new guilds when the cap is hit. Same-guild moves
-  // (existing != null) bypass the cap — the slot is already
-  // accounted for.
+  // Refuse new guilds when the cap is hit. Same-guild moves (existing != null)
+  // bypass the cap — the slot is already accounted for.
   if (!existing && states.size >= MAX_CONCURRENT_VOICE_GUILDS) {
     throw new VoiceCapacityError(
       `concurrent voice guilds at cap (${MAX_CONCURRENT_VOICE_GUILDS})`,
     );
   }
   if (existing) {
-    // Move to a different channel in the same guild — destroy old,
-    // recreate. discord.js can rejoin with the same connection but
-    // the simpler path is fresh state.
+    // Move to a different channel in the same guild — destroy old, recreate.
     existing.connection.destroy();
     existing.player.stop(true);
     states.delete(guildId);
@@ -157,9 +175,9 @@ export async function joinVoice(opts: JoinOptions): Promise<VoiceStatus> {
   const player = createAudioPlayer();
   connection.subscribe(player);
 
-  // Disconnect handling — Discord can drop the connection (gateway
-  // resume failure, channel deleted). Try one rejoin; if that fails,
-  // tear down so the next join() starts clean.
+  // Disconnect handling — Discord can drop the connection (gateway resume
+  // failure, channel deleted). Try one rejoin; if that fails, tear down so
+  // the next join() starts clean.
   connection.on(VoiceConnectionStatus.Disconnected, async () => {
     try {
       await Promise.race([
@@ -181,10 +199,9 @@ export async function joinVoice(opts: JoinOptions): Promise<VoiceStatus> {
     playingUrl: null,
   });
 
-  // Wait up to 15s for the connection to be ready. If we time out we
-  // still leave the state in the map so subsequent calls (e.g. /leave)
-  // can clean up; we surface a logical "connected: false" via the
-  // connection status string.
+  // Wait up to 15s for the connection to be ready. If we time out we still
+  // leave the state in the map so subsequent calls (e.g. /leave) can clean
+  // up; we surface a logical "connected: false" via the connection status.
   try {
     await entersState(connection, VoiceConnectionStatus.Ready, 15_000);
   } catch (err) {
@@ -193,9 +210,7 @@ export async function joinVoice(opts: JoinOptions): Promise<VoiceStatus> {
   return getStatus(guildId);
 }
 
-/**
- * Leave the guild voice channel. No-op if not connected.
- */
+/** Leave the guild voice channel. No-op if not connected. */
 export function leaveVoice(guildId: string): VoiceStatus {
   const state = states.get(guildId);
   if (!state) return getStatus(guildId);
@@ -206,39 +221,25 @@ export function leaveVoice(guildId: string): VoiceStatus {
 }
 
 /**
- * Stream-decode and play an audio URL. Returns immediately once the
- * player accepts the resource — playback continues in the background.
- *
- * Replaces any currently-playing track. Caller must already be joined
- * via joinVoice() — we don't auto-join (the channel choice is policy).
+ * Stream-decode and play an audio URL. Returns immediately once the player
+ * accepts the resource — playback continues in the background. Replaces any
+ * currently-playing track. Caller must already be joined via joinVoice().
  */
 export function playUrl(guildId: string, url: string): VoiceStatus {
   const state = states.get(guildId);
   if (!state) {
     throw new Error("not_joined");
   }
-  // ffmpeg presence check is best-effort — prism-media will throw a
-  // clearer error during spawn if there's no ffmpeg on PATH.
-  // Spawn ffmpeg with a generic decode pipeline: input from URL,
-  // resample to 48kHz stereo PCM (Discord's native sample rate), pipe
-  // to stdout. prism-media handles the lifecycle.
+  // Spawn ffmpeg: input from URL, resample to 48kHz stereo PCM (Discord's
+  // native rate), pipe to stdout. prism-media handles the lifecycle.
   //
-  // -reconnect 1 + -reconnect_streamed 1 keeps long radio streams
-  // alive across transient network blips (without these the stream
-  // stops at the first TCP RST).
-  //
-  // -rw_timeout (microseconds) bounds a single input I/O wait: if the
-  // source socket goes silent for ~10 s ffmpeg errors out instead of
-  // hanging forever on a dead connection — and -reconnect then retries
-  // from where it left off. Short network jitter (sub-2 s) is absorbed
-  // by the PassThrough buffer below, so this only trips on real stalls.
-  //
-  // -protocol_whitelist locks ffmpeg's *input* side to the HTTP stack
-  // (+ pipe/fd for prism's stdout output, + crypto for AES-HLS segments)
-  // — so a crafted playlist/manifest can't pivot to file:/concat:/
-  // subfile:/data:/gopher: and read local files or reach other
-  // protocols. Combined with the SSRF host-policy check in voice-rpc.ts,
-  // this keeps `/radio play <url>` from being a foothold.
+  // -reconnect keeps long radio streams alive across transient blips.
+  // -rw_timeout bounds a single input I/O wait (10s) so ffmpeg errors out
+  // instead of hanging on a dead connection; -reconnect then retries.
+  // -protocol_whitelist locks ffmpeg's input side to the HTTP stack (+ pipe/
+  // fd for prism's stdout, + crypto for AES-HLS) so a crafted playlist can't
+  // pivot to file:/concat:/data: etc. (defence-in-depth with the bot's SSRF
+  // host-policy check in voice-rpc.ts).
   const ffmpeg = new prism.FFmpeg({
     args: [
       "-protocol_whitelist",
@@ -265,9 +266,6 @@ export function playUrl(guildId: string, url: string): VoiceStatus {
       "2",
     ],
   });
-  // prism.FFmpeg exposes the underlying child process via .process;
-  // tap stderr so we capture exec-level errors too (the pipeline()
-  // callback below only fires for transformer-/stream-level failures).
   const child = (
     ffmpeg as unknown as {
       process?: {
@@ -279,20 +277,19 @@ export function playUrl(guildId: string, url: string): VoiceStatus {
     const text = b.toString("utf8").trim();
     if (text) log.warn({ url, guildId, ffmpeg: text }, "ffmpeg stderr");
   });
-  // A ~2 s PCM jitter buffer between ffmpeg and the audio player. ffmpeg
-  // races ahead to keep it full (back-pressured once it is), so when the
-  // source CDN hiccups the player drains the buffer instead of starving
-  // — no stutter / speed-up artefact for sub-2 s blips. 192 kB/s is the
-  // 48 kHz·stereo·s16le rate. pipeline() ties their lifecycles together:
-  // an ffmpeg error/EOF tears down the buffer, and the buffer being
-  // destroyed (the player swapping in the next track) kills the ffmpeg
-  // child — so a skip never leaks a zombie ffmpeg.
+  // A ~2 s PCM jitter buffer between ffmpeg and the audio player. pipeline()
+  // ties their lifecycles: an ffmpeg error/EOF tears down the buffer, and the
+  // buffer being destroyed (player swapping in the next track) kills the
+  // ffmpeg child — so a skip never leaks a zombie ffmpeg.
   const PCM_BYTES_PER_SECOND = 48_000 * 2 * 2;
   const buffered = new PassThrough({ highWaterMark: PCM_BYTES_PER_SECOND * 2 });
   pipeline(ffmpeg, buffered, (err) => {
-    // ERR_STREAM_PREMATURE_CLOSE just means the player swapped this track
-    // out (skip / stop / leave) and destroyed the buffer — expected.
-    if (err && (err as NodeJS.ErrnoException).code !== "ERR_STREAM_PREMATURE_CLOSE") {
+    // ERR_STREAM_PREMATURE_CLOSE just means the player swapped this track out
+    // (skip / stop / leave) and destroyed the buffer — expected.
+    if (
+      err &&
+      (err as NodeJS.ErrnoException).code !== "ERR_STREAM_PREMATURE_CLOSE"
+    ) {
       log.warn({ err, url, guildId }, "ffmpeg → playback buffer error");
     }
   });
@@ -300,29 +297,15 @@ export function playUrl(guildId: string, url: string): VoiceStatus {
     inputType: StreamType.Raw,
   });
   log.info(
-    {
-      url,
-      guildId,
-      channelId: state.channelId,
-      ffmpegPath: config.voice.ffmpegPath,
-    },
+    { url, guildId, channelId: state.channelId },
     "playUrl: spawning ffmpeg + queueing resource",
   );
   state.player.play(resource);
   state.playingUrl = url;
 
-  // Player state observability — without these the only signal of a
-  // failed stream is silence in the channel. We log every transition
-  // (idle→buffering→playing→idle) so we can see how far the pipeline
-  // got before giving up.
-  // INFO level (not debug) so it surfaces in prod where the default
-  // is LOG_LEVEL=info; this is intended audit data, not noisy debug.
-  //
-  // Both listeners are removed on Idle. The error handler used to be
-  // registered without cleanup; every playUrl call added a fresh
-  // `error` listener and the AudioPlayer eventually crossed Node's
-  // 10-listener warning threshold, after which Node logs a leak
-  // warning on every play.
+  // Player state observability + listener cleanup on Idle (so each play call
+  // doesn't leak an `error`/`stateChange` listener past Node's 10-listener
+  // warning threshold).
   const onStateChange = (
     oldState: { status: string },
     newState: { status: string },
@@ -358,15 +341,8 @@ export function stopPlayback(guildId: string): VoiceStatus {
 /**
  * Pause / resume the current track. `paused` undefined → toggle. No-op
  * (returns the current status) if not joined or nothing is playing.
- * Pausing keeps the ffmpeg pipe alive — fine for library files and most
- * progressive streams, but a live radio stream resumed after a long
- * pause may have buffered/stalled; callers that care should treat pause
- * as a short-lived control.
  */
-export function pausePlayback(
-  guildId: string,
-  paused?: boolean,
-): VoiceStatus {
+export function pausePlayback(guildId: string, paused?: boolean): VoiceStatus {
   const state = states.get(guildId);
   if (!state) return getStatus(guildId);
   const isPaused = state.player.state.status === AudioPlayerStatus.Paused;
@@ -393,12 +369,10 @@ export function getStatus(guildId: string): VoiceStatus {
     connected: state.connection.state.status === VoiceConnectionStatus.Ready,
     channelId: state.channelId,
     paused: state.player.state.status === AudioPlayerStatus.Paused,
-    // "playing" = the player currently holds an audio resource — i.e. any
-    // state that isn't Idle (Playing, but also Buffering during a freshly
-    // started track, AutoPaused, Paused). Reporting only `=== Playing`
-    // here made callers (the radio plugin's advance loop) think nothing
-    // was playing during the 1–3 s ffmpeg startup of a just-started
-    // track and "advance" past it — desyncing the WebUI / cutting tracks.
+    // "playing" = the player currently holds an audio resource — any state
+    // that isn't Idle (Playing, Buffering, AutoPaused, Paused). Reporting only
+    // `=== Playing` made callers "advance" past a track during the 1–3 s
+    // ffmpeg startup.
     playing: state.player.state.status !== AudioPlayerStatus.Idle,
     playingUrl: state.playingUrl,
     connectionStatus: state.connection.state.status,
@@ -406,10 +380,7 @@ export function getStatus(guildId: string): VoiceStatus {
   };
 }
 
-/**
- * Tear down all active voice connections. Used by graceful shutdown
- * paths (and by tests).
- */
+/** Tear down all active voice connections (graceful shutdown / tests). */
 export function shutdownAllVoice(): void {
   for (const [guildId, state] of states.entries()) {
     try {
