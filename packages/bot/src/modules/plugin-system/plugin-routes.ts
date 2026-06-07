@@ -281,7 +281,9 @@ export async function registerPluginRoutes(
    * The pluginKey is taken from the in-memory auth record (set at
    * registration) — no extra DB round-trip is needed.
    */
-  server.post("/api/plugins/heartbeat", async (request, reply) => {
+  server.post<{ Body: { url?: unknown } }>(
+    "/api/plugins/heartbeat",
+    async (request, reply) => {
     const token = presentedBearerToken(request);
     if (!token) {
       reply.code(401).send({ error: "missing bearer token" });
@@ -292,14 +294,55 @@ export async function registerPluginRoutes(
       reply.code(401).send({ error: "token invalid or expired" });
       return;
     }
-    await pluginRegistry.heartbeat(rec.pluginId, token);
+    // Optional `url` in the beat is the replica's own advertised address
+    // (PR-3.1 multi-endpoint). Older SDKs send no body — handled by the
+    // registry falling back to the DB row's url.
+    const advertisedUrl =
+      typeof request.body?.url === "string" ? request.body.url : undefined;
+    await pluginRegistry.heartbeat(rec.pluginId, token, advertisedUrl);
     const publicBaseUrl = pluginPublicBaseUrl(rec.pluginKey);
     return {
       ok: true,
       sessionVerifyPublicKey: jwtService.publicKeyPem(),
       ...(publicBaseUrl !== undefined ? { publicBaseUrl } : {}),
     };
-  });
+    },
+  );
+
+  /**
+   * POST /api/plugins/deregister
+   *
+   * Headers: Authorization: Bearer <plugin-token>
+   * Body (optional): { url?: string }  — the replica's own advertised
+   *   address; when present only that replica's endpoint is dropped, so
+   *   one replica of a multi-replica plugin can shut down without taking
+   *   the plugin offline. When absent (or no live siblings remain) the
+   *   plugin is flipped to `inactive` immediately rather than waiting for
+   *   the heartbeat reaper.
+   *
+   * Best-effort: the SDK calls this on SIGTERM/SIGINT during graceful
+   * shutdown. Always returns `{ ok: true }` once the token is valid —
+   * the plugin is going away regardless.
+   */
+  server.post<{ Body: { url?: unknown } }>(
+    "/api/plugins/deregister",
+    async (request, reply) => {
+      const token = presentedBearerToken(request);
+      if (!token) {
+        reply.code(401).send({ error: "missing bearer token" });
+        return;
+      }
+      const rec = pluginAuthStore.verify(token);
+      if (!rec) {
+        reply.code(401).send({ error: "token invalid or expired" });
+        return;
+      }
+      const advertisedUrl =
+        typeof request.body?.url === "string" ? request.body.url : undefined;
+      await pluginRegistry.deregister(rec.pluginId, token, advertisedUrl);
+      return { ok: true };
+    },
+  );
 
   // ─── Admin-facing ────────────────────────────────────────────────
 

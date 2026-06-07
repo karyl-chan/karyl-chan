@@ -16,6 +16,14 @@ export interface PluginClientOptions {
   botUrl: string;
   setupSecret: string;
   manifest: PluginManifest;
+  /**
+   * This replica's own advertised address (the `plugin.url` the manifest
+   * carries). Sent on every heartbeat and on graceful deregister so the
+   * bot's multi-endpoint registry (PR-3.1) can track / age out THIS
+   * replica independently of any siblings sharing the pluginKey.
+   * Defaults to `manifest.plugin.url` when omitted.
+   */
+  pluginUrl?: string;
   logger?: Logger;
   /**
    * Called once, after the very first successful register. Receives no
@@ -30,6 +38,14 @@ export interface PluginClientOptions {
 
 export interface PluginClient {
   stop(): void;
+  /**
+   * Best-effort graceful deregister (PR-3.1): tell the bot this replica
+   * is shutting down so it drops the endpoint immediately instead of
+   * waiting for the heartbeat reaper. Safe to call before `stop()`;
+   * never throws (network errors are swallowed). No-op if not yet
+   * registered (no token).
+   */
+  deregister(): Promise<void>;
   /** Currently held bearer token (cleartext); null until first register. */
   token(): string | null;
   /**
@@ -58,6 +74,10 @@ const REGISTER_BACKOFF_MAX_MS = 60_000;
 export function startPluginClient(opts: PluginClientOptions): PluginClient {
   const log = opts.logger ?? consoleLogger();
   const botUrl = opts.botUrl.replace(/\/+$/, "");
+  const pluginUrl = (opts.pluginUrl ?? opts.manifest.plugin.url).replace(
+    /\/+$/,
+    "",
+  );
   let token: string | null = null;
   let dispatchHmacKey: string | null = null;
   let sessionVerifyPublicKey: string | null = null;
@@ -169,7 +189,14 @@ export function startPluginClient(opts: PluginClientOptions): PluginClient {
     try {
       const res = await fetch(`${botUrl}/api/plugins/heartbeat`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        // Advertise this replica's own address so the bot's
+        // multi-endpoint registry slides THIS endpoint's TTL forward
+        // (PR-3.1), keeping sibling replicas tracked independently.
+        body: JSON.stringify({ url: pluginUrl }),
       });
       if (res.status === 401) {
         log.warn("heartbeat 401, re-registering");
@@ -227,12 +254,30 @@ export function startPluginClient(opts: PluginClientOptions): PluginClient {
   // host's listen() can proceed even if the bot is slow / down.
   void registerWithRetry();
 
+  async function deregister(): Promise<void> {
+    if (!token) return;
+    try {
+      await fetch(`${botUrl}/api/plugins/deregister`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ url: pluginUrl }),
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn(`deregister network error: ${msg}`);
+    }
+  }
+
   return {
     stop() {
       stopped = true;
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       heartbeatTimer = null;
     },
+    deregister,
     token: () => token,
     getDispatchHmacKey: () => dispatchHmacKey,
     getSessionVerifyPublicKey: () => sessionVerifyPublicKey,

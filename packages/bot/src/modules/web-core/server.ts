@@ -240,6 +240,7 @@ export async function createWebServer(
       const path = pathOnly(request.url);
       if (path === "/api/plugins/register") return;
       if (path === "/api/plugins/heartbeat") return;
+      if (path === "/api/plugins/deregister") return;
       // Plugin RPC: any route under /api/plugin/* (singular).
       // Auth is the plugin's bearer token, not admin auth. We verify
       // here and stash the plugin auth record on the request so route

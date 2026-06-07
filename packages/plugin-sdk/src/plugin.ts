@@ -836,6 +836,7 @@ export function definePlugin(config: PluginConfig): PluginInstance {
           botUrl,
           setupSecret,
           manifest,
+          pluginUrl,
           logger: {
             info: (msg, meta) => server.log.info(meta ?? {}, msg),
             warn: (msg, meta) => server.log.warn(meta ?? {}, msg),
@@ -993,6 +994,17 @@ export function definePlugin(config: PluginConfig): PluginInstance {
               "./redis-streams-client.js"
             );
             await closeStreamsClient().catch(() => {});
+          }
+          // Best-effort graceful deregister BEFORE stopping the client
+          // (PR-3.1): tells the bot this replica is going away so it
+          // drops the endpoint immediately instead of waiting for the
+          // heartbeat reaper. Bounded — never blocks shutdown on a slow
+          // bot. Then stop the heartbeat loop.
+          if (client) {
+            await Promise.race([
+              client.deregister(),
+              new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
+            ]).catch(() => {});
           }
           client?.stop();
           try {

@@ -298,3 +298,132 @@ describe("PluginClient.getPublicBaseUrl()", () => {
     client.stop();
   });
 });
+
+// ── PluginClient PR-3.1: heartbeat advertises url + graceful deregister ──────
+
+describe("PluginClient PR-3.1 (advertise url + deregister)", () => {
+  const originalFetch = globalThis.fetch;
+  type FetchFn = typeof fetch;
+  let fetchImpl: FetchFn;
+
+  before(() => {
+    (globalThis as unknown as Record<string, unknown>)["fetch"] = (
+      ...args: Parameters<FetchFn>
+    ) => fetchImpl(...args);
+  });
+  after(() => {
+    (globalThis as unknown as Record<string, unknown>)["fetch"] = originalFetch;
+  });
+
+  function bodyOf(init: RequestInit | undefined): Record<string, unknown> {
+    if (!init || typeof init.body !== "string") return {};
+    try {
+      return JSON.parse(init.body) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  }
+
+  it("heartbeat POSTs the replica's advertised url in the body", async () => {
+    let heartbeatBody: Record<string, unknown> | null = null;
+    fetchImpl = async (input, init) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      if (url.includes("/heartbeat")) {
+        heartbeatBody = bodyOf(init as RequestInit);
+        return new Response(JSON.stringify({}), { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({ token: "tok", heartbeat: { interval_seconds: 0.1 } }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    };
+
+    const client = startPluginClient({
+      botUrl: "http://bot",
+      setupSecret: "secret",
+      manifest: {
+        plugin: {
+          id: "p31",
+          name: "P",
+          version: "0.1.0",
+          url: "http://p31-replica-a:3000",
+        },
+      },
+    });
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 300));
+    client.stop();
+
+    assert.ok(heartbeatBody, "heartbeat should have fired");
+    assert.equal(
+      (heartbeatBody as Record<string, unknown> | null)?.url,
+      "http://p31-replica-a:3000",
+    );
+  });
+
+  it("deregister() POSTs to /api/plugins/deregister with token + url", async () => {
+    let deregisterCalled = false;
+    let deregisterAuth: string | null = null;
+    let deregisterBody: Record<string, unknown> | null = null;
+    fetchImpl = async (input, init) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      if (url.includes("/deregister")) {
+        deregisterCalled = true;
+        const headers = (init as RequestInit)?.headers as
+          | Record<string, string>
+          | undefined;
+        deregisterAuth = headers?.["Authorization"] ?? null;
+        deregisterBody = bodyOf(init as RequestInit);
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      if (url.includes("/heartbeat")) {
+        return new Response(JSON.stringify({}), { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({ token: "tok-dereg", heartbeat: { interval_seconds: 999 } }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    };
+
+    const client = startPluginClient({
+      botUrl: "http://bot",
+      setupSecret: "secret",
+      manifest: {
+        plugin: { id: "p31b", name: "P", version: "0.1.0", url: "http://p31b:3000" },
+      },
+    });
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    await client.deregister();
+    client.stop();
+
+    assert.ok(deregisterCalled, "deregister endpoint should be hit");
+    assert.equal(deregisterAuth, "Bearer tok-dereg");
+    assert.equal(
+      (deregisterBody as Record<string, unknown> | null)?.url,
+      "http://p31b:3000",
+    );
+  });
+
+  it("deregister() is a no-op before first register (no token)", async () => {
+    let anyCall = false;
+    fetchImpl = async (input) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      // Never resolve register so token stays null.
+      if (url.includes("/deregister")) anyCall = true;
+      return new Promise<Response>(() => {}); // hang register forever
+    };
+
+    const client = startPluginClient({
+      botUrl: "http://bot",
+      setupSecret: "secret",
+      manifest: {
+        plugin: { id: "p31c", name: "P", version: "0.1.0", url: "http://p31c:3000" },
+      },
+    });
+
+    await client.deregister();
+    client.stop();
+    assert.equal(anyCall, false, "deregister must not fire without a token");
+  });
+});
