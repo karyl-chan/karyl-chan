@@ -1323,6 +1323,28 @@ export async function registerPluginRoutes(
       invalidatePluginById(pluginId);
       dropDispatchPoolForPlugin(plugin.pluginKey);
 
+      // 4b. Clear the health + metrics snapshots keyed by pluginKey. Same
+      // rationale as the dispatch-pool drop above: a plugin re-registered
+      // under the same key must not inherit the deleted plugin's stale
+      // health/metrics (which live up to the store's freshness TTL), and
+      // orphaned entries shouldn't linger across delete churn. Best-effort
+      // — a store error must not block the delete (the DB row is gone).
+      try {
+        const { clearHealth } = await import("./plugin-health-store.js");
+        const { clearSnapshot } = await import("./plugin-metrics-store.js");
+        await Promise.all([
+          clearHealth(plugin.pluginKey),
+          clearSnapshot(plugin.pluginKey),
+        ]);
+      } catch (err) {
+        botEventLog.record(
+          "warn",
+          "bot",
+          `plugin-routes: health/metrics cleanup failed during delete of ${plugin.pluginKey}: ${err instanceof Error ? err.message : String(err)}`,
+          { pluginId },
+        );
+      }
+
       // Audit + operation log.
       await recordAudit(
         request.authUserId ?? "system",
