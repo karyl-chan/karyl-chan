@@ -5,7 +5,10 @@ import {
   type Client,
 } from "discord.js";
 import { findRoleReceiveMessage } from "./role-receive-message.model.js";
-import { findRoleEmojiInGroup } from "./role-emoji.model.js";
+import {
+  findRoleEmojiInGroup,
+  findAllRoleEmojisInGroup,
+} from "./role-emoji.model.js";
 import { resolveBuiltinFeatureEnabled } from "../../feature-toggle/models/bot-feature-state.model.js";
 import { botEventLog } from "../../bot-events/bot-event-log.js";
 import { moduleLogger } from "../../../logger.js";
@@ -68,6 +71,54 @@ async function getRoleForReaction(
   if (!roleEmoji) return null;
   const roleId = roleEmoji.getDataValue("roleId") as string;
   return messageReaction.message.guild?.roles.cache.get(roleId) ?? null;
+}
+
+/**
+ * Two emojis in a group can map to the SAME role (the mapping is keyed by
+ * emoji, not role). On reaction-remove we must only revoke the role if the
+ * user no longer holds ANY other reaction on this message whose emoji also
+ * grants it — otherwise removing one emoji strips a role the user still earns
+ * via another.
+ */
+async function userStillEarnsRoleViaOtherReaction(
+  messageReaction: MessageReaction,
+  userId: string,
+  roleId: string,
+): Promise<boolean> {
+  const guildId = messageReaction.message.guildId;
+  if (!guildId) return false;
+  const watched = await findRoleReceiveMessage(
+    guildId,
+    messageReaction.message.channelId,
+    messageReaction.message.id,
+  );
+  if (!watched) return false;
+  const groupId = watched.getDataValue("groupId") as number;
+
+  const removedId = messageReaction.emoji.id ?? "";
+  const removedChar = removedId ? "" : (messageReaction.emoji.name ?? "");
+
+  // Other emojis in the group that grant the same role (excluding the one
+  // whose reaction was just removed).
+  const siblings = (await findAllRoleEmojisInGroup(groupId)).filter((re) => {
+    if ((re.getDataValue("roleId") as string) !== roleId) return false;
+    const eId = (re.getDataValue("emojiId") as string) ?? "";
+    const eChar = (re.getDataValue("emojiChar") as string) ?? "";
+    return !(eId === removedId && eChar === removedChar);
+  });
+  if (siblings.length === 0) return false;
+
+  for (const sib of siblings) {
+    const eId = (sib.getDataValue("emojiId") as string) ?? "";
+    const eChar = (sib.getDataValue("emojiChar") as string) ?? "";
+    const reaction = messageReaction.message.reactions.cache.find((r) =>
+      eId ? r.emoji.id === eId : r.emoji.name === eChar,
+    );
+    if (!reaction) continue;
+    const users = await reaction.users.fetch().catch(() => null);
+    if (users?.has(userId)) return true;
+  }
+  return false;
 }
 
 export function registerRoleEmojiEvents(client: Client): void {
@@ -143,6 +194,12 @@ export function registerRoleEmojiEvents(client: Client): void {
         .fetch(user.id)
         .catch(() => null);
       if (!member) return;
+      // Keep the role if another emoji's reaction by this user still grants it.
+      if (
+        await userStillEarnsRoleViaOtherReaction(hydrated, user.id, role.id)
+      ) {
+        return;
+      }
       try {
         await member.roles.remove(role);
         botEventLog.record(
