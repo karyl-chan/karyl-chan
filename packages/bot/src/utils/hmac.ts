@@ -175,34 +175,11 @@ export function verifyInboundSignatureWithKeys(
 
 /**
  * Verify HMAC headers on an inbound REQUEST whose headers are a plain record
- * (Fastify `request.headers`) rather than a fetch `Headers`. Same scheme as
- * `verifyInboundSignature` — used by the bot's internal voice routes
- * (voice service → bot) which receive a signed POST with the shared secret.
- */
-export function verifyInboundSignatureFromHeaders(
-  secret: string,
-  headers: Record<string, string | string[] | undefined>,
-  rawBody: string,
-  nowSec: number,
-  method: string,
-  urlPath: string,
-): SignatureCheck {
-  return verifyInboundSignature(
-    secret,
-    recordHeadersToFetch(headers),
-    rawBody,
-    nowSec,
-    method,
-    urlPath,
-  );
-}
-
-/**
- * Rotation-aware variant of `verifyInboundSignatureFromHeaders` (PR-5.1):
- * accepts the request if any of `secrets` validates. Used by the bot's
- * internal voice routes so the shared VOICE_HMAC_SECRET can be rotated
- * (current + previous) without restarting both bot and voice service at
- * once. Single-element array == the single-key behaviour.
+ * (Fastify `request.headers`) against one or more keys: accepts if ANY of
+ * `secrets` validates (PR-5.1). Used by the bot's signed internal routes
+ * (voice service → bot, sibling shard → bot) so a shared secret can be
+ * rotated (current + previous) without restarting both sides at once. A
+ * single-element array == single-key behaviour.
  */
 export function verifyInboundSignatureFromHeadersWithKeys(
   secrets: readonly string[],

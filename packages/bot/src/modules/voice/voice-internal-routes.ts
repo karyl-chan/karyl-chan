@@ -22,7 +22,7 @@
  * service actually has a live connection for.
  */
 import type { Client } from "discord.js";
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { makeSignedVerify } from "../../utils/signed-routes.js";
 import { moduleLogger } from "../../logger.js";
 

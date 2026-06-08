@@ -61,10 +61,13 @@ RUN apt-get update \
 # without voice's dist/, the bot's tsc can't resolve its types.
 RUN pnpm install --frozen-lockfile --filter "@karyl-chan/bot..."
 # Source for the bot AND its transitive workspace deps must be present so
-# `build` can compile each: bot → @karyl-chan/voice → @karyl-chan/plugin-sdk.
-COPY packages/bot packages/bot
-COPY packages/voice packages/voice
-COPY packages/plugin-sdk packages/plugin-sdk
+# `build` can compile each (currently bot → @karyl-chan/voice →
+# @karyl-chan/plugin-sdk). Copy the whole packages/ tree rather than an
+# enumerated list so a future workspace dep doesn't silently break the build;
+# node_modules/build/dist are .dockerignore'd, and this stage is discarded
+# (only the /app bundle reaches the runtime image), so the only cost is
+# build-cache granularity.
+COPY packages/ packages/
 RUN pnpm --filter "@karyl-chan/bot..." build
 # Flatten the bot + its production dependencies into a self-contained
 # bundle. `pnpm deploy` resolves the workspace's symlinked node_modules
