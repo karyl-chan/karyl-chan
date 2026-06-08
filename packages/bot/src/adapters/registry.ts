@@ -237,6 +237,16 @@ export function getSecretProvider(): SecretProvider {
   return cache.secretProvider;
 }
 
+/**
+ * Test-only — pin the session store to a specific instance so a test
+ * can both drive the store directly (mint/spy on tokens) and have the
+ * server + admin-service resolve the SAME instance via getSessionStore().
+ * Mirrors production, where both sides share the one memoized singleton.
+ */
+export function __setSessionStoreForTests(store: SessionStore): void {
+  cache.sessionStore = store;
+}
+
 export function __resetAdaptersForTests(): void {
   cache.pluginMetricsStore = undefined;
   cache.pluginHealthStore = undefined;

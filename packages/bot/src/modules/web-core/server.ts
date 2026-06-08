@@ -11,7 +11,6 @@ import { existsSync, readFileSync } from "fs";
 import type { ServerOptions as HttpsServerOptions } from "https";
 import { dirname, resolve } from "path";
 import { fileURLToPath } from "url";
-import type { SessionStore } from "../../adapters/session-store.js";
 import { getSessionStore } from "../../adapters/index.js";
 import { JwtService, jwtService as defaultJwtService } from "./jwt.service.js";
 import {
@@ -144,13 +143,6 @@ export interface WebServerOptions {
 export interface CreateWebServerOptions {
   staticRoot?: string;
   bot?: Client;
-  /**
-   * Session/token backend. Defaults to `getSessionStore()`, which is
-   * the in-process store (single-machine, zero deps) unless
-   * `SESSION_STORE=redis` selects the cross-shard Redis store. Tests
-   * inject a concrete store directly.
-   */
-  sessionStore?: SessionStore;
   /** Override JWT issuer/verifier for tests; defaults to the singleton. */
   jwtService?: JwtService;
   dmInbox?: DmInboxStore;
@@ -208,7 +200,11 @@ export async function createWebServer(
   });
 
   const ownerIds = options.ownerIds ?? config.bot.ownerIds;
-  const auth = options.sessionStore ?? getSessionStore();
+  // Single source of truth: the admin-service revocation paths
+  // (authorized-user.service) resolve the same getSessionStore()
+  // singleton, so a revoke there invalidates the exact tokens this
+  // server validates. Tests pin the instance via __setSessionStoreForTests.
+  const auth = getSessionStore();
   const jwt = options.jwtService ?? defaultJwtService;
   const authEnabled = ownerIds.length > 0;
 

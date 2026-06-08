@@ -10,13 +10,13 @@
  * `admin/authorized-user.service.ts`) now route through
  * `getSessionStore()`, so the Redis store can transparently take over
  * cross-shard. This wrapper holds a reference to the same `authStore`
- * singleton so the in-process path keeps one source of truth; the
- * singleton is still touched directly only for `attach()` (the
- * refresh-store durability hook, which is in-process-only and absent
- * from the `SessionStore` interface).
+ * singleton so the in-process path keeps one source of truth, and owns
+ * the in-process-only refresh-store durability wiring in `init()` (so
+ * the bootstrap layer never reaches past the `SessionStore` interface).
  */
 
 import { authStore } from "../modules/web-core/auth-store.service.js";
+import { sequelizeRefreshStore } from "../modules/web-core/refresh-token.repository.js";
 import {
   type SessionStore,
   type IssuedTokens,
@@ -25,6 +25,12 @@ import {
 
 export class InProcessSessionStore implements SessionStore {
   async init(now?: number): Promise<void> {
+    // Refresh-token durability across restarts is an in-process-only
+    // concern (the Redis store keeps its own state), so it's owned here
+    // rather than wired from the bootstrap layer. Attaching at init()
+    // time — invoked once at boot after migrations — keeps it off the
+    // import path and guarantees the DB is ready before init() loads.
+    authStore.attach(sequelizeRefreshStore);
     await authStore.init(now);
   }
 
