@@ -19,7 +19,7 @@ import {
   botEventsSequelize,
   botEventsSharesMainDb,
 } from "./modules/bot-events/bot-events-db.js";
-import { getDistributedLock } from "./adapters/registry.js";
+import { getDistributedLock, getSessionStore } from "./adapters/registry.js";
 import { closeRedisClient } from "./adapters/redis/client.js";
 import { config } from "./config.js";
 import { shutdownOtel } from "./observability/otel.js";
@@ -231,7 +231,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
     }
     // 2. Stop background timers / cleanup.
     pluginRegistry.stopReaper();
-    authStore.stop();
+    getSessionStore().stop();
     // 2'. Drain the plugin dispatch pool (HTTP keep-alive sockets).
     await stopDispatchPool();
     // 3. Close RCON sockets (was registered as its own SIGTERM handler;
@@ -653,8 +653,13 @@ async function run() {
     await seedDefaultRoles();
     await auditStoredCapabilities();
 
+    // Session store: in-process by default (single-machine, zero deps),
+    // or Redis when SESSION_STORE=redis (cross-shard SSO). The sequelize
+    // refresh repository gives the in-process store durability across
+    // restarts; the Redis store keeps its own state, so attaching to the
+    // in-process singleton is inert when Redis is selected.
     authStore.attach(sequelizeRefreshStore);
-    await authStore.init();
+    await getSessionStore().init();
 
     // Plugin heartbeat reaper. Marks plugins inactive after 75s with
     // no heartbeat (their own cadence is 30s, so a single dropped

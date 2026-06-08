@@ -57,7 +57,7 @@ beforeAll(async () => {
   // the same token map.
   server = await createWebServer({
     staticRoot: undefined,
-    authStore: store,
+    sessionStore: store,
     jwtService: new JwtService(generateKeyPairSync("ed25519").privateKey),
     ownerIds: [OWNER_ID],
   });

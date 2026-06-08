@@ -266,7 +266,7 @@ describe("web server", () => {
       jwt = new JwtService(generateKeyPairSync("ed25519").privateKey);
       server = await createWebServer({
         staticRoot: undefined,
-        authStore: store,
+        sessionStore: store,
         jwtService: jwt,
         ownerIds: [OWNER_ID],
       });
@@ -434,7 +434,7 @@ describe("web server", () => {
         spaStore = new AuthStore();
         spaServer = await createWebServer({
           staticRoot: spaStaticRoot,
-          authStore: spaStore,
+          sessionStore: spaStore,
           jwtService: new JwtService(generateKeyPairSync("ed25519").privateKey),
           ownerIds: [OWNER_ID],
         });
@@ -543,7 +543,7 @@ describe("web server", () => {
       jwt = new JwtService(generateKeyPairSync("ed25519").privateKey);
       server = await createWebServer({
         staticRoot: undefined,
-        authStore: store,
+        sessionStore: store,
         jwtService: jwt,
         ownerIds: [OWNER_ID],
       });

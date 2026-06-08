@@ -5,13 +5,15 @@
  * `SESSION_STORE` env — the rest of the bot reads `getSessionStore()`
  * and the implementation difference is invisible.
  *
- * The legacy `authStore` singleton in
- * `modules/web-core/auth-store.service.ts` keeps its existing call
- * sites; this wrapper holds a reference to that same instance to
- * avoid a forked source of truth during the rollout. A follow-up
- * commit can replace `authStore.*` call sites with
- * `getSessionStore().*` once every caller has been audited for the
- * sync→async signature change (verifyAccessToken / consumeSseTicket).
+ * The session-verb call sites (the web auth hook + auth routes in
+ * `web-core/server.ts`, and `revokeOwner` in
+ * `admin/authorized-user.service.ts`) now route through
+ * `getSessionStore()`, so the Redis store can transparently take over
+ * cross-shard. This wrapper holds a reference to the same `authStore`
+ * singleton so the in-process path keeps one source of truth; the
+ * singleton is still touched directly only for `attach()` (the
+ * refresh-store durability hook, which is in-process-only and absent
+ * from the `SessionStore` interface).
  */
 
 import { authStore } from "../modules/web-core/auth-store.service.js";
