@@ -302,13 +302,18 @@ onMounted(refresh);
                                     {{ group.pluginName }}
                                     <span class="plugin-key muted">({{ group.pluginKey }})</span>
                                 </h4>
+                                <!-- Disabled is the dominant state: a disabled plugin shows
+                                     only "已停用", never the running/not-running badge (the two
+                                     together read as a contradictory 運行中 + 已停用). The
+                                     running badge applies only while the plugin is enabled. -->
                                 <AppBadge
+                                    v-if="group.pluginEnabled"
                                     variant="outline"
                                     :tone="group.pluginStatus === 'active' ? 'accent' : 'warn'"
                                 >
                                     {{ group.pluginStatus === 'active' ? $t('allServers.statusActive') : $t('allServers.statusInactive') }}
                                 </AppBadge>
-                                <AppBadge v-if="!group.pluginEnabled" variant="outline" tone="danger">
+                                <AppBadge v-else variant="outline" tone="danger">
                                     {{ $t('allServers.statusDisabled') }}
                                 </AppBadge>
                             </header>
