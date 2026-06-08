@@ -28,7 +28,8 @@ export type ConfigGroup =
   | "botEvents"
   | "dm"
   | "logging"
-  | "voice";
+  | "voice"
+  | "shard";
 
 export type Sensitivity = "sensitive" | "semi-sensitive" | "public";
 export type Editability = "env-only" | "runtime-capable" | "runtime-editable";
@@ -101,6 +102,24 @@ export const CONFIG_METADATA: Record<string, ConfigFieldMeta> = {
     editability: "env-only",
     productionRequired: false,
     descriptionKey: "config.bot.totalShards",
+  },
+
+  // ── shard (PR-3.3 cross-shard forwarding) ─────────────────────────────────
+  "shard.urls": {
+    group: "shard",
+    envVar: "SHARD_URLS",
+    sensitivity: "public",
+    editability: "env-only",
+    productionRequired: false,
+    descriptionKey: "config.shard.urls",
+  },
+  "shard.hmacSecret": {
+    group: "shard",
+    envVar: "SHARD_HMAC_SECRET",
+    sensitivity: "sensitive",
+    editability: "env-only",
+    productionRequired: false,
+    descriptionKey: "config.shard.hmacSecret",
   },
 
   // ── web ──────────────────────────────────────────────────────────────────
@@ -516,7 +535,19 @@ function collectLeafPaths(obj: Record<string, unknown>, prefix = ""): string[] {
   for (const key of Object.keys(obj)) {
     const full = prefix ? `${prefix}.${key}` : key;
     const value = obj[key];
-    if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    // A key explicitly classified in CONFIG_METADATA is a leaf even when
+    // its runtime value is a nested object — e.g. `shard.urls` is a
+    // dynamic `{ [shardId]: url }` map; we classify the map as a whole
+    // rather than each (operator-defined) shard id. Stop descending so a
+    // populated map doesn't manufacture unclassifiable `shard.urls.0`
+    // leaves at boot.
+    if (full in CONFIG_METADATA) {
+      paths.push(full);
+    } else if (
+      value !== null &&
+      typeof value === "object" &&
+      !Array.isArray(value)
+    ) {
       paths.push(...collectLeafPaths(value as Record<string, unknown>, full));
     } else {
       paths.push(full);

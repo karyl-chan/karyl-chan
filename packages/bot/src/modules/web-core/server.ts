@@ -111,6 +111,7 @@ import { registerBotFeatureRoutes } from "../feature-toggle/bot-feature-routes.j
 import { registerPluginRpcRoutes } from "../plugin-system/plugin-rpc-routes.js";
 import { registerVoiceRpcRoutes } from "../voice/voice-rpc.js";
 import { registerVoiceInternalRoutes } from "../voice/voice-internal-routes.js";
+import { registerShardForwardRoutes } from "../plugin-system/shard-forward-routes.js";
 import {
   pluginAuthStore,
   type PluginAuthRecord,
@@ -240,6 +241,7 @@ export async function createWebServer(
       const path = pathOnly(request.url);
       if (path === "/api/plugins/register") return;
       if (path === "/api/plugins/heartbeat") return;
+      if (path === "/api/plugins/deregister") return;
       // Plugin RPC: any route under /api/plugin/* (singular).
       // Auth is the plugin's bearer token, not admin auth. We verify
       // here and stash the plugin auth record on the request so route
@@ -726,6 +728,12 @@ export async function createWebServer(
   await registerVoiceInternalRoutes(server, {
     bot,
     secret: config.voice.hmacSecret,
+  });
+  // Cross-shard forward relay (PR-3.3). Self-guards (503 without a
+  // shared secret); harmless to mount in the single-shard default where
+  // nothing ever forwards to it.
+  await registerShardForwardRoutes(server, {
+    secret: config.shard.hmacSecret,
   });
   await registerBotFeatureRoutes(server, { bot });
 

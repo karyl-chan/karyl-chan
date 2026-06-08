@@ -23,6 +23,8 @@ import {
   invalidatePluginByKey,
   invalidatePluginById,
 } from "./plugin-lookup-cache.js";
+import { pluginEndpointRegistry } from "./plugin-endpoint-registry.js";
+import { deactivatePluginByKey } from "./models/plugin.model.js";
 import {
   ManifestCommandError,
   pluginCommandRegistry,
@@ -646,6 +648,12 @@ export class PluginRegistry {
         `reconcilePluginCapabilities failed for ${manifest.plugin.id}`,
       );
     }
+    // Record this replica's advertised address in the multi-endpoint
+    // registry (PR-3.1). For the single-replica default this is just
+    // the same url the DB row already carries; with replicas>1 each
+    // replica's distinct url accumulates here under one pluginKey, each
+    // with its own TTL, so a stopped replica ages out independently.
+    pluginEndpointRegistry.touch(manifest.plugin.id, manifest.plugin.url);
     // Invalidate the proxy/lookup cache so the fresh row is read on
     // the next request (e.g. URL change on re-register).
     invalidatePluginByKey(manifest.plugin.id);
@@ -736,9 +744,25 @@ export class PluginRegistry {
    * or the plugin will keep getting 404s and dropped events for up to
    * the cache TTL after recovery.
    */
-  async heartbeat(pluginId: number, token: string): Promise<void> {
+  async heartbeat(
+    pluginId: number,
+    token: string,
+    advertisedUrl?: string,
+  ): Promise<void> {
     const touched = await touchHeartbeat(pluginId);
     this.auth.refresh(token);
+    // Slide the endpoint TTL forward (PR-3.1 multi-endpoint). The
+    // replica heartbeats its OWN advertised url so sibling replicas
+    // each keep their own entry alive; without a url in the beat (older
+    // SDK) we fall back to the DB row's url, which is correct for the
+    // single-replica default.
+    if (touched?.row) {
+      const url =
+        typeof advertisedUrl === "string" && advertisedUrl.length > 0
+          ? advertisedUrl
+          : touched.row.url;
+      pluginEndpointRegistry.touch(touched.row.pluginKey, url);
+    }
     if (touched?.revived) {
       try {
         applyPluginChange(touched.row);
@@ -752,6 +776,57 @@ export class PluginRegistry {
         "bot",
         `Plugin ${touched.row.pluginKey} revived via heartbeat (was inactive)`,
         { pluginId, pluginKey: touched.row.pluginKey },
+      );
+    }
+  }
+
+  /**
+   * Graceful deregister (PR-3.1). Called when a plugin announces its own
+   * shutdown (SDK SIGTERM/SIGINT → POST /api/plugins/deregister) so the
+   * bot drops it *immediately* instead of waiting up to the heartbeat
+   * timeout for the reaper. The `advertisedUrl` (when supplied) removes
+   * just that one replica's endpoint; the DB row is only flipped to
+   * `inactive` once NO live endpoints remain for the pluginKey — so one
+   * replica of a multi-replica plugin shutting down doesn't take the
+   * whole plugin offline.
+   *
+   * Token is verified by the route handler before this runs; we revoke
+   * it here so a stale bearer can't keep beating after deregister.
+   */
+  async deregister(
+    pluginId: number,
+    token: string,
+    advertisedUrl?: string,
+  ): Promise<void> {
+    const row = await findPluginById(pluginId);
+    if (!row) return;
+    // Drop this replica's endpoint (or all of them if no url was given).
+    if (typeof advertisedUrl === "string" && advertisedUrl.length > 0) {
+      pluginEndpointRegistry.remove(row.pluginKey, advertisedUrl);
+    } else {
+      pluginEndpointRegistry.removeAll(row.pluginKey);
+    }
+    // If other replicas are still alive, keep the plugin active — only
+    // this bearer is retired.
+    const remaining = pluginEndpointRegistry.endpoints(row.pluginKey);
+    if (remaining.length > 0) {
+      this.auth.revokeToken(token);
+      return;
+    }
+    // No live endpoints left → take the plugin offline now (mirrors the
+    // reaper's inactive transition, just early).
+    pluginEndpointRegistry.removeAll(row.pluginKey);
+    this.auth.revokeByPluginId(pluginId);
+    const deactivated = await deactivatePluginByKey(row.pluginKey);
+    if (deactivated) {
+      removePluginFromIndex(pluginId);
+      invalidatePluginById(pluginId);
+      dropDispatchPoolForPlugin(row.pluginKey);
+      botEventLog.record(
+        "info",
+        "bot",
+        `Plugin deregistered (graceful shutdown): ${row.pluginKey}`,
+        { pluginId, pluginKey: row.pluginKey },
       );
     }
   }
@@ -847,6 +922,14 @@ export class PluginRegistry {
         for (const id of ids) {
           removePluginFromIndex(id);
           invalidatePluginById(id);
+        }
+        // Sweep the multi-endpoint registry on the same cadence so a
+        // stale replica address (one that stopped heartbeating) ages
+        // out of the discovery set even when the DB row stays active
+        // because a sibling replica is still alive (PR-3.1).
+        const reapedKeys = pluginEndpointRegistry.reap();
+        for (const key of reapedKeys) {
+          invalidatePluginByKey(key);
         }
       } catch (err) {
         log.error({ err }, "plugin reaper failed");

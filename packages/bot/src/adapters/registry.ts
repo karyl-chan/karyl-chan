@@ -33,6 +33,12 @@ import {
 } from "./voice-state-store.js";
 import { type SessionStore } from "./session-store.js";
 import { InProcessSessionStore } from "./in-process-session-store.js";
+import {
+  type ServiceDiscovery,
+  InProcessServiceDiscovery,
+  DnsServiceDiscovery,
+} from "./service-discovery.js";
+import { pluginEndpointRegistry } from "../modules/plugin-system/plugin-endpoint-registry.js";
 import { type PluginEventBus } from "./plugin-event-bus.js";
 import { RedisPluginMetricsStore } from "./redis/plugin-metrics-store.js";
 import { RedisPluginHealthStore } from "./redis/plugin-health-store.js";
@@ -49,6 +55,7 @@ interface AdapterCache {
   voiceStateStore?: VoiceStateStore;
   sessionStore?: SessionStore;
   pluginEventBus?: PluginEventBus;
+  serviceDiscovery?: ServiceDiscovery;
 }
 
 const cache: AdapterCache = {};
@@ -148,6 +155,35 @@ export function getVoiceStateStore(): VoiceStateStore {
 }
 
 /**
+ * Service discovery (PR-3.2): resolve a plugin key → live base URL(s).
+ *
+ * `SERVICE_DISCOVERY` unset / `inprocess` → the DB registry + the
+ * in-memory multi-endpoint set (single-host default; one container per
+ * plugin returns exactly its DB url — current behaviour). `dns` / `k8s`
+ * → resolve the plugin host via DNS A/AAAA records so replicas behind a
+ * headless Service are load-distributed.
+ */
+export function getServiceDiscovery(): ServiceDiscovery {
+  if (cache.serviceDiscovery) return cache.serviceDiscovery;
+  const choice = envChoice("SERVICE_DISCOVERY");
+  if (choice === "" || choice === "inprocess") {
+    cache.serviceDiscovery = new InProcessServiceDiscovery((key) =>
+      pluginEndpointRegistry.endpoints(key),
+    );
+  } else if (choice === "dns" || choice === "k8s") {
+    cache.serviceDiscovery = new DnsServiceDiscovery();
+  } else {
+    throw new Error(
+      `Unknown SERVICE_DISCOVERY implementation: '${choice}'. ` +
+        `Set SERVICE_DISCOVERY=inprocess (or unset) for the single-host ` +
+        `default. Set SERVICE_DISCOVERY=dns (alias: k8s) to resolve plugin ` +
+        `replicas via Service DNS.`,
+    );
+  }
+  return cache.serviceDiscovery;
+}
+
+/**
  * Test-only — drop every cached singleton so the next call rebuilds
  * with the current env. Do NOT call from production code; the
  * adapters hold open resources (DB connections, Redis sockets).
@@ -185,4 +221,5 @@ export function __resetAdaptersForTests(): void {
   cache.voiceStateStore = undefined;
   cache.sessionStore = undefined;
   cache.pluginEventBus = undefined;
+  cache.serviceDiscovery = undefined;
 }

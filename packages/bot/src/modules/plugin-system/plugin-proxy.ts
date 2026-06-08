@@ -6,6 +6,7 @@ import {
   assertPluginTarget,
   HostPolicyError,
 } from "../../utils/host-policy.js";
+import { getServiceDiscovery } from "../../adapters/registry.js";
 
 /** Regex that matches valid pluginKey values (same constraint as plugin.id at register time). */
 const PLUGIN_KEY_RE = /^[a-z0-9][a-z0-9-]*$/;
@@ -36,6 +37,21 @@ const TRANSIENT_CONNECT_ERROR_CODES = new Set([
  */
 const PROXY_CONNECT_RETRY_COUNT = 1;
 const PROXY_CONNECT_RETRY_DELAY_MS = 250;
+
+/**
+ * Per-pluginKey round-robin cursor for spreading proxy traffic across
+ * the live endpoints service discovery returns (PR-3.2). With the
+ * single-replica default discovery returns one endpoint, so the cursor
+ * never advances and the same url is always chosen — current behaviour.
+ */
+const rrCursor = new Map<string, number>();
+
+function pickEndpoint(pluginKey: string, endpoints: string[]): string {
+  if (endpoints.length <= 1) return endpoints[0];
+  const i = (rrCursor.get(pluginKey) ?? 0) % endpoints.length;
+  rrCursor.set(pluginKey, i + 1);
+  return endpoints[i];
+}
 
 /**
  * Register the `/plugin/<pluginKey>/*` reverse proxy.
@@ -234,12 +250,34 @@ export async function registerPluginProxy(
         return;
       }
 
-      // Re-vet the upstream URL on every request. `plugin.url` may have been
-      // valid at register time, but a plugin operator who repoints DNS
-      // afterwards could redirect the anonymous-accessible proxy to an
-      // internal target. This mirrors the per-call pattern in
+      // Resolve the plugin's live endpoint(s) via service discovery
+      // (PR-3.2). In-process default returns just the DB row's url; a
+      // DNS/k8s impl returns one base url per ready replica. We pick one
+      // (round-robin) so multi-replica plugins are load-distributed.
+      let chosenBase: string;
+      try {
+        const endpoints = await getServiceDiscovery().resolve(
+          pluginKey,
+          plugin.url,
+        );
+        chosenBase = pickEndpoint(pluginKey, endpoints);
+      } catch (err) {
+        (reply.log ?? server.log).warn(
+          { err, pluginKey },
+          "plugin proxy service discovery failed",
+        );
+        reply.code(502).send({ error: "plugin unreachable" });
+        return;
+      }
+
+      // Re-vet the chosen upstream URL on every request. `plugin.url` may
+      // have been valid at register time, but a plugin operator who
+      // repoints DNS afterwards could redirect the anonymous-accessible
+      // proxy to an internal target. This mirrors the per-call pattern in
       // plugin-interaction-dispatch.service.ts and plugin-event-bridge.service.ts.
-      const parsedUrl = new URL(plugin.url);
+      // The check runs on the resolved endpoint (an IP under DNS-SD), so
+      // host-policy still vets the concrete address being connected to.
+      const parsedUrl = new URL(chosenBase);
       const upstreamPort = parsedUrl.port
         ? Number(parsedUrl.port)
         : parsedUrl.protocol === "https:"
@@ -264,7 +302,7 @@ export async function registerPluginProxy(
       const rest = (request.raw.url ?? "/").slice(prefix.length) || "/";
       // rest starts with '/' and includes the undecoded path + query string.
 
-      const target = plugin.url.replace(/\/+$/, "") + rest;
+      const target = chosenBase.replace(/\/+$/, "") + rest;
 
       // Only retry the recreate-race window for requests that carry no body —
       // re-sending a buffered body to a non-idempotent upstream risks a

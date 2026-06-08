@@ -261,6 +261,24 @@ export const deletePlugin = async (id: number): Promise<boolean> => {
 };
 
 /**
+ * Flip a single plugin (by key) to `inactive` immediately, regardless
+ * of its heartbeat age. Used by the graceful-deregister path so a
+ * cleanly-shutting-down plugin is taken offline at once instead of
+ * waiting for the reaper's heartbeat-timeout window. Returns true when a
+ * row was found and was active (i.e. an actual state change happened),
+ * false otherwise.
+ */
+export const deactivatePluginByKey = async (
+  pluginKey: string,
+): Promise<boolean> => {
+  const row = await Plugin.findOne({ where: { pluginKey } });
+  if (!row) return false;
+  if (row.getDataValue("status") !== "active") return false;
+  await row.update({ status: "inactive" });
+  return true;
+};
+
+/**
  * Mark every plugin whose last heartbeat is older than `cutoff` as
  * inactive. Returns affected ids so the caller can also revoke their
  * tokens / log the failure.
