@@ -504,6 +504,54 @@ export async function registerBehaviorRoutes(
       if ("slashCommandDescription" in body)
         patch["slashCommandDescription"] =
           body["slashCommandDescription"] ?? null;
+      // When triggerType is (re)set, enforce the cross-field invariant the
+      // model validates on save (triggerTypeShape): a row must carry ONLY
+      // its trigger type's columns, with the required one present. The
+      // per-field blocks above can leave the previous type's columns stale,
+      // and because the PATCH applies via an instance update (full row in
+      // the validate context), a switch then throws and 500s the edit
+      // instead of clearing the old side. Reconcile here — mirrors the
+      // system branch and the create path.
+      if ("triggerType" in body) {
+        if (body["triggerType"] === "slash_command") {
+          const name = String(
+            (patch["slashCommandName"] as string | null | undefined) ??
+              existingRow.slashCommandName ??
+              "",
+          ).trim();
+          if (!name) {
+            return reply.code(400).send({ error: "slashCommandName 為必填" });
+          }
+          patch["slashCommandName"] = name;
+          patch["messagePatternKind"] = null;
+          patch["messagePatternValue"] = null;
+        } else {
+          const kind =
+            (patch["messagePatternKind"] as string | null | undefined) ??
+            existingRow.messagePatternKind ??
+            null;
+          const val = String(
+            (patch["messagePatternValue"] as string | null | undefined) ??
+              existingRow.messagePatternValue ??
+              "",
+          ).trim();
+          if (!kind || !["startswith", "endswith", "regex"].includes(kind)) {
+            return reply.code(400).send({ error: "無效的 messagePatternKind" });
+          }
+          if (!val) {
+            return reply
+              .code(400)
+              .send({ error: "messagePatternValue 為必填" });
+          }
+          if (kind === "regex" && !isValidRegex(val)) {
+            return reply.code(400).send({ error: "regex 格式錯誤" });
+          }
+          patch["messagePatternKind"] = kind;
+          patch["messagePatternValue"] = val;
+          patch["slashCommandName"] = null;
+          patch["slashCommandDescription"] = null;
+        }
+      }
       if ("scope" in body) patch["scope"] = body["scope"];
       if ("integrationTypes" in body) {
         // integrationTypes 只在 global_all tab 上可自選 — 其他 tab 由
