@@ -135,7 +135,13 @@ beforeAll(async () => {
   // late-registered model hits "no such table".
   server = await buildServer();
   await sequelize.sync({ force: true });
-});
+  // Generous timeout: buildServer() imports the full plugin-routes /
+  // registry graph and sync({force}) rebuilds the schema. On a CPU-starved
+  // parallel runner this can blow past vitest's default 10s hook timeout
+  // and fail the whole file (its tests then report as skipped). The setup
+  // normally finishes in well under a second; the headroom only matters
+  // under contention — a genuine hang still fails, just later.
+}, 30_000);
 
 beforeEach(async () => {
   await Plugin.destroy({ where: {} });
