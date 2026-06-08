@@ -93,6 +93,41 @@ describe("InMemoryDmInbox", () => {
     expect(ids).toEqual(["c-new", "c-old"]);
   });
 
+  it("updateLatestMessageId advances lastMessageAt so the channel re-sorts", async () => {
+    await store.recordActivity(
+      "c-a",
+      { ...RECIPIENT, id: "u-a" },
+      makeMessage("m-a", "2026-04-23T08:00:00.000Z"),
+    );
+    await store.recordActivity(
+      "c-b",
+      { ...RECIPIENT, id: "u-b" },
+      makeMessage("m-b", "2026-04-23T09:00:00.000Z"),
+    );
+    // c-b is on top. A message that arrived offline lands in c-a (newer
+    // than c-b); the ready-sync path passes the derived timestamp.
+    await store.updateLatestMessageId("c-a", "m-a2", "2026-04-23T10:00:00.000Z");
+    const ch = await store.getChannel("c-a");
+    expect(ch?.lastMessageId).toBe("m-a2");
+    expect(ch?.lastMessageAt).toBe("2026-04-23T10:00:00.000Z");
+    expect((await store.listChannels()).map((c) => c.id)).toEqual([
+      "c-a",
+      "c-b",
+    ]);
+  });
+
+  it("updateLatestMessageId without a timestamp leaves lastMessageAt unchanged", async () => {
+    await store.recordActivity(
+      "c1",
+      RECIPIENT,
+      makeMessage("m1", "2026-04-23T10:00:00.000Z"),
+    );
+    await store.updateLatestMessageId("c1", "m2");
+    const ch = await store.getChannel("c1");
+    expect(ch?.lastMessageId).toBe("m2");
+    expect(ch?.lastMessageAt).toBe("2026-04-23T10:00:00.000Z");
+  });
+
   it("preview falls back to attachment when content is empty", async () => {
     await store.recordActivity("c1", RECIPIENT, {
       ...makeMessage("m1", "2026-04-23T10:00:00.000Z", ""),
