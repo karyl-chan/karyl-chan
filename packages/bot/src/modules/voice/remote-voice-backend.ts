@@ -26,15 +26,19 @@ const log = moduleLogger("remote-voice-backend");
 
 export class RemoteVoiceBackend implements VoiceBackend {
   private readonly base: string;
-  private readonly secret: string;
+  private readonly getSecret: () => string;
 
-  constructor(opts: { serviceUrl: string; secret: string }) {
+  constructor(opts: { serviceUrl: string; secret: () => string }) {
     this.base = opts.serviceUrl.replace(/\/+$/, "");
-    this.secret = opts.secret;
+    this.getSecret = opts.secret;
   }
 
   private async call(path: string, body: unknown): Promise<VoiceStatus> {
-    const res = await signedJsonPost(this.secret, this.base, path, body);
+    // Read the secret fresh per call so a VOICE_HMAC_SECRET rotation takes
+    // effect without a bot restart — the backend is memoised for the whole
+    // process, so a snapshot would sign with the boot-time key forever and
+    // get 401'd once the voice service drops the previous key.
+    const res = await signedJsonPost(this.getSecret(), this.base, path, body);
     if (res.status === 429) {
       // Drain the body so the connection can be reused, then surface the cap.
       const detail = await res.text().catch(() => "");

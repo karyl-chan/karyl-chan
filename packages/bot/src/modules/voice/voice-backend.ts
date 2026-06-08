@@ -146,16 +146,20 @@ export function getVoiceBackend(): VoiceBackend {
     // The shared HMAC secret is mandatory — an unauthenticated control
     // channel to a process that owns ffmpeg + the gateway is a footgun, so
     // fail loud rather than silently run unsigned.
-    // Outbound signing uses the *current* value from the SecretProvider.
-    const secret = getSecret("VOICE_HMAC_SECRET") ?? "";
-    if (!secret) {
+    // Presence check at construction (fail loud if unsigned), but pass a
+    // getter so each RPC reads the *current* secret — a rotation then takes
+    // effect without restarting the (memoised) backend.
+    if (!(getSecret("VOICE_HMAC_SECRET") ?? "")) {
       throw new Error(
         "VOICE_SERVICE_URL is set but VOICE_HMAC_SECRET is missing — the " +
           "bot↔voice-service channel must be signed. Set VOICE_HMAC_SECRET " +
           "(same value on the voice service) or unset VOICE_SERVICE_URL.",
       );
     }
-    backend = new RemoteVoiceBackend({ serviceUrl: remoteUrl, secret });
+    backend = new RemoteVoiceBackend({
+      serviceUrl: remoteUrl,
+      secret: () => getSecret("VOICE_HMAC_SECRET") ?? "",
+    });
     return backend;
   }
   backend = new InProcessVoiceBackend(clientAccessor);
