@@ -112,6 +112,7 @@ import { registerPluginRpcRoutes } from "../plugin-system/plugin-rpc-routes.js";
 import { registerVoiceRpcRoutes } from "../voice/voice-rpc.js";
 import { registerVoiceInternalRoutes } from "../voice/voice-internal-routes.js";
 import { registerShardForwardRoutes } from "../plugin-system/shard-forward-routes.js";
+import { getVerificationKeys } from "../../utils/secrets.js";
 import {
   pluginAuthStore,
   type PluginAuthRecord,
@@ -727,7 +728,10 @@ export async function createWebServer(
   // (503 when no shared secret), so they're harmless to mount unconditionally.
   await registerVoiceInternalRoutes(server, {
     bot,
-    secret: config.voice.hmacSecret,
+    // Rotation-aware + read per request (not snapshotted at boot) so the
+    // SecretProvider's live re-read lets VOICE_HMAC_SECRET be rolled without
+    // a synchronized bot+voice restart.
+    secrets: () => getVerificationKeys("VOICE_HMAC_SECRET"),
   });
   // Cross-shard forward relay (PR-3.3). Self-guards (503 without a
   // shared secret); harmless to mount in the single-shard default where

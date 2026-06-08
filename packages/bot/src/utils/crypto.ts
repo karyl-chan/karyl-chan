@@ -5,6 +5,7 @@ import {
   randomBytes,
 } from "crypto";
 import { moduleLogger } from "../logger.js";
+import { getSecret } from "./secrets.js";
 
 const log = moduleLogger("crypto");
 const ALGO = "aes-256-gcm";
@@ -47,11 +48,14 @@ function parseKeys(raw: string): EncKey[] {
  * over stored ciphertexts, then drop the old key on the next deploy.
  */
 function getKeys(): EncKey[] {
-  // Read directly from process.env on every call so key rotation (prepending
-  // a new key to ENCRYPTION_KEY) takes effect without a restart. This is an
+  // Re-read on every call so key rotation (prepending a new key to the
+  // ENCRYPTION_KEY secret) takes effect without a restart. This is an
   // intentional exception to the "read env via config singleton" rule: the
   // key set is operationally changed at runtime and must be re-read each call.
-  const raw = process.env.ENCRYPTION_KEY;
+  // Sourced through the SecretProvider (PR-5.1) so SECRET_PROVIDER=file can
+  // feed it from a mounted secret; the default env provider re-reads
+  // process.env each call exactly as before.
+  const raw = getSecret("ENCRYPTION_KEY");
   if (!raw) {
     throw new Error(
       "ENCRYPTION_KEY is not set. Generate one with: openssl rand -hex 32",

@@ -36,6 +36,7 @@ import {
 } from "@karyl-chan/voice";
 import { moduleLogger } from "../../logger.js";
 import { RemoteVoiceBackend } from "./remote-voice-backend.js";
+import { getSecret } from "../../utils/secrets.js";
 
 // Route the relocated voice manager's structured logs through the bot's pino
 // logger so in-process voice logging is byte-for-byte what it was before the
@@ -145,7 +146,8 @@ export function getVoiceBackend(): VoiceBackend {
     // The shared HMAC secret is mandatory — an unauthenticated control
     // channel to a process that owns ffmpeg + the gateway is a footgun, so
     // fail loud rather than silently run unsigned.
-    const secret = (process.env.VOICE_HMAC_SECRET ?? "").trim();
+    // Outbound signing uses the *current* value from the SecretProvider.
+    const secret = getSecret("VOICE_HMAC_SECRET") ?? "";
     if (!secret) {
       throw new Error(
         "VOICE_SERVICE_URL is set but VOICE_HMAC_SECRET is missing — the " +

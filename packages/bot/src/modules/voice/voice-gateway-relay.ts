@@ -23,6 +23,7 @@ import type { Client } from "discord.js";
 import { signedJsonPost } from "../../utils/hmac.js";
 import { moduleLogger } from "../../logger.js";
 import { activeRemoteGuilds } from "./voice-internal-routes.js";
+import { getSecret } from "../../utils/secrets.js";
 
 const log = moduleLogger("voice-gateway-relay");
 
@@ -60,7 +61,8 @@ async function relayEvent(
  */
 export function installVoiceGatewayRelay(bot: Client): void {
   const serviceUrl = (process.env.VOICE_SERVICE_URL ?? "").trim();
-  const secret = (process.env.VOICE_HMAC_SECRET ?? "").trim();
+  // Outbound signing uses the *current* value from the SecretProvider.
+  const secret = getSecret("VOICE_HMAC_SECRET") ?? "";
   if (!serviceUrl || !secret) return;
   const base = serviceUrl.replace(/\/+$/, "");
   log.info({ serviceUrl: base }, "voice gateway relay installed");
