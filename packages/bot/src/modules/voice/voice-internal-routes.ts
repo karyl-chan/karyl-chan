@@ -23,7 +23,7 @@
  */
 import type { Client } from "discord.js";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { verifyInboundSignatureFromHeadersWithKeys } from "../../utils/hmac.js";
+import { makeSignedVerify } from "../../utils/signed-routes.js";
 import { moduleLogger } from "../../logger.js";
 
 const log = moduleLogger("voice-internal-routes");
@@ -61,34 +61,9 @@ export async function registerVoiceInternalRoutes(
   // Encapsulated scope so the raw-string parser doesn't affect the rest of
   // the bot's API (which relies on Fastify's default JSON object parsing).
   await server.register(async (scoped) => {
-    scoped.addContentTypeParser(
-      "application/json",
-      { parseAs: "string" },
-      (_req, body, done) => done(null, body),
-    );
-
-    function verify(request: FastifyRequest, reply: FastifyReply): boolean {
-      // Re-read keys each request so a rotation is picked up live.
-      const keys = secrets();
-      if (keys.length === 0) {
-        reply.code(503).send({ error: "voice HMAC secret not configured" });
-        return false;
-      }
-      const rawBody = typeof request.body === "string" ? request.body : "";
-      const check = verifyInboundSignatureFromHeadersWithKeys(
-        keys,
-        request.headers,
-        rawBody,
-        Math.floor(Date.now() / 1000),
-        request.method,
-        request.url.split("?")[0] ?? request.url,
-      );
-      if (!check.ok) {
-        reply.code(401).send({ error: check.reason });
-        return false;
-      }
-      return true;
-    }
+    // Raw-body parser + rotation-aware HMAC verify, shared with the
+    // shard-forward routes (one verify path for all signed inbound channels).
+    const verify = makeSignedVerify(scoped, secrets);
 
     function parse<T>(request: FastifyRequest): T {
       const raw = typeof request.body === "string" ? request.body : "{}";

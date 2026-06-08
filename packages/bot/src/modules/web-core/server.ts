@@ -737,7 +737,10 @@ export async function createWebServer(
   // shared secret); harmless to mount in the single-shard default where
   // nothing ever forwards to it.
   await registerShardForwardRoutes(server, {
-    secret: config.shard.hmacSecret,
+    secrets: () => {
+      const s = config.shard.hmacSecret;
+      return s ? [s] : [];
+    },
   });
   await registerBotFeatureRoutes(server, { bot });
 

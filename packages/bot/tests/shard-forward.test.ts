@@ -164,7 +164,9 @@ describe("shard replay route", () => {
         body: request.body ?? null,
       };
     });
-    await registerShardForwardRoutes(s, { secret });
+    await registerShardForwardRoutes(s, {
+      secrets: () => (secret ? [secret] : []),
+    });
     await s.ready();
     return s;
   }

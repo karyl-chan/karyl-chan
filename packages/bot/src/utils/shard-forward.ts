@@ -23,11 +23,7 @@
 
 import { config } from "../config.js";
 import { targetShardForGuild } from "./shard-routing.js";
-import {
-  signedJsonPost,
-  verifyInboundSignatureFromHeaders,
-  type SignatureCheck,
-} from "./hmac.js";
+import { signedJsonPost } from "./hmac.js";
 
 export type ForwardDecision =
   | { forward: false; reason: "mine" | "single-shard" }
@@ -112,29 +108,4 @@ export async function forwardToShard(
     parsed = null;
   }
   return { status: res.status, body: parsed };
-}
-
-/**
- * Verify an inbound forwarded request on the owning shard. Thin wrapper
- * over `verifyInboundSignatureFromHeaders` so the inter-shard route and
- * any future caller share one verification call shape. `rawBody` MUST be
- * the exact bytes the signature was computed over (register a raw-string
- * content-type parser on the scope, as the voice internal routes do).
- */
-export function verifyInboundShardRequest(
-  secret: string,
-  headers: Record<string, string | string[] | undefined>,
-  rawBody: string,
-  method: string,
-  urlPath: string,
-  nowSec: number = Math.floor(Date.now() / 1000),
-): SignatureCheck {
-  return verifyInboundSignatureFromHeaders(
-    secret,
-    headers,
-    rawBody,
-    nowSec,
-    method,
-    urlPath,
-  );
 }

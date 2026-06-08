@@ -26,6 +26,11 @@ COPY packages/bot/package.json packages/bot/
 COPY packages/bot/frontend/package.json packages/bot/frontend/
 COPY packages/plugin-sdk/package.json packages/plugin-sdk/
 COPY packages/ui/package.json packages/ui/
+# @karyl-chan/voice is a workspace dep of the bot (PR-2.3); e2e is a
+# workspace member (PR-6). Their manifests must exist so the frozen
+# install can validate the lockfile against the whole workspace.
+COPY packages/voice/package.json packages/voice/
+COPY e2e/package.json e2e/
 
 
 FROM base AS frontend-build

@@ -1,11 +1,8 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { config } from "../../config.js";
 import { moduleLogger } from "../../logger.js";
-import {
-  decideForward,
-  forwardToShard,
-  verifyInboundShardRequest,
-} from "../../utils/shard-forward.js";
+import { decideForward, forwardToShard } from "../../utils/shard-forward.js";
+import { makeSignedVerify } from "../../utils/signed-routes.js";
 
 const log = moduleLogger("shard-forward");
 
@@ -113,46 +110,24 @@ interface ReplayEnvelope {
 }
 
 export interface ShardForwardRoutesOptions {
-  /** Shared HMAC secret; absent → relay 503s everything (misconfig guard). */
-  secret: string | null;
+  /**
+   * Resolver for the inter-shard HMAC verification keys, read per request
+   * (rotation-aware, same shape as the voice internal routes). Empty ⇒ the
+   * relay 503s everything (misconfig guard / no shared secret configured).
+   */
+  secrets: () => readonly string[];
 }
 
 export async function registerShardForwardRoutes(
   server: FastifyInstance,
   options: ShardForwardRoutesOptions,
 ): Promise<void> {
-  const { secret } = options;
+  const { secrets } = options;
 
-  // Encapsulated scope with a raw-string JSON parser so the HMAC is
-  // verified over the exact received bytes (mirrors the voice internal
-  // routes' pattern — the signature covers the raw body, not a
-  // re-serialised object).
+  // Encapsulated scope: raw-string body parser + rotation-aware HMAC verify,
+  // shared with the voice internal routes (one signed-inbound mechanism).
   await server.register(async (scoped) => {
-    scoped.addContentTypeParser(
-      "application/json",
-      { parseAs: "string" },
-      (_req, body, done) => done(null, body),
-    );
-
-    function verify(request: FastifyRequest, reply: FastifyReply): boolean {
-      if (!secret) {
-        reply.code(503).send({ error: "shard HMAC secret not configured" });
-        return false;
-      }
-      const rawBody = typeof request.body === "string" ? request.body : "";
-      const check = verifyInboundShardRequest(
-        secret,
-        request.headers,
-        rawBody,
-        request.method,
-        request.url.split("?")[0] ?? request.url,
-      );
-      if (!check.ok) {
-        reply.code(401).send({ error: check.reason });
-        return false;
-      }
-      return true;
-    }
+    const verify = makeSignedVerify(scoped, secrets);
 
     scoped.post(SHARD_REPLAY_PATH, async (request, reply) => {
       if (!verify(request, reply)) return;
@@ -203,7 +178,7 @@ export async function registerShardForwardRoutes(
         shardId: config.bot.shardId,
         totalShards: config.bot.totalShards,
         knownShardUrls: Object.keys(config.shard.urls).length,
-        hmac: secret ? "configured" : "MISSING",
+        hmac: secrets().length > 0 ? "configured" : "MISSING",
       },
       "cross-shard forwarding enabled (PR-3.3)",
     );
