@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [bot, plugin-sdk]
+        target: [bot, plugin-sdk, voice]
     steps:
       - uses: actions/checkout@v4
 
@@ -41,10 +41,19 @@ jobs:
           pnpm --filter @karyl-chan/plugin-sdk build
           pnpm --filter @karyl-chan/plugin-sdk test
 
+      - name: Build & test voice
+        if: matrix.target == 'voice'
+        # `...` builds the workspace deps (plugin-sdk) before voice.
+        run: |
+          pnpm --filter "@karyl-chan/voice..." build
+          pnpm --filter @karyl-chan/voice test
+
       - name: Build & test bot
         if: matrix.target == 'bot'
+        # `...` builds the bot's workspace deps (voice → plugin-sdk) first;
+        # without it the bot's tsc can't resolve their types.
         run: |
-          pnpm --filter @karyl-chan/bot build
+          pnpm --filter "@karyl-chan/bot..." build
           pnpm --filter @karyl-chan/bot test:typecheck
           pnpm --filter @karyl-chan/bot test
           pnpm --filter karyl-chan-frontend build
