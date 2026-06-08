@@ -24,6 +24,14 @@ onMounted(async () => {
         state.value = 'no-token';
         return;
     }
+    // Strip the one-time token from the URL *before* the async exchange, so
+    // it doesn't linger in the address bar / history / Referer while the
+    // round-trip is in flight. We've already captured it in `token`. (The
+    // success/error router.replace below also reconcile vue-router's view of
+    // the now-stripped URL.)
+    if (typeof window !== 'undefined' && window.history?.replaceState) {
+        window.history.replaceState(window.history.state, '', window.location.pathname);
+    }
     state.value = 'exchanging';
     try {
         const tokens = await exchangeOneTimeToken(token);
