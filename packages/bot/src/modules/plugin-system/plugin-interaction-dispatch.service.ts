@@ -260,6 +260,9 @@ async function dispatchChatInputCommand(
       method: "POST",
       headers,
       body,
+      // Don't follow redirects past the assertPluginTarget host check — a
+      // 3xx Location would bypass the SSRF guard (cf. webhook-forwarder).
+      redirect: "manual",
       signal: ctrl.signal,
     });
     if (!res.ok) {
@@ -366,6 +369,9 @@ async function dispatchAutocomplete(
       method: "POST",
       headers,
       body,
+      // Don't follow redirects past the assertPluginTarget host check — a
+      // 3xx Location would bypass the SSRF guard (cf. webhook-forwarder).
+      redirect: "manual",
       signal: ctrl.signal,
     });
     if (!res.ok) {

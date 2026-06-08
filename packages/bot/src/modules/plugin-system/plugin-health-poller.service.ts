@@ -85,7 +85,12 @@ async function probeOne(plugin: PluginRow): Promise<void> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
   try {
-    const res = await fetch(url, { method: "GET", signal: ctrl.signal });
+    const res = await fetch(url, {
+      method: "GET",
+      // Don't follow redirects past the assertPluginTarget host check (SSRF).
+      redirect: "manual",
+      signal: ctrl.signal,
+    });
     if (!res.ok) {
       await setHealth(plugin.pluginKey, {
         status: "unhealthy",
