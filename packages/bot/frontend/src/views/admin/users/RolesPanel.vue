@@ -117,27 +117,38 @@ async function onDescSave(role: AdminRole) {
     });
 }
 
-// ── Capability toggle (called from the modal) ───────────────────────
+// ── Capability apply (called from the modal on Confirm) ─────────────
 //
-// Optimistic — the click flips the local state immediately via an emit
-// to the parent, then fires the API in the background. On failure we
-// emit again with the rollback set so the UI reflects reality. The
-// modal stays open across grants so users can edit several tokens in
-// one session.
-async function onToggleCapability(role: AdminRole, capKey: string, want: boolean) {
-    const granted = role.capabilities.includes(capKey);
-    if (granted === want) return;
-    const next = want
-        ? [...role.capabilities, capKey]
-        : role.capabilities.filter(c => c !== capKey);
-    emit('capability-change', role.name, next);
+// The modal stages all checkbox toggles and emits them as one batch.
+// We apply them as a SINGLE optimistic update — computing the final set
+// once — then fire the per-token API calls serially via withRoleLock.
+//
+// Why batched: emitting one capability-change per token recomputed the
+// optimistic set from the (stale) role each time, so the updates
+// overwrote each other and only the last toggle appeared to stick. One
+// update from the pre-computed final set fixes that; the backend always
+// received every call, this just makes the UI match.
+async function onModalApply(changes: { grants: string[]; revokes: string[] }) {
+    const role = editingRole.value;
+    if (!role) return;
+    const { grants, revokes } = changes;
+    if (grants.length === 0 && revokes.length === 0) return;
+
+    // Capture the pre-apply set for rollback; compute the final set once.
+    const original = role.capabilities;
+    const finalSet = new Set(original);
+    for (const token of grants) finalSet.add(token);
+    for (const token of revokes) finalSet.delete(token);
+    emit('capability-change', role.name, [...finalSet]);
+
     await withRoleLock(role.name, async () => {
         try {
-            if (want) await grantRoleCapability(role.name, capKey);
-            else await revokeRoleCapability(role.name, capKey);
+            for (const token of grants) await grantRoleCapability(role.name, token);
+            for (const token of revokes) await revokeRoleCapability(role.name, token);
         } catch (err) {
-            // Roll back on failure.
-            emit('capability-change', role.name, role.capabilities);
+            // Roll the whole batch back to the pre-apply state; a full
+            // reload reconciles any partially-applied change with the server.
+            emit('capability-change', role.name, original);
             reportErr(err);
         }
     });
@@ -159,14 +170,6 @@ function openCapsModal(role: AdminRole) {
 }
 function closeCapsModal() {
     editingRoleName.value = null;
-}
-async function onModalGrant(token: string) {
-    if (!editingRole.value) return;
-    await onToggleCapability(editingRole.value, token, true);
-}
-async function onModalRevoke(token: string) {
-    if (!editingRole.value) return;
-    await onToggleCapability(editingRole.value, token, false);
 }
 
 // ── Role delete ─────────────────────────────────────────────────────
@@ -380,8 +383,7 @@ function summariseCaps(role: AdminRole): CapSummary {
             :capability-catalog="capabilityCatalog"
             :pending="editingRole ? isRolePending(editingRole.name) : false"
             @close="closeCapsModal"
-            @grant="onModalGrant"
-            @revoke="onModalRevoke"
+            @apply="onModalApply"
         />
 
         <AppModal :visible="addOpen" :title="$t('admin.roles.add')" @close="addOpen = false">

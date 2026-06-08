@@ -38,10 +38,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
     (e: 'close'): void;
-    /** Add `token` to the role's grants. */
-    (e: 'grant', token: string): void;
-    /** Remove `token` from the role's grants. */
-    (e: 'revoke', token: string): void;
+    /** Apply all staged grants + revokes as one atomic batch. */
+    (e: 'apply', changes: { grants: string[]; revokes: string[] }): void;
 }>();
 
 const { t } = useI18n();
@@ -325,11 +323,16 @@ function onConfirm() {
         emit('close');
         return;
     }
-    // Emit grants then revokes. Parent's per-token handler queues
-    // each through withRoleLock so the API calls serialize even
-    // though we synchronously fire all the events here.
-    for (const token of pendingGrants.value) emit('grant', token);
-    for (const token of pendingRevokes.value) emit('revoke', token);
+    // Apply the whole staged batch as ONE intent. Emitting per-token made
+    // the parent recompute its optimistic state from props.role on every
+    // event — but props.role doesn't update within this synchronous burst,
+    // so each update overwrote the last and only one change appeared to
+    // take effect. One batched apply lets the parent compute the final set
+    // once.
+    emit('apply', {
+        grants: [...pendingGrants.value],
+        revokes: [...pendingRevokes.value],
+    });
     pendingGrants.value = new Set();
     pendingRevokes.value = new Set();
     emit('close');
