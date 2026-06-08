@@ -43,12 +43,13 @@ export function resetActiveRemoteGuildsForTest(): void {
 export interface VoiceInternalRoutesOptions {
   bot?: Client;
   /**
-   * Verification keys for the shared bot↔voice HMAC secret, sourced from
-   * the SecretProvider: `[current]`, or `[current, previous]` during a
-   * rotation window. Empty array ⇒ routes 503 everything (misconfig
-   * guard / no shared secret configured).
+   * Resolver for the shared bot↔voice HMAC verification keys, read fresh
+   * PER REQUEST so a rotated secret (FileSecretProvider re-reads on a TTL)
+   * takes effect without restarting the bot. Returns `[current]`, or
+   * `[current, previous]` during a rotation window; empty ⇒ routes 503
+   * everything (misconfig guard / no shared secret configured).
    */
-  secrets: readonly string[];
+  secrets: () => readonly string[];
 }
 
 export async function registerVoiceInternalRoutes(
@@ -67,13 +68,15 @@ export async function registerVoiceInternalRoutes(
     );
 
     function verify(request: FastifyRequest, reply: FastifyReply): boolean {
-      if (secrets.length === 0) {
+      // Re-read keys each request so a rotation is picked up live.
+      const keys = secrets();
+      if (keys.length === 0) {
         reply.code(503).send({ error: "voice HMAC secret not configured" });
         return false;
       }
       const rawBody = typeof request.body === "string" ? request.body : "";
       const check = verifyInboundSignatureFromHeadersWithKeys(
-        secrets,
+        keys,
         request.headers,
         rawBody,
         Math.floor(Date.now() / 1000),

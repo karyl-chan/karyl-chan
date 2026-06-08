@@ -726,10 +726,10 @@ export async function createWebServer(
   // (503 when no shared secret), so they're harmless to mount unconditionally.
   await registerVoiceInternalRoutes(server, {
     bot,
-    // Rotation-aware: [current] or [current, previous] from the
-    // SecretProvider so VOICE_HMAC_SECRET can be rolled without a
-    // synchronized bot+voice restart.
-    secrets: getVerificationKeys("VOICE_HMAC_SECRET"),
+    // Rotation-aware + read per request (not snapshotted at boot) so the
+    // SecretProvider's live re-read lets VOICE_HMAC_SECRET be rolled without
+    // a synchronized bot+voice restart.
+    secrets: () => getVerificationKeys("VOICE_HMAC_SECRET"),
   });
   await registerBotFeatureRoutes(server, { bot });
 

@@ -29,6 +29,7 @@ import {
   type SecretProvider,
   type SecretName,
   type RotatableSecret,
+  ENV_VAR as ENV_FALLBACK,
 } from "./secret-provider.js";
 
 const DEFAULT_SECRET_DIR = "/var/run/secrets/karyl";
@@ -36,12 +37,6 @@ const DEFAULT_SECRET_DIR = "/var/run/secrets/karyl";
 /** Re-read window. Short enough to pick up a rotated mount promptly,
  *  long enough to avoid a filesystem stat on every single request. */
 const FILE_CACHE_TTL_MS = 5_000;
-
-const ENV_FALLBACK: Record<SecretName, string> = {
-  BOT_TOKEN: "BOT_TOKEN",
-  ENCRYPTION_KEY: "ENCRYPTION_KEY",
-  VOICE_HMAC_SECRET: "VOICE_HMAC_SECRET",
-};
 
 interface CacheEntry {
   value: string | null;

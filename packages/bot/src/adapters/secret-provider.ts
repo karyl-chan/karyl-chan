@@ -96,7 +96,9 @@ export function verificationKeys(secret: RotatableSecret): string[] {
  * provider also recognises a `<ENV>_PREVIOUS` companion var: setting it
  * opens a rotation window without any external backend.
  */
-const ENV_VAR: Record<SecretName, string> = {
+/** Logical secret name → env var. Exported so the file provider's env
+ *  fallback uses the same single source of truth. */
+export const ENV_VAR: Record<SecretName, string> = {
   BOT_TOKEN: "BOT_TOKEN",
   ENCRYPTION_KEY: "ENCRYPTION_KEY",
   VOICE_HMAC_SECRET: "VOICE_HMAC_SECRET",

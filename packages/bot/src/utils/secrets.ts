@@ -18,18 +18,12 @@
 import { getSecretProvider } from "../adapters/registry.js";
 import {
   type SecretName,
-  type RotatableSecret,
   verificationKeys,
 } from "../adapters/secret-provider.js";
 
 /** Resolve a secret's current value (signing / single-value use). */
 export function getSecret(name: SecretName): string | null {
   return getSecretProvider().getSecret(name);
-}
-
-/** Resolve a secret with its optional previous value (rotation window). */
-export function getRotatableSecret(name: SecretName): RotatableSecret {
-  return getSecretProvider().getRotatable(name);
 }
 
 /**
