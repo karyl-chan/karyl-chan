@@ -54,6 +54,24 @@ function isPrivateIPv4(ip: string): boolean {
   return false;
 }
 
+/**
+ * Returns true for RFC 6598 shared address space / carrier-grade NAT
+ * (100.64.0.0/10). This is NOT public internet — ISPs and cloud providers
+ * use it for internal NAT (and Tailscale etc.), so the public-only webhook
+ * policy must treat it like RFC1918.
+ */
+function isSharedAddressSpaceIPv4(ip: string): boolean {
+  const octets = ip.split(".").map(Number);
+  if (
+    octets.length !== 4 ||
+    octets.some((o) => !Number.isInteger(o) || o < 0 || o > 255)
+  ) {
+    return false;
+  }
+  const [a, b] = octets;
+  return a === 100 && b >= 64 && b <= 127;
+}
+
 /** Returns true for loopback: 127.0.0.0/8. */
 function isLoopbackIPv4(ip: string): boolean {
   const octets = ip.split(".").map(Number);
@@ -251,6 +269,7 @@ export async function assertExternalTarget(
   const checkIPv4 = (ip: string) => {
     if (isBlockedIPv4(ip)) denyExternal();
     if (!allowPrivate && isPrivateIPv4(ip)) denyExternal();
+    if (!allowPrivate && isSharedAddressSpaceIPv4(ip)) denyExternal();
     if (isLoopbackIPv4(ip)) denyExternal();
     if (isUnspecifiedIPv4(ip)) denyExternal();
   };

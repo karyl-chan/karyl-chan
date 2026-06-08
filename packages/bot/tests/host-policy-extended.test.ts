@@ -53,6 +53,25 @@ describe("assertExternalTarget", () => {
     ).rejects.toBeInstanceOf(HostPolicyError);
   });
 
+  it("rejects CGNAT / shared address space 100.64.0.1", async () => {
+    await expect(
+      assertExternalTarget("100.64.0.1", 80),
+    ).rejects.toBeInstanceOf(HostPolicyError);
+  });
+
+  it("rejects CGNAT edge 100.127.255.255", async () => {
+    await expect(
+      assertExternalTarget("100.127.255.255", 80),
+    ).rejects.toBeInstanceOf(HostPolicyError);
+  });
+
+  it("allows 100.63.x and 100.128.x (just outside CGNAT)", async () => {
+    await expect(assertExternalTarget("100.63.0.1", 80)).resolves.toBeUndefined();
+    await expect(
+      assertExternalTarget("100.128.0.1", 80),
+    ).resolves.toBeUndefined();
+  });
+
   it("rejects loopback 127.0.0.1", async () => {
     await expect(assertExternalTarget("127.0.0.1", 80)).rejects.toBeInstanceOf(
       HostPolicyError,
@@ -122,6 +141,12 @@ describe("assertExternalTarget", () => {
     it("allows RFC1918 10.0.0.5 when escape hatch enabled", async () => {
       await expect(
         assertExternalTarget("10.0.0.5", 80),
+      ).resolves.toBeUndefined();
+    });
+
+    it("allows CGNAT 100.64.0.1 when escape hatch enabled", async () => {
+      await expect(
+        assertExternalTarget("100.64.0.1", 80),
       ).resolves.toBeUndefined();
     });
 
