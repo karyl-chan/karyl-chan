@@ -54,15 +54,24 @@ FROM base AS backend-build
 RUN apt-get update \
     && apt-get install -y --no-install-recommends python3 make g++ \
     && rm -rf /var/lib/apt/lists/*
-RUN pnpm install --frozen-lockfile --filter @karyl-chan/bot
+# The bot depends on the @karyl-chan/voice workspace package (PR-2.3), so it
+# must be installed + built alongside the bot. `@karyl-chan/bot...` (trailing
+# `...`) selects the bot AND its workspace dependencies, so the install pulls
+# voice's devDeps and `build` compiles voice before the bot (topo order) —
+# without voice's dist/, the bot's tsc can't resolve its types.
+RUN pnpm install --frozen-lockfile --filter "@karyl-chan/bot..."
+# Source for the bot AND its transitive workspace deps must be present so
+# `build` can compile each: bot → @karyl-chan/voice → @karyl-chan/plugin-sdk.
 COPY packages/bot packages/bot
-RUN pnpm --filter @karyl-chan/bot build
+COPY packages/voice packages/voice
+COPY packages/plugin-sdk packages/plugin-sdk
+RUN pnpm --filter "@karyl-chan/bot..." build
 # Flatten the bot + its production dependencies into a self-contained
 # bundle. `pnpm deploy` resolves the workspace's symlinked node_modules
 # into a real tree that can be copied verbatim into the runtime image.
-# --legacy: pnpm 10 otherwise refuses to deploy a non-injected
-# workspace; the bot has no workspace-package dependencies, so the
-# legacy hard-copy behaviour is exactly what is wanted here.
+# --legacy: pnpm 10 otherwise refuses to deploy a non-injected workspace.
+# deploy bundles the bot + its prod deps, including the @karyl-chan/voice
+# workspace package (already built above), into the self-contained tree.
 RUN pnpm --filter @karyl-chan/bot deploy --legacy --prod /app
 # sqlite3@6.0.1's install script (`prebuild-install -r napi || node-gyp
 # rebuild`) downloads a prebuilt binary linked to GLIBC_2.38, which
