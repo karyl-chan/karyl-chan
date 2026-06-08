@@ -1,12 +1,14 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 
 /**
  * Verify the `X-Plugin-Webhook-Token` header sent by the bot
  * when `webhookAuthMode='token'` is configured for a behavior.
  *
- * Uses `timingSafeEqual` to prevent timing-based secret inference.
- * Length-mismatch is handled by padding to the longer length before
- * comparison — this avoids leaking length information through early exit.
+ * Compares SHA-256 digests of the two values with `timingSafeEqual`:
+ * the digests are always 32 bytes (so the compare is constant-time with
+ * no length leak), and an exact match is required — two values that
+ * differ at all, including by length or trailing NUL bytes, hash
+ * differently and are rejected.
  *
  * @param headerValue  The raw header value from the incoming request,
  *                     e.g. `request.headers['x-plugin-webhook-token']`.
@@ -33,17 +35,11 @@ export function verifyWebhookToken(
   if (typeof headerValue !== "string" || headerValue.length === 0) {
     return false;
   }
-  const presented = Buffer.from(headerValue, "utf8");
-  const expected = Buffer.from(secret, "utf8");
-  // Pad both buffers to the same length to prevent length-timing leaks.
-  // The constant-time comparison is only valid when lengths are equal;
-  // if they differ, we compare against a same-length zero-padded copy
-  // of the shorter one — guaranteed to mismatch, but without leaking
-  // which side was shorter.
-  const len = Math.max(presented.length, expected.length);
-  const a = Buffer.alloc(len, 0);
-  const b = Buffer.alloc(len, 0);
-  presented.copy(a);
-  expected.copy(b);
-  return timingSafeEqual(a, b);
+  // Hash both sides to fixed-length (32-byte) digests before comparing.
+  // This keeps the compare constant-time and length-agnostic while still
+  // requiring an EXACT match — the previous zero-padding approach treated
+  // `secret + "\0"` (and any trailing-NUL variant) as equal.
+  const presented = createHash("sha256").update(headerValue, "utf8").digest();
+  const expected = createHash("sha256").update(secret, "utf8").digest();
+  return timingSafeEqual(presented, expected);
 }
