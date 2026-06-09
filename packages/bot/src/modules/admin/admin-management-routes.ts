@@ -505,6 +505,16 @@ export async function registerAdminManagementRoutes(
         reply.code(400).send({ error: "unknown capability token" });
         return;
       }
+      // Reject a revoke against a role that doesn't exist — mirrors the
+      // grant (POST) handler. Without this, revoking a capability from a
+      // nonexistent role destroys 0 rows but still returns 204 AND writes a
+      // `role.revoke-capability` audit entry for a revocation that never
+      // happened, polluting the audit trail.
+      const roles = await listAdminRoles();
+      if (!roles.some((r) => r.name === request.params.name)) {
+        reply.code(404).send({ error: "role not found" });
+        return;
+      }
       // Mirror of the "don't nuke your own role" guard — revoking the
       // `admin` token from your own role is instant self-lockout.
       if (
