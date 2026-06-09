@@ -918,7 +918,14 @@ export class PluginRegistry {
     try {
       const cutoff = new Date(now() - HEARTBEAT_TIMEOUT_MS);
       const expired = await expireStalePlugins(cutoff);
-      for (const { id } of expired) {
+      // Tear down every trace of each dead plugin (no cross-item ordering
+      // dependency, so one pass): revoke its token, drop it from the event
+      // index (so dispatch stops fanning out to it) + the proxy/lookup
+      // cache, AND tear down its dispatch pool — the undici Pool keeps
+      // keep-alive TCP sockets open to the dead plugin, so without this the
+      // pool entry leaks on every crash-without-deregister (register /
+      // heartbeat / deregister already drop it; the reaper was the one gap).
+      for (const { id, pluginKey } of expired) {
         this.auth.revokeByPluginId(id);
         botEventLog.record(
           "warn",
@@ -926,16 +933,6 @@ export class PluginRegistry {
           `Plugin marked inactive (heartbeat timeout): id=${id}`,
           { pluginId: id, cutoff: cutoff.toISOString() },
         );
-      }
-      // If we just expired anything, drop the dead plugins from the
-      // index so dispatch stops fanning out events to them: O(|expired|)
-      // per-id removal instead of a full rebuild. Also drop them from
-      // the proxy/lookup cache AND tear down their dispatch pool — the
-      // undici Pool keeps keep-alive TCP sockets open to the dead plugin,
-      // so without this the pool entry leaks for every crash-without-
-      // deregister (register/heartbeat/deregister already drop it; the
-      // reaper path was the one gap).
-      for (const { id, pluginKey } of expired) {
         removePluginFromIndex(id);
         invalidatePluginById(id);
         dropDispatchPoolForPlugin(pluginKey);
