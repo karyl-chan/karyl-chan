@@ -49,6 +49,40 @@ export function requireAnyCapability(
 }
 
 /**
+ * Coarse messaging gate for endpoints that must resolve a destination
+ * channel with a LIVE Discord fetch before they know whether to apply the
+ * `dm.message` or the `guild.<id>.message` check (e.g. message forward).
+ * Blocks a caller who holds NO message capability at all from triggering
+ * that fetch — a least-privilege + arbitrary-channel-probe concern. It
+ * admits anyone who could pass the precise per-channel check for SOME
+ * channel: `admin`, `dm.message`, `guild.message`, or any per-guild
+ * `guild:<id>.message` grant. The precise requireAnyCapability /
+ * requireGuildCapability call AFTER the fetch still enforces the exact
+ * scope for the resolved channel.
+ */
+export function requireAnyMessagingCapability(
+    request: FastifyRequest,
+    reply: FastifyReply
+): boolean {
+    const caps = request.authCapabilities as Set<AdminCapability> | undefined;
+    if (caps) {
+        if (caps.has('admin') || caps.has('dm.message') || caps.has('guild.message')) {
+            return true;
+        }
+        // Any per-guild message grant (guild:<id>.message) also qualifies —
+        // such a user can forward into that guild, so they must not be
+        // denied before the channel is resolved.
+        for (const cap of caps) {
+            if (typeof cap === 'string' && /^guild:[^.:]+\.message$/.test(cap)) {
+                return true;
+            }
+        }
+    }
+    reply.code(403).send({ error: 'a dm.message or guild.message capability is required' });
+    return false;
+}
+
+/**
  * Per-guild capability gate. Satisfied by `admin`, the global guild
  * token (`guild.<scope>`), or the matching per-guild token
  * (`guild:<guildId>.<scope>`). Use this for any route that operates on
