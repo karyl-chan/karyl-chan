@@ -488,34 +488,7 @@ export class CommandReconciler {
 
     // 步驟末：upsert 名冊
     for (const item of desiredItems) {
-      if (item.spec.scope === "global") {
-        await upsertOwnedCommand({
-          name: item.name,
-          scope: "global",
-          guildId: null,
-        }).catch((e: unknown) => {
-          botEventLog.record(
-            "warn",
-            "bot",
-            `command-reconciler: 名冊 upsert 失敗 ${item.name}: ${e instanceof Error ? e.message : String(e)}`,
-          );
-        });
-      } else {
-        // guild scope：為每個 bot 所在 guild 各登記一筆
-        for (const guild of bot.guilds.cache.values()) {
-          await upsertOwnedCommand({
-            name: item.name,
-            scope: "guild",
-            guildId: guild.id,
-          }).catch((e: unknown) => {
-            botEventLog.record(
-              "warn",
-              "bot",
-              `command-reconciler: 名冊 upsert 失敗 ${item.name}/${guild.id}: ${e instanceof Error ? e.message : String(e)}`,
-            );
-          });
-        }
-      }
+      await this.upsertOwnedForItem(bot, item);
     }
 
     botEventLog.record(
@@ -592,7 +565,14 @@ export class CommandReconciler {
     }
 
     const discordState = await this.fetchDiscordState(bot);
-    return this.applyOne(bot, item, discordState);
+    const result = await this.applyOne(bot, item, discordState);
+    // Register in the owned-commands roster so a later reconcileAll can
+    // recognise + clean this command up. Without this, a command created
+    // via this incremental path (e.g. /resync) is invisible to the
+    // roster, so when the behavior is later deleted reconcileAll's stale
+    // sweep can't find it and it orphans on Discord.
+    await this.upsertOwnedForItem(bot, item);
+    return result;
   }
 
   /**
@@ -649,7 +629,12 @@ export class CommandReconciler {
     }
 
     const discordState = await this.fetchDiscordState(bot);
-    return this.applyOne(bot, item, discordState);
+    const result = await this.applyOne(bot, item, discordState);
+    // Register in the owned-commands roster (see _reconcileForBehavior) so
+    // reconcileAll's stale sweep can later clean up a command first created
+    // via this incremental path.
+    await this.upsertOwnedForItem(bot, item);
+    return result;
   }
 
   /**
@@ -1048,6 +1033,47 @@ export class CommandReconciler {
   }
 
   // ── 私有：stale 清除 ───────────────────────────────────────────────────────
+
+  /**
+   * Register an item's owned-command rows so a later reconcileAll can
+   * recognise + clean them up. Mirrors the apply just performed: one row
+   * for a global command, one per bot guild for a guild-scoped command.
+   * Failures are logged, not thrown — the registry is best-effort
+   * bookkeeping that reconcileAll re-derives, not the source of truth.
+   */
+  private async upsertOwnedForItem(
+    bot: Client,
+    item: DesiredItem,
+  ): Promise<void> {
+    if (item.spec.scope === "global") {
+      await upsertOwnedCommand({
+        name: item.name,
+        scope: "global",
+        guildId: null,
+      }).catch((e: unknown) => {
+        botEventLog.record(
+          "warn",
+          "bot",
+          `command-reconciler: 名冊 upsert 失敗 ${item.name}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      });
+    } else {
+      // guild scope：為每個 bot 所在 guild 各登記一筆
+      for (const guild of bot.guilds.cache.values()) {
+        await upsertOwnedCommand({
+          name: item.name,
+          scope: "guild",
+          guildId: guild.id,
+        }).catch((e: unknown) => {
+          botEventLog.record(
+            "warn",
+            "bot",
+            `command-reconciler: 名冊 upsert 失敗 ${item.name}/${guild.id}: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        });
+      }
+    }
+  }
 
   private async deleteStale(
     bot: Client,
