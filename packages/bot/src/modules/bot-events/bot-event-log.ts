@@ -23,15 +23,25 @@ const MAX_ROWS = 50_000;
  */
 const PRUNE_INTERVAL_MS = 10 * 60 * 1000;
 
-export type BotEventLevel = "info" | "warn" | "error";
-export type BotEventCategory =
-  | "bot"
-  | "auth"
-  | "feature"
-  | "web"
-  | "error"
-  /** Plugin-originated structured log entries forwarded via `/api/plugin/log.emit`. */
-  | "plugin";
+export const BOT_EVENT_LEVELS = ["info", "warn", "error"] as const;
+export type BotEventLevel = (typeof BOT_EVENT_LEVELS)[number];
+
+// Single source of truth for the valid categories — the admin query route's
+// category filter is derived from this list. (Keeping them separate let the
+// route's hard-coded allowlist drift: "plugin" was added here but not there,
+// so `?category=plugin` silently returned ALL categories.)
+//
+// "plugin" = plugin-originated structured log entries forwarded via
+// /api/plugin/log.emit.
+export const BOT_EVENT_CATEGORIES = [
+  "bot",
+  "auth",
+  "feature",
+  "web",
+  "error",
+  "plugin",
+] as const;
+export type BotEventCategory = (typeof BOT_EVENT_CATEGORIES)[number];
 
 /**
  * Fire-and-forget persistent bot event logger.
