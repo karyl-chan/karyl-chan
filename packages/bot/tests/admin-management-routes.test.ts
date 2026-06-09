@@ -415,6 +415,21 @@ describe("role capability grants", () => {
     }
   });
 
+  it("404s when revoking a capability from a nonexistent role (no false audit)", async () => {
+    const server = await buildServer({ userId: OWNER_ID, caps: ["admin"] });
+    try {
+      const r = await server.inject({
+        method: "DELETE",
+        url: "/api/admin/roles/ghost/capabilities/dm.message",
+      });
+      // Mirrors the grant handler. On main this returned 204 and wrote a
+      // role.revoke-capability audit entry for a revoke that never happened.
+      expect(r.statusCode).toBe(404);
+    } finally {
+      await server.close();
+    }
+  });
+
   it("grant then revoke leaves the catalog row gone", async () => {
     await createAdminRole("mod");
     const server = await buildServer({ userId: OWNER_ID, caps: ["admin"] });
