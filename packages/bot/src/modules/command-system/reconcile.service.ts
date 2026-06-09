@@ -447,9 +447,16 @@ export class CommandReconciler {
     for (const item of desiredItems) {
       try {
         const result = await this.applyOne(bot, item, discordState);
-        if (result.action === "create") report.created++;
-        else if (result.action === "patch") report.patched++;
-        if (!result.ok) report.errors.push(result);
+        // Count only successful work; a failed create/patch returns
+        // ok:false with action set, and must land in errors (not the
+        // created/patched totals) so the report can't claim a command
+        // was registered when the Discord call actually threw.
+        if (result.ok) {
+          if (result.action === "create") report.created++;
+          else if (result.action === "patch") report.patched++;
+        } else {
+          report.errors.push(result);
+        }
       } catch (err) {
         const error = err instanceof Error ? err.message : String(err);
         report.errors.push({
@@ -1016,14 +1023,18 @@ export class CommandReconciler {
     } else {
       // guild scope：對每個 bot 所在 guild 操作
       let anyError: string | undefined;
+      let anyCreate = false;
+      let anyPatch = false;
       for (const guild of bot.guilds.cache.values()) {
         const key = `guild:${name}:${guild.id}`;
         const existing = discordState.get(key);
         try {
           if (!existing) {
             await guild.commands.create(spec.data);
+            anyCreate = true;
           } else if (commandNeedsPatch(existing, spec.data)) {
             await guild.commands.edit(existing.id, spec.data);
+            anyPatch = true;
           }
         } catch (err) {
           anyError = err instanceof Error ? err.message : String(err);
@@ -1043,7 +1054,14 @@ export class CommandReconciler {
           error: anyError,
         };
       }
-      return { ok: true, source, sourceId, action: "noop" };
+      // Report the strongest action actually taken across guilds. This
+      // previously always returned "noop", so reconcileAll's created /
+      // patched totals never counted guild-scope work (always 0) and the
+      // resync endpoint mislabelled every guild command as a no-op. Per-
+      // item granularity matches the global branch (one logical command
+      // = at most one count, regardless of how many guilds it fans out to).
+      const action = anyCreate ? "create" : anyPatch ? "patch" : "noop";
+      return { ok: true, source, sourceId, action };
     }
   }
 
