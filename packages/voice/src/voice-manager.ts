@@ -198,6 +198,12 @@ export async function joinVoice(opts: JoinOptions): Promise<VoiceStatus> {
     channelId,
     playingUrl: null,
   });
+  // Register player observability ONCE per player. Doing it per-play (in
+  // playUrl) leaked a stateChange + error listener on every skip: a skip
+  // calls player.play() on an already-playing player, which @discordjs/voice
+  // does NOT route through Idle, so the per-play once(Idle) cleanup never
+  // fired → MaxListenersExceededWarning + every stale handler re-firing.
+  attachPlayerObservability(player, guildId);
 
   // Wait up to 15s for the connection to be ready. If we time out we still
   // leave the state in the map so subsequent calls (e.g. /leave) can clean
@@ -208,6 +214,41 @@ export async function joinVoice(opts: JoinOptions): Promise<VoiceStatus> {
     log.error({ err, guildId, channelId }, "voice connection failed to ready");
   }
   return getStatus(guildId);
+}
+
+/**
+ * Attach the per-player observability + playingUrl-reset listeners. Called
+ * exactly once per player (at joinVoice) — the player outlives individual
+ * plays, so registering here (not per-play) keeps the listener count bounded
+ * regardless of how many tracks are skipped. Exported for testing.
+ */
+export function attachPlayerObservability(
+  player: AudioPlayer,
+  guildId: string,
+): void {
+  player.on("stateChange", (oldState, newState) => {
+    log.info(
+      {
+        guildId,
+        url: states.get(guildId)?.playingUrl,
+        from: oldState.status,
+        to: newState.status,
+      },
+      "audio player state change",
+    );
+  });
+  player.on("error", (err) => {
+    log.error(
+      { err, guildId, url: states.get(guildId)?.playingUrl },
+      "audio player error",
+    );
+  });
+  // Idle = no active resource (track ended / stopped). A skip swaps the
+  // resource WITHOUT an Idle transition, so this only fires on a genuine end.
+  player.on(AudioPlayerStatus.Idle, () => {
+    const s = states.get(guildId);
+    if (s) s.playingUrl = null;
+  });
 }
 
 /** Leave the guild voice channel. No-op if not connected. */
@@ -300,33 +341,12 @@ export function playUrl(guildId: string, url: string): VoiceStatus {
     { url, guildId, channelId: state.channelId },
     "playUrl: spawning ffmpeg + queueing resource",
   );
+  // Player observability + playingUrl reset are registered once per player in
+  // joinVoice (attachPlayerObservability) — NOT here. Registering per-play
+  // leaked a listener pair on every skip (play() on an already-playing player
+  // doesn't transition through Idle, so the per-play cleanup never ran).
   state.player.play(resource);
   state.playingUrl = url;
-
-  // Player state observability + listener cleanup on Idle (so each play call
-  // doesn't leak an `error`/`stateChange` listener past Node's 10-listener
-  // warning threshold).
-  const onStateChange = (
-    oldState: { status: string },
-    newState: { status: string },
-  ): void => {
-    log.info(
-      { url, guildId, from: oldState.status, to: newState.status },
-      "audio player state change",
-    );
-  };
-  const onError = (err: Error): void => {
-    log.error({ err, url, guildId }, "audio player error");
-  };
-  state.player.on("stateChange", onStateChange);
-  state.player.on("error", onError);
-  state.player.once(AudioPlayerStatus.Idle, () => {
-    if (state.playingUrl === url) {
-      state.playingUrl = null;
-    }
-    state.player.off("stateChange", onStateChange);
-    state.player.off("error", onError);
-  });
   return getStatus(guildId);
 }
 
