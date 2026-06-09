@@ -188,7 +188,8 @@ async function resolvePluginAttachments(
     if (typeof e.path !== "string" || !e.path.startsWith("/")) {
       throw new Error("attachment.path must be a leading-slash path");
     }
-    const res = await fetch(`${base}${e.path}`);
+    // Don't follow redirects past the assertPluginTarget host check (SSRF).
+    const res = await fetch(`${base}${e.path}`, { redirect: "manual" });
     if (!res.ok) {
       throw new Error(`attachment fetch ${e.path} → ${res.status}`);
     }
