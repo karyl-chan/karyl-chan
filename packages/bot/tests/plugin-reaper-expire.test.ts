@@ -18,6 +18,9 @@ import {
   Plugin,
   expireStalePlugins,
 } from "../src/modules/plugin-system/models/plugin.model.js";
+import { PluginRegistry } from "../src/modules/plugin-system/plugin-registry.service.js";
+import { __getDispatchPoolForTests } from "../src/modules/plugin-system/plugin-event-bridge.service.js";
+import type { PluginAuthStore } from "../src/modules/plugin-system/plugin-auth.service.js";
 
 const CUTOFF = new Date("2026-01-01T00:00:00Z");
 const STALE = new Date("2025-12-31T23:00:00Z"); // before cutoff → expirable
@@ -52,8 +55,10 @@ beforeEach(async () => {
 describe("expireStalePlugins", () => {
   it("expires active plugins with stale heartbeats and returns their ids", async () => {
     const id = await makePlugin("stale", "active", STALE);
-    const ids = await expireStalePlugins(CUTOFF);
-    expect(ids).toEqual([id]);
+    const expired = await expireStalePlugins(CUTOFF);
+    // Returns {id, pluginKey} so the reaper can drop the pluginKey-keyed
+    // dispatch pool, not just the id-keyed state.
+    expect(expired).toEqual([{ id, pluginKey: "stale" }]);
     expect(await statusOf(id)).toBe("inactive");
   });
 
@@ -97,5 +102,44 @@ describe("expireStalePlugins", () => {
     // ...and must not be reported as expired (the caller would revoke its
     // token + evict it from the event index otherwise).
     expect(ids).toEqual([]);
+  });
+});
+
+describe("reaper tears down the dispatch pool for expired plugins", () => {
+  // now() far in the future so cutoff (= now - heartbeatTimeout) is well
+  // after the STALE heartbeat, regardless of the configured timeout.
+  const FUTURE = () => new Date("2030-01-01T00:00:00Z").getTime();
+
+  it("drops the pluginKey-keyed dispatch pool when a plugin is reaped", async () => {
+    const id = await makePlugin("doomed", "active", STALE);
+    const registry = new PluginRegistry({
+      revokeByPluginId: vi.fn(),
+    } as unknown as PluginAuthStore);
+    const dropSpy = vi.spyOn(__getDispatchPoolForTests(), "drop");
+    try {
+      await registry.runReaperOnce(FUTURE);
+      // The fix: the reaper now drops the dead plugin's pool (undici Pool +
+      // keep-alive sockets). On main this was never called for the reaper
+      // path, leaking the pool for every crash-without-deregister.
+      expect(dropSpy).toHaveBeenCalledWith("doomed");
+      expect(await statusOf(id)).toBe("inactive");
+    } finally {
+      dropSpy.mockRestore();
+    }
+  });
+
+  it("does not drop pools when nothing is expired", async () => {
+    await makePlugin("healthy", "active", FRESH);
+    const registry = new PluginRegistry({
+      revokeByPluginId: vi.fn(),
+    } as unknown as PluginAuthStore);
+    const dropSpy = vi.spyOn(__getDispatchPoolForTests(), "drop");
+    try {
+      // Use a cutoff (via now) that keeps the FRESH plugin alive.
+      await registry.runReaperOnce(() => new Date("2026-01-01T00:30:00Z").getTime());
+      expect(dropSpy).not.toHaveBeenCalled();
+    } finally {
+      dropSpy.mockRestore();
+    }
   });
 });

@@ -902,42 +902,53 @@ export class PluginRegistry {
    */
   startReaper(now: () => number = Date.now): void {
     if (this.reaperTimer) return;
-    const tick = async () => {
-      try {
-        const cutoff = new Date(now() - HEARTBEAT_TIMEOUT_MS);
-        const ids = await expireStalePlugins(cutoff);
-        for (const id of ids) {
-          this.auth.revokeByPluginId(id);
-          botEventLog.record(
-            "warn",
-            "bot",
-            `Plugin marked inactive (heartbeat timeout): id=${id}`,
-            { pluginId: id, cutoff: cutoff.toISOString() },
-          );
-        }
-        // If we just expired anything, drop the dead plugins from the
-        // index so dispatch stops fanning out events to them: O(|expired|)
-        // per-id removal instead of a full rebuild. Also drop them from
-        // the proxy/lookup cache.
-        for (const id of ids) {
-          removePluginFromIndex(id);
-          invalidatePluginById(id);
-        }
-        // Sweep the multi-endpoint registry on the same cadence so a
-        // stale replica address (one that stopped heartbeating) ages
-        // out of the discovery set even when the DB row stays active
-        // because a sibling replica is still alive (PR-3.1).
-        const reapedKeys = pluginEndpointRegistry.reap();
-        for (const key of reapedKeys) {
-          invalidatePluginByKey(key);
-        }
-      } catch (err) {
-        log.error({ err }, "plugin reaper failed");
-        botEventLog.record("error", "error", "Plugin reaper failed");
-      }
-    };
-    this.reaperTimer = setInterval(tick, REAPER_INTERVAL_MS);
+    this.reaperTimer = setInterval(() => {
+      void this.runReaperOnce(now);
+    }, REAPER_INTERVAL_MS);
     this.reaperTimer.unref();
+  }
+
+  /**
+   * One heartbeat-reaper sweep: mark stale plugins inactive and tear down
+   * all of their per-plugin state. Exposed (rather than a closure) so a
+   * test can drive a single deterministic tick. Normally invoked by
+   * {@link startReaper}'s interval.
+   */
+  async runReaperOnce(now: () => number = Date.now): Promise<void> {
+    try {
+      const cutoff = new Date(now() - HEARTBEAT_TIMEOUT_MS);
+      const expired = await expireStalePlugins(cutoff);
+      // Tear down every trace of each dead plugin (no cross-item ordering
+      // dependency, so one pass): revoke its token, drop it from the event
+      // index (so dispatch stops fanning out to it) + the proxy/lookup
+      // cache, AND tear down its dispatch pool — the undici Pool keeps
+      // keep-alive TCP sockets open to the dead plugin, so without this the
+      // pool entry leaks on every crash-without-deregister (register /
+      // heartbeat / deregister already drop it; the reaper was the one gap).
+      for (const { id, pluginKey } of expired) {
+        this.auth.revokeByPluginId(id);
+        botEventLog.record(
+          "warn",
+          "bot",
+          `Plugin marked inactive (heartbeat timeout): id=${id}`,
+          { pluginId: id, cutoff: cutoff.toISOString() },
+        );
+        removePluginFromIndex(id);
+        invalidatePluginById(id);
+        dropDispatchPoolForPlugin(pluginKey);
+      }
+      // Sweep the multi-endpoint registry on the same cadence so a
+      // stale replica address (one that stopped heartbeating) ages
+      // out of the discovery set even when the DB row stays active
+      // because a sibling replica is still alive (PR-3.1).
+      const reapedKeys = pluginEndpointRegistry.reap();
+      for (const key of reapedKeys) {
+        invalidatePluginByKey(key);
+      }
+    } catch (err) {
+      log.error({ err }, "plugin reaper failed");
+      botEventLog.record("error", "error", "Plugin reaper failed");
+    }
   }
 
   stopReaper(): void {
