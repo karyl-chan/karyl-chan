@@ -14,6 +14,7 @@ import {
 } from "./message-mapper.js";
 import {
   requireAnyCapability,
+  requireAnyMessagingCapability,
   requireGuildCapability,
 } from "./route-guards.js";
 import { isSnowflake } from "./validators.js";
@@ -430,6 +431,12 @@ export async function registerDiscordRoutes(
       });
       return;
     }
+    // Coarse authz BEFORE the live channel fetch: the precise dm.message /
+    // guild.<id>.message check below needs the resolved channel's guild,
+    // but we must not let a caller with no messaging capability at all
+    // drive arbitrary bot.channels.fetch() calls (rate-limit burn +
+    // channel-existence probing) just by being authenticated.
+    if (!requireAnyMessagingCapability(request, reply)) return;
     const target = await resolveTextChannel(bot, targetChannelId);
     if (!target) {
       reply.code(404).send({ error: "Unknown destination channel" });

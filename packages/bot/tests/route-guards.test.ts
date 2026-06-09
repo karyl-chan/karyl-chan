@@ -1,7 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { AdminCapability } from '../src/modules/admin/authorized-user.service.js';
-import { requireAnyCapability, requireCapability } from '../src/modules/web-core/route-guards.js';
+import {
+    requireAnyCapability,
+    requireAnyMessagingCapability,
+    requireCapability,
+} from '../src/modules/web-core/route-guards.js';
 
 /**
  * Tiny fake reply object — only the surface that route-guards touches
@@ -118,6 +122,59 @@ describe('requireAnyCapability', () => {
         expect(
             requireAnyCapability(fakeRequest(['dm.message']), reply, [])
         ).toBe(false);
+        expect(code).toHaveBeenCalledWith(403);
+    });
+});
+
+describe('requireAnyMessagingCapability', () => {
+    it('allows admin', () => {
+        const { reply, code } = fakeReply();
+        expect(requireAnyMessagingCapability(fakeRequest(['admin']), reply)).toBe(true);
+        expect(code).not.toHaveBeenCalled();
+    });
+
+    it('allows a global dm.message or guild.message holder', () => {
+        expect(
+            requireAnyMessagingCapability(fakeRequest(['dm.message']), fakeReply().reply)
+        ).toBe(true);
+        expect(
+            requireAnyMessagingCapability(fakeRequest(['guild.message']), fakeReply().reply)
+        ).toBe(true);
+    });
+
+    it('allows a per-guild guild:<id>.message holder (must not be denied before resolution)', () => {
+        const { reply, code } = fakeReply();
+        expect(
+            requireAnyMessagingCapability(
+                fakeRequest(['guild:123456789012345678.message'] as AdminCapability[]),
+                reply
+            )
+        ).toBe(true);
+        expect(code).not.toHaveBeenCalled();
+    });
+
+    it('denies a caller with capabilities but NO messaging grant (the bug: would otherwise drive a channel fetch)', () => {
+        const { reply, code } = fakeReply();
+        expect(
+            requireAnyMessagingCapability(fakeRequest(['system.read']), reply)
+        ).toBe(false);
+        expect(code).toHaveBeenCalledWith(403);
+    });
+
+    it('denies a per-guild MANAGE-only holder (manage ≠ message)', () => {
+        const { reply, code } = fakeReply();
+        expect(
+            requireAnyMessagingCapability(
+                fakeRequest(['guild:123456789012345678.manage'] as AdminCapability[]),
+                reply
+            )
+        ).toBe(false);
+        expect(code).toHaveBeenCalledWith(403);
+    });
+
+    it('denies when unauthenticated (no capabilities)', () => {
+        const { reply, code } = fakeReply();
+        expect(requireAnyMessagingCapability(fakeRequest(undefined), reply)).toBe(false);
         expect(code).toHaveBeenCalledWith(403);
     });
 });
