@@ -26,7 +26,17 @@ export interface DmInboxStore {
     recipient: DmRecipient,
     message: ApiMessage,
   ): Promise<DmChannelSummary>;
-  updateLatestMessageId(channelId: string, messageId: string): Promise<void>;
+  updateLatestMessageId(
+    channelId: string,
+    messageId: string,
+    /**
+     * When provided, also advances the sidebar ordering key. Callers that
+     * only learn the latest message id (e.g. the offline ready-sync) pass
+     * the snowflake's derived timestamp so a conversation that received
+     * messages while the bot was down re-sorts to the top.
+     */
+    lastMessageAt?: string,
+  ): Promise<void>;
   listChannels(): Promise<DmChannelSummary[]>;
   getChannel(channelId: string): Promise<DmChannelSummary | null>;
 }
@@ -81,10 +91,12 @@ export class InMemoryDmInbox implements DmInboxStore {
   async updateLatestMessageId(
     channelId: string,
     messageId: string,
+    lastMessageAt?: string,
   ): Promise<void> {
     const existing = this.channels.get(channelId);
     if (!existing) return;
     existing.lastMessageId = messageId;
+    if (lastMessageAt) existing.lastMessageAt = lastMessageAt;
   }
 
   async listChannels(): Promise<DmChannelSummary[]> {
@@ -146,9 +158,13 @@ export class SqliteDmInbox implements DmInboxStore {
   async updateLatestMessageId(
     channelId: string,
     messageId: string,
+    lastMessageAt?: string,
   ): Promise<void> {
     await DmChannel.update(
-      { lastMessageId: messageId },
+      {
+        lastMessageId: messageId,
+        ...(lastMessageAt ? { lastMessageAt } : {}),
+      },
       { where: { id: channelId } },
     );
   }

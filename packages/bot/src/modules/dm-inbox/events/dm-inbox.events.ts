@@ -1,5 +1,6 @@
 import {
   ChannelType,
+  SnowflakeUtil,
   type Client,
   type DMChannel,
   type Message,
@@ -84,7 +85,19 @@ async function readySync(client: Client): Promise<void> {
         }
         const latest = (channel as DMChannel).lastMessageId;
         if (latest && latest !== summary.lastMessageId) {
-          await dmInboxService.updateLatestMessageId(summary.id, latest);
+          // Discord's lastMessageId is a snowflake whose embedded timestamp
+          // tells us when that message was sent. Advance lastMessageAt (the
+          // sidebar ordering key) too, so a conversation that received
+          // messages while the bot was offline re-sorts to the top rather
+          // than only gaining an unread badge in its stale position.
+          // Forward-only: never regress the order if Discord's lastMessageId
+          // points at an older message (e.g. the newest one was deleted).
+          const ts = new Date(SnowflakeUtil.timestampFrom(latest)).toISOString();
+          const bumped =
+            !summary.lastMessageAt || ts > summary.lastMessageAt
+              ? ts
+              : undefined;
+          await dmInboxService.updateLatestMessageId(summary.id, latest, bumped);
           syncedCount++;
         } else {
           skippedCount++;

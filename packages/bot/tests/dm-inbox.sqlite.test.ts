@@ -155,12 +155,58 @@ describe("SqliteDmInbox", () => {
     expect(list.map((c) => c.id)).toEqual(["c-new", "c-old"]);
   });
 
-  it("updateLatestMessageId only writes the messageId column", async () => {
+  it("updateLatestMessageId without a timestamp leaves lastMessageAt unchanged", async () => {
     const inbox = new SqliteDmInbox();
-    await inbox.upsertChannel("c-1", RECIPIENT);
+    await inbox.recordActivity(
+      "c-1",
+      RECIPIENT,
+      fakeMessage({
+        id: "600000000000000010",
+        createdAt: "2026-04-25T12:00:00.000Z",
+      }),
+    );
     await inbox.updateLatestMessageId("c-1", "600000000000000099");
     const summary = await inbox.getChannel("c-1");
     expect(summary?.lastMessageId).toBe("600000000000000099");
+    expect(summary?.lastMessageAt).toBe("2026-04-25T12:00:00.000Z");
+  });
+
+  it("updateLatestMessageId with a timestamp advances lastMessageAt and re-sorts", async () => {
+    const inbox = new SqliteDmInbox();
+    await inbox.recordActivity(
+      "c-old",
+      RECIPIENT,
+      fakeMessage({
+        id: "600000000000000010",
+        createdAt: "2026-04-20T00:00:00.000Z",
+      }),
+    );
+    await inbox.recordActivity(
+      "c-recent",
+      RECIPIENT_2,
+      fakeMessage({
+        id: "600000000000000020",
+        createdAt: "2026-04-25T00:00:00.000Z",
+      }),
+    );
+    expect((await inbox.listChannels()).map((c) => c.id)).toEqual([
+      "c-recent",
+      "c-old",
+    ]);
+    // A message that arrived offline lands in c-old (newer than c-recent);
+    // ready-sync passes the snowflake-derived timestamp → c-old floats up.
+    await inbox.updateLatestMessageId(
+      "c-old",
+      "600000000000000099",
+      "2026-04-26T00:00:00.000Z",
+    );
+    const summary = await inbox.getChannel("c-old");
+    expect(summary?.lastMessageId).toBe("600000000000000099");
+    expect(summary?.lastMessageAt).toBe("2026-04-26T00:00:00.000Z");
+    expect((await inbox.listChannels()).map((c) => c.id)).toEqual([
+      "c-old",
+      "c-recent",
+    ]);
   });
 
   it("getChannel returns null for an unknown channel id", async () => {
