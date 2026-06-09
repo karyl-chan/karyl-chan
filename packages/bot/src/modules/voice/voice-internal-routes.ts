@@ -80,6 +80,24 @@ export async function registerVoiceInternalRoutes(
       if (body.payload == null || typeof body.payload !== "object") {
         return reply.code(400).send({ error: "payload required" });
       }
+      // Defense in depth behind the HMAC boundary: this channel only carries
+      // the voice handshake's OP4 (Voice State Update). Refuse any other
+      // opcode (or a mismatched guild) so a compromised / misconfigured voice
+      // service can't inject arbitrary gateway frames onto the bot's shard —
+      // an unexpected or malformed op can get the shard rate-limited or
+      // disconnected, taking the whole bot offline, not just voice.
+      const payload = body.payload as { op?: unknown; d?: unknown };
+      if (payload.op !== 4) {
+        return reply
+          .code(400)
+          .send({ error: "only OP4 (voice state update) may be relayed" });
+      }
+      const d = payload.d as { guild_id?: unknown } | null;
+      if (d == null || typeof d !== "object" || d.guild_id !== body.guildId) {
+        return reply
+          .code(400)
+          .send({ error: "payload.d.guild_id must match guildId" });
+      }
       if (!bot) {
         return reply.code(503).send({ error: "bot client unavailable" });
       }

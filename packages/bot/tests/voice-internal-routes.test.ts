@@ -111,7 +111,10 @@ describe("bot internal voice routes", () => {
   it("404s gateway-send for a guild the bot doesn't know", async () => {
     const app = await buildApp(fakeBot({ hasGuild: false, shard: { sent: [] } }));
     const path = "/internal/voice/gateway-send";
-    const body = JSON.stringify({ guildId: "ghost", payload: { op: 4 } });
+    const body = JSON.stringify({
+      guildId: "ghost",
+      payload: { op: 4, d: { guild_id: "ghost" } },
+    });
     const res = await app.inject({
       method: "POST",
       url: path,
@@ -120,6 +123,46 @@ describe("bot internal voice routes", () => {
     });
     expect(res.statusCode).toBe(404);
     expect(activeRemoteGuilds.has("ghost")).toBe(false);
+    await app.close();
+  });
+
+  it("400s and does not relay a non-OP4 payload", async () => {
+    const shard: ShardSendSpy = { sent: [] };
+    const app = await buildApp(fakeBot({ hasGuild: true, shard }));
+    const path = "/internal/voice/gateway-send";
+    // OP8 (request guild members) — must never be injectable onto the shard.
+    const body = JSON.stringify({
+      guildId: "g1",
+      payload: { op: 8, d: { guild_id: "g1", query: "" } },
+    });
+    const res = await app.inject({
+      method: "POST",
+      url: path,
+      headers: signed(path, body),
+      payload: body,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(shard.sent).toEqual([]);
+    expect(activeRemoteGuilds.has("g1")).toBe(false);
+    await app.close();
+  });
+
+  it("400s an OP4 whose d.guild_id does not match guildId", async () => {
+    const shard: ShardSendSpy = { sent: [] };
+    const app = await buildApp(fakeBot({ hasGuild: true, shard }));
+    const path = "/internal/voice/gateway-send";
+    const body = JSON.stringify({
+      guildId: "g1",
+      payload: { op: 4, d: { guild_id: "other-guild" } },
+    });
+    const res = await app.inject({
+      method: "POST",
+      url: path,
+      headers: signed(path, body),
+      payload: body,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(shard.sent).toEqual([]);
     await app.close();
   });
 
