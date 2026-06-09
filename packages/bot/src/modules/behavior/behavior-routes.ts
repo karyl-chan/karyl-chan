@@ -45,6 +45,10 @@ import type { CommandReconciler } from "../command-system/reconcile.service.js";
 
 export type { BehaviorRoutesOptions };
 
+/** The valid `messagePatternKind` values, single-sourced for every
+ *  validation site in this module (create, PATCH switch, PATCH sub-field). */
+const MESSAGE_PATTERN_KINDS = ["startswith", "endswith", "regex"];
+
 // ── 主函式 ────────────────────────────────────────────────────────────────────
 
 export async function registerBehaviorRoutes(
@@ -218,7 +222,7 @@ export async function registerBehaviorRoutes(
     if (body.triggerType === "message_pattern") {
       if (
         !body.messagePatternKind ||
-        !["startswith", "endswith", "regex"].includes(body.messagePatternKind)
+        !MESSAGE_PATTERN_KINDS.includes(body.messagePatternKind)
       ) {
         return reply.code(400).send({ error: "無效的 messagePatternKind" });
       }
@@ -421,7 +425,7 @@ export async function registerBehaviorRoutes(
             "messagePatternKind" in body
               ? (body["messagePatternKind"] as string)
               : existingRow.messagePatternKind;
-          if (!kind || !["startswith", "endswith", "regex"].includes(kind)) {
+          if (!kind || !MESSAGE_PATTERN_KINDS.includes(kind)) {
             return reply
               .code(400)
               .send({ error: "無效的 messagePatternKind" });
@@ -535,7 +539,7 @@ export async function registerBehaviorRoutes(
               existingRow.messagePatternValue ??
               "",
           ).trim();
-          if (!kind || !["startswith", "endswith", "regex"].includes(kind)) {
+          if (!kind || !MESSAGE_PATTERN_KINDS.includes(kind)) {
             return reply.code(400).send({ error: "無效的 messagePatternKind" });
           }
           if (!val) {
@@ -584,7 +588,7 @@ export async function registerBehaviorRoutes(
           if (
             "messagePatternKind" in body &&
             patch["messagePatternKind"] != null &&
-            !["startswith", "endswith", "regex"].includes(
+            !MESSAGE_PATTERN_KINDS.includes(
               patch["messagePatternKind"] as string,
             )
           ) {
