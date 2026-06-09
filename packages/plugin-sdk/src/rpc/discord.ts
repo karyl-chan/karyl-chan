@@ -68,13 +68,16 @@ export interface MemberGetArgs {
 }
 
 export interface MemberSummary {
-  user_id: string;
-  display_name: string;
-  avatar_url: string | null;
+  // camelCase to match what the bot's /api/plugin/members.get actually
+  // returns ({ userId, displayName, avatarUrl }).
+  userId: string;
+  displayName: string;
+  avatarUrl: string | null;
 }
 
 export interface DiscordMembers {
-  get(args: MemberGetArgs): Promise<MemberSummary>;
+  /** Returns null if the user isn't a member of the guild (left / never joined). */
+  get(args: MemberGetArgs): Promise<MemberSummary | null>;
 }
 
 // ─── interactions.* ────────────────────────────────────────────────────
@@ -169,10 +172,16 @@ export function createDiscord(call: RpcCaller): Discord {
     },
     members: {
       async get(args) {
-        return (await call("/api/plugin/members.get", {
+        // The bot's members.get is a BATCH endpoint: it reads `user_ids`
+        // (an array) and returns `{ members: MemberSummary[] }`, omitting
+        // users who aren't in the guild. Send a one-element batch and
+        // unwrap. (The old facade sent `user_id` + cast the wrapper object
+        // as a single MemberSummary → every call 400'd.)
+        const res = (await call("/api/plugin/members.get", {
           guild_id: args.guildId,
-          user_id: args.userId,
-        })) as MemberSummary;
+          user_ids: [args.userId],
+        })) as { members?: MemberSummary[] };
+        return res.members?.[0] ?? null;
       },
     },
     interactions: {

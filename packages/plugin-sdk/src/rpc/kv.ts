@@ -14,8 +14,10 @@
 
 import type { RpcCaller } from "./index.js";
 
-/** Hard cap on key length the bot will accept (see `KV_KEY_MAX`). */
-export const KV_KEY_MAX = 256;
+/** Hard cap on key length the bot will accept. MUST match the bot's
+ *  KV_KEY_MAX in plugin-rpc-routes.ts (200) — a higher value here lets a
+ *  key pass the SDK's pre-flight check only to be 400'd by the bot. */
+export const KV_KEY_MAX = 200;
 /** Hard cap on serialised value bytes (see `KV_VALUE_MAX_BYTES`). */
 export const KV_VALUE_MAX_BYTES = 64 * 1024;
 
