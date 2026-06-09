@@ -68,16 +68,39 @@ function serializeGuildSettings(guild: import("discord.js").Guild) {
   };
 }
 
-function encodeSystemChannelFlags(payload: SystemChannelFlagsPayload): number {
-  let bits = 0;
-  if (payload.suppressJoinNotifications)
-    bits |= GuildSystemChannelFlags.SuppressJoinNotifications;
-  if (payload.suppressPremiumSubscriptions)
-    bits |= GuildSystemChannelFlags.SuppressPremiumSubscriptions;
-  if (payload.suppressGuildReminderNotifications)
-    bits |= GuildSystemChannelFlags.SuppressGuildReminderNotifications;
-  if (payload.suppressJoinNotificationReplies)
-    bits |= GuildSystemChannelFlags.SuppressJoinNotificationReplies;
+function encodeSystemChannelFlags(
+  payload: SystemChannelFlagsPayload,
+  currentBits: number,
+): number {
+  // Partial-merge against the guild's CURRENT flags. The payload type is
+  // all-optional (and the frontend PATCH type declares Partial), so an
+  // omitted flag must be LEFT AS-IS. Starting from 0 made this a full
+  // overwrite: a body carrying only the toggled flag silently cleared
+  // every other flag Discord had set (Discord treats system_channel_flags
+  // as a complete replacement). Only flags explicitly present in the body
+  // are changed.
+  let bits = currentBits;
+  const apply = (value: boolean | undefined, flag: number): void => {
+    if (value === true) bits |= flag;
+    else if (value === false) bits &= ~flag;
+    // undefined → preserve the current bit
+  };
+  apply(
+    payload.suppressJoinNotifications,
+    GuildSystemChannelFlags.SuppressJoinNotifications,
+  );
+  apply(
+    payload.suppressPremiumSubscriptions,
+    GuildSystemChannelFlags.SuppressPremiumSubscriptions,
+  );
+  apply(
+    payload.suppressGuildReminderNotifications,
+    GuildSystemChannelFlags.SuppressGuildReminderNotifications,
+  );
+  apply(
+    payload.suppressJoinNotificationReplies,
+    GuildSystemChannelFlags.SuppressJoinNotificationReplies,
+  );
   return bits;
 }
 
@@ -153,6 +176,7 @@ export async function registerGuildSettingsRoutes(
       if (body.systemChannelFlags) {
         edit.systemChannelFlags = encodeSystemChannelFlags(
           body.systemChannelFlags,
+          guild.systemChannelFlags.bitfield,
         );
       }
       if (typeof body.verificationLevel === "number") {
