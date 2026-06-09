@@ -64,4 +64,22 @@ describe("bot-event-dedup", () => {
     // so a fresh call for it is treated as a new key → true.
     expect(shouldRecord("filler:0")).toBe(true);
   });
+
+  it("does not cap-evict a frequently-recurring key mid-window", async () => {
+    const shouldRecord = await importFresh();
+    // 'recurring' is recorded first, then the map is filled to the cap with
+    // distinct fillers — so 'recurring' is the first-inserted (FIFO head).
+    expect(shouldRecord("recurring")).toBe(true);
+    for (let i = 0; i < 999; i++) shouldRecord(`filler:${i}`);
+    // 'recurring' fires again inside its window: suppressed, but the fix
+    // refreshes its recency (the old FIFO scheme left it stranded at the head).
+    vi.advanceTimersByTime(1_000);
+    expect(shouldRecord("recurring")).toBe(false);
+    // A new key forces an eviction. Under the old FIFO-by-insertion logic this
+    // evicted 'recurring' (the head), and the next call below would wrongly
+    // return true (dedup bypassed). With LRU-by-use it evicts a stale filler
+    // instead, so 'recurring' stays suppressed.
+    shouldRecord("flood");
+    expect(shouldRecord("recurring")).toBe(false);
+  });
 });
