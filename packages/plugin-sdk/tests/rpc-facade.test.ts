@@ -187,3 +187,28 @@ describe("ctx.voice", () => {
     assert.deepEqual(stub.calls[1].body, { guild_id: "g" });
   });
 });
+
+describe("ctx.discord.members", () => {
+  it("get: sends a one-element user_ids batch and unwraps members[0]", async () => {
+    const member = { userId: "u1", displayName: "Alice", avatarUrl: null };
+    const stub = makeStub({ members: [member] });
+    const rpc = createPluginRpc(stub.call);
+    const res = await rpc.discord.members.get({ guildId: "g1", userId: "u1" });
+    // The bot reads `user_ids` (array); the old facade sent `user_id`
+    // (singular) → every call 400'd "user_ids must be an array".
+    assert.deepEqual(stub.calls[0], {
+      path: "/api/plugin/members.get",
+      body: { guild_id: "g1", user_ids: ["u1"] },
+    });
+    // The bot returns { members: [...] }; the facade must unwrap, not cast
+    // the wrapper object as a single MemberSummary.
+    assert.deepEqual(res, member);
+  });
+
+  it("get: returns null when the user isn't in the guild", async () => {
+    const stub = makeStub({ members: [] });
+    const rpc = createPluginRpc(stub.call);
+    const res = await rpc.discord.members.get({ guildId: "g1", userId: "u1" });
+    assert.equal(res, null);
+  });
+});
