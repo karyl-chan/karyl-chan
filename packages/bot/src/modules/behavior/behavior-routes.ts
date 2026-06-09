@@ -45,6 +45,10 @@ import type { CommandReconciler } from "../command-system/reconcile.service.js";
 
 export type { BehaviorRoutesOptions };
 
+/** The valid `messagePatternKind` values, single-sourced for every
+ *  validation site in this module (create, PATCH switch, PATCH sub-field). */
+const MESSAGE_PATTERN_KINDS = ["startswith", "endswith", "regex"];
+
 // ── 主函式 ────────────────────────────────────────────────────────────────────
 
 export async function registerBehaviorRoutes(
@@ -218,7 +222,7 @@ export async function registerBehaviorRoutes(
     if (body.triggerType === "message_pattern") {
       if (
         !body.messagePatternKind ||
-        !["startswith", "endswith", "regex"].includes(body.messagePatternKind)
+        !MESSAGE_PATTERN_KINDS.includes(body.messagePatternKind)
       ) {
         return reply.code(400).send({ error: "無效的 messagePatternKind" });
       }
@@ -421,7 +425,7 @@ export async function registerBehaviorRoutes(
             "messagePatternKind" in body
               ? (body["messagePatternKind"] as string)
               : existingRow.messagePatternKind;
-          if (!kind || !["startswith", "endswith", "regex"].includes(kind)) {
+          if (!kind || !MESSAGE_PATTERN_KINDS.includes(kind)) {
             return reply
               .code(400)
               .send({ error: "無效的 messagePatternKind" });
@@ -535,7 +539,7 @@ export async function registerBehaviorRoutes(
               existingRow.messagePatternValue ??
               "",
           ).trim();
-          if (!kind || !["startswith", "endswith", "regex"].includes(kind)) {
+          if (!kind || !MESSAGE_PATTERN_KINDS.includes(kind)) {
             return reply.code(400).send({ error: "無效的 messagePatternKind" });
           }
           if (!val) {
@@ -550,6 +554,48 @@ export async function registerBehaviorRoutes(
           patch["messagePatternValue"] = val;
           patch["slashCommandName"] = null;
           patch["slashCommandDescription"] = null;
+        }
+      } else {
+        // triggerType is NOT changing in this PATCH. The per-field blocks
+        // above still let a caller set a sub-field that belongs to the
+        // OTHER trigger type (or an out-of-enum messagePatternKind) without
+        // going through the reconcile block. Validate against the EXISTING
+        // type here so we return a clean 400 instead of (a) letting the
+        // model's triggerTypeShape validator throw a 500 on update, or
+        // (b) silently writing a behavior that never fires (matchesTrigger
+        // returns false for an unknown kind).
+        if (existingRow.triggerType === "slash_command") {
+          if (
+            ("messagePatternKind" in body &&
+              patch["messagePatternKind"] != null) ||
+            ("messagePatternValue" in body &&
+              patch["messagePatternValue"] != null)
+          ) {
+            return reply.code(400).send({
+              error: "messagePattern 欄位不適用於 slash_command behavior",
+            });
+          }
+        } else {
+          if (
+            ("slashCommandName" in body && patch["slashCommandName"] != null) ||
+            ("slashCommandDescription" in body &&
+              patch["slashCommandDescription"] != null)
+          ) {
+            return reply.code(400).send({
+              error: "slashCommand 欄位不適用於 message_pattern behavior",
+            });
+          }
+          if (
+            "messagePatternKind" in body &&
+            patch["messagePatternKind"] != null &&
+            !MESSAGE_PATTERN_KINDS.includes(
+              patch["messagePatternKind"] as string,
+            )
+          ) {
+            return reply
+              .code(400)
+              .send({ error: "無效的 messagePatternKind" });
+          }
         }
       }
       if ("scope" in body) patch["scope"] = body["scope"];
