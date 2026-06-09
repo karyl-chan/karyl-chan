@@ -24,8 +24,8 @@
  * effect of `issueTokens` / `issueSseTicket` / `revokeRefresh` etc.
  */
 
-import { createHash, randomBytes } from "crypto";
 import { config } from "../../config.js";
+import { hashToken, newToken } from "../../utils/crypto.js";
 import {
   type SessionStore,
   type IssuedTokens,
@@ -54,14 +54,6 @@ const ROTATE_SCRIPT =
   `  return "U" .. reused ` +
   `end ` +
   `return ""`;
-
-function hashToken(token: string): string {
-  return createHash("sha256").update(token).digest("hex");
-}
-
-function newToken(): string {
-  return randomBytes(32).toString("hex");
-}
 
 const PREFIX = "karyl:session:";
 const accessKey = (hash: string) => `${PREFIX}access:${hash}`;
@@ -146,28 +138,16 @@ export class RedisSessionStore implements SessionStore {
     token: string,
     now: number = Date.now(),
   ): Promise<string | null> {
-    const raw = await this.redis.get(accessKey(hashToken(token)));
+    const key = accessKey(hashToken(token));
+    const raw = await this.redis.get(key);
     const rec = decodeRecord(raw);
     if (!rec) return null;
     if (rec.expiresAt <= now) {
       // Redis TTL should already have evicted, but defence-in-depth.
-      await this.redis.del(accessKey(hashToken(token)));
+      await this.redis.del(key);
       return null;
     }
     return rec.ownerId;
-  }
-
-  /**
-   * Deprecated — use `verifyAccessToken()` (now async on this impl).
-   * Kept as a thin alias for any external caller that imported the
-   * pre-fix name directly.
-   * @deprecated
-   */
-  verifyAccessTokenAsync(
-    token: string,
-    now: number = Date.now(),
-  ): Promise<string | null> {
-    return this.verifyAccessToken(token, now);
   }
 
   async rotateRefresh(
@@ -263,17 +243,6 @@ export class RedisSessionStore implements SessionStore {
     if (!rec) return null;
     if (rec.expiresAt <= now) return null;
     return rec.ownerId;
-  }
-
-  /**
-   * Deprecated — use `consumeSseTicket()` (now async on this impl).
-   * @deprecated
-   */
-  consumeSseTicketAsync(
-    ticket: string,
-    now: number = Date.now(),
-  ): Promise<string | null> {
-    return this.consumeSseTicket(ticket, now);
   }
 
   stop(): void {

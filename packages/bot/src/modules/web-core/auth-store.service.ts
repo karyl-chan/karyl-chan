@@ -1,5 +1,5 @@
-import { createHash, randomBytes } from "crypto";
 import { config } from "../../config.js";
+import { hashToken, newToken } from "../../utils/crypto.js";
 
 const ACCESS_TTL_MS = config.jwt.accessTtlMs;
 const REFRESH_TTL_MS = config.jwt.refreshTtlMs;
@@ -41,14 +41,6 @@ export interface RefreshStoreAdapter {
   delete(hash: string): Promise<void>;
   deleteByOwner(ownerId: string): Promise<void>;
   deleteExpired(now: number): Promise<void>;
-}
-
-function hashToken(token: string): string {
-  return createHash("sha256").update(token).digest("hex");
-}
-
-function newToken(): string {
-  return randomBytes(32).toString("hex");
 }
 
 /**

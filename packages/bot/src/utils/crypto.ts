@@ -8,6 +8,23 @@ import { moduleLogger } from "../logger.js";
 import { getSecret } from "./secrets.js";
 
 const log = moduleLogger("crypto");
+
+/**
+ * SHA-256 hex digest of an opaque token. Session/SSE tokens are stored
+ * only as their hash so a store dump never reveals a usable credential.
+ * The in-process and Redis session stores MUST hash identically (tokens
+ * minted by one are looked up by the other during a migration window),
+ * so this lives in one place rather than being copy-pasted per store.
+ */
+export function hashToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+/** A fresh 256-bit opaque token, hex-encoded. */
+export function newToken(): string {
+  return randomBytes(32).toString("hex");
+}
+
 const ALGO = "aes-256-gcm";
 const ENC_VERSION_V2 = "v2";
 const IV_BYTES = 12;
