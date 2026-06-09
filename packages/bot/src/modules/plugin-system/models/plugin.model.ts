@@ -292,8 +292,28 @@ export const expireStalePlugins = async (cutoff: Date): Promise<number[]> => {
     attributes: ["id"],
   });
   const ids = stale.map((m) => m.getDataValue("id") as number);
-  if (ids.length > 0) {
-    await Plugin.update({ status: "inactive" }, { where: { id: ids } });
-  }
-  return ids;
+  if (ids.length === 0) return [];
+  // Re-assert the staleness predicate in the UPDATE. A heartbeat that
+  // lands between the SELECT above and this write revives the row
+  // (touchHeartbeat sets status -> active, lastHeartbeatAt -> now). A
+  // blind `id IN (ids)` UPDATE would clobber that revived row back to
+  // inactive — and the reaper caller would then revoke its freshly-rolled
+  // token and drop it from the event index, forcing a needless re-register.
+  await Plugin.update(
+    { status: "inactive" },
+    {
+      where: {
+        id: ids,
+        status: "active",
+        lastHeartbeatAt: { [Op.lt]: cutoff },
+      },
+    },
+  );
+  // Return only the rows this sweep actually left inactive, so the caller
+  // never evicts a plugin that revived in the race window above.
+  const expired = await Plugin.findAll({
+    where: { id: ids, status: "inactive" },
+    attributes: ["id"],
+  });
+  return expired.map((m) => m.getDataValue("id") as number);
 };
