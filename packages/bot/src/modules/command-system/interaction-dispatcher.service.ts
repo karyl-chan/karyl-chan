@@ -177,6 +177,15 @@ export class InteractionDispatcher {
     }
 
     // ─ Fallback：未被任何層 claim
+    // Autocomplete has a hard ~3s deadline and ONLY respond() can close it
+    // (you can't reply/defer it). If an autocomplete reached here unclaimed —
+    // the plugin layer threw (caught above, fell through) or the command was
+    // deregistered while Discord still offers it — ack with no suggestions so
+    // the user doesn't stare at a frozen list until Discord times it out.
+    // Safe even if a layer already responded: the .catch swallows the dup.
+    if (interaction.isAutocomplete()) {
+      await interaction.respond([]).catch(() => {});
+    }
     return {
       claimed: false,
       reason: "unknown_command",
