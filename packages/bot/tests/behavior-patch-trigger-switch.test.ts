@@ -138,3 +138,85 @@ describe("custom behavior PATCH triggerType switch", () => {
     await server.close();
   });
 });
+
+describe("custom behavior PATCH trigger sub-fields without triggerType", () => {
+  it("rejects an out-of-enum messagePatternKind → 400 (not a silently dead behavior)", async () => {
+    await seedMsgPattern(1);
+    const server = await buildServer();
+    const res = await server.inject({
+      method: "PATCH",
+      url: "/api/behaviors/1",
+      payload: { messagePatternKind: "contains" },
+    });
+    expect(res.statusCode).toBe(400);
+    // The invalid kind must NOT have been written.
+    const row = await Behavior.findByPk(1);
+    expect(row?.getDataValue("messagePatternKind")).toBe("startswith");
+    await server.close();
+  });
+
+  it("rejects slashCommandName on a message_pattern behavior → 400 (not 500)", async () => {
+    await seedMsgPattern(1);
+    const server = await buildServer();
+    const res = await server.inject({
+      method: "PATCH",
+      url: "/api/behaviors/1",
+      payload: { slashCommandName: "mycommand" },
+    });
+    expect(res.statusCode).toBe(400);
+    const row = await Behavior.findByPk(1);
+    expect(row?.getDataValue("triggerType")).toBe("message_pattern");
+    expect(row?.getDataValue("slashCommandName")).toBeNull();
+    await server.close();
+  });
+
+  it("rejects slashCommandDescription on a message_pattern behavior → 400", async () => {
+    await seedMsgPattern(1);
+    const server = await buildServer();
+    const res = await server.inject({
+      method: "PATCH",
+      url: "/api/behaviors/1",
+      payload: { slashCommandDescription: "desc" },
+    });
+    expect(res.statusCode).toBe(400);
+    await server.close();
+  });
+
+  it("rejects messagePatternValue on a slash_command behavior → 400 (not 500)", async () => {
+    await seedSlash(1);
+    const server = await buildServer();
+    const res = await server.inject({
+      method: "PATCH",
+      url: "/api/behaviors/1",
+      payload: { messagePatternValue: "!hi" },
+    });
+    expect(res.statusCode).toBe(400);
+    await server.close();
+  });
+
+  it("still allows a valid same-type sub-field edit (messagePatternKind)", async () => {
+    await seedMsgPattern(1);
+    const server = await buildServer();
+    const res = await server.inject({
+      method: "PATCH",
+      url: "/api/behaviors/1",
+      payload: { messagePatternKind: "endswith" },
+    });
+    expect(res.statusCode).toBe(200);
+    const row = await Behavior.findByPk(1);
+    expect(row?.getDataValue("messagePatternKind")).toBe("endswith");
+    await server.close();
+  });
+
+  it("allows clearing the opposite side with null (no-op) → 200", async () => {
+    await seedMsgPattern(1);
+    const server = await buildServer();
+    const res = await server.inject({
+      method: "PATCH",
+      url: "/api/behaviors/1",
+      payload: { slashCommandName: null },
+    });
+    expect(res.statusCode).toBe(200);
+    await server.close();
+  });
+});

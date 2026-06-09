@@ -551,6 +551,48 @@ export async function registerBehaviorRoutes(
           patch["slashCommandName"] = null;
           patch["slashCommandDescription"] = null;
         }
+      } else {
+        // triggerType is NOT changing in this PATCH. The per-field blocks
+        // above still let a caller set a sub-field that belongs to the
+        // OTHER trigger type (or an out-of-enum messagePatternKind) without
+        // going through the reconcile block. Validate against the EXISTING
+        // type here so we return a clean 400 instead of (a) letting the
+        // model's triggerTypeShape validator throw a 500 on update, or
+        // (b) silently writing a behavior that never fires (matchesTrigger
+        // returns false for an unknown kind).
+        if (existingRow.triggerType === "slash_command") {
+          if (
+            ("messagePatternKind" in body &&
+              patch["messagePatternKind"] != null) ||
+            ("messagePatternValue" in body &&
+              patch["messagePatternValue"] != null)
+          ) {
+            return reply.code(400).send({
+              error: "messagePattern 欄位不適用於 slash_command behavior",
+            });
+          }
+        } else {
+          if (
+            ("slashCommandName" in body && patch["slashCommandName"] != null) ||
+            ("slashCommandDescription" in body &&
+              patch["slashCommandDescription"] != null)
+          ) {
+            return reply.code(400).send({
+              error: "slashCommand 欄位不適用於 message_pattern behavior",
+            });
+          }
+          if (
+            "messagePatternKind" in body &&
+            patch["messagePatternKind"] != null &&
+            !["startswith", "endswith", "regex"].includes(
+              patch["messagePatternKind"] as string,
+            )
+          ) {
+            return reply
+              .code(400)
+              .send({ error: "無效的 messagePatternKind" });
+          }
+        }
       }
       if ("scope" in body) patch["scope"] = body["scope"];
       if ("integrationTypes" in body) {
