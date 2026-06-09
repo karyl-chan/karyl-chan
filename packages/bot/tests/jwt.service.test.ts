@@ -198,4 +198,73 @@ describe("JwtService (Ed25519)", () => {
       expect(svc.verify(token)).not.toBeNull();
     });
   });
+
+  describe("per-plugin session keys", () => {
+    // Mirror what @karyl-chan/plugin-sdk's verifyPluginSession does at the
+    // crypto layer: verify the JWS signature of `header.body` against an
+    // SPKI-PEM Ed25519 public key.
+    function sigVerifies(token: string, pem: string): boolean {
+      const [h, b, sig] = token.split(".");
+      return cryptoVerify(
+        null,
+        Buffer.from(`${h}.${b}`, "utf-8"),
+        createPublicKey(pem),
+        Buffer.from(sig.replace(/-/g, "+").replace(/_/g, "/"), "base64"),
+      );
+    }
+
+    it("a plugin-session token verifies ONLY against its own plugin's key", () => {
+      const svc = new JwtService(newKey());
+      const { token } = svc.signPluginSession("plugin-a", sessionClaims, {
+        ttlMs: 60_000,
+      });
+      // Bound plugin: verifies.
+      expect(sigVerifies(token, svc.pluginSessionPublicKeyPem("plugin-a"))).toBe(
+        true,
+      );
+      // A DIFFERENT plugin's key must NOT verify it — this is the fix:
+      // a token minted for plugin A can't be replayed against plugin B.
+      expect(sigVerifies(token, svc.pluginSessionPublicKeyPem("plugin-b"))).toBe(
+        false,
+      );
+      // Nor against the shared master key.
+      expect(sigVerifies(token, svc.publicKeyPem())).toBe(false);
+    });
+
+    it("derives a distinct public key per plugin (and vs the master key)", () => {
+      const svc = new JwtService(newKey());
+      const a = svc.pluginSessionPublicKeyPem("plugin-a");
+      const b = svc.pluginSessionPublicKeyPem("plugin-b");
+      expect(a).not.toBe(b);
+      expect(a).not.toBe(svc.publicKeyPem());
+    });
+
+    it("derivation is deterministic for the same master key (survives restart)", () => {
+      const masterKey = newKey();
+      const svc1 = new JwtService(masterKey);
+      const svc2 = new JwtService(masterKey);
+      // A token minted by one instance verifies against the key the OTHER
+      // instance publishes — i.e. register and a later heartbeat (or a
+      // process restart loading the same persisted master key) agree.
+      const { token } = svc1.signPluginSession("plugin-a", sessionClaims, {
+        ttlMs: 60_000,
+      });
+      expect(sigVerifies(token, svc2.pluginSessionPublicKeyPem("plugin-a"))).toBe(
+        true,
+      );
+    });
+
+    it("rotating the master key rotates every plugin key (old tokens stop verifying)", () => {
+      const svc = new JwtService(newKey());
+      const before = svc.pluginSessionPublicKeyPem("plugin-a");
+      const { token } = svc.signPluginSession("plugin-a", sessionClaims, {
+        ttlMs: 60_000,
+      });
+      svc.setKey(newKey());
+      const after = svc.pluginSessionPublicKeyPem("plugin-a");
+      expect(after).not.toBe(before);
+      // The pre-rotation token no longer verifies against the new key.
+      expect(sigVerifies(token, after)).toBe(false);
+    });
+  });
 });

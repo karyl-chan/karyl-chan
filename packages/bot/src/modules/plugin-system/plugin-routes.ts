@@ -234,11 +234,13 @@ export async function registerPluginRoutes(
           token: result.token,
           dispatchHmacKey: result.dispatchHmacKey,
           // SPKI-PEM Ed25519 public key for verifying `plugin-session`
-          // JWTs (the bot's single JWT signing authority — see
-          // jwt.service.ts — signs them with the matching private key).
-          // Same for every plugin: it's a public key. Plugins that don't
-          // run a WebUI can ignore it.
-          sessionVerifyPublicKey: jwtService.publicKeyPem(),
+          // JWTs. PER-PLUGIN: the bot derives a distinct signing key for
+          // each plugin (jwt.service.ts), so a token minted for this plugin
+          // can't be verified — hence can't be replayed — against another
+          // plugin's WebUI. Plugins that don't run a WebUI can ignore it.
+          sessionVerifyPublicKey: jwtService.pluginSessionPublicKeyPem(
+            result.plugin.pluginKey,
+          ),
           // publicBaseUrl: the bot reverse-proxies /plugin/<pluginKey>/*
           // to the plugin's stored manifest url, no TLS cert required.
           // Omitted when WEB_BASE_URL is not configured.
@@ -303,7 +305,11 @@ export async function registerPluginRoutes(
     const publicBaseUrl = pluginPublicBaseUrl(rec.pluginKey);
     return {
       ok: true,
-      sessionVerifyPublicKey: jwtService.publicKeyPem(),
+      // Per-plugin verify key (see register handler) — re-sent each beat
+      // so a plugin picks up rotations within ~30s.
+      sessionVerifyPublicKey: jwtService.pluginSessionPublicKeyPem(
+        rec.pluginKey,
+      ),
       ...(publicBaseUrl !== undefined ? { publicBaseUrl } : {}),
     };
     },

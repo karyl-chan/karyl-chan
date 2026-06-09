@@ -1741,7 +1741,11 @@ export async function registerPluginRpcRoutes(
             (c) => c === "admin" || c.startsWith(`plugin:${ctx.pluginKey}:`),
           )
         : [];
-    const { token, expiresAt } = jwtService.sign(
+    // Sign with this plugin's own derived key so the token verifies ONLY
+    // against the `sessionVerifyPublicKey` we hand THIS plugin — a token
+    // minted here can't be replayed against a different plugin's WebUI.
+    const { token, expiresAt } = jwtService.signPluginSession(
+      ctx.pluginKey,
       { purpose: "plugin-session", userId, guildId, capabilities: pluginCaps },
       { ttlMs },
     );

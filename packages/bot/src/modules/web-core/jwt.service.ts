@@ -2,6 +2,7 @@ import {
   createPrivateKey,
   createPublicKey,
   generateKeyPairSync,
+  hkdfSync,
   sign as cryptoSign,
   verify as cryptoVerify,
   type KeyObject,
@@ -18,6 +19,19 @@ const log = moduleLogger("jwt");
 
 const DEFAULT_TTL_MS = config.jwt.loginLinkTtlMs;
 const KEY_ALGORITHM = "ed25519";
+
+/**
+ * PKCS8 DER prefix for an Ed25519 private key: SEQUENCE { version, OID
+ * 1.3.101.112, OCTET STRING { OCTET STRING(32-byte seed) } }. Concatenated
+ * with a raw 32-byte seed it yields a DER blob `createPrivateKey` accepts —
+ * Node has no "Ed25519 key from raw seed" API, so we wrap the seed by hand.
+ */
+const ED25519_PKCS8_PREFIX = Buffer.from(
+  "302e020100300506032b657004220420",
+  "hex",
+);
+/** HKDF salt domain-separating the per-plugin session-signing keys. */
+const PLUGIN_SESSION_KEY_SALT = Buffer.from("karyl-plugin-session-sign-v1");
 
 /**
  * The bot's single JWT signing authority.
@@ -124,6 +138,15 @@ export class JwtService {
   private privateKey: KeyObject;
   private publicKey: KeyObject;
   private publicKeyPemCache: string;
+  /**
+   * Memoized per-plugin session-signing keys, keyed by pluginKey. Cleared
+   * by {@link setKey} so a master-key rotation re-derives every plugin's
+   * key (and invalidates outstanding plugin-session tokens, as intended).
+   */
+  private pluginSessionKeys = new Map<
+    string,
+    { priv: KeyObject; pubPem: string }
+  >();
 
   constructor(privateKey: KeyObject) {
     assertEd25519(privateKey);
@@ -146,6 +169,9 @@ export class JwtService {
     this.publicKeyPemCache = this.publicKey
       .export({ type: "spki", format: "pem" })
       .toString();
+    // Per-plugin keys are derived from the master key — drop the cache so
+    // the next access re-derives against the new key.
+    this.pluginSessionKeys.clear();
   }
 
   /** SPKI PEM the bot publishes so others can verify bot-issued JWTs. */
@@ -154,6 +180,14 @@ export class JwtService {
   }
 
   sign(
+    claims: JwtClaims,
+    options: SignOptions = {},
+  ): { token: string; expiresAt: number } {
+    return this.signWith(this.privateKey, claims, options);
+  }
+
+  private signWith(
+    privateKey: KeyObject,
     claims: JwtClaims,
     options: SignOptions = {},
   ): { token: string; expiresAt: number } {
@@ -179,9 +213,77 @@ export class JwtService {
     // Ed25519: the algorithm argument to crypto.sign MUST be null —
     // the hash is baked into the scheme.
     const signatureSeg = base64urlEncode(
-      cryptoSign(null, Buffer.from(signingInput, "utf-8"), this.privateKey),
+      cryptoSign(null, Buffer.from(signingInput, "utf-8"), privateKey),
     );
     return { token: `${signingInput}.${signatureSeg}`, expiresAt };
+  }
+
+  /**
+   * Derive (and memoize) a per-plugin Ed25519 session-signing key from the
+   * active master key + `pluginKey` via HKDF-SHA256. Because each plugin
+   * gets a distinct key, a `plugin-session` token minted for plugin A does
+   * NOT verify against plugin B's published key — the key itself binds the
+   * token to one plugin, with no `aud` claim and no per-plugin key storage.
+   */
+  private derivePluginSessionKey(pluginKey: string): {
+    priv: KeyObject;
+    pubPem: string;
+  } {
+    const cached = this.pluginSessionKeys.get(pluginKey);
+    if (cached) return cached;
+    // The 32-byte Ed25519 seed of the master key is its JWK `d` field.
+    const masterJwk = this.privateKey.export({ format: "jwk" }) as {
+      d?: string;
+    };
+    if (!masterJwk.d) {
+      throw new Error("master signing key has no private seed");
+    }
+    const masterSeed = Buffer.from(masterJwk.d, "base64url");
+    const seed = Buffer.from(
+      hkdfSync(
+        "sha256",
+        masterSeed,
+        PLUGIN_SESSION_KEY_SALT,
+        Buffer.from(pluginKey, "utf-8"),
+        32,
+      ),
+    );
+    const priv = createPrivateKey({
+      key: Buffer.concat([ED25519_PKCS8_PREFIX, seed]),
+      format: "der",
+      type: "pkcs8",
+    });
+    const pubPem = createPublicKey(priv)
+      .export({ type: "spki", format: "pem" })
+      .toString();
+    const entry = { priv, pubPem };
+    this.pluginSessionKeys.set(pluginKey, entry);
+    return entry;
+  }
+
+  /**
+   * SPKI PEM that verifies `plugin-session` tokens for `pluginKey`. Handed
+   * to that plugin at register/heartbeat as `sessionVerifyPublicKey`.
+   */
+  pluginSessionPublicKeyPem(pluginKey: string): string {
+    return this.derivePluginSessionKey(pluginKey).pubPem;
+  }
+
+  /**
+   * Sign a `plugin-session` token bound to `pluginKey`, using that plugin's
+   * derived key instead of the shared master key. Verifies only against
+   * {@link pluginSessionPublicKeyPem}(pluginKey).
+   */
+  signPluginSession(
+    pluginKey: string,
+    claims: JwtClaims,
+    options: SignOptions = {},
+  ): { token: string; expiresAt: number } {
+    return this.signWith(
+      this.derivePluginSessionKey(pluginKey).priv,
+      claims,
+      options,
+    );
   }
 
   verify(token: string, options: VerifyOptions = {}): JwtClaims | null {

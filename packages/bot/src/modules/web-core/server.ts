@@ -645,36 +645,14 @@ export async function createWebServer(
     reply.code(204).send();
   });
 
-  server.post("/api/auth/plugin-session", async (request, reply) => {
-    if (!authEnabled) {
-      reply.code(503).send({ error: "Auth not configured" });
-      return;
-    }
-    const header = request.headers.authorization;
-    const presented = header?.startsWith("Bearer ") ? header.slice(7) : null;
-    const userId = presented ? await auth.verifyAccessToken(presented) : null;
-    if (!userId) {
-      reply.code(401).send({ error: "Unauthorized" });
-      return;
-    }
-    // Embed only the subset a plugin can act on: the `admin` superuser
-    // bypass and any `plugin:<key>:*` tokens. Guild / behavior scopes
-    // are irrelevant to a plugin and would just bloat the token.
-    const allCaps = await resolveUserCapabilities(userId, ownerIds);
-    const pluginCaps = [...allCaps].filter(
-      (c) => c === "admin" || c.startsWith("plugin:"),
-    );
-    const { token, expiresAt } = jwt.sign(
-      {
-        purpose: "plugin-session",
-        userId,
-        guildId: null,
-        capabilities: pluginCaps,
-      },
-      { ttlMs: 900_000 },
-    );
-    return { jwt: token, expiresAt };
-  });
+  // NOTE: the former POST /api/auth/plugin-session was removed with the
+  // per-plugin session-key change. It minted an un-plugin-bound token with
+  // ALL `plugin:*` caps signed by the shared master key — exactly the
+  // cross-plugin reuse the per-plugin keys close. It had no in-repo caller,
+  // and post-change its master-signed token would no longer verify against
+  // any plugin's (now per-plugin) `sessionVerifyPublicKey` anyway. Plugins
+  // mint user WebUI tokens via the plugin-scoped `auth.session` RPC
+  // (plugin-rpc-routes.ts), which binds to the calling plugin's key.
 
   // /api/health, /api/health/live, /api/health/ready are registered
   // by registerSystemRoutes() (web-core/system-routes.ts). They're
