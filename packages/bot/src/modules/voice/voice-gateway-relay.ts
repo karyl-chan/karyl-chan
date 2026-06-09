@@ -61,9 +61,10 @@ async function relayEvent(
  */
 export function installVoiceGatewayRelay(bot: Client): void {
   const serviceUrl = (process.env.VOICE_SERVICE_URL ?? "").trim();
-  // Outbound signing uses the *current* value from the SecretProvider.
-  const secret = getSecret("VOICE_HMAC_SECRET") ?? "";
-  if (!serviceUrl || !secret) return;
+  // Presence check only — the split is a no-op unless both are configured at
+  // boot. The signing key itself is re-read per event below so a rotation
+  // takes effect without a bot restart.
+  if (!serviceUrl || !(getSecret("VOICE_HMAC_SECRET") ?? "")) return;
   const base = serviceUrl.replace(/\/+$/, "");
   log.info({ serviceUrl: base }, "voice gateway relay installed");
 
@@ -78,6 +79,10 @@ export function installVoiceGatewayRelay(bot: Client): void {
       // The adapter only wants the bot's own voice state.
       if (packet.d?.user_id !== bot.user?.id) return;
     }
+    // Re-read the secret per event so a rotation takes effect without a bot
+    // restart; skip relaying if it was cleared at runtime (can't sign).
+    const secret = getSecret("VOICE_HMAC_SECRET") ?? "";
+    if (!secret) return;
     void relayEvent(base, secret, guildId, t, packet.d);
   });
 }

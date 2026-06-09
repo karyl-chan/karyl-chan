@@ -43,7 +43,7 @@ describe("RemoteVoiceBackend", () => {
     const calls = stubFetch(200, { connected: true, channelId: "c1" });
     const backend = new RemoteVoiceBackend({
       serviceUrl: "http://voice:4000/",
-      secret: "s",
+      secret: () => "s",
     });
     const status = await backend.join({ guildId: "g1", channelId: "c1" });
     expect(status.connected).toBe(true);
@@ -61,7 +61,7 @@ describe("RemoteVoiceBackend", () => {
     stubFetch(429, { error: "voice capacity reached" });
     const backend = new RemoteVoiceBackend({
       serviceUrl: "http://voice:4000",
-      secret: "s",
+      secret: () => "s",
     });
     await expect(
       backend.join({ guildId: "g1", channelId: "c1" }),
@@ -72,7 +72,7 @@ describe("RemoteVoiceBackend", () => {
     stubFetch(409, { error: "not joined" });
     const backend = new RemoteVoiceBackend({
       serviceUrl: "http://voice:4000",
-      secret: "s",
+      secret: () => "s",
     });
     await expect(backend.play("g1", "http://x/a.mp3")).rejects.toThrow(/409/);
   });
@@ -81,9 +81,26 @@ describe("RemoteVoiceBackend", () => {
     stubFetch(200, { connected: false, channelId: null, playing: false });
     const backend = new RemoteVoiceBackend({
       serviceUrl: "http://voice:4000",
-      secret: "s",
+      secret: () => "s",
     });
     const s = await backend.status("g1");
     expect(s.connected).toBe(false);
+  });
+
+  it("reads the secret fresh on every call (rotation without restart)", async () => {
+    stubFetch(200, { connected: true, channelId: "c1" });
+    let current = "old";
+    const secret = vi.fn(() => current);
+    const backend = new RemoteVoiceBackend({
+      serviceUrl: "http://voice:4000",
+      secret,
+    });
+    await backend.status("g1");
+    current = "rotated"; // operator rotates VOICE_HMAC_SECRET
+    await backend.status("g1");
+    // The getter is consulted per call (a snapshot would read it once at
+    // construction), so the post-rotation call signs with the new key.
+    expect(secret).toHaveBeenCalledTimes(2);
+    expect(secret.mock.results.at(-1)?.value).toBe("rotated");
   });
 });
