@@ -11,10 +11,7 @@ import { existsSync, readFileSync } from "fs";
 import type { ServerOptions as HttpsServerOptions } from "https";
 import { dirname, resolve } from "path";
 import { fileURLToPath } from "url";
-import {
-  AuthStore,
-  authStore as defaultAuthStore,
-} from "./auth-store.service.js";
+import { getSessionStore } from "../../adapters/index.js";
 import { JwtService, jwtService as defaultJwtService } from "./jwt.service.js";
 import {
   resolveLoginRole,
@@ -146,7 +143,6 @@ export interface WebServerOptions {
 export interface CreateWebServerOptions {
   staticRoot?: string;
   bot?: Client;
-  authStore?: AuthStore;
   /** Override JWT issuer/verifier for tests; defaults to the singleton. */
   jwtService?: JwtService;
   dmInbox?: DmInboxStore;
@@ -204,7 +200,11 @@ export async function createWebServer(
   });
 
   const ownerIds = options.ownerIds ?? config.bot.ownerIds;
-  const auth = options.authStore ?? defaultAuthStore;
+  // Single source of truth: the admin-service revocation paths
+  // (authorized-user.service) resolve the same getSessionStore()
+  // singleton, so a revoke there invalidates the exact tokens this
+  // server validates. Tests pin the instance via __setSessionStoreForTests.
+  const auth = getSessionStore();
   const jwt = options.jwtService ?? defaultJwtService;
   const authEnabled = ownerIds.length > 0;
 
@@ -276,7 +276,7 @@ export async function createWebServer(
       ? header.slice(7)
       : null;
     let userId: string | null = presentedAccess
-      ? auth.verifyAccessToken(presentedAccess)
+      ? await auth.verifyAccessToken(presentedAccess)
       : null;
     if (!userId && isEventStreamPath(request.url)) {
       // EventSource can't set Authorization headers, so SSE endpoints
@@ -289,7 +289,7 @@ export async function createWebServer(
         typeof query?.ticket === "string" && query.ticket.length > 0
           ? query.ticket
           : null;
-      if (ticket) userId = auth.consumeSseTicket(ticket);
+      if (ticket) userId = await auth.consumeSseTicket(ticket);
     }
     if (!userId) {
       reply.code(401).send({ error: "Unauthorized" });
@@ -582,12 +582,12 @@ export async function createWebServer(
     }
     const header = request.headers.authorization;
     const presented = header?.startsWith("Bearer ") ? header.slice(7) : null;
-    const userId = presented ? auth.verifyAccessToken(presented) : null;
+    const userId = presented ? await auth.verifyAccessToken(presented) : null;
     if (!userId) {
       reply.code(401).send({ error: "Unauthorized" });
       return;
     }
-    return auth.issueSseTicket(userId);
+    return await auth.issueSseTicket(userId);
   });
 
   server.post<{ Body: { refreshToken?: unknown } }>(
@@ -611,8 +611,8 @@ export async function createWebServer(
       const accessToken = header?.startsWith("Bearer ")
         ? header.slice(7)
         : null;
-      const userId = accessToken ? auth.verifyAccessToken(accessToken) : null;
-      if (accessToken) auth.revokeAccess(accessToken);
+      const userId = accessToken ? await auth.verifyAccessToken(accessToken) : null;
+      if (accessToken) await auth.revokeAccess(accessToken);
       if (userId) {
         botEventLog.record("info", "auth", `Admin logout: ${userId}`, {
           userId,
@@ -635,7 +635,7 @@ export async function createWebServer(
     }
     const header = request.headers.authorization;
     const accessToken = header?.startsWith("Bearer ") ? header.slice(7) : null;
-    const userId = accessToken ? auth.verifyAccessToken(accessToken) : null;
+    const userId = accessToken ? await auth.verifyAccessToken(accessToken) : null;
     if (!userId) {
       reply.code(401).send({ error: "Unauthorized" });
       return;
@@ -652,7 +652,7 @@ export async function createWebServer(
     }
     const header = request.headers.authorization;
     const presented = header?.startsWith("Bearer ") ? header.slice(7) : null;
-    const userId = presented ? auth.verifyAccessToken(presented) : null;
+    const userId = presented ? await auth.verifyAccessToken(presented) : null;
     if (!userId) {
       reply.code(401).send({ error: "Unauthorized" });
       return;

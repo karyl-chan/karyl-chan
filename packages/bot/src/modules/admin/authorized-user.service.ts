@@ -11,7 +11,7 @@ import {
 } from "./admin-capabilities.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { config } from "../../config.js";
-import { authStore } from "../web-core/auth-store.service.js";
+import { getSessionStore } from "../../adapters/index.js";
 
 export {
   GLOBAL_CAPABILITY_DESCRIPTIONS,
@@ -235,7 +235,7 @@ export async function addAuthorizedUser(
 export async function removeAuthorizedUser(userId: string): Promise<boolean> {
   const deleted = await AuthorizedUser.destroy({ where: { userId } });
   invalidateCapabilityCache(userId);
-  if (deleted > 0) await authStore.revokeOwner(userId);
+  if (deleted > 0) await getSessionStore().revokeOwner(userId);
   return deleted > 0;
 }
 
@@ -291,7 +291,7 @@ export async function deleteAdminRole(name: string): Promise<boolean> {
   invalidateCapabilityCache();
   if (removed > 0) {
     for (const user of affectedUsers) {
-      await authStore.revokeOwner(user.getDataValue("userId") as string);
+      await getSessionStore().revokeOwner(user.getDataValue("userId") as string);
     }
   }
   return removed > 0;
@@ -318,6 +318,6 @@ export async function revokeRoleCapability(
   await AdminRoleCapability.destroy({ where: { role, capability } });
   invalidateCapabilityCache();
   for (const user of affectedUsers) {
-    await authStore.revokeOwner(user.getDataValue("userId") as string);
+    await getSessionStore().revokeOwner(user.getDataValue("userId") as string);
   }
 }

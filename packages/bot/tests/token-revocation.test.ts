@@ -38,6 +38,10 @@ import {
   authStore,
 } from "../src/modules/web-core/auth-store.service.js";
 import { createWebServer } from "../src/modules/web-core/server.js";
+import {
+  __setSessionStoreForTests,
+  __resetAdaptersForTests,
+} from "../src/adapters/registry.js";
 import { JwtService } from "../src/modules/web-core/jwt.service.js";
 import { generateKeyPairSync } from "crypto";
 import type { FastifyInstance } from "fastify";
@@ -53,11 +57,12 @@ let server: FastifyInstance;
 
 beforeAll(async () => {
   await sequelize.sync({ force: true });
-  // Pass the same singleton to the server so HTTP endpoint tests share
-  // the same token map.
+  // Pin getSessionStore() to this instance so the server AND the admin
+  // service resolve the same token map — the production invariant
+  // (both read one getSessionStore() singleton) is exercised here.
+  __setSessionStoreForTests(store);
   server = await createWebServer({
     staticRoot: undefined,
-    authStore: store,
     jwtService: new JwtService(generateKeyPairSync("ed25519").privateKey),
     ownerIds: [OWNER_ID],
   });
@@ -66,6 +71,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await server.close();
+  __resetAdaptersForTests();
   await sequelize.close();
 });
 

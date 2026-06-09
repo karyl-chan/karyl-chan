@@ -28,6 +28,10 @@ import { sequelize } from "../src/db.js";
 import { createWebServer } from "../src/modules/web-core/server.js";
 import { AuthStore } from "../src/modules/web-core/auth-store.service.js";
 import {
+  __setSessionStoreForTests,
+  __resetAdaptersForTests,
+} from "../src/adapters/registry.js";
+import {
   JwtService,
   type JwtClaims,
 } from "../src/modules/web-core/jwt.service.js";
@@ -263,10 +267,10 @@ describe("web server", () => {
       // expects to find it empty.
       await sequelize.sync({ force: true });
       store = new AuthStore();
+      __setSessionStoreForTests(store);
       jwt = new JwtService(generateKeyPairSync("ed25519").privateKey);
       server = await createWebServer({
         staticRoot: undefined,
-        authStore: store,
         jwtService: jwt,
         ownerIds: [OWNER_ID],
       });
@@ -432,9 +436,9 @@ describe("web server", () => {
           "<!doctype html><title>spa</title>",
         );
         spaStore = new AuthStore();
+        __setSessionStoreForTests(spaStore);
         spaServer = await createWebServer({
           staticRoot: spaStaticRoot,
-          authStore: spaStore,
           jwtService: new JwtService(generateKeyPairSync("ed25519").privateKey),
           ownerIds: [OWNER_ID],
         });
@@ -540,10 +544,10 @@ describe("web server", () => {
       // the test never touches the DB. The previous describe already ran
       // sequelize.close(), so we must not call sequelize here.
       store = new AuthStore();
+      __setSessionStoreForTests(store);
       jwt = new JwtService(generateKeyPairSync("ed25519").privateKey);
       server = await createWebServer({
         staticRoot: undefined,
-        authStore: store,
         jwtService: jwt,
         ownerIds: [OWNER_ID],
       });

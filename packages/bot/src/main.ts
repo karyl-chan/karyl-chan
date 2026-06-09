@@ -19,7 +19,7 @@ import {
   botEventsSequelize,
   botEventsSharesMainDb,
 } from "./modules/bot-events/bot-events-db.js";
-import { getDistributedLock } from "./adapters/registry.js";
+import { getDistributedLock, getSessionStore } from "./adapters/registry.js";
 import { closeRedisClient } from "./adapters/redis/client.js";
 import { config } from "./config.js";
 import { shutdownOtel } from "./observability/otel.js";
@@ -36,8 +36,7 @@ import {
 import { setBotEventLogMetric } from "./modules/bot-events/bot-event-log.js";
 import { setAuditLogMetric } from "./modules/admin/admin-audit.service.js";
 import { dmInboxService } from "./modules/dm-inbox/dm-inbox.service.js";
-import { authStore } from "./modules/web-core/auth-store.service.js";
-import { sequelizeRefreshStore } from "./modules/web-core/refresh-token.repository.js";
+import type { SessionStore } from "./adapters/session-store.js";
 import {
   auditStoredCapabilities,
   seedDefaultRoles,
@@ -129,6 +128,10 @@ process.on("uncaughtException", (error) => {
 });
 
 let webServer: Awaited<ReturnType<typeof startWebServer>> | null = null;
+// Resolved once at boot so shutdown stops the store the bot actually
+// started, rather than lazily constructing one (which, under
+// SESSION_STORE=redis, would open a connection mid-teardown).
+let sessionStore: SessionStore | null = null;
 
 // Sharding-ready Client construction. Single-shard deployments
 // (default) set shardId=0, totalShards=1. Multi-shard deployments
@@ -231,7 +234,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
     }
     // 2. Stop background timers / cleanup.
     pluginRegistry.stopReaper();
-    authStore.stop();
+    sessionStore?.stop();
     // 2'. Drain the plugin dispatch pool (HTTP keep-alive sockets).
     await stopDispatchPool();
     // 3. Close RCON sockets (was registered as its own SIGTERM handler;
@@ -653,8 +656,13 @@ async function run() {
     await seedDefaultRoles();
     await auditStoredCapabilities();
 
-    authStore.attach(sequelizeRefreshStore);
-    await authStore.init();
+    // Session store: in-process by default (single-machine, zero deps),
+    // or Redis when SESSION_STORE=redis (cross-shard SSO). The in-process
+    // store owns its own refresh-token durability wiring in init(); the
+    // Redis store keeps its state in Redis. Resolve once and reuse the
+    // same instance for shutdown.
+    sessionStore = getSessionStore();
+    await sessionStore.init();
 
     // Plugin heartbeat reaper. Marks plugins inactive after 75s with
     // no heartbeat (their own cadence is 30s, so a single dropped
