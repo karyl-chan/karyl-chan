@@ -1,3 +1,4 @@
+import { Op } from "sequelize";
 import { DmChannel } from "./models/dm-channel.model.js";
 import type { Message as ApiMessage } from "../web-core/message-types.js";
 
@@ -121,26 +122,44 @@ export class SqliteDmInbox implements DmInboxStore {
     recipient: DmRecipient,
     message: ApiMessage,
   ): Promise<DmChannelSummary> {
-    const existing = await DmChannel.findByPk(channelId);
-    const previousLast = existing
-      ? (existing.getDataValue("lastMessageAt") as string | null)
-      : null;
-    const isNewer = !previousLast || message.createdAt >= previousLast;
-    const [row] = await DmChannel.upsert({
+    // Ensure the row exists + refresh the recipient fields. We deliberately do
+    // NOT write the lastMessage* columns here — Sequelize upsert only SETs the
+    // provided columns, so an existing row keeps its message state.
+    await DmChannel.upsert({
       id: channelId,
       recipientId: recipient.id,
       recipientUsername: recipient.username,
       recipientGlobalName: recipient.globalName,
       recipientAvatarUrl: recipient.avatarUrl,
-      lastMessageAt: isNewer ? message.createdAt : previousLast,
-      lastMessageId: isNewer
-        ? message.id
-        : (existing?.getDataValue("lastMessageId") as string | null),
-      lastMessagePreview: isNewer
-        ? previewFor(message)
-        : (existing?.getDataValue("lastMessagePreview") as string | null),
     });
-    return this.rowToSummary(row);
+    // Advance the latest-message columns with a single atomic conditional
+    // UPDATE that only fires when this message is at least as new as the
+    // stored one. The previous read-then-upsert raced: two near-simultaneous
+    // DMs both read the same previousLast and the OLDER one's write could land
+    // last, regressing lastMessageAt (sidebar then shows a stale "latest").
+    // The DB evaluates this WHERE against the committed row, so a stale write
+    // matches nothing.
+    await DmChannel.update(
+      {
+        lastMessageAt: message.createdAt,
+        lastMessageId: message.id,
+        lastMessagePreview: previewFor(message),
+      },
+      {
+        where: {
+          id: channelId,
+          [Op.or]: [
+            { lastMessageAt: null },
+            { lastMessageAt: { [Op.lte]: message.createdAt } },
+          ],
+        },
+      },
+    );
+    // The row was just upserted, so it always exists. Return its current
+    // state (which reflects the newest message, even if a concurrent newer
+    // one landed in between — that's the correct sidebar value).
+    const row = await DmChannel.findByPk(channelId);
+    return this.rowToSummary(row!);
   }
 
   async updateLatestMessageId(
