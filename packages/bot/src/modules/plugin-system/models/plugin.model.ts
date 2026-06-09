@@ -283,7 +283,9 @@ export const deactivatePluginByKey = async (
  * inactive. Returns affected ids so the caller can also revoke their
  * tokens / log the failure.
  */
-export const expireStalePlugins = async (cutoff: Date): Promise<number[]> => {
+export const expireStalePlugins = async (
+  cutoff: Date,
+): Promise<Array<{ id: number; pluginKey: string }>> => {
   const stale = await Plugin.findAll({
     where: {
       status: "active",
@@ -310,10 +312,15 @@ export const expireStalePlugins = async (cutoff: Date): Promise<number[]> => {
     },
   );
   // Return only the rows this sweep actually left inactive, so the caller
-  // never evicts a plugin that revived in the race window above.
+  // never evicts a plugin that revived in the race window above. The
+  // pluginKey rides along so the reaper can drop the dead plugin's
+  // dispatch pool (keyed by pluginKey), not just its id-keyed state.
   const expired = await Plugin.findAll({
     where: { id: ids, status: "inactive" },
-    attributes: ["id"],
+    attributes: ["id", "pluginKey"],
   });
-  return expired.map((m) => m.getDataValue("id") as number);
+  return expired.map((m) => ({
+    id: m.getDataValue("id") as number,
+    pluginKey: m.getDataValue("pluginKey") as string,
+  }));
 };
