@@ -10,6 +10,12 @@ const log = moduleLogger("picture-only");
 export function registerPictureOnlyChannelEvents(client: Client): void {
   client.on("messageCreate", async (message) => {
     try {
+      // Never police bot/webhook messages — same convention as the other
+      // channel features (rcon-forward, todo-channel). Deleting the bot's
+      // own posts (or other integrations'/webhooks') in a picture-only
+      // channel is never intended, and an image shared as an embed/link
+      // carries no attachment.
+      if (message.author.bot) return;
       // Honor the operator's per-guild + default toggle. Disabled →
       // skip; the configuration row stays in place so re-enabling
       // restores previous setup without losing data.
