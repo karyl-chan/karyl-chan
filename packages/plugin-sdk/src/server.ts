@@ -821,22 +821,35 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
           // its own bot.application.id available and uses that for
           // the REST callback. Forwarding a plugin-supplied id would
           // suggest the bot honours it (it doesn't).
-          const res = await callBotRpc(
-            server.log,
-            opts.botUrl,
-            token,
-            "/api/plugin/interactions.send_modal",
-            {
-              interaction_id: payload.interaction_id,
-              interaction_token: payload.interaction_token,
-              modal,
-            },
-          );
-          if (res !== null) {
+          // callBotRpc resolves to an object on success and THROWS a
+          // BotRpcError on any non-2xx (it never returns null). The bot
+          // rejects a modal whose interaction already expired / was
+          // deferred with a 4xx — surface that as `false` (the documented
+          // contract) instead of letting it propagate as a throw, which
+          // would skip the handler's post-sendModal code AND log a
+          // misleading "command handler threw" error for an expected,
+          // recoverable case (common during a bot restart).
+          try {
+            await callBotRpc(
+              server.log,
+              opts.botUrl,
+              token,
+              "/api/plugin/interactions.send_modal",
+              {
+                interaction_id: payload.interaction_id,
+                interaction_token: payload.interaction_token,
+                modal,
+              },
+            );
             modalSent = true;
             return true;
+          } catch (err) {
+            server.log.warn(
+              { err, commandName: payload.command_name },
+              "sendModal failed — interaction likely expired or deferred",
+            );
+            return false;
           }
-          return false;
         },
       };
 
