@@ -9,7 +9,10 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
 import type { Client } from "discord.js";
-import { installVoiceGatewayRelay } from "../src/modules/voice/voice-gateway-relay.js";
+import {
+  installVoiceGatewayRelay,
+  __resetVoiceGatewayRelayForTests,
+} from "../src/modules/voice/voice-gateway-relay.js";
 import {
   activeRemoteGuilds,
   resetActiveRemoteGuildsForTest,
@@ -47,6 +50,7 @@ async function flush(): Promise<void> {
 
 describe("voice gateway relay filter", () => {
   beforeEach(() => {
+    __resetVoiceGatewayRelayForTests();
     resetActiveRemoteGuildsForTest();
     process.env.VOICE_SERVICE_URL = "http://voice:4000";
     process.env.VOICE_HMAC_SECRET = "s";

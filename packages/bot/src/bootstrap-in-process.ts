@@ -18,7 +18,14 @@ import { registerVoiceCommands } from "./modules/builtin-features/voice/voice.co
  *      that calls registerInProcessCommand(...) — no decorators.
  *   2) Import + invoke it here.
  */
+// Idempotent: a resetBot() → run() restart re-invokes this, and
+// registerInProcessModal appends to a module-level array. Guard so a
+// restart doesn't bloat the modal registry with duplicate entries.
+let inProcessFeaturesRegistered = false;
+
 export function bootstrapInProcessFeatures(): void {
+  if (inProcessFeaturesRegistered) return;
+  inProcessFeaturesRegistered = true;
   registerPictureOnlyChannelCommands();
   registerTodoChannelCommands();
   registerRoleEmojiCommands();

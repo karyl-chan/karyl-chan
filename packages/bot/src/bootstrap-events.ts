@@ -20,7 +20,16 @@ import { registerVoiceStateEvents } from "./modules/bot-events/events/voice-stat
  * src/events/xyz.events.ts (no decorators, plain `client.on(...)`),
  * import + invoke it here.
  */
+// `bot` is a module-level singleton reused across resetBot() → run()
+// restarts, and discord.js Client.destroy() does NOT remove listeners.
+// Guard so a restart (after a transient startup failure) doesn't stack a
+// second copy of every handler → events firing twice (double DM publish,
+// double event dispatch, double feature processing).
+let eventHandlersRegistered = false;
+
 export function bootstrapEventHandlers(client: Client): void {
+  if (eventHandlersRegistered) return;
+  eventHandlersRegistered = true;
   registerDmInboxEvents(client);
   registerGuildChannelEvents(client);
   registerPictureOnlyChannelEvents(client);
