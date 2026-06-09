@@ -183,6 +183,12 @@ export class WebhookForwarder {
         method: "POST",
         headers,
         body,
+        // Do NOT follow redirects. assertExternalTarget above validated the
+        // configured host, but a 3xx `Location` is attacker-controlled and
+        // `redirect: "follow"` (the default) would chase it WITHOUT
+        // re-validating — an SSRF into cloud metadata (169.254.169.254) or
+        // internal hosts whose response we'd then relay back into Discord.
+        redirect: "manual",
         signal: AbortSignal.timeout(10_000),
       });
     } catch (err) {
@@ -192,6 +198,19 @@ export class WebhookForwarder {
         ended: false,
         relayContent: "",
         error: `network error: ${msg}`,
+      };
+    }
+
+    // A webhook endpoint redirecting is not a success — and with
+    // redirect: "manual" we won't have followed it. Treat any 3xx as a
+    // failed delivery rather than reading the redirect body as content.
+    if (res.status >= 300 && res.status < 400) {
+      return {
+        ok: false,
+        ended: false,
+        relayContent: "",
+        status: res.status,
+        error: `webhook returned a redirect (HTTP ${res.status}); redirects are not followed`,
       };
     }
 
