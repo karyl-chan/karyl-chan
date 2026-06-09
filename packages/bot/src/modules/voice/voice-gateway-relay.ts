@@ -55,16 +55,29 @@ async function relayEvent(
   }
 }
 
+// Idempotent: the bot is a module-level singleton reused across
+// resetBot() → run() restarts and Client.destroy() doesn't remove
+// listeners, so a second install would relay every voice gateway packet
+// twice. Guard against the duplicate "raw" listener.
+let relayInstalled = false;
+
+/** Test-only: reset the install guard so a test can re-install on a fresh bot. */
+export function __resetVoiceGatewayRelayForTests(): void {
+  relayInstalled = false;
+}
+
 /**
  * Install the relay on the bot client. Returns immediately (no-op) when the
- * split isn't configured. Safe to call once at boot.
+ * split isn't configured, or if already installed. Safe to call repeatedly.
  */
 export function installVoiceGatewayRelay(bot: Client): void {
+  if (relayInstalled) return;
   const serviceUrl = (process.env.VOICE_SERVICE_URL ?? "").trim();
   // Presence check only — the split is a no-op unless both are configured at
   // boot. The signing key itself is re-read per event below so a rotation
   // takes effect without a bot restart.
   if (!serviceUrl || !(getSecret("VOICE_HMAC_SECRET") ?? "")) return;
+  relayInstalled = true;
   const base = serviceUrl.replace(/\/+$/, "");
   log.info({ serviceUrl: base }, "voice gateway relay installed");
 
