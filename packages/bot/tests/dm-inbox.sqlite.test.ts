@@ -133,6 +133,58 @@ describe("SqliteDmInbox", () => {
     expect(after.lastMessagePreview).toBe("newer");
   });
 
+  it("recordActivity does not lose a concurrent newer write (race regression)", async () => {
+    // Deterministically reproduce the read-modify-write race: a NEWER message
+    // lands in the window between an older recordActivity's DB read and its
+    // write. We force that window by spying on findByPk so the first read
+    // captures a stale snapshot, then a newer message is fully recorded, then
+    // the stale snapshot is returned to the caller. The old code (findByPk →
+    // upsert) would then write the stale/older state back, clobbering the
+    // newer message. The atomic conditional UPDATE evaluates against the
+    // committed row instead, so the newer message survives.
+    const inbox = new SqliteDmInbox();
+    // Capture the real implementation before spying so the spy can still
+    // perform a genuine (stale) read.
+    const realFindByPk = DmChannel.findByPk.bind(DmChannel);
+    let injected = false;
+    const spy = vi
+      .spyOn(DmChannel, "findByPk")
+      .mockImplementation(async (id, options) => {
+        const snapshot = await realFindByPk(id, options);
+        if (!injected) {
+          injected = true;
+          // A newer message arrives mid-flight and is committed.
+          await inbox.recordActivity(
+            "c-1",
+            RECIPIENT,
+            fakeMessage({
+              id: "600000000000000200",
+              createdAt: "2026-04-25T14:00:00.000Z",
+              content: "newer-concurrent",
+            }),
+          );
+        }
+        return snapshot; // intentionally stale read for the outer caller
+      });
+    try {
+      await inbox.recordActivity(
+        "c-1",
+        RECIPIENT,
+        fakeMessage({
+          id: "600000000000000199",
+          createdAt: "2026-04-25T13:00:00.000Z",
+          content: "older-outer",
+        }),
+      );
+    } finally {
+      spy.mockRestore();
+    }
+    // The newer concurrent message must not have been clobbered.
+    const summary = await inbox.getChannel("c-1");
+    expect(summary?.lastMessageId).toBe("600000000000000200");
+    expect(summary?.lastMessagePreview).toBe("newer-concurrent");
+  });
+
   it("listChannels orders by lastMessageAt DESC", async () => {
     const inbox = new SqliteDmInbox();
     await inbox.recordActivity(
