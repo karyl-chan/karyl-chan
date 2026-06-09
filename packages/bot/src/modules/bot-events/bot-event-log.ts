@@ -47,27 +47,28 @@ class BotEventLog {
     message: string,
     context?: Record<string, unknown>,
   ): void {
-    // Lazy import + lazy require: dynamic-style read avoids ESM
-    // circular at module load time. metrics.ts imports
-    // plugin-registry which imports this module. Top-level access
-    // of metrics counters here would trip the cycle; deferring to
-    // call-time is safe because by the time .record() runs, all
-    // modules have finished initialising.
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const m = botEventLogWritesTotalRef;
-      if (m) m.inc({ level, category });
-    } catch {
-      /* metrics-failure must never affect log writes */
-    }
     BotEvent.create({
       level,
       category,
       message: message.slice(0, 500),
       context: context ?? null,
-    }).catch((err: unknown) => {
-      log.error({ err }, "DB write failed");
-    });
+    })
+      .then(() => {
+        // Count only writes that ACTUALLY landed. Incrementing before the
+        // create() (as this used to) over-reports during a DB outage — the
+        // dashboard shows steady event flow while the audit trail is silently
+        // blank. The counter ref is read lazily at call-time to dodge the
+        // metrics.ts → plugin-registry → this-module ESM import cycle.
+        try {
+          const m = botEventLogWritesTotalRef;
+          if (m) m.inc({ level, category });
+        } catch {
+          /* metrics-failure must never affect log writes */
+        }
+      })
+      .catch((err: unknown) => {
+        log.error({ err }, "DB write failed");
+      });
   }
 }
 
