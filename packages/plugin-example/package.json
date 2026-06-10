@@ -11,7 +11,8 @@
     "build:ui": "vite build",
     "build:server": "tsc",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit && vue-tsc --noEmit -p web/tsconfig.json"
+    "typecheck": "tsc --noEmit && vue-tsc --noEmit -p web/tsconfig.json",
+    "test": "EXAMPLE_DB_PATH=:memory: node --import tsx --test \"tests/**/*.test.ts\""
   },
   "engines": {
     "node": ">=22"

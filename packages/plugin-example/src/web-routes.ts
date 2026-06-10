@@ -307,11 +307,17 @@ export async function registerWebRoutes(
     async (request, reply) => {
       const claims = authManageAccess(request, reply, pluginKey, manageCap);
       if (!claims) return;
-      const guildId = request.query?.guildId;
-      if (!guildId) {
-        return reply.code(400).send({ error: "guildId required" });
+      // Scope strictly to the token's own guild. The manage capability is flat
+      // (`plugin:<key>:manage`, not guild-scoped), so trusting a client-supplied
+      // ?guildId would let a manager in one guild read another guild's stickies.
+      if (!claims.guildId) {
+        return reply.code(403).send({ error: "Token is missing guild scope" });
       }
-      return { stickies: listStickies(guildId) };
+      const requested = request.query?.guildId;
+      if (requested && requested !== claims.guildId) {
+        return reply.code(403).send({ error: "guildId does not match session" });
+      }
+      return { stickies: listStickies(claims.guildId) };
     },
   );
 
