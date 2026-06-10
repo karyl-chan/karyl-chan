@@ -5,6 +5,7 @@ import {
   ApplicationIntegrationType,
   InteractionContextType,
   PermissionFlagsBits,
+  RateLimitError,
   type ApplicationCommandData,
   type ApplicationCommandOptionData,
   type ChannelType,
@@ -219,6 +220,21 @@ export class ManifestCommandError extends Error {
   }
 }
 
+/**
+ * Discord refused a command write because of rate limiting (PM-7.3).
+ * Thrown instead of letting @discordjs/rest silently sleep out the
+ * retry window (the 2026-06-11 register hang was exactly such a sleep,
+ * inside what was then a synchronous register handler). The caller
+ * (PluginRegistry's background sync runner) marks the plugin
+ * `rate_limited` and reschedules after `retryAfterMs`.
+ */
+export class CommandSyncRateLimitedError extends Error {
+  constructor(public readonly retryAfterMs: number) {
+    super(`Discord command route rate limited; retry in ${retryAfterMs}ms`);
+    this.name = "CommandSyncRateLimitedError";
+  }
+}
+
 export class PluginCommandRegistry {
   constructor(private getBot: () => Client | null) {}
 
@@ -347,9 +363,25 @@ export class PluginCommandRegistry {
    * changed) and refreshes the discordCommandId.
    *
    * Failures are logged per-command but don't throw — a bad option
-   * in one command shouldn't kill the rest of the manifest.
+   * in one command shouldn't kill the rest of the manifest. The one
+   * exception is CommandSyncRateLimitedError, which DOES propagate so
+   * the background runner can back off and retry instead of plowing
+   * into the same rate limit command after command.
+   *
+   * Diff-based (PM-7.3): a command whose persisted manifestJson is
+   * byte-identical AND already has a discordCommandId is skipped —
+   * a re-register with an unchanged manifest costs ZERO Discord
+   * writes. This removes the dev-loop amplifier (restart → full
+   * re-create × commands × guilds) that rate-limited the 2026-06-11
+   * incident's bot. Trade-off: Discord-side drift (a command someone
+   * deleted by hand) is no longer repaired by a plain re-register —
+   * pass `force: true` (admin resync paths) to rewrite everything.
    */
-  async sync(plugin: PluginRow, manifest: PluginManifest): Promise<void> {
+  async sync(
+    plugin: PluginRow,
+    manifest: PluginManifest,
+    opts?: { force?: boolean },
+  ): Promise<void> {
     const bot = this.getBot();
     if (!bot || !bot.application) {
       botEventLog.record(
@@ -373,6 +405,10 @@ export class PluginCommandRegistry {
     // Track each row so anything not re-registered this pass becomes
     // stale and gets cleaned at the end.
     const stale = new Map(existing.map((r) => [r.id, r]));
+    // Lookup for the diff pass: (guildId, featureKey, name) → row.
+    const rowByKey = new Map(
+      existing.map((r) => [`${r.guildId}::${r.featureKey}::${r.name}`, r]),
+    );
 
     // ── Top-level (truly global) commands：DB only（Discord 由 CommandReconciler 管）
     // M1-C2：軌三 global 指令 Discord 登記改由 CommandReconciler.reconcileAll() 接管。
@@ -432,6 +468,18 @@ export class PluginCommandRegistry {
           manifestDefault;
         if (!enabled) continue; // off — any leftover row gets cleaned below
         for (const cmd of cmds) {
+          // Diff: unchanged definition that already made it to Discord
+          // (has a discordCommandId) → keep the row, skip the REST call.
+          const prior = rowByKey.get(`${guildId}::${feature.key}::${cmd.name}`);
+          if (
+            !opts?.force &&
+            prior &&
+            prior.discordCommandId &&
+            prior.manifestJson === JSON.stringify(cmd)
+          ) {
+            stale.delete(prior.id);
+            continue;
+          }
           const upsertResult = await this.registerFeatureCommandInGuild(
             plugin,
             feature.key,
@@ -497,6 +545,12 @@ export class PluginCommandRegistry {
         manifestJson: JSON.stringify(cmd),
       });
     } catch (err) {
+      // Rate limit propagates (PM-7.3): continuing the loop would slam
+      // the same bucket once per remaining command. The background
+      // runner backs the whole plugin off and retries.
+      if (err instanceof RateLimitError) {
+        throw new CommandSyncRateLimitedError(err.timeToReset);
+      }
       const msg = err instanceof Error ? err.message : String(err);
       botEventLog.record(
         "warn",
@@ -670,7 +724,21 @@ export class PluginCommandRegistry {
       }
       const manifest = parseManifest(plugin);
       if (!manifest) continue;
-      await this.sync(plugin, manifest);
+      // One plugin's failure (incl. a propagated rate limit) must not
+      // strand every plugin after it in the walk. With diff-based sync
+      // an unchanged plugin costs zero Discord writes, so boot-time
+      // rate limits should be rare to begin with.
+      try {
+        await this.sync(plugin, manifest);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        botEventLog.record(
+          "warn",
+          "bot",
+          `plugin-commands: reconcile sync failed for ${plugin.pluginKey}: ${msg}`,
+          { pluginId: plugin.id },
+        );
+      }
     }
     botEventLog.record(
       "info",
@@ -690,6 +758,12 @@ export class PluginCommandRegistry {
           await bot.application.commands.delete(row.discordCommandId);
         }
       } catch (err) {
+        // Rate limit: keep the DB row (deleting it would orphan the
+        // Discord-side command forever) and let the runner retry the
+        // whole sync later.
+        if (err instanceof RateLimitError) {
+          throw new CommandSyncRateLimitedError(err.timeToReset);
+        }
         const msg = err instanceof Error ? err.message : String(err);
         // 404 is fine (command already gone); other errors get logged
         // but don't throw — we still want to drop the DB row.

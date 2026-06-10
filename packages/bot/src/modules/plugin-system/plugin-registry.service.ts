@@ -26,7 +26,10 @@ import {
 } from "./plugin-lookup-cache.js";
 import { pluginEndpointRegistry } from "./plugin-endpoint-registry.js";
 import { deactivatePluginByKey } from "./models/plugin.model.js";
-import { pluginCommandRegistry } from "./plugin-command-registry.service.js";
+import {
+  CommandSyncRateLimitedError,
+  pluginCommandRegistry,
+} from "./plugin-command-registry.service.js";
 import {
   assertPluginTarget,
   HostPolicyError,
@@ -540,7 +543,7 @@ export interface RegisterResult {
  * see per-replica state only — acceptable because only the replica
  * that accepted the register performs the sync.
  */
-export type CommandSyncStatus = "pending" | "ok" | "failed";
+export type CommandSyncStatus = "pending" | "ok" | "failed" | "rate_limited";
 
 export interface CommandSyncState {
   status: CommandSyncStatus;
@@ -614,20 +617,53 @@ export class PluginRegistry {
             finishedAt: Date.now(),
           });
         } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          this.commandSyncStates.set(key, {
-            status: "failed",
-            startedAt,
-            finishedAt: Date.now(),
-            error: msg,
-          });
-          log.error({ err }, `plugin-commands: background sync failed for ${key}`);
-          botEventLog.record(
-            "warn",
-            "bot",
-            `plugin-commands: background sync failed for ${key}: ${msg}`,
-            { pluginId: task.plugin.id },
-          );
+          if (err instanceof CommandSyncRateLimitedError) {
+            // Clamp Discord's retry hint: ≥5s so we never busy-loop,
+            // ≤15min so a pathological reset time can't park the
+            // plugin for hours without a fresh attempt.
+            const retryMs = Math.min(
+              Math.max(err.retryAfterMs, 5_000),
+              900_000,
+            );
+            this.commandSyncStates.set(key, {
+              status: "rate_limited",
+              startedAt,
+              finishedAt: Date.now(),
+              error: `Discord rate limit; retrying in ${Math.ceil(retryMs / 1000)}s`,
+            });
+            botEventLog.record(
+              "warn",
+              "bot",
+              `plugin-commands: sync for ${key} rate limited by Discord; retrying in ${Math.ceil(retryMs / 1000)}s`,
+              { pluginId: task.plugin.id },
+            );
+            // Re-queue THIS manifest after the window — unless a newer
+            // one already arrived (it supersedes the failed attempt).
+            if (!marker.pending) {
+              const retryTask = task;
+              setTimeout(() => {
+                this.scheduleCommandSync(retryTask.plugin, retryTask.manifest);
+              }, retryMs).unref();
+            }
+          } else {
+            const msg = err instanceof Error ? err.message : String(err);
+            this.commandSyncStates.set(key, {
+              status: "failed",
+              startedAt,
+              finishedAt: Date.now(),
+              error: msg,
+            });
+            log.error(
+              { err },
+              `plugin-commands: background sync failed for ${key}`,
+            );
+            botEventLog.record(
+              "warn",
+              "bot",
+              `plugin-commands: background sync failed for ${key}: ${msg}`,
+              { pluginId: task.plugin.id },
+            );
+          }
         }
         task = marker.pending;
         marker.pending = null;

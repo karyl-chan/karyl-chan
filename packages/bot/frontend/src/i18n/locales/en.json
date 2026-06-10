@@ -1007,6 +1007,7 @@
             "statusInactive": "offline",
             "commandSyncFailed": "command sync failed",
             "commandSyncStalled": "command sync stuck",
+            "commandSyncRateLimited": "command sync rate-limited",
             "toggleEnabled": "Enabled (click to disable)",
             "toggleDisabled": "Disabled (click to enable)",
             "url": "URL",

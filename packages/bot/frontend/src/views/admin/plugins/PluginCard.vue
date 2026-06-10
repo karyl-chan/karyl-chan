@@ -128,10 +128,11 @@ const lastHeartbeat = computed(() => {
 // pending one that has been running suspiciously long (rate-limited
 // Discord call). A fresh/ok sync renders nothing — quiet by default.
 const SYNC_STALL_MS = 60_000;
-const commandSyncProblem = computed<null | { kind: 'failed' | 'stalled'; detail: string }>(() => {
+const commandSyncProblem = computed<null | { kind: 'failed' | 'stalled' | 'rateLimited'; detail: string }>(() => {
     const s = props.plugin.commandSync;
     if (!s) return null;
     if (s.status === 'failed') return { kind: 'failed', detail: s.error ?? '' };
+    if (s.status === 'rate_limited') return { kind: 'rateLimited', detail: s.error ?? '' };
     if (s.status === 'pending' && Date.now() - s.startedAt > SYNC_STALL_MS) {
         return { kind: 'stalled', detail: '' };
     }
@@ -257,7 +258,9 @@ async function confirmDelete() {
                     {{
                         commandSyncProblem.kind === 'failed'
                             ? t('admin.plugins.commandSyncFailed')
-                            : t('admin.plugins.commandSyncStalled')
+                            : commandSyncProblem.kind === 'rateLimited'
+                                ? t('admin.plugins.commandSyncRateLimited')
+                                : t('admin.plugins.commandSyncStalled')
                     }}
                 </AppBadge>
             </div>

@@ -152,7 +152,7 @@ export interface PluginRecord {
 }
 
 export interface PluginCommandSyncState {
-  status: "pending" | "ok" | "failed";
+  status: "pending" | "ok" | "failed" | "rate_limited";
   /** Epoch ms when the current/most recent sync run started. */
   startedAt: number;
   finishedAt?: number;
