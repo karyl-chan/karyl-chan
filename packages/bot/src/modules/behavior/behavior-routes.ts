@@ -283,8 +283,15 @@ export async function registerBehaviorRoutes(
 
     // integrationTypes:tab 寫死的優先（admin 在非 global_all tab 上的
     // 設定會被覆蓋）；tab 沒寫死才採 body 給的值，最後才落到預設。
+    // message_pattern 不經指令註冊、沒有安裝面 — body 給的值一律忽略，
+    // 只存 tab 衍生/預設值（BH-0.2；PATCH 端對顯式設定則直接 400）。
     const integrationTypes =
-      tabIntegrationTypes ?? sortJoin(body.integrationTypes || "guild_install");
+      tabIntegrationTypes ??
+      sortJoin(
+        (body.triggerType === "message_pattern"
+          ? ""
+          : body.integrationTypes || "") || "guild_install",
+      );
     const contexts = body.scopeTabId
       ? derivedContexts
       : sortJoin(body.contexts || "Guild");
@@ -600,6 +607,18 @@ export async function registerBehaviorRoutes(
       }
       if ("scope" in body) patch["scope"] = body["scope"];
       if ("integrationTypes" in body) {
+        // integrationTypes 是 slash 指令的安裝面設定（Discord application
+        // command install scope）；message_pattern 不經指令註冊，設定它
+        // 沒有任何效果 — 拒絕，不留「看似生效」的假象（BH-0.2）。
+        const effectiveTrigger =
+          (body["triggerType"] as string | undefined) ??
+          existingRow.triggerType;
+        if (effectiveTrigger === "message_pattern") {
+          return reply.code(400).send({
+            error:
+              "message_pattern behavior 不使用 integrationTypes（僅 slash command 有安裝面）",
+          });
+        }
         // integrationTypes 只在 global_all tab 上可自選 — 其他 tab 由
         // deriveFieldsFromTab() 寫死。若 admin 嘗試覆蓋,拒絕並告知。
         const tabRow = await BehaviorScopeTab.findByPk(existingRow.scopeTabId);

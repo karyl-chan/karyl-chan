@@ -147,6 +147,11 @@ const scopeOptions = [
 const canEditIntegrationTypes = computed(
     () => props.scopeTab?.tabType === 'global_all',
 );
+// integrationTypes 是 slash 指令的安裝面設定;message_pattern 不經指令
+// 註冊,顯示這個欄位會誤導 admin 以為有效(BH-0.2),整塊隱藏。
+const showIntegrationTypes = computed(
+    () => draft.triggerType === 'slash_command',
+);
 // 3 種有意義的組合（單獨 guild / 單獨 user / 兩者皆可），computed 把
 // 存進 DB 的 comma-joined 字串（sortJoin 排序過）映射回 enum。
 type IntegrationMode = 'both' | 'guild_only' | 'user_only';
@@ -328,9 +333,10 @@ async function onSave() {
                 forwardType: draft.forwardType,
                 stopOnMatch: draft.stopOnMatch,
             };
-            // 只在 global_all tab 才送 integrationTypes — 其他 tab 由
-            // 後端 deriveFieldsFromTab() 寫死,送過去後端會 400 拒絕。
-            if (canEditIntegrationTypes.value) {
+            // 只在 global_all tab + slash trigger 才送 integrationTypes —
+            // 其他 tab 由後端 deriveFieldsFromTab() 寫死、message_pattern
+            // 沒有安裝面,送過去後端都會 400 拒絕。
+            if (canEditIntegrationTypes.value && draft.triggerType === 'slash_command') {
                 patch.integrationTypes = draft.integrationTypes;
             }
             if (draft.triggerType === 'slash_command') {
@@ -573,15 +579,16 @@ const saveLabel = computed(() => {
                             />
                         </template>
 
-                        <!-- 可安裝範圍 — 只有 global_all tab 可自選。其他
-                             tab 由 deriveFieldsFromTab() 寫死,這裡顯示
-                             readonly 提示讓 admin 知道為何不能改。 -->
-                        <div v-if="canEditIntegrationTypes" class="field">
+                        <!-- 可安裝範圍 — 僅 slash command 有安裝面;
+                             message_pattern 整塊隱藏(BH-0.2)。global_all
+                             tab 可自選,其他 tab 由 deriveFieldsFromTab()
+                             寫死,顯示 readonly 提示讓 admin 知道為何不能改。 -->
+                        <div v-if="showIntegrationTypes && canEditIntegrationTypes" class="field">
                             <span class="label">{{ t('behaviors.card.integrationTypes') }}</span>
                             <AppSelectField v-model="integrationMode" :options="integrationModeOptions" />
                         </div>
                         <AppTextField
-                            v-else
+                            v-else-if="showIntegrationTypes"
                             :modelValue="integrationModeOptions.find((o) => o.value === integrationMode)?.label ?? ''"
                             :label="t('behaviors.card.integrationTypes')"
                             :hint="t('behaviors.card.integrationTypesLocked')"

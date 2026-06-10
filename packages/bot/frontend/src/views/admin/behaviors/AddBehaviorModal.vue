@@ -87,10 +87,12 @@ const webhookAuthModeOptions = [
 ];
 
 // Integration types — 跟 BehaviorCard 一樣的 3 種組合下拉。
-// 只有 global_all tab 顯示這個 field;其他 tab 由 deriveFieldsFromTab()
-// 寫死,送過去後端會 400 拒絕。
+// 只有 global_all tab + slash trigger 顯示這個 field;其他 tab 由
+// deriveFieldsFromTab() 寫死,message_pattern 則沒有安裝面(BH-0.2)。
 const canEditIntegrationTypes = computed(
-    () => props.scopeTab?.tabType === 'global_all',
+    () =>
+        props.scopeTab?.tabType === 'global_all' &&
+        form.value.triggerType === 'slash_command',
 );
 type IntegrationMode = 'both' | 'guild_only' | 'user_only';
 const integrationModeOptions = computed<{ value: IntegrationMode; label: string }[]>(() => [
@@ -147,7 +149,10 @@ async function onSubmit() {
             ...(f.triggerType === 'slash_command'
                 ? { slashCommandName: f.slashCommandName.trim(), slashCommandDescription: f.slashCommandDescription }
                 : { messagePatternKind: f.messagePatternKind as 'startswith' | 'endswith' | 'regex', messagePatternValue: f.messagePatternValue.trim() }),
-            integrationTypes: f.integrationTypes,
+            // message_pattern 沒有安裝面 — 不送 integrationTypes(BH-0.2)
+            ...(f.triggerType === 'slash_command'
+                ? { integrationTypes: f.integrationTypes }
+                : {}),
             scopeTabId: props.scopeTabId,
             webhookUrl: f.webhookUrl.trim(),
             ...(f.webhookSecret
