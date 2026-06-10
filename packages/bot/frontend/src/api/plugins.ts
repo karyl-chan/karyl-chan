@@ -138,6 +138,19 @@ export interface PluginRecord {
   enabled: boolean;
   lastHeartbeatAt: string | null;
   manifest: PluginManifest | null;
+  /** RPC scopes the manifest declares (the *requested* set). */
+  rpcMethods?: string[];
+  /** Admin-approved subset the issued token actually carries (PM-3.1). */
+  approvedRpcScopes?: string[];
+  /** requested − approved: scopes still awaiting admin approval. */
+  pendingRpcScopes?: string[];
+}
+
+/** RPC scope approval state returned by the approve/deny endpoint. */
+export interface PluginScopeState {
+  requested: string[];
+  approved: string[];
+  pending: string[];
 }
 
 export async function listPlugins(): Promise<PluginRecord[]> {
@@ -165,6 +178,24 @@ export async function setPluginEnabled(
     plugin: { id: number; pluginKey: string; enabled: boolean };
   }>(r);
   return body.plugin;
+}
+
+/**
+ * PUT /api/plugins/:id/scopes — approve / deny a plugin's RPC scopes.
+ * `approved` is the full set to grant (not a delta); the bot clamps it to
+ * what the manifest requests and applies it to the live token at once.
+ */
+export async function setPluginApprovedScopes(
+  id: number,
+  approved: string[],
+): Promise<PluginScopeState> {
+  const r = await authedFetch(`/api/plugins/${id}/scopes`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ approved }),
+  });
+  const body = await jsonOrThrow<{ scopes: PluginScopeState }>(r);
+  return body.scopes;
 }
 
 // ─── Plugin-level config (admin-editable) ──────────────────────────

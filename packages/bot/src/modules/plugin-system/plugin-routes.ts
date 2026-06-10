@@ -368,6 +368,13 @@ export async function registerPluginRoutes(
         lastHeartbeatAt: p.lastHeartbeatAt,
         manifest: safeParse(p.manifestJson),
         rpcMethods: manifestRpcMethods(p.manifestJson),
+        // RPC scope approval state (PM-3.1). rpcMethods are the
+        // *requested* scopes; approved is the admin-granted subset the
+        // token actually carries; pending is the still-unapproved delta.
+        approvedRpcScopes: p.approvedRpcScopes,
+        pendingRpcScopes: manifestRpcMethods(p.manifestJson).filter(
+          (m) => !p.approvedRpcScopes.includes(m),
+        ),
       })),
     };
   });
@@ -465,6 +472,11 @@ export async function registerPluginRoutes(
           lastHeartbeatAt: p.lastHeartbeatAt,
           manifest: safeParse(p.manifestJson),
           rpcMethods: manifestRpcMethods(p.manifestJson),
+          // RPC scope approval state (PM-3.1), same shape as the list route.
+          approvedRpcScopes: p.approvedRpcScopes,
+          pendingRpcScopes: manifestRpcMethods(p.manifestJson).filter(
+            (m) => !p.approvedRpcScopes.includes(m),
+          ),
           pluginCommands: thirdTrackCommands.map((c) => ({
             id: c.id,
             name: c.name,
@@ -1231,6 +1243,49 @@ export async function registerPluginRoutes(
           enabled: updated.enabled,
         },
       };
+    },
+  );
+
+  /**
+   * PUT /api/plugins/:id/scopes — admin approve / deny RPC scopes (PM-3.2).
+   *
+   * Body: { approved: string[] }. The set is clamped to what the
+   * manifest actually requests (an admin can't grant an undeclared
+   * scope), persisted, and applied to the plugin's live token at once —
+   * no re-register needed. "Approve all" is just this with the full
+   * requested list. Returns the new { requested, approved, pending }.
+   *
+   * Requires admin capability.
+   */
+  server.put<{ Params: { id: string }; Body: { approved?: unknown } }>(
+    "/api/plugins/:id/scopes",
+    async (request, reply) => {
+      if (!requireCapability(request, reply, "admin")) return;
+      const id = Number(request.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        reply.code(400).send({ error: "invalid id" });
+        return;
+      }
+      const approvedRaw = request.body?.approved;
+      if (
+        !Array.isArray(approvedRaw) ||
+        !approvedRaw.every((s) => typeof s === "string")
+      ) {
+        reply.code(400).send({ error: "approved must be a string array" });
+        return;
+      }
+      const state = await pluginRegistry.setApprovedScopes(id, approvedRaw);
+      if (!state) {
+        reply.code(404).send({ error: "plugin not found" });
+        return;
+      }
+      botEventLog.record(
+        "info",
+        "bot",
+        `Plugin RPC scopes set by admin (${state.approved.length} approved, ${state.pending.length} pending)`,
+        { pluginId: id, ...state, actor: request.authUserId },
+      );
+      return { scopes: state };
     },
   );
 
