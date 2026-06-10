@@ -88,8 +88,30 @@ export const useDmStore = defineStore('discord-dm', () => {
                     }
                 }
             },
-            onError: () => {}
+            onError: () => {},
+            onResync() {
+                void resync();
+            }
         });
+    }
+
+    // The SSE server couldn't replay the reconnect gap (buffer overflow or a
+    // restart). Reconcile by reloading the channel list + unread counts, and
+    // force-refetching the open conversation so it can't stay silently stale.
+    async function resync() {
+        try {
+            await loadChannels();
+        } catch {
+            /* error already surfaced via error.value */
+        }
+        const openId = useUnreadStore().currentChannelId;
+        if (openId) {
+            try {
+                await useMessageCacheStore().reload(openId, apiGetMessages);
+            } catch {
+                /* keep the cached view; the next interaction retries */
+            }
+        }
     }
 
     // Closes the live event stream and resets the in-memory channel list.

@@ -1486,12 +1486,19 @@ export async function removeGuildReaction(
 export interface GuildEventStreamHandlers {
   onEvent: (event: GuildChannelEvent) => void;
   onError?: (event: Event) => void;
+  /** The server couldn't replay the reconnect gap (buffer overflow or a
+   *  restart) and asked the client to reconcile with a full reload. */
+  onResync?: () => void;
 }
 
 export function subscribeGuildEvents(
   handlers: GuildEventStreamHandlers,
 ): () => void {
+  // Track the last stream id so a reconnect can ask the server to replay the
+  // gap (?lastEventId=). MessageEvent.lastEventId is set from each `id:` line.
+  let lastEventId: string | undefined;
   const dispatch = (raw: MessageEvent) => {
+    if (raw.lastEventId) lastEventId = raw.lastEventId;
     try {
       const data = JSON.parse(raw.data) as GuildChannelEvent;
       handlers.onEvent(data);
@@ -1499,10 +1506,16 @@ export function subscribeGuildEvents(
       // ignore malformed events
     }
   };
+  const onResync = (raw: MessageEvent) => {
+    if (raw.lastEventId) lastEventId = raw.lastEventId;
+    handlers.onResync?.();
+  };
   return openTicketedSse("/api/guilds/events", {
     onEvent: dispatch,
     onError: handlers.onError,
+    getLastEventId: () => lastEventId,
     bindEventListeners(source) {
+      source.addEventListener("resync", onResync as EventListener);
       source.addEventListener(
         "guild-message-created",
         dispatch as EventListener,

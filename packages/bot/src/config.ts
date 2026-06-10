@@ -130,6 +130,7 @@ export interface AppConfig {
     maxFetchCount: number;
     maxAttachmentBytes: number;
     sseMaxListeners: number;
+    sseReplayBufferSize: number;
   };
   logging: {
     /** Pino log level. Defaults to "info" in production, "debug" otherwise. */
@@ -352,6 +353,11 @@ function loadConfig(): AppConfig {
       maxFetchCount: parseIntEnv("DM_MAX_FETCH_COUNT", 500),
       maxAttachmentBytes: parseIntEnv("DM_MAX_ATTACHMENT_BYTES", 1_000_000),
       sseMaxListeners: parseIntEnv("SSE_MAX_LISTENERS", 200),
+      // How many recent durable DM events to retain for SSE reconnect replay.
+      // A client that reconnects within this many events of its last-seen id
+      // recovers the gap exactly; a larger gap (or a server restart) triggers a
+      // full client resync instead.
+      sseReplayBufferSize: parseIntEnv("DM_SSE_REPLAY_BUFFER_SIZE", 512),
     },
     logging: {
       level: strEnv("LOG_LEVEL") ?? (env === "production" ? "info" : "debug"),

@@ -370,7 +370,7 @@ describe("DM routes", () => {
   describe("GET /api/dm/events SSE listener limit", () => {
     it("returns 503 when the event bus is at its listener limit", async () => {
       // Build a bus with limit=1 and fill the single slot.
-      const fullBus = new DmEventBus(1);
+      const fullBus = new DmEventBus({ maxListeners: 1 });
       fullBus.subscribe(() => {});
 
       const bot = fakeBot({});

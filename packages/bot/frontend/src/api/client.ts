@@ -170,6 +170,11 @@ export interface TicketedSseHandlers {
     onOpen?: () => void;
     /** Optional. Called when an EventSource errors (before reconnect). */
     onError?: (event: Event) => void;
+    /** Optional. The last stream id the consumer has seen. Sent as
+     *  ?lastEventId= on every (re)connect so a replay-capable server can
+     *  resend the events missed during the gap. Endpoints that don't emit
+     *  `id:` frames simply never have one, so this stays a no-op for them. */
+    getLastEventId?: () => string | undefined;
 }
 
 /**
@@ -196,7 +201,10 @@ export function openTicketedSse(path: string, handlers: TicketedSseHandlers): ()
             // signed out; the next route guard / 401 will redirect them.
             return;
         }
-        const url = `${path}?ticket=${encodeURIComponent(ticket)}`;
+        const lastEventId = handlers.getLastEventId?.();
+        const url =
+            `${path}?ticket=${encodeURIComponent(ticket)}` +
+            (lastEventId ? `&lastEventId=${encodeURIComponent(lastEventId)}` : '');
         const source = new EventSource(url);
         current = source;
         source.onopen = () => {

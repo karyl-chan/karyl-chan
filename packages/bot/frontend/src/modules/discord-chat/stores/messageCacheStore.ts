@@ -98,6 +98,24 @@ export const useMessageCacheStore = defineStore('discord-message-cache', () => {
         }
     }
 
+    // Force-refetch the latest page, replacing the cached messages even if the
+    // channel was already loaded. Used by the SSE resync path (the server
+    // couldn't replay the gap) so the open conversation can't stay silently
+    // stale. applyEvent's id-dedup keeps any concurrent live events consistent.
+    async function reload(channelId: string, listFn: ListMessagesFn): Promise<void> {
+        const entry = getOrCreate(channelId);
+        if (entry.loadingInitial) return;
+        entry.loadingInitial = true;
+        try {
+            const result = await listFn(channelId, { limit: PAGE_SIZE });
+            entry.messages = result.messages;
+            entry.hasMore = result.hasMore;
+            entry.loaded = true;
+        } finally {
+            entry.loadingInitial = false;
+        }
+    }
+
     async function loadOlder(channelId: string, listFn: ListMessagesFn): Promise<void> {
         const entry = entries[channelId];
         if (!entry?.loaded || entry.loadingOlder || !entry.hasMore || entry.messages.length === 0) return;
@@ -218,6 +236,7 @@ export const useMessageCacheStore = defineStore('discord-message-cache', () => {
         get,
         isLoaded,
         ensureLoaded,
+        reload,
         loadOlder,
         loadAround,
         applyEvent,
