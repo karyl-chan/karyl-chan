@@ -40,8 +40,17 @@ export const useUserSummaryStore = defineStore("user-summary", () => {
         const newExp = Date.now() + TTL_MS;
         const next = { ...summaries.value };
         for (const id of chunk) {
-          next[id] = result[id] ?? null;
-          expiresAt.set(id, newExp);
+          // Only cache ids the backend actually answered for. The bulk route
+          // returns EVERY requested id (null for genuinely-unknown users), so
+          // a present key means a real response — stamp it (caching null is a
+          // valid negative result). A transient fetch failure returns `{}`
+          // (see fetchUserSummaries), so those ids stay un-cached and retry on
+          // the next resolve instead of being poisoned to null for the full
+          // TTL.
+          if (id in result) {
+            next[id] = result[id];
+            expiresAt.set(id, newExp);
+          }
         }
         summaries.value = next;
       }
