@@ -18,6 +18,9 @@ import type { FastifyInstance } from "fastify";
 import type { BehaviorRoutesOptions } from "./behavior-helpers.js";
 import {
   requireBehaviorAdmin,
+  requireAnyBehaviorAccess,
+  hasGlobalBehaviorManage,
+  behaviorScopeAllowed,
   decryptedView,
   isValidWebhookUrl,
   isValidRegex,
@@ -35,6 +38,7 @@ import {
 import {
   BehaviorScopeTab,
   deriveFieldsFromTab,
+  scopeKeyOf,
   rowOf as tabRowOf,
 } from "./models/behavior-scope-tab.model.js";
 import { BehaviorSession } from "./models/behavior-session.model.js";
@@ -60,6 +64,23 @@ export async function registerBehaviorRoutes(
   server: FastifyInstance,
   options: BehaviorRoutesOptions = {},
 ): Promise<void> {
+  /**
+   * BH-5：per-row scope 守衛。全域 token 直接過；scoped token 比對該
+   * behavior 所屬 tab 的 scopeKey。tab 消失（理論上 FK 擋住）按拒絕處理。
+   */
+  async function guardRowScope(
+    request: Parameters<typeof requireAnyBehaviorAccess>[0],
+    reply: Parameters<typeof requireAnyBehaviorAccess>[1],
+    scopeTabId: number,
+  ): Promise<boolean> {
+    if (hasGlobalBehaviorManage(request)) return true;
+    const tabRow = await BehaviorScopeTab.findByPk(scopeTabId);
+    const key = tabRow ? scopeKeyOf(tabRowOf(tabRow)) : null;
+    if (key && behaviorScopeAllowed(request, key)) return true;
+    void reply.code(403).send({ error: "缺少此範圍的 behavior 管理權限" });
+    return false;
+  }
+
   function getReconciler(): CommandReconciler {
     if (!options.reconciler) {
       throw new Error("CommandReconciler not provided to behavior routes");
@@ -105,7 +126,7 @@ export async function registerBehaviorRoutes(
   // ── GET /api/behaviors ──────────────────────────────────────────────────────
 
   server.get("/api/behaviors", async (request, reply) => {
-    if (!requireBehaviorAdmin(request, reply)) return;
+    if (!requireAnyBehaviorAccess(request, reply)) return;
 
     const query = request.query as {
       scopeTabId?: string;
@@ -151,14 +172,28 @@ export async function registerBehaviorRoutes(
       ],
     });
 
-    const behaviors = rows.map((r) => decryptedView(rowOfBehavior(r)));
+    // BH-5：scoped token 只看得到自己 tab 的 rows
+    let visible = rows;
+    if (!hasGlobalBehaviorManage(request)) {
+      const tabRows = await BehaviorScopeTab.findAll();
+      const allowedTabIds = new Set(
+        tabRows
+          .filter((t) => behaviorScopeAllowed(request, scopeKeyOf(tabRowOf(t))))
+          .map((t) => t.getDataValue("id") as number),
+      );
+      visible = rows.filter((r) =>
+        allowedTabIds.has(r.getDataValue("scopeTabId") as number),
+      );
+    }
+
+    const behaviors = visible.map((r) => decryptedView(rowOfBehavior(r)));
     return reply.send({ behaviors });
   });
 
   // ── GET /api/behaviors/:id ──────────────────────────────────────────────────
 
   server.get("/api/behaviors/:id", async (request, reply) => {
-    if (!requireBehaviorAdmin(request, reply)) return;
+    if (!requireAnyBehaviorAccess(request, reply)) return;
 
     const { id } = request.params as { id: string };
     const numId = parseInt(id, 10);
@@ -170,6 +205,15 @@ export async function registerBehaviorRoutes(
     if (!row) {
       return reply.code(404).send({ error: "Behavior 不存在" });
     }
+    if (
+      !(await guardRowScope(
+        request,
+        reply,
+        row.getDataValue("scopeTabId") as number,
+      ))
+    ) {
+      return;
+    }
 
     return reply.send({ behavior: decryptedView(rowOfBehavior(row)) });
   });
@@ -178,7 +222,13 @@ export async function registerBehaviorRoutes(
   // admin 只能建立 source=custom（webhook URL）的 behavior；system 由系統 seed。
 
   server.post("/api/behaviors", async (request, reply) => {
-    if (!requireBehaviorAdmin(request, reply)) return;
+    if (!requireAnyBehaviorAccess(request, reply)) return;
+    // BH-5：建立目標 tab 的 scope 檢查（未帶 scopeTabId 時預設 global_all=1）
+    {
+      const tabId =
+        (request.body as { scopeTabId?: number } | null)?.scopeTabId ?? 1;
+      if (!(await guardRowScope(request, reply, tabId))) return;
+    }
 
     const body = request.body as {
       title?: string;
@@ -395,7 +445,7 @@ export async function registerBehaviorRoutes(
   // system：只能改 trigger value（slashCommandName / messagePatternValue）+ enabled
 
   server.patch("/api/behaviors/:id", async (request, reply) => {
-    if (!requireBehaviorAdmin(request, reply)) return;
+    if (!requireAnyBehaviorAccess(request, reply)) return;
 
     const { id } = request.params as { id: string };
     const numId = parseInt(id, 10);
@@ -409,6 +459,9 @@ export async function registerBehaviorRoutes(
     }
 
     const existingRow = rowOfBehavior(existing);
+    if (!(await guardRowScope(request, reply, existingRow.scopeTabId))) {
+      return;
+    }
     const body = request.body as Record<string, unknown>;
     const patch: Record<string, unknown> = {};
 
@@ -795,7 +848,7 @@ export async function registerBehaviorRoutes(
   // ── DELETE /api/behaviors/:id ───────────────────────────────────────────────
 
   server.delete("/api/behaviors/:id", async (request, reply) => {
-    if (!requireBehaviorAdmin(request, reply)) return;
+    if (!requireAnyBehaviorAccess(request, reply)) return;
 
     const { id } = request.params as { id: string };
     const numId = parseInt(id, 10);
@@ -809,6 +862,9 @@ export async function registerBehaviorRoutes(
     }
 
     const existingRow = rowOfBehavior(existing);
+    if (!(await guardRowScope(request, reply, existingRow.scopeTabId))) {
+      return;
+    }
     if (existingRow.source === "system") {
       return reply.code(403).send({ error: "system behavior 不可刪除" });
     }
@@ -837,7 +893,7 @@ export async function registerBehaviorRoutes(
   // ── POST /api/behaviors/:id/resync ──────────────────────────────────────────
 
   server.post("/api/behaviors/:id/resync", async (request, reply) => {
-    if (!requireBehaviorAdmin(request, reply)) return;
+    if (!requireAnyBehaviorAccess(request, reply)) return;
 
     const { id } = request.params as { id: string };
     const numId = parseInt(id, 10);
@@ -848,6 +904,15 @@ export async function registerBehaviorRoutes(
     const existing = await Behavior.findByPk(numId);
     if (!existing) {
       return reply.code(404).send({ error: "Behavior 不存在" });
+    }
+    if (
+      !(await guardRowScope(
+        request,
+        reply,
+        existing.getDataValue("scopeTabId") as number,
+      ))
+    ) {
+      return;
     }
 
     const result = await getReconciler().reconcileForBehavior(numId);
@@ -907,12 +972,18 @@ export async function registerBehaviorRoutes(
 
   // GET /api/behavior-groups/:groupName/members
   server.get("/api/behavior-groups/:groupName/members", async (request, reply) => {
-    if (!requireBehaviorAdmin(request, reply)) return;
+    if (!requireAnyBehaviorAccess(request, reply)) return;
     const groupName = decodeURIComponent(
       (request.params as { groupName: string }).groupName,
     ).trim();
     if (!groupName) {
       return reply.code(400).send({ error: "groupName 為必填" });
+    }
+    if (
+      !hasGlobalBehaviorManage(request) &&
+      !behaviorScopeAllowed(request, `group:${groupName}`)
+    ) {
+      return reply.code(403).send({ error: "缺少此 group 的管理權限" });
     }
     const members = await findGroupMembers(groupName);
     return reply.send({ groupName, members });
@@ -921,12 +992,18 @@ export async function registerBehaviorRoutes(
   // PUT /api/behavior-groups/:groupName/members { userIds: string[] }
   // 全量替換（與 UI 的編輯-儲存模型一致；增/刪都走同一條）。
   server.put("/api/behavior-groups/:groupName/members", async (request, reply) => {
-    if (!requireBehaviorAdmin(request, reply)) return;
+    if (!requireAnyBehaviorAccess(request, reply)) return;
     const groupName = decodeURIComponent(
       (request.params as { groupName: string }).groupName,
     ).trim();
     if (!groupName || groupName.length > 200) {
       return reply.code(400).send({ error: "groupName 為必填（max 200）" });
+    }
+    if (
+      !hasGlobalBehaviorManage(request) &&
+      !behaviorScopeAllowed(request, `group:${groupName}`)
+    ) {
+      return reply.code(403).send({ error: "缺少此 group 的管理權限" });
     }
     const body = request.body as { userIds?: unknown };
     if (!Array.isArray(body?.userIds)) {
