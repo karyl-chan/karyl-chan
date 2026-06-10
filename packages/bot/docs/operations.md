@@ -2,6 +2,10 @@
 
 Day-2 procedures: backup, logs, upgrades, common troubleshooting.
 
+> The `docker compose … bot` commands below assume a deployment compose
+> with a `bot` service. A ready-made compose example is not yet provided
+> in-repo (to be added later) — see [`setup.md`](setup.md#docker-deployment).
+
 ## Database
 
 SQLite, single file:
@@ -85,12 +89,13 @@ docker compose logs --since 1h bot        # last hour
 
 ### Upgrading the deployed version
 
-The shipped `docker-compose.yml` builds from source. Upgrade by pulling
-new code and rebuilding:
+Pull the new bot image (or new code, if your deployment compose builds
+from source) and recreate the container:
 
 ```bash
-git pull
-pnpm docker:up        # docker compose up -d --build
+docker compose pull bot && docker compose up -d bot   # published image
+# or, for a source-building compose:
+git pull && docker compose up -d --build bot
 ```
 
 ### Schema changes on upgrade
@@ -185,9 +190,9 @@ Privileged intents are not enabled in the Discord developer portal. See
 
 ### Restart policy
 
-`docker-compose.yml` sets `restart: unless-stopped`. The container is
-restarted automatically after a crash; it stays down after a manual
-`docker compose stop`.
+Set `restart: unless-stopped` on the bot service in your deployment compose:
+the container is then restarted automatically after a crash; it stays down
+after a manual `docker compose stop`.
 
 ### Data volume
 

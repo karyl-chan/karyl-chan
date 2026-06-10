@@ -41,13 +41,11 @@ pnpm build:sdk              # build only the plugin SDK
 pnpm --filter @karyl-chan/bot dev         # transpile-only run (no watch)
 pnpm --filter @karyl-chan/bot start       # nodemon watch mode
 pnpm --filter @karyl-chan/bot preflight   # build + typecheck + test + frontend
-pnpm docker:up                            # build + start in Docker, wait for healthy
-pnpm docker:down                          # stop the Docker bot
 ```
 
 Configuration lives in `packages/bot/.env` (copy from `.env.example`). See
-[`packages/bot/docs/setup.md`](packages/bot/docs/setup.md). Docker Compose
-configuration is at `packages/bot/docker-compose.yml`.
+[`packages/bot/docs/setup.md`](packages/bot/docs/setup.md). A Docker Compose
+deployment example is not yet provided in-repo (to be added later).
 
 ## Release process
 

@@ -64,9 +64,6 @@ migrations directory suffices.
 ```bash
 # After adding a new migration, restart the bot:
 pnpm dev    # ts-node picks up *.ts straight from src/migrations/
-
-# Or, against a built container:
-docker compose -f docker-compose.bot.yml up --build -d bot
 ```
 
 The runner logs every applied migration via the `db-migrations` pino

@@ -23,9 +23,6 @@ pnpm install
 cd packages/bot
 cp .env.example .env        # fill in BOT_TOKEN, ENCRYPTION_KEY, ...
 pnpm start                  # nodemon watch mode
-
-# Or, from the monorepo root, to run in Docker
-pnpm docker:up              # build + start, wait for healthy
 ```
 
 See [`docs/setup.md`](docs/setup.md) for the full setup walkthrough.

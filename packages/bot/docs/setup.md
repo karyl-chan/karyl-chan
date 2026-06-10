@@ -69,22 +69,15 @@ See [`development.md`](development.md) for the full development guide.
 
 ## Docker deployment
 
-The shipped `packages/bot/docker-compose.yml` builds the image from source
-(the build context is the monorepo root). From the monorepo root:
+A Docker Compose deployment example is not yet provided in-repo (to be
+added later). When deploying, note:
 
-```bash
-pnpm docker:up         # docker compose up -d --build; waits for healthy
-pnpm docker:down
-```
-
-The `packages/bot/.env` file must exist. The compose file bind-mounts
-`./data` (for the SQLite file) and, if `CERTS_DIR` is set, the
-certificate directory.
-
-> Every push to `main` and every release also publishes the bot image to
-> `ghcr.io/<owner>/karyl-chan-bot`. To deploy from the published image
-> instead of building from source, write a compose file that points at
-> the ghcr image; the repository ships only the build-from-source compose.
+- The bot image is published to `ghcr.io/<owner>/karyl-chan-bot` on every
+  push to `main` (`:edge`) and every release (`:<version>` + `:latest`), so
+  a deployment compose can pull that image rather than build from source.
+- The container needs the `packages/bot/.env` configuration, a bind mount
+  for the SQLite data directory (`./data/database.sqlite`), and — if
+  `CERTS_DIR` is set — the certificate directory.
 
 ## First-run checklist
 

@@ -186,8 +186,7 @@ Confirm `package.json` has `"type": "module"`. Execution must use
 ### `sqlite3` or `@discordjs/opus` fails to install
 
 The build needs a C/C++ toolchain (on Windows: Visual Studio Build
-Tools; on Linux: `build-essential`). Alternative: use the Docker
-development path with `pnpm docker:up`.
+Tools; on Linux: `build-essential`).
 
 ### Vitest cannot find `dns/promises`
 

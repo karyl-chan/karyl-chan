@@ -15,9 +15,7 @@
     "build:bot": "pnpm --filter @karyl-chan/bot build",
     "test": "pnpm -r test",
     "lint": "pnpm -r --if-present lint",
-    "clean": "pnpm -r exec rm -rf dist build dist-test node_modules && rm -rf node_modules",
-    "docker:up": "docker compose -f packages/bot/docker-compose.yml up -d --build",
-    "docker:down": "docker compose -f packages/bot/docker-compose.yml down"
+    "clean": "pnpm -r exec rm -rf dist build dist-test node_modules && rm -rf node_modules"
   },
   "devDependencies": {
     "typescript": "^6.0.3"
