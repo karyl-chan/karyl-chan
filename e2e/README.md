@@ -17,6 +17,7 @@ nothing here can turn the default CI run red.
 | File | Flag (gate) | What it proves |
 |---|---|---|
 | `src/streams-roundtrip.e2e.ts` | `TEST_E2E_REDIS_URL` | Real event round-trip: bot `RedisStreamsPluginEventBus` producer → real Redis → SDK `StreamsConsumer` → handler → `XACK`. Producer/consumer agree on stream key, fields, ack semantics against a live broker. |
+| `src/plugin-lifecycle.e2e.ts` | `TEST_E2E_DB_URL` (Postgres URL) | **PM-2.1 core path 3** — the whole external-author journey over real HTTP: spawned bot (`BOT_SKIP_DISCORD`, dev unauth bypass via empty owner ids) → admin mints setup secret → real `definePlugin().start()` registers → `commandSync` settles in the background (register never waits on it, PM-7.1) → register ≠ enabled asserted → admin enable → plugin-token RPC → HMAC-signed dispatch → handler writes bot-side KV → read-back → graceful deregister flips the row inactive → SIGTERM drains the bot within 15s. Needs Postgres (NOT sqlite — the host-run bot would hit the glibc-sensitive `sqlite3` native binding). Run: `docker compose -f e2e/docker-compose.e2e.yml --profile full up -d postgres`, then `TEST_E2E_DB_URL=postgres://postgres:e2e@localhost:55433/karyl_e2e pnpm --dir e2e e2e`. |
 | `src/chaos-scenarios.chaos.ts` | `TEST_CHAOS=1` | Fault-injection scaffold: kill plugin, kill Redis, network partition, gateway resume window. Scenarios are declared + the runner is wired; the actual fault-injection steps are documented TODOs pending a services-up lane. |
 
 ## Prerequisites
