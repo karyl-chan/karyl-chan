@@ -3,9 +3,9 @@ import { sequelize } from "../../../db.js";
 
 /**
  * A named bucket of emoji→role mappings inside a guild. A watched
- * message can be associated with one or more groups; reactions only
- * resolve to a role when the emoji belongs to one of the message's
- * groups (or, when no groups are pinned, any group in the guild).
+ * message is bound to exactly one group (`RoleReceiveMessage.groupId`,
+ * NOT NULL); a reaction resolves to a role only when the emoji belongs
+ * to that message's group.
  *
  * The groups model lets one guild keep several independent reaction
  * sets — for example, a "self-assignable colours" board and a "pings

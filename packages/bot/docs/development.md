@@ -72,9 +72,12 @@ frontend/                      # nested admin SPA (Vue); built and served by the
 docs/                          # this file lives here
 ```
 
-DB schema is defined per module under `models/`; `sequelize.sync()` builds
-the tables at startup. There is no separate migration system.
-Schema-evolution notes are in [`operations.md`](operations.md#upgrades).
+DB schema is defined per module under `models/`. At startup `sequelize.sync()`
+**creates** missing tables, then `runMigrations()` ([`src/db-migrations.ts`](../src/db-migrations.ts))
+applies any incremental schema changes via an Umzug runner (tracked in
+`SequelizeMeta`). Add a migration as `src/migrations/NNN-short-name.ts` (see
+[`src/migrations/README.md`](../src/migrations/README.md)). Schema-evolution
+notes are in [`operations.md`](operations.md#upgrades).
 
 The SOPs for adding a feature, an endpoint, an event handler, or a model
 are in [`architecture.md`](architecture.md).
@@ -131,9 +134,11 @@ pnpm test:typecheck             # type-check tests/
 
 ## Adding a capability
 
-1. Add a key to `CAPABILITIES` in
-   `src/modules/admin/admin-capabilities.ts`, in `feature.action` form.
-2. Add the corresponding default to `EVERYONE_DEFAULTS`.
+1. Add a key + description to `GLOBAL_CAPABILITY_DESCRIPTIONS` in
+   `src/modules/admin/admin-capabilities.ts`, in `feature.action` form
+   (`GLOBAL_CAPABILITY_KEYS` derives from it). Guild-scoped sub-actions go
+   under `GUILD_SCOPES`.
+2. Grant it where appropriate in `DEFAULT_ROLES` (the seeded role defaults).
 3. Use `requireCapability(...)` or `requireGuildCapability(...)` in the
    route or event handler (import from `web-core/route-guards.js`).
 4. Add a case in `tests/admin-capabilities.test.ts` covering the default.

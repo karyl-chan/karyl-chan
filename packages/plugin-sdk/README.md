@@ -336,7 +336,7 @@ await kv.set(`r:${row.id}`, row);           // JSON.stringify under the hood
 const row = await kv.get(`r:${id}`);        // returns Reminder | null
 const { entries, total } = await kv.listValues({ prefix: 'r:', limit: 50 });
 await kv.delete(`r:${id}`);                 // returns true when row existed
-const next = await kv.increment('counter'); // atomic numeric increment
+const { value: next } = await kv.increment('counter'); // atomic numeric increment
 const { usedBytes, quotaBytes } = await kv.usage();
 ```
 
@@ -344,7 +344,7 @@ Hard caps (importable as constants):
 
 | Constant | Value | Meaning |
 |----------|-------|---------|
-| `KV_KEY_MAX` | `256` | Max key length in characters. |
+| `KV_KEY_MAX` | `200` | Max key length in characters. |
 | `KV_VALUE_MAX_BYTES` | `65_536` | Max serialised value size per row. |
 
 Per-guild quota is configurable in the manifest:

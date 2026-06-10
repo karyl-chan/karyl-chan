@@ -51,8 +51,9 @@ the API:
 | `break` | `/break` | End the caller's active continuous-forward session. |
 
 All three are registered globally with dual-install enabled, and
-`contexts` is restricted to `BotDM` and `PrivateChannel`; they do not
-appear in the guild command UI.
+`contexts` is restricted to `BotDM` (the seeded home is `all_bot_dms`;
+older `all_dms` rows that also carried `PrivateChannel` are self-migrated
+off it); they do not appear in the guild command UI.
 
 ### Forward types (`forwardType`)
 
@@ -62,8 +63,11 @@ appear in the guild command UI.
   directly to the same webhook until the session ends. Sessions persist
   across bot restarts.
 
-`stopOnMatch` controls whether to keep evaluating other behaviors after a
-match.
+`stopOnMatch` is persisted and editable but **not currently wired into
+evaluation**: the DM matcher returns on the first match, and slash dispatch
+is first-claim-wins over a unique `(slashCommandName, scope, contexts)`
+index, so there is never a "next behavior" to keep or skip. Treat the field
+as reserved.
 
 ## Evaluation and dispatch
 
@@ -111,11 +115,13 @@ evaluation path.
 Bot → webhook (the URL is automatically suffixed with `?wait=true` to
 obtain a synchronous response):
 
-- `content` — DM message body, with attachment URLs appended.
+- `content` — the DM message body (`message.content`, verbatim).
 - `username` and `avatar_url` — caller's display name and avatar.
-- `embeds` — embeds from the source message.
-- `allowed_mentions: { parse: [] }` — prevents the source from
-  re-triggering mentions.
+
+(The outbound payload carries only those three fields — no `embeds`,
+`allowed_mentions`, or appended attachment URLs. The `allowed_mentions: { parse: [] }`
+guard is applied to the bot's *response* relayed back into the DM, not to
+this outbound webhook call.)
 
 Webhook → bot — the response (`APIMessage`)'s `content` is relayed back
 to the caller's DM.

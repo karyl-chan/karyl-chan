@@ -96,8 +96,8 @@ Up to 10 forwards per channel per minute. Over-limit messages get a
 
 ### Reconnect policy
 
-Connection errors are retried with exponential backoff (1s → 2s → 4s →
-up to 30s) for up to three attempts. After three failures the connection
+Connection errors are retried with exponential backoff (`min(1000 · 2^n, 30s)`,
+so 2s → 4s → 8s) for up to three attempts. After three failures the connection
 closes and the channel is notified. Connections idle for 30 minutes are
 cleaned up.
 

@@ -157,7 +157,8 @@ with `ctx.botRpc(path, body)` as escape hatch):
   omitting `paused` toggles), `voice.stop`, `voice.status`, `voice.leave`
   — all available as `ctx.voice.*`.
 - `members.get` (`ctx.discord.members.get`).
-- `auth.session` and KV access (no typed facade yet — use `ctx.botRpc`).
+- `auth.session` via `ctx.auth.mintSession(...)`, and KV access via
+  `ctx.kv.guild(guildId).get/set/...`.
 
 `messages.send` and `messages.edit` are gated by the per-guild feature
 toggle: the plugin must have at least one enabled feature in the target
@@ -167,7 +168,8 @@ channel's guild to send or edit messages there.
 
 Every `/api/plugin/*` call (via either the typed facade or
 `ctx.botRpc`) throws `BotRpcError` on failure with
-`reason: 'no_token' | 'network' | 'http_status'`. The SDK auto-retries
+`reason: 'no_token' | 'network' | 'forbidden' | 'quota_exceeded' | 'rate_limited' | 'http_status'`.
+The SDK auto-retries
 on `503` / `429` / network errors up to 3 times with exponential
 backoff (200 ms base, 1.5 s cap, ±30% jitter; respects `Retry-After`).
 Other `5xx` and any `4xx` (other than `429`) are surfaced immediately

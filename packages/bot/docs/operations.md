@@ -75,10 +75,10 @@ docker compose logs --since 1h bot        # last hour
 | Message | Meaning |
 |---------|---------|
 | `bot started` | Logged in to the gateway and finished slash command registration. |
-| `Connection authenticated: <host>:<port>` | RCON handshake succeeded. |
-| `Received response from <host>:<port> (N bytes)` | RCON response received; the line records the body length only, never the contents. |
+| `Connection authenticated` (+ `connectionName` field) | RCON handshake succeeded. |
+| `Received response` (+ `connectionName`, `bytes` fields) | RCON response received; the line records the body length only, never the contents. |
 | `decryptSecret: unsupported pre-v2 encryption format detected` | The database holds a pre-v2 encrypted value that this build cannot decrypt. |
-| `Cleaning up inactive connection: <host>:<port>` | An idle RCON connection was reaped after 30 minutes. |
+| `Cleaning up inactive connection` (+ `connectionName` field) | An idle RCON connection was reaped after the idle timeout (default 30 minutes). |
 | `Unhandled promise rejection: ...` | An uncaught promise rejection that needs investigation. |
 
 ## Upgrades
@@ -100,14 +100,16 @@ creates missing tables at startup. `sync()` only **creates** missing
 tables; it never ALTERs an existing table (no column additions, no index
 changes, no CHECK changes).
 
-The old Umzug migration system has been removed. There is currently **no
-mechanism** for evolving the schema of an existing database:
+Incremental schema changes are handled by an Umzug-backed migration runner
+(`packages/bot/src/db-migrations.ts`), called on every boot right after
+`sync()` (`runMigrations(sequelize, "main")` in `main.ts`). Applied
+migrations are tracked in the `SequelizeMeta` table:
 
-- **Fresh install.** `sync()` builds the full and correct schema in one
-  step; nothing else to do.
-- **Existing DB schema changes.** No automatic mechanism — ALTER
-  manually. The long-term policy is unresolved (see the
-  `TODO(schema-evolution)` note in `packages/bot/src/main.ts`).
+- **Fresh install.** `sync()` builds the current table shapes; the runner
+  then records the existing `src/migrations/NNN-*` files as applied.
+- **Existing DB schema changes.** Add `src/migrations/NNN-short-name.ts`
+  with an `up(ctx)` (optional `down(ctx)`); the runner applies it on next
+  boot in filename-lexical order. See `src/migrations/README.md`.
 - **Pre-v2 DB compatibility.** The one-time encryption-v2 uplift
   migration is gone; this build can only decrypt v2 ciphertexts.
   Restoring a pre-v2 backup will throw when reading an encrypted

@@ -21,12 +21,19 @@ All commands require the Discord `Manage Channels` permission, enforced via
 | Command | Description |
 |---------|-------------|
 | `/todo-channel watch` | Register the current channel as a todo list. Idempotent — re-running on an already-watched channel returns "No action". |
-| `/todo-channel stop-watch` | Stop watching the current channel. Existing todo records are removed. |
+| `/todo-channel stop-watch` | Stop watching the current channel. Only the channel registration is removed; existing todo records are left in place (pruned lazily on a later rotation if the channel is re-watched). |
 | `/todo-channel check-cache` | Scan the last 100 messages in the channel and register any qualifying ones as todos. Use this to catch up after bot downtime. |
 
 ## Rules
 
 ### What counts as a todo
+
+On the realtime `messageCreate` path, any non-bot message in a watched
+channel that does **not** @-mention the bot is recorded as a todo (the
+@-mention-the-bot case is reserved for the done/rotation handling).
+
+The stricter filters below apply only to the `/todo-channel check-cache`
+backfill:
 
 - The author is not a bot.
 - The message mentions at least one member.

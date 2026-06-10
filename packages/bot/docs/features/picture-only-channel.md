@@ -32,7 +32,8 @@ attachments and do not satisfy the rule on their own.
 
 ### Exemptions and edge cases
 
-- Messages the bot posts itself are subject to the same rule.
+- Messages from bots and webhooks (including the bot's own) are exempt —
+  the handler returns early on `message.author.bot`.
 - Enforcement runs through `messageCreate`; messages sent while the bot is
   offline are not retroactively deleted.
 - A reply that adds text to an image-bearing message but carries no

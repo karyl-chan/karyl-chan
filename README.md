@@ -6,12 +6,14 @@ A pnpm monorepo containing the karyl-chan Discord bot and its plugin SDK.
 
 ```
 packages/
-├── bot/         # @karyl-chan/bot         Discord bot (HTTP API + nested Vue admin SPA)
-│   └── frontend/  # karyl-chan-frontend   Admin SPA, served as static assets by the bot
-└── plugin-sdk/  # @karyl-chan/plugin-sdk  Shared SDK consumed by external plugins
+├── bot/             # @karyl-chan/bot             Discord bot (HTTP API + nested Vue admin SPA)
+│   └── frontend/      # karyl-chan-frontend        Admin SPA, served as static assets by the bot
+├── voice/           # @karyl-chan/voice           Standalone voice connection/playback service
+├── ui/              # @karyl-chan/ui              Shared Vue UI components (admin SPA + plugin WebUIs)
+├── plugin-sdk/      # @karyl-chan/plugin-sdk      Shared SDK consumed by external plugins
+├── plugin-example/  # @karyl-chan/plugin-example  Reference plugin (manage UI + stateful session)
+└── plugin-reminder/ # @karyl-chan/plugin-reminder Reference reminder plugin
 ```
-
-A `ui` package for shared UI components is not yet created.
 
 ## Requirements
 
@@ -19,7 +21,7 @@ A `ui` package for shared UI components is not yet created.
 |------|---------|-------|
 | Node.js | `>= 22` | Enforced by each package's `engines`. |
 | pnpm | pinned by `packageManager` in the root `package.json` | Install via `corepack enable`. |
-| C/C++ toolchain | any recent | `sqlite3` and `@discordjs/opus` build from source (`.npmrc` sets `build_from_source=true`) to avoid prebuilt glibc-linkage issues. |
+| C/C++ toolchain | any recent | `sqlite3` source-builds (`.npmrc` sets `build_from_source=sqlite3`) to avoid prebuilt glibc-linkage issues; `@discordjs/opus` uses its prebuilt binary. Native postinstalls are allow-listed via `allowBuilds` in `pnpm-workspace.yaml`. |
 
 ## Development
 
@@ -58,16 +60,17 @@ Merging a release PR:
 
 1. Commits a `chore` to `main` that bumps the package's `package.json` and
    updates its `CHANGELOG.md`.
-2. Creates a GitHub release and a tag of the form `bot-v<x.y.z>` or
-   `plugin-sdk-v<x.y.z>`.
+2. Creates a GitHub release and a tag of the form `bot-v<x.y.z>`,
+   `plugin-sdk-v<x.y.z>`, or `ui-v<x.y.z>`.
 3. Triggers the package's publish workflow.
 
 | Workflow | Trigger | Output |
 |----------|---------|--------|
-| `.github/workflows/release-please.yml` | push to `main` | release PR per package (version proposal + CHANGELOG) |
+| `.github/workflows/release-please.yml` | push to `main` | release PR per package (bot, plugin-sdk, ui) |
 | `.github/workflows/publish-bot-image.yml` | push to `main` → `:edge`; tag `bot-v*` → `:<version>` + `:latest` | `ghcr.io/<owner>/karyl-chan-bot` (`:latest` only moves on a real release) |
 | `.github/workflows/publish-plugin-sdk.yml` | tag `plugin-sdk-v*` | `@karyl-chan/plugin-sdk` on GitHub Packages npm |
-| `.github/workflows/ci.yml` | push / pull request | build + test for both packages |
+| `.github/workflows/publish-ui.yml` | tag `ui-v*` | `@karyl-chan/ui` on GitHub Packages npm |
+| `.github/workflows/ci.yml` | push / pull request | build + test (matrix: bot, plugin-sdk, voice; the bot job also builds the frontend) |
 
 Commit messages must follow conventional commits to drive release-please
 decisions: `feat:` → minor, `fix:` → patch, footer `BREAKING CHANGE:` → major.

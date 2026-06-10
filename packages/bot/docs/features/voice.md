@@ -37,8 +37,10 @@ All `/voice` replies are ephemeral (visible only to the caller).
 
 - One `VoiceConnection` per guild. A second `join` moves the bot to the
   new channel.
-- Playback uses ffmpeg through `prism-media`. If ffmpeg is unavailable in
-  the runtime, `/voice play` returns "ffmpeg not available".
+- Playback uses ffmpeg through `prism-media` (feeding `@discordjs/voice`).
+  If ffmpeg is unavailable, `/voice play` still reports success and the
+  failure surfaces later as an `AudioPlayer` error event (playback simply
+  produces no audio) — there is no synchronous "ffmpeg not available" error.
 - Connection and playback state live in memory; the bot must be re-joined
   after a restart.
 
@@ -50,13 +52,16 @@ All `/voice` replies are ephemeral (visible only to the caller).
 ## Runtime requirements
 
 - The container image bundles `ffmpeg` (installed in the bot's Dockerfile).
-- For local development, ensure `ffmpeg` is on `PATH`; override with
-  `FFMPEG_PATH` if needed.
+- For local development, ensure `ffmpeg` is on `PATH`. (Note: the relocated
+  voice manager uses prism-media's resolver, which ignores the `FFMPEG_PATH`
+  env var — ffmpeg must be discoverable on `PATH`.)
 
 ## Source
 
 | File | Purpose |
 |------|---------|
 | `src/modules/builtin-features/voice/voice.commands.ts` | `/voice` slash command |
-| `src/modules/voice/voice-manager.service.ts` | Per-guild connection manager (join / leave / play / stop / status) |
+| `src/modules/voice/voice-backend.ts` | Backend seam — in-process vs remote (`getVoiceBackend()`) |
 | `src/modules/voice/voice-rpc.ts` | Plugin → bot voice RPC entry point |
+| `src/modules/voice/voice-internal-routes.ts`, `voice-gateway-relay.ts` | Bot ↔ external voice-service bridge |
+| `packages/voice/src/voice-manager.ts` | Per-guild connection manager (join / leave / play / pause / stop / status) |

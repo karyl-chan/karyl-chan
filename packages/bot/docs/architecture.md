@@ -54,9 +54,11 @@ src/
     └── web-core/               # Fastify infrastructure + JWT signing authority + bot-wide meta endpoints
 ```
 
-> DB schema is defined by each module's `models/`; `sequelize.sync()`
-> builds the tables at startup. The old Umzug migration system has been
-> removed — schema-evolution caveats are in
+> DB schema is defined by each module's `models/`; at startup
+> `sequelize.sync()` **creates** missing tables, then an Umzug-backed
+> migration runner (`src/db-migrations.ts`, `runMigrations()` in `main.ts`)
+> applies incremental schema changes from `src/migrations/NNN-*.ts` (tracked
+> in `SequelizeMeta`). Schema-evolution caveats are in
 > [`operations.md`](operations.md#schema-changes-on-upgrade).
 
 ---
@@ -66,7 +68,9 @@ src/
 ### `modules/plugin-system/` — external RPC plugins
 
 **What it does.** A plugin is an **independent process**. The bot talks
-to it over HTTP RPC with HMAC-shared keys. This module handles plugin
+to it over HTTP RPC; each plugin gets its own randomly-generated
+`dispatchHmacKey` (returned once at registration, stored on the plugin row)
+that signs bot→plugin event dispatch. This module handles plugin
 registration, heartbeats, token management, event dispatch, command
 sync, interaction and component routing, bidirectional RPC, and the
 WebUI reverse proxy.
@@ -217,19 +221,27 @@ model.
 
 ---
 
-### `modules/voice/` — voice connection manager
+### `modules/voice/` — voice backend seam
 
-**What it does.** One `VoiceConnection` per guild; exposes join,
-leave, play, stop, status. Playback uses `@discordjs/voice` with
-ffmpeg. Slash commands (`builtin-features/voice/`) and plugin RPC
-both go through this module, so per-guild state stays consistent.
+**What it does.** The actual per-guild connection manager (one
+`VoiceConnection` per guild; join/leave/play/pause/stop/status; playback via
+`@discordjs/voice` + ffmpeg) now lives in the standalone `@karyl-chan/voice`
+package (`packages/voice/src/voice-manager.ts`). This bot module is the seam
+that selects a `VoiceBackend`: `InProcessVoiceBackend` (default, drives the
+voice manager in-process) or `RemoteVoiceBackend` (forwards to an external
+voice service at `VOICE_SERVICE_URL`, signed with `VOICE_HMAC_SECRET`). Slash
+commands (`builtin-features/voice/`) and plugin RPC both go through the
+selected backend, so per-guild state stays consistent.
 
 **Key files.**
-- `voice-manager.service.ts` — connection pool and playback control.
+- `voice-backend.ts` — `VoiceBackend` interface + in-process backend + `getVoiceBackend()`.
+- `remote-voice-backend.ts` — HTTP client for the external voice service.
+- `voice-internal-routes.ts`, `voice-gateway-relay.ts` — bot↔voice-service bridge (gateway-send is restricted to OP4 voice-state-update).
 - `voice-rpc.ts` — plugin → bot voice RPC entry point.
 
-**External surface.** `joinVoice`, `leaveVoice`, `playUrl`,
-`stopPlayback`, `getStatus`; voice RPC handler.
+**External surface.** `getVoiceBackend()` / `setVoiceClient()`; the
+`VoiceBackend` interface (`join`/`leave`/`play`/`pause`/`stop`/`status`/`shutdown`);
+voice RPC handler.
 
 **Depends on.** utils, config, logger (intentionally no dependency on
 business modules).
@@ -250,8 +262,10 @@ tokens, and the audit log (with hash chain).
 - `admin-audit.service.ts` — audit log writes; canonical payload +
   hash chain.
 - `authorized-user.service.ts` — Discord user → admin mapping.
-- `admin-capabilities.ts` — capability token enumeration;
-  `requireCapability` / `requireGuildCapability` helpers.
+- `admin-capabilities.ts` — capability enumeration + token builders/parsers
+  (`GLOBAL_CAPABILITY_DESCRIPTIONS`, `GUILD_SCOPES`, `DEFAULT_ROLES`,
+  `makeGuildScopedCapability`, …). The `requireCapability` /
+  `requireGuildCapability` route guards live in `web-core/route-guards.ts`.
 - `models/` — admin-audit-log, admin-role, admin-role-capability,
   authorized-user.
 
@@ -337,7 +351,10 @@ plus cross-cutting meta routes.
 - `server.ts` — Fastify entry; the **central registration point** for
   every module's routes.
 - `jwt.service.ts` + `models/jwt-signing-key.model.ts` — Ed25519 JWT
-  signing.
+  signing. Admin/session tokens use the master key; plugin-session tokens
+  are signed with a **per-plugin** key derived via HKDF from the master
+  seed + plugin key, so a token minted for one plugin can't verify against
+  another.
 - `auth-store.service.ts` + `refresh-token.repository.ts` +
   `models/refresh-token.model.ts` — token storage.
 - `route-guards.ts` — `requireAnyCapability` / `requireGuildCapability`

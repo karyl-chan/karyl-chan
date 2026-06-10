@@ -40,7 +40,7 @@ The main variables:
 | `BOT_OWNER_ID` | no | Legacy single-owner alias. Used only when `BOT_OWNER_IDS` is unset; prefer the plural form for new deployments. |
 | `WEB_PORT` | no | HTTP port the admin API listens on. Default `3000`. |
 | `WEB_BASE_URL` | no | Public base URL. Admin login links and the plugin proxy use this as their base. |
-| `NODE_ENV` | no | Default `production`. |
+| `NODE_ENV` | no | Default `development`. |
 | `SQLITE_DB_PATH` | no | SQLite file path. Default `<bot>/data/database.sqlite`. |
 | `CERTS_DIR` and `TRUSTED_PROXY` | no | HTTPS certificate path and reverse-proxy trust settings. |
 
@@ -99,7 +99,9 @@ certificate directory.
 ## Upgrades
 
 The DB schema is defined by Sequelize models and built at startup via
-`sequelize.sync()`; there is no separate migration system. Upgrade-time
-schema notes (including the caveat that `sync()` never ALTERs existing
-tables, and the "pre-v2 encrypted values are not supported" caveat) are in
-the [operations runbook](operations.md#upgrades).
+`sequelize.sync()` (creates missing tables), followed by an Umzug-backed
+migration runner for incremental schema changes (`src/db-migrations.ts`,
+tracked in `SequelizeMeta`). Upgrade-time schema notes (including the caveat
+that `sync()` never ALTERs existing tables, and the "pre-v2 encrypted values
+are not supported" caveat) are in the
+[operations runbook](operations.md#upgrades).
