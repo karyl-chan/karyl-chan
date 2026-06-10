@@ -83,38 +83,22 @@ function pathOnly(url: string): string {
 function isEventStreamPath(url: string): boolean {
   return SSE_PATHS.has(pathOnly(url));
 }
-import { registerDmRoutes } from "../dm-inbox/dm-routes.js";
-import { registerDiscordRoutes } from "./discord-routes.js";
-import { avatarUrlFor } from "./message-mapper.js";
-import { registerGuildsRoutes } from "../guild-management/guilds-routes.js";
-import { registerGuildChannelRoutes } from "../guild-management/guild-channel-routes.js";
-import { registerGuildManagementRoutes } from "../guild-management/guild-management-routes.js";
 import type { DmInboxStore } from "../dm-inbox/dm-inbox.service.js";
-import { registerSystemRoutes } from "./system-routes.js";
 import {
   metricsRegistry,
   httpRequestsTotal,
   httpRequestDuration,
 } from "./metrics.js";
-import { registerAdminManagementRoutes } from "../admin/admin-management-routes.js";
-import { registerAdminLoginStatusRoutes } from "../admin/admin-login-status-routes.js";
-import { registerAdminSystemSettingsRoutes } from "../admin/admin-system-settings-routes.js";
-import { registerBotEventRoutes } from "../bot-events/bot-event-routes.js";
-import { registerBehaviorRoutes } from "../behavior/behavior-routes.js";
-import { registerScopeTabRoutes } from "../behavior/scope-tab-routes.js";
-import { registerPluginRoutes } from "../plugin-system/plugin-routes.js";
+// Plugin reverse proxy stays here (it's web infrastructure, registered
+// in its own encapsulated scope below). All business-module route
+// registration is delegated to registerModuleRoutes (module-routes.ts)
+// so this file no longer enumerates every module (PM-4).
 import { registerPluginProxy } from "../plugin-system/plugin-proxy.js";
-import { registerBotFeatureRoutes } from "../feature-toggle/bot-feature-routes.js";
-import { registerPluginRpcRoutes } from "../plugin-system/plugin-rpc-routes.js";
-import { registerVoiceRpcRoutes } from "../voice/voice-rpc.js";
-import { registerVoiceInternalRoutes } from "../voice/voice-internal-routes.js";
-import { registerShardForwardRoutes } from "../plugin-system/shard-forward-routes.js";
-import { getVerificationKeys } from "../../utils/secrets.js";
+import { registerModuleRoutes } from "./module-routes.js";
 import {
   pluginAuthStore,
   type PluginAuthRecord,
 } from "../plugin-system/plugin-auth.service.js";
-import { requireAnyCapability } from "./route-guards.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { shouldRecord } from "../bot-events/bot-event-dedup.js";
 
@@ -691,73 +675,16 @@ export async function createWebServer(
     httpRequestDuration.observe(labels, elapsedMs / 1000);
   });
 
+  // Business-module routes — delegated to a single aggregator so this
+  // file stays focused on web infrastructure (Fastify, auth/throttle
+  // hooks, auth routes, metrics, static). See module-routes.ts (PM-4).
   const bot = options.bot;
-  await registerAdminManagementRoutes(server, { bot });
-  await registerAdminLoginStatusRoutes(server);
-  await registerAdminSystemSettingsRoutes(server);
-  await registerBotEventRoutes(server);
-  await registerBehaviorRoutes(server, { bot, reconciler: options.reconciler });
-  await registerScopeTabRoutes(server);
-  await registerPluginRoutes(server, { bot, reconciler: options.reconciler });
-  await registerPluginRpcRoutes(server, { bot, dmLimiter: options.dmLimiter });
-  await registerVoiceRpcRoutes(server, { bot });
-  // Reverse channel from the standalone voice service (PR-2.3 full split).
-  // Only meaningful when VOICE_SERVICE_URL is set; the routes self-guard
-  // (503 when no shared secret), so they're harmless to mount unconditionally.
-  await registerVoiceInternalRoutes(server, {
+  await registerModuleRoutes(server, {
     bot,
-    // Rotation-aware + read per request (not snapshotted at boot) so the
-    // SecretProvider's live re-read lets VOICE_HMAC_SECRET be rolled without
-    // a synchronized bot+voice restart.
-    secrets: () => getVerificationKeys("VOICE_HMAC_SECRET"),
+    reconciler: options.reconciler,
+    dmInbox: options.dmInbox,
+    dmLimiter: options.dmLimiter,
   });
-  // Cross-shard forward relay (PR-3.3). Self-guards (503 without a
-  // shared secret); harmless to mount in the single-shard default where
-  // nothing ever forwards to it.
-  await registerShardForwardRoutes(server, {
-    secrets: () => {
-      const s = config.shard.hmacSecret;
-      return s ? [s] : [];
-    },
-  });
-  await registerBotFeatureRoutes(server, { bot });
-
-  if (bot) {
-    server.get("/api/bot/status", async (request, reply) => {
-      // Bot identity feeds the chat composer ("is this me?") and the
-      // dashboard at the same time, so any of the read capabilities
-      // is enough.
-      if (
-        !requireAnyCapability(request, reply, [
-          "dm.message",
-          "guild.message",
-          "guild.manage",
-          "system.read",
-        ])
-      )
-        return;
-      const ready = bot.isReady();
-      const user = ready ? bot.user : null;
-      return {
-        ready,
-        userTag: user?.tag ?? null,
-        userId: user?.id ?? null,
-        username: user?.username ?? null,
-        globalName: user?.globalName ?? null,
-        avatarUrl: user ? avatarUrlFor(user.id, user.avatar) : null,
-        guildCount: bot.guilds.cache.size,
-        uptimeMs: bot.uptime ?? 0,
-      };
-    });
-    await registerDmRoutes(server, { bot, inbox: options.dmInbox });
-    await registerDiscordRoutes(server, { bot });
-    await registerGuildsRoutes(server, { bot });
-    await registerGuildChannelRoutes(server, { bot });
-    await registerGuildManagementRoutes(server, { bot });
-    await registerSystemRoutes(server, { bot, dmInbox: options.dmInbox });
-  } else {
-    await registerSystemRoutes(server, { dmInbox: options.dmInbox });
-  }
 
   const staticRoot = options.staticRoot ?? defaultStaticRoot();
   if (staticRoot) {
