@@ -4,6 +4,12 @@ Shared SDK for karyl-chan plugins. The SDK lives in the same monorepo as the
 bot (`packages/bot/`); the bot side of the plugin protocol is documented at
 [`packages/bot/docs/development/plugin-guide.md`](../bot/docs/development/plugin-guide.md).
 
+Running your plugin against your **own self-hosted bot** (external authors,
+single docker-compose with both services)? Start with
+[`docs/self-host-deployment.md`](docs/self-host-deployment.md) — official bot
+image, setup-secret flow, register→enable journey, readiness semantics, and a
+troubleshooting table.
+
 The SDK encapsulates the boilerplate every plugin needs:
 
 - A Fastify server with HMAC-verified dispatch on `/commands/:commandName`
