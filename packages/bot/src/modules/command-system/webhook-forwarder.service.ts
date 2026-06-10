@@ -28,7 +28,7 @@ import {
 } from "../../utils/host-policy.js";
 import { decryptSecret } from "../../utils/crypto.js";
 import type { BehaviorRow } from "../behavior/models/behavior.model.js";
-import type { ForwardResult } from "./types.js";
+import type { ForwardResult, SanitizedEmbed } from "./types.js";
 
 // ── 常數 ─────────────────────────────────────────────────────────────────────
 
@@ -39,6 +39,81 @@ import type { ForwardResult } from "./types.js";
  */
 export const BEHAVIOR_END_TOKEN = "[BEHAVIOR:END]";
 const BEHAVIOR_END_RE = /\[BEHAVIOR:END\]/gi;
+
+// ── BH-2.2A：embeds 白名單清洗 ───────────────────────────────────────────────
+// webhook 回應來自外部服務，不可信：只搬白名單欄位、強制型別、按 Discord
+// 上限截斷。壞形狀的個別 embed 靜默丟棄（content 仍照常 relay）。
+
+const MAX_EMBEDS = 10;
+const MAX_FIELDS = 25;
+
+function clampStr(v: unknown, max: number): string | undefined {
+  if (typeof v !== "string" || v.length === 0) return undefined;
+  return v.length > max ? v.slice(0, max) : v;
+}
+
+function sanitizeOneEmbed(raw: unknown): SanitizedEmbed | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const e = raw as Record<string, unknown>;
+  const out: SanitizedEmbed = {};
+  const title = clampStr(e["title"], 256);
+  if (title) out.title = title;
+  const description = clampStr(e["description"], 4096);
+  if (description) out.description = description;
+  const url = clampStr(e["url"], 2048);
+  if (url && /^https?:\/\//i.test(url)) out.url = url;
+  if (typeof e["color"] === "number" && Number.isInteger(e["color"])) {
+    out.color = Math.max(0, Math.min(0xffffff, e["color"]));
+  }
+  const ts = clampStr(e["timestamp"], 64);
+  if (ts && !Number.isNaN(new Date(ts).getTime())) out.timestamp = ts;
+  const footer = e["footer"] as Record<string, unknown> | undefined;
+  const footerText = footer ? clampStr(footer["text"], 2048) : undefined;
+  if (footerText) {
+    out.footer = { text: footerText };
+    const icon = footer ? clampStr(footer["icon_url"], 2048) : undefined;
+    if (icon && /^https?:\/\//i.test(icon)) out.footer.icon_url = icon;
+  }
+  for (const key of ["image", "thumbnail"] as const) {
+    const obj = e[key] as Record<string, unknown> | undefined;
+    const u = obj ? clampStr(obj["url"], 2048) : undefined;
+    if (u && /^https?:\/\//i.test(u)) out[key] = { url: u };
+  }
+  const author = e["author"] as Record<string, unknown> | undefined;
+  const authorName = author ? clampStr(author["name"], 256) : undefined;
+  if (authorName) {
+    out.author = { name: authorName };
+    const aUrl = author ? clampStr(author["url"], 2048) : undefined;
+    if (aUrl && /^https?:\/\//i.test(aUrl)) out.author.url = aUrl;
+    const aIcon = author ? clampStr(author["icon_url"], 2048) : undefined;
+    if (aIcon && /^https?:\/\//i.test(aIcon)) out.author.icon_url = aIcon;
+  }
+  if (Array.isArray(e["fields"])) {
+    const fields: NonNullable<SanitizedEmbed["fields"]> = [];
+    for (const f of e["fields"] as unknown[]) {
+      if (typeof f !== "object" || f === null) continue;
+      const fr = f as Record<string, unknown>;
+      const name = clampStr(fr["name"], 256);
+      const value = clampStr(fr["value"], 1024);
+      if (!name || !value) continue;
+      fields.push({ name, value, inline: !!fr["inline"] });
+      if (fields.length >= MAX_FIELDS) break;
+    }
+    if (fields.length > 0) out.fields = fields;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+export function sanitizeEmbeds(raw: unknown): SanitizedEmbed[] {
+  if (!Array.isArray(raw)) return [];
+  const out: SanitizedEmbed[] = [];
+  for (const item of raw) {
+    const e = sanitizeOneEmbed(item);
+    if (e) out.push(e);
+    if (out.length >= MAX_EMBEDS) break;
+  }
+  return out;
+}
 
 /** X-Plugin-Webhook-Token header name（CR-2 token mode）。 */
 const PLUGIN_WEBHOOK_TOKEN_HEADER = "x-plugin-webhook-token";
@@ -297,12 +372,19 @@ export class WebhookForwarder {
 
     // 解析 response body
     let responseContent = "";
+    let relayEmbeds: SanitizedEmbed[] | undefined;
     if (rawText.length > 0) {
       try {
-        const parsed = JSON.parse(rawText) as { content?: unknown };
+        const parsed = JSON.parse(rawText) as {
+          content?: unknown;
+          embeds?: unknown;
+        };
         if (typeof parsed.content === "string") {
           responseContent = parsed.content;
         }
+        // BH-2.2A：embeds（白名單清洗；壞形狀靜默丟個別 embed）
+        const sanitized = sanitizeEmbeds(parsed.embeds);
+        if (sanitized.length > 0) relayEmbeds = sanitized;
       } catch {
         // wait=true 應永遠回 JSON，misbehaving webhook server 回純文字時視為無 content
         return { ok: true, ended: false, relayContent: "" };
@@ -317,7 +399,7 @@ export class WebhookForwarder {
       : responseContent.trim();
     BEHAVIOR_END_RE.lastIndex = 0;
 
-    return { ok: true, ended, relayContent };
+    return { ok: true, ended, relayContent, relayEmbeds };
   }
 
   // ── 私有：安全解密（不讓解密失敗 crash forward）──────────────────────────

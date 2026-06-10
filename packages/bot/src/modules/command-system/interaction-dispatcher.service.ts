@@ -236,6 +236,8 @@ export class InteractionDispatcher {
         slashCommandDescription:
           (row.getDataValue("slashCommandDescription") as string | null) ??
           null,
+        slashCommandOptions:
+          (row.getDataValue("slashCommandOptions") as string | null) ?? null,
         scope: row.getDataValue("scope") as BehaviorRow["scope"],
         integrationTypes: row.getDataValue("integrationTypes") as string,
         contexts: row.getDataValue("contexts") as string,
@@ -555,13 +557,15 @@ export class InteractionDispatcher {
         ? tForInteraction(interaction, "system.continuous-dm-warning")
         : "";
 
-      if (result.relayContent || dmStartFailed) {
+      if (result.relayContent || result.relayEmbeds || dmStartFailed) {
         // relay 內容來自外部 webhook，不可信，strip mentions 防止
         // user/role ping 經 bot relay 放大（與 message-pattern-matcher
-        // session 路徑同個威脅模型，這裡補上同等保護）。
+        // session 路徑同個威脅模型，這裡補上同等保護）。embeds 已在
+        // forwarder 白名單清洗（BH-2.2A）。
         await interaction
           .editReply({
             content: (result.relayContent ?? "") + dmWarning,
+            embeds: result.relayEmbeds ?? [],
             allowedMentions: { parse: [] },
           })
           .catch(() => {});

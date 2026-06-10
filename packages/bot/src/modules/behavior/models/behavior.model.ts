@@ -110,6 +110,12 @@ export const Behavior = sequelize.define(
       type: DataTypes.TEXT,
       allowNull: true,
     },
+    // BH-2.2C：slash 指令的 options 定義（JSON 陣列，ManifestCommandOption
+    // 的扁平 scalar 子集）。null = 無參數。pattern 行為一律 null。
+    slashCommandOptions: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
     // 三軸
     scope: {
       type: DataTypes.ENUM("global", "guild"),
@@ -416,6 +422,7 @@ export interface BehaviorRow {
   messagePatternValue: string | null;
   slashCommandName: string | null;
   slashCommandDescription: string | null;
+  slashCommandOptions: string | null;
   scope: BehaviorScope;
   integrationTypes: string;
   contexts: string;
@@ -455,6 +462,8 @@ export function rowOfBehavior(
       (model.getDataValue("slashCommandName") as string | null) ?? null,
     slashCommandDescription:
       (model.getDataValue("slashCommandDescription") as string | null) ?? null,
+    slashCommandOptions:
+      (model.getDataValue("slashCommandOptions") as string | null) ?? null,
     scope: model.getDataValue("scope") as BehaviorScope,
     integrationTypes: model.getDataValue("integrationTypes") as string,
     contexts: model.getDataValue("contexts") as string,

@@ -67,9 +67,12 @@ off it); they do not appear in the guild command UI.
 
 - `one_time` — fire once on match, end.
 - `continuous` — fire on match, open a session in `behavior_sessions`
-  (keyed by user, one per user). Subsequent DMs from the same user go
-  directly to the same webhook until the session ends. Sessions persist
-  across bot restarts.
+  (keyed by `(userId, channelId)`, BH-4.3 — one per user per channel; a
+  user's DMs with the bot are one channel, so DM behaviour matches the
+  old one-per-user model, while guild patterns give the same user
+  independent sessions per channel). Subsequent messages from that user
+  in that channel go directly to the same webhook until the session
+  ends. Sessions persist across bot restarts.
 
 ### Multi-match and `stopOnMatch` (message_pattern only)
 
@@ -103,23 +106,28 @@ The slash command registration and synchronisation in Discord are handled
 by `CommandReconciler`; see the `command-system` module in
 [`../architecture.md`](../architecture.md).
 
-### DM message_pattern trigger
+### message_pattern trigger (DMs + guild channels)
 
-`MessagePatternMatcher` mounts a `messageCreate` listener (DM only):
+`MessagePatternMatcher` mounts a `messageCreate` listener:
 
-1. If the caller has an active session, the message is forwarded to that
-   session's bound behavior directly.
+1. If the caller has an active session in this channel, the message is
+   forwarded to that session's bound behavior directly.
 2. Otherwise, collect the `message_pattern` behaviors applicable to the
-   caller (filtered by `audienceKind`, ordered by `sortOrder` ascending).
+   caller (filtered by `audienceKind`, ordered by `sortOrder` ascending),
+   then by surface (`contexts`), placement, and — for bot authors in
+   guilds — `ignoreBots`.
 3. Evaluate each via `matchesTrigger` (`startswith` / `endswith` /
-   `regex`); forward on the first match.
-4. If the matched behavior has `forwardType='continuous'`, open a session.
+   `regex`); forward per the multi-match rules above (`stopOnMatch`).
+4. If a matched behavior has `forwardType='continuous'`, open a session
+   for `(user, channel)` and stop the walk.
 
 ### Ending a continuous forward
 
 Two independent end points:
 
-- **Caller side** — DM `/break`.
+- **Caller side** — `/break` (or the break text pattern); ends the
+  current channel's session, falling back to all of the caller's
+  sessions so the escape hatch can never leave someone stuck.
 - **Webhook side** — the webhook's response `content` contains the token
   `[BEHAVIOR:END]` (case-insensitive). The session ends and the token is
   stripped from the content before relay.
@@ -152,8 +160,18 @@ applied to the bot's *response* relayed back into the DM, not to this
 outbound webhook call. The slash path's `_meta` additionally carries the
 interaction fields and now also `behavior_id`.)
 
-Webhook → bot — the response (`APIMessage`)'s `content` is relayed back
-to the caller's DM.
+Webhook → bot — the response's `content` is relayed back to the caller.
+The response may also carry `embeds` (BH-2.2A): an array of Discord-shaped
+embed objects, sanitized through a whitelist (title/description/url/color/
+timestamp/footer/image/thumbnail/author/fields), truncated to Discord's
+length limits, capped at 10, with non-http(s) urls dropped. A response may
+be embeds-only.
+
+Slash behaviors may define command options (BH-2.2C,
+`slashCommandOptions`): a flat list of scalar options (string / integer /
+number / boolean / user / channel / role / mentionable / attachment) edited
+in the admin UI, registered to Discord by the reconciler, and delivered to
+the webhook in `_meta.options` as `{ name, type, value }` entries.
 
 Failed dispatch (network error, non-2xx, signature failure) is recorded
 in `bot_events`; a continuous session is **not** auto-ended. The caller

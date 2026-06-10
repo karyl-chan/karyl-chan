@@ -37,6 +37,8 @@ export interface BehaviorRow {
   messagePatternValue: string | null;
   slashCommandName: string | null;
   slashCommandDescription: string | null;
+  /** JSON 字串（BehaviorCommandOption[]）；null = 無參數 */
+  slashCommandOptions: string | null;
   scope: BehaviorScope;
   integrationTypes: string;
   contexts: string;
@@ -70,6 +72,22 @@ export interface ScopeTabRow {
 
 // ── Create / Patch payload ──────────────────────────────────────────────────
 
+export interface BehaviorCommandOption {
+  type:
+    | "string"
+    | "integer"
+    | "number"
+    | "boolean"
+    | "user"
+    | "channel"
+    | "role"
+    | "mentionable"
+    | "attachment";
+  name: string;
+  description: string;
+  required: boolean;
+}
+
 export interface BehaviorCreatePayload {
   title: string;
   description?: string;
@@ -78,6 +96,7 @@ export interface BehaviorCreatePayload {
   messagePatternValue?: string;
   slashCommandName?: string;
   slashCommandDescription?: string;
+  slashCommandOptions?: BehaviorCommandOption[];
   scope?: BehaviorScope;
   integrationTypes?: string;
   contexts?: string;
@@ -102,6 +121,7 @@ export interface BehaviorPatchPayload {
   messagePatternValue?: string | null;
   slashCommandName?: string | null;
   slashCommandDescription?: string | null;
+  slashCommandOptions?: BehaviorCommandOption[] | null;
   scope?: BehaviorScope;
   integrationTypes?: string;
   contexts?: string;

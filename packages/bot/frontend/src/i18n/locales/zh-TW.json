@@ -1237,7 +1237,13 @@
             "saveTrigger": "儲存觸發",
             "stopOnMatchHint": "命中後，這則訊息不再比對後續 pattern。",
             "ignoreBots": "忽略 bot 訊息",
-            "ignoreBotsHint": "bot／webhook 發的訊息不觸發此 pattern。本 bot 自身的訊息無論如何都會被忽略。"
+            "ignoreBotsHint": "bot／webhook 發的訊息不觸發此 pattern。本 bot 自身的訊息無論如何都會被忽略。",
+            "options": "指令參數",
+            "optionName": "名稱",
+            "optionDescription": "說明",
+            "optionRequired": "必填",
+            "optionAdd": "新增參數",
+            "optionInvalid": "參數「{name}」無效：名稱須為 1-32 字的 [a-z0-9_-]，且說明必填。"
         },
         "addTab": {
             "title": "新增範圍分頁",

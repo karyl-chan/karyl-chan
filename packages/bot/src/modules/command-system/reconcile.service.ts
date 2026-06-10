@@ -793,6 +793,24 @@ export class CommandReconciler {
     const integrationTypes = parseIntegrationTypes(row.integrationTypes);
     const contexts = parseContexts(row.contexts);
 
+    // BH-2.2C：admin 定義的 options（JSON 欄位）→ 註冊 payload。
+    // 形狀已在路由層用 parseSlashCommandOptions 驗證過；這裡只防禦
+    // 解析失敗（手改 DB 等），壞 JSON 記 warn 並以無參數註冊。
+    let options: ManifestCommandOption[] | undefined;
+    if (row.slashCommandOptions) {
+      try {
+        const parsed = JSON.parse(row.slashCommandOptions) as ManifestCommandOption[];
+        if (Array.isArray(parsed) && parsed.length > 0) options = parsed;
+      } catch {
+        botEventLog.record(
+          "warn",
+          "bot",
+          `command-reconciler: behavior ${row.id} slashCommandOptions JSON 解析失敗，以無參數註冊`,
+          { behaviorId: row.id },
+        );
+      }
+    }
+
     let spec: DiscordRegistrationSpec;
     try {
       spec = deriveRegistrationCall(
@@ -801,7 +819,7 @@ export class CommandReconciler {
         row.scope,
         integrationTypes,
         contexts,
-        undefined,
+        options,
       );
     } catch (err) {
       if (err instanceof RejectionError) {
@@ -1216,6 +1234,8 @@ function rowOfBehavior(model: InstanceType<typeof Behavior>): BehaviorRow {
       (model.getDataValue("slashCommandName") as string | null) ?? null,
     slashCommandDescription:
       (model.getDataValue("slashCommandDescription") as string | null) ?? null,
+    slashCommandOptions:
+      (model.getDataValue("slashCommandOptions") as string | null) ?? null,
     scope: model.getDataValue("scope") as BehaviorRow["scope"],
     integrationTypes: model.getDataValue("integrationTypes") as string,
     contexts: model.getDataValue("contexts") as string,

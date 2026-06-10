@@ -373,24 +373,26 @@ export class MessagePatternMatcher {
 
     if (result.ended) {
       await endSession(userId, session.channelId);
-      if (result.relayContent) {
+      if (result.relayContent || result.relayEmbeds) {
         // No allowed_mentions parsing — the response content comes from
         // an external webhook server, which we don't trust to set ping
         // policy. DMs don't honour @everyone but role/user pings can
         // still notify in group-DM contexts, and this also guards
         // against a future relay site that uses a guild channel.
         await dmChannel
-          .send({ content: result.relayContent, allowedMentions: { parse: [] } })
+          .send({ content: result.relayContent,
+            embeds: result.relayEmbeds ?? [], allowedMentions: { parse: [] } })
           .catch(() => {});
       }
       return { handled: true, sessionEnded: true, behaviorId: behavior.id };
     }
 
-    if (result.ok && result.relayContent) {
+    if (result.ok && (result.relayContent || result.relayEmbeds)) {
       // M-3 修：與 ended 分支一致 strip mentions，relay 內容來自外部 webhook
       // 不可信，避免 user/role ping 經 group-DM 等情境放大。
       await dmChannel
-        .send({ content: result.relayContent, allowedMentions: { parse: [] } })
+        .send({ content: result.relayContent,
+            embeds: result.relayEmbeds ?? [], allowedMentions: { parse: [] } })
         .catch(() => {});
     }
 
@@ -438,14 +440,18 @@ export class MessagePatternMatcher {
         sessionEnded = true;
       }
 
-      if (result.relayContent) {
+      if (result.relayContent || result.relayEmbeds) {
         // No allowed_mentions parsing — the response content comes from
         // an external webhook server, which we don't trust to set ping
         // policy. DMs don't honour @everyone but role/user pings can
         // still notify in group-DM contexts, and this also guards
         // against a future relay site that uses a guild channel.
         await dmChannel
-          .send({ content: result.relayContent, allowedMentions: { parse: [] } })
+          .send({
+            content: result.relayContent,
+            embeds: result.relayEmbeds ?? [],
+            allowedMentions: { parse: [] },
+          })
           .catch(() => {});
       }
     } else {
@@ -690,6 +696,8 @@ export class MessagePatternMatcher {
       slashCommandDescription:
         (model.getDataValue("slashCommandDescription") as string | null) ??
         null,
+      slashCommandOptions:
+        (model.getDataValue("slashCommandOptions") as string | null) ?? null,
       scope: model.getDataValue("scope") as BehaviorRow["scope"],
       integrationTypes: model.getDataValue("integrationTypes") as string,
       contexts: model.getDataValue("contexts") as string,

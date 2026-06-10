@@ -11,6 +11,7 @@ import {
     type BehaviorScope,
     type BehaviorWebhookAuthMode,
     type BehaviorPatchPayload,
+    type BehaviorCommandOption,
     type ScopeTabRow,
     updateBehavior,
     deleteBehavior,
@@ -68,6 +69,7 @@ interface Draft {
     messagePatternValue: string;
     slashCommandName: string;
     slashCommandDescription: string;
+    slashCommandOptions: BehaviorCommandOption[];
     // 三軸（custom 可改；system 唯讀）
     scope: BehaviorScope;
     integrationTypes: string;
@@ -82,6 +84,21 @@ interface Draft {
     webhookAuthMode: BehaviorWebhookAuthMode | '';
 }
 
+// BH-2.2C：slash options 定義（DB 存 JSON 字串 → 編輯用陣列）
+function parseOptionsJson(raw: string | null): BehaviorCommandOption[] {
+    if (!raw) return [];
+    try {
+        const parsed = JSON.parse(raw) as BehaviorCommandOption[];
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
+    }
+}
+
+const OPTION_TYPE_CHOICES = [
+    'string', 'integer', 'number', 'boolean', 'user', 'channel', 'role', 'mentionable', 'attachment',
+] as const;
+
 function draftFrom(row: BehaviorRow): Draft {
     return {
         title: row.title,
@@ -95,6 +112,7 @@ function draftFrom(row: BehaviorRow): Draft {
         messagePatternValue: row.messagePatternValue ?? '',
         slashCommandName: row.slashCommandName ?? '',
         slashCommandDescription: row.slashCommandDescription ?? '',
+        slashCommandOptions: parseOptionsJson(row.slashCommandOptions),
         scope: row.scope,
         integrationTypes: row.integrationTypes,
         contexts: row.contexts,
@@ -108,6 +126,14 @@ function draftFrom(row: BehaviorRow): Draft {
 }
 
 const draft = reactive<Draft>(draftFrom(props.behavior));
+
+const optionTypeOptions = OPTION_TYPE_CHOICES.map((v) => ({ value: v, label: v }));
+function addOption() {
+    draft.slashCommandOptions.push({ type: 'string', name: '', description: '', required: false });
+}
+function removeOption(index: number) {
+    draft.slashCommandOptions.splice(index, 1);
+}
 const saving = ref(false);
 const error = ref<string | null>(null);
 
@@ -233,6 +259,7 @@ const dirty = computed(() => {
         draft.messagePatternValue !== (b.messagePatternValue ?? '') ||
         draft.slashCommandName !== (b.slashCommandName ?? '') ||
         draft.slashCommandDescription !== (b.slashCommandDescription ?? '') ||
+        JSON.stringify(draft.slashCommandOptions) !== JSON.stringify(parseOptionsJson(b.slashCommandOptions)) ||
         draft.scope !== b.scope ||
         draft.integrationTypes !== b.integrationTypes ||
         draft.contexts !== b.contexts ||
@@ -353,6 +380,15 @@ async function onSave() {
                 }
                 patch.slashCommandName = draft.slashCommandName.trim();
                 patch.slashCommandDescription = draft.slashCommandDescription;
+                // BH-2.2C：options 定義（空陣列 → null 清除）
+                for (const opt of draft.slashCommandOptions) {
+                    if (!/^[a-z0-9_-]{1,32}$/.test(opt.name) || !opt.description.trim()) {
+                        error.value = t('behaviors.card.optionInvalid', { name: opt.name || '?' });
+                        return;
+                    }
+                }
+                patch.slashCommandOptions =
+                    draft.slashCommandOptions.length > 0 ? draft.slashCommandOptions : null;
                 patch.messagePatternKind = null;
                 patch.messagePatternValue = null;
             } else {
@@ -572,6 +608,35 @@ const saveLabel = computed(() => {
                                 :maxlength="200"
                                 fullWidth
                             />
+
+                            <!-- BH-2.2C：slash options 定義 -->
+                            <div class="field full options-editor">
+                                <span class="label">{{ t('behaviors.card.options') }}</span>
+                                <div v-for="(opt, i) in draft.slashCommandOptions" :key="i" class="option-row">
+                                    <AppTextField
+                                        v-model="opt.name"
+                                        :placeholder="t('behaviors.card.optionName')"
+                                        :maxlength="32"
+                                    />
+                                    <AppTextField
+                                        v-model="opt.description"
+                                        :placeholder="t('behaviors.card.optionDescription')"
+                                        :maxlength="100"
+                                    />
+                                    <AppSelectField v-model="opt.type" :options="optionTypeOptions" />
+                                    <label class="inline">
+                                        <input type="checkbox" v-model="opt.required" />
+                                        <span>{{ t('behaviors.card.optionRequired') }}</span>
+                                    </label>
+                                    <button type="button" class="option-remove" @click="removeOption(i)">
+                                        <Icon icon="material-symbols:close-rounded" />
+                                    </button>
+                                </div>
+                                <button type="button" class="option-add" @click="addOption">
+                                    <Icon icon="material-symbols:add-rounded" />
+                                    {{ t('behaviors.card.optionAdd') }}
+                                </button>
+                            </div>
                         </template>
 
                         <template v-else>
@@ -693,6 +758,35 @@ const saveLabel = computed(() => {
                                 :maxlength="200"
                                 fullWidth
                             />
+
+                            <!-- BH-2.2C：slash options 定義 -->
+                            <div class="field full options-editor">
+                                <span class="label">{{ t('behaviors.card.options') }}</span>
+                                <div v-for="(opt, i) in draft.slashCommandOptions" :key="i" class="option-row">
+                                    <AppTextField
+                                        v-model="opt.name"
+                                        :placeholder="t('behaviors.card.optionName')"
+                                        :maxlength="32"
+                                    />
+                                    <AppTextField
+                                        v-model="opt.description"
+                                        :placeholder="t('behaviors.card.optionDescription')"
+                                        :maxlength="100"
+                                    />
+                                    <AppSelectField v-model="opt.type" :options="optionTypeOptions" />
+                                    <label class="inline">
+                                        <input type="checkbox" v-model="opt.required" />
+                                        <span>{{ t('behaviors.card.optionRequired') }}</span>
+                                    </label>
+                                    <button type="button" class="option-remove" @click="removeOption(i)">
+                                        <Icon icon="material-symbols:close-rounded" />
+                                    </button>
+                                </div>
+                                <button type="button" class="option-add" @click="addOption">
+                                    <Icon icon="material-symbols:add-rounded" />
+                                    {{ t('behaviors.card.optionAdd') }}
+                                </button>
+                            </div>
                         </template>
                         <template v-else>
                             <div class="field">
@@ -877,5 +971,35 @@ const saveLabel = computed(() => {
 
 @media (max-width: 640px) {
     .grid { grid-template-columns: 1fr; }
+}
+
+/* BH-2.2C options editor */
+.options-editor .option-row {
+    display: grid;
+    grid-template-columns: 1fr 2fr auto auto auto;
+    gap: 0.5rem;
+    align-items: center;
+    margin-bottom: 0.4rem;
+}
+.options-editor .option-remove,
+.options-editor .option-add {
+    background: none;
+    border: 1px solid var(--border, #444);
+    border-radius: 6px;
+    color: inherit;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.3rem 0.5rem;
+    opacity: 0.8;
+}
+.options-editor .option-remove:hover,
+.options-editor .option-add:hover { opacity: 1; }
+.options-editor label.inline {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    white-space: nowrap;
 }
 </style>

@@ -72,3 +72,94 @@ export function isValidRegex(value: string): boolean {
     return false;
   }
 }
+
+// ── BH-2.2C：slash command options 驗證 ──────────────────────────────────────
+
+/** behaviors 允許的扁平 scalar option 型別（OPTION_TYPE_MAP 的子集；
+ *  不開 sub_command / choices / autocomplete —— 那些屬 plugin SDK 的進階面）。 */
+export const BEHAVIOR_OPTION_TYPES = [
+  "string",
+  "integer",
+  "number",
+  "boolean",
+  "user",
+  "channel",
+  "role",
+  "mentionable",
+  "attachment",
+] as const;
+
+export interface BehaviorCommandOption {
+  type: (typeof BEHAVIOR_OPTION_TYPES)[number];
+  name: string;
+  description: string;
+  required: boolean;
+}
+
+const OPTION_NAME_RE = /^[a-z0-9_-]{1,32}$/;
+const MAX_OPTIONS = 10;
+
+/**
+ * 驗證 admin 提交的 slash command options 定義並正規化。
+ * Discord 的硬規則都在這裡擋：name 格式、description 長度、required 必須
+ * 排在 optional 前、名稱不重複、數量上限。
+ */
+export function parseSlashCommandOptions(
+  raw: unknown,
+):
+  | { ok: true; options: BehaviorCommandOption[] }
+  | { ok: false; reason: string } {
+  if (!Array.isArray(raw)) {
+    return { ok: false, reason: "slashCommandOptions 必須是陣列" };
+  }
+  if (raw.length > MAX_OPTIONS) {
+    return { ok: false, reason: `options 過多 (max ${MAX_OPTIONS})` };
+  }
+  const options: BehaviorCommandOption[] = [];
+  const seen = new Set<string>();
+  let sawOptional = false;
+  for (const item of raw) {
+    if (typeof item !== "object" || item === null) {
+      return { ok: false, reason: "option 必須是物件" };
+    }
+    const o = item as Record<string, unknown>;
+    const type = String(o["type"] ?? "");
+    if (!(BEHAVIOR_OPTION_TYPES as readonly string[]).includes(type)) {
+      return { ok: false, reason: `不支援的 option 型別：${type}` };
+    }
+    const name = String(o["name"] ?? "");
+    if (!OPTION_NAME_RE.test(name)) {
+      return {
+        ok: false,
+        reason: `option 名稱必須是 1-32 字的 [a-z0-9_-]：'${name}'`,
+      };
+    }
+    if (seen.has(name)) {
+      return { ok: false, reason: `option 名稱重複：'${name}'` };
+    }
+    seen.add(name);
+    const description = String(o["description"] ?? "").trim();
+    if (!description || description.length > 100) {
+      return {
+        ok: false,
+        reason: `option '${name}' 的 description 必填且 ≤100 字`,
+      };
+    }
+    const required = !!o["required"];
+    // Discord 規則：required options 必須排在所有 optional 之前
+    if (required && sawOptional) {
+      return {
+        ok: false,
+        reason: "required option 必須排在 optional options 之前",
+      };
+    }
+    if (!required) sawOptional = true;
+    options.push({
+      type: type as BehaviorCommandOption["type"],
+      name,
+      description,
+      required,
+    });
+  }
+  return { ok: true, options };
+}

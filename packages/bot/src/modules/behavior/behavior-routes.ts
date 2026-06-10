@@ -21,6 +21,7 @@ import {
   decryptedView,
   isValidWebhookUrl,
   isValidRegex,
+  parseSlashCommandOptions,
 } from "./behavior-helpers.js";
 import { sortJoin } from "../../utils/sort-join.js";
 import {
@@ -187,6 +188,7 @@ export async function registerBehaviorRoutes(
       messagePatternValue?: string;
       slashCommandName?: string;
       slashCommandDescription?: string;
+      slashCommandOptions?: unknown;
       scope?: string;
       integrationTypes?: string;
       contexts?: string;
@@ -310,6 +312,16 @@ export async function registerBehaviorRoutes(
       ? (maxSortRow.getDataValue("sortOrder") as number) + 1
       : 0;
 
+    // BH-2.2C：slash options 定義（pattern 不適用）
+    let slashOptionsJson: string | null = null;
+    if (body.triggerType === "slash_command" && body.slashCommandOptions !== undefined) {
+      const parsed = parseSlashCommandOptions(body.slashCommandOptions);
+      if (!parsed.ok) {
+        return reply.code(400).send({ error: parsed.reason });
+      }
+      slashOptionsJson = parsed.options.length > 0 ? JSON.stringify(parsed.options) : null;
+    }
+
     const row = await Behavior.create({
       title: body.title.trim(),
       description: body.description ?? "",
@@ -329,6 +341,7 @@ export async function registerBehaviorRoutes(
         body.triggerType === "slash_command"
           ? (body.slashCommandDescription ?? "")
           : null,
+      slashCommandOptions: slashOptionsJson,
       scope: derivedScope,
       integrationTypes,
       contexts,
@@ -527,6 +540,27 @@ export async function registerBehaviorRoutes(
       if ("slashCommandDescription" in body)
         patch["slashCommandDescription"] =
           body["slashCommandDescription"] ?? null;
+      if ("slashCommandOptions" in body) {
+        // BH-2.2C：僅 slash trigger 有 options 定義
+        const effectiveTrigger =
+          (body["triggerType"] as string | undefined) ??
+          existingRow.triggerType;
+        if (effectiveTrigger !== "slash_command") {
+          return reply.code(400).send({
+            error: "slashCommandOptions 僅對 slash_command behavior 有效",
+          });
+        }
+        if (body["slashCommandOptions"] === null) {
+          patch["slashCommandOptions"] = null;
+        } else {
+          const parsed = parseSlashCommandOptions(body["slashCommandOptions"]);
+          if (!parsed.ok) {
+            return reply.code(400).send({ error: parsed.reason });
+          }
+          patch["slashCommandOptions"] =
+            parsed.options.length > 0 ? JSON.stringify(parsed.options) : null;
+        }
+      }
       // When triggerType is (re)set, enforce the cross-field invariant the
       // model validates on save (triggerTypeShape): a row must carry ONLY
       // its trigger type's columns, with the required one present. The
@@ -549,6 +583,7 @@ export async function registerBehaviorRoutes(
           patch["messagePatternKind"] = null;
           patch["messagePatternValue"] = null;
         } else {
+          patch["slashCommandOptions"] = null;
           const kind =
             (patch["messagePatternKind"] as string | null | undefined) ??
             existingRow.messagePatternKind ??

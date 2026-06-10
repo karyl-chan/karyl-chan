@@ -1237,7 +1237,13 @@
             "saveTrigger": "Save trigger",
             "stopOnMatchHint": "Block later patterns from also firing on this message.",
             "ignoreBots": "Ignore bot messages",
-            "ignoreBotsHint": "Messages from bots and webhooks won't trigger this pattern. The bot always ignores its own messages."
+            "ignoreBotsHint": "Messages from bots and webhooks won't trigger this pattern. The bot always ignores its own messages.",
+            "options": "Command options",
+            "optionName": "name",
+            "optionDescription": "description",
+            "optionRequired": "required",
+            "optionAdd": "Add option",
+            "optionInvalid": "Option '{name}' is invalid: name must be 1-32 [a-z0-9_-] chars and description is required."
         },
         "addTab": {
             "title": "Add Scope Tab",

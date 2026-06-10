@@ -1236,7 +1236,13 @@
             "saveTrigger": "保存触发",
             "stopOnMatchHint": "命中后，这条消息不再比对后续 pattern。",
             "ignoreBots": "忽略 bot 消息",
-            "ignoreBotsHint": "bot／webhook 发的消息不触发此 pattern。本 bot 自身的消息无论如何都会被忽略。"
+            "ignoreBotsHint": "bot／webhook 发的消息不触发此 pattern。本 bot 自身的消息无论如何都会被忽略。",
+            "options": "指令参数",
+            "optionName": "名称",
+            "optionDescription": "说明",
+            "optionRequired": "必填",
+            "optionAdd": "新增参数",
+            "optionInvalid": "参数「{name}」无效：名称须为 1-32 字的 [a-z0-9_-]，且说明必填。"
         },
         "addTab": {
             "title": "新增范围分页",
