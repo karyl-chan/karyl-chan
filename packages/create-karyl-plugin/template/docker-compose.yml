@@ -1,0 +1,58 @@
+# Self-hosted bot + this plugin, one compose. The blessed shape — see
+# the SDK guide `docs/self-host-deployment.md` for the why behind every
+# line (setup-secret flow, register→enable journey, readiness
+# semantics, troubleshooting).
+#
+#   1. cp .env.example .env  → fill BOT_TOKEN / ENCRYPTION_KEY / BOT_OWNER_IDS
+#   2. docker compose up -d karyl-chan
+#   3. /login in a DM → admin → Plugins → mint the setup secret for
+#      "__PLUGIN_KEY__" → put it in .env as KARYL_PLUGIN_SETUP_SECRET
+#   4. docker compose up --build -d __PLUGIN_KEY__
+#   5. back in admin: enable the plugin (registration alone doesn't)
+
+services:
+  karyl-chan:
+    # Official multi-arch image. :latest = newest bot-v* release,
+    # :edge = main. Building from monorepo source also works; you then
+    # own keeping it in sync with this plugin's SDK version.
+    image: ghcr.io/karyl-chan/karyl-chan-bot:latest
+    container_name: karyl-chan-bot
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      BOT_TOKEN: ${BOT_TOKEN:?set BOT_TOKEN in .env}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY in .env (openssl rand -hex 32)}
+      BOT_OWNER_IDS: ${BOT_OWNER_IDS:?set BOT_OWNER_IDS in .env}
+      NODE_ENV: production
+      WEB_BASE_URL: http://localhost:3000
+    volumes:
+      - ./data:/usr/src/app/data   # SQLite — this mount IS your bot state
+    healthcheck:
+      # ready = web AND db AND Discord gateway — siblings can trust it.
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/api/health/ready', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  __PLUGIN_KEY__:
+    build:
+      context: .
+    container_name: __PLUGIN_KEY__
+    restart: unless-stopped
+    environment:
+      PORT: 3000
+      HOST: 0.0.0.0
+      BOT_URL: http://karyl-chan-bot:3000
+      PLUGIN_URL: http://__PLUGIN_KEY__:3000
+      KARYL_PLUGIN_SETUP_SECRET: ${KARYL_PLUGIN_SETUP_SECRET:?mint via the bot admin UI first}
+    depends_on:
+      karyl-chan:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
