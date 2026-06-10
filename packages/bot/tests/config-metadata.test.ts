@@ -73,6 +73,7 @@ const stubConfig: AppConfig = {
     maxFetchCount: 500,
     maxAttachmentBytes: 1_000_000,
     sseMaxListeners: 200,
+    sseReplayBufferSize: 512,
   },
   logging: { level: "info" },
   voice: { ffmpegPath: null, serviceUrl: null, hmacSecret: null },

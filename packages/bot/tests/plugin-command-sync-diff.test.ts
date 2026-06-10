@@ -24,8 +24,8 @@ import {
   pluginCommandRegistry,
   setPluginCommandBotClient,
   CommandSyncRateLimitedError,
-  type PluginManifest,
 } from "../src/modules/plugin-system/plugin-command-registry.service.js";
+import type { PluginManifest } from "../src/modules/plugin-system/plugin-registry.service.js";
 
 let snowflake = 0;
 function makeFakeBot(guildIds: string[]) {
@@ -78,7 +78,7 @@ async function makePluginRow() {
 }
 
 function createCalls(bot: Client, guildId: string): number {
-  const g = (bot.guilds.cache as Map<string, { commands: { create: ReturnType<typeof vi.fn> } }>).get(guildId);
+  const g = (bot.guilds.cache as unknown as Map<string, { commands: { create: ReturnType<typeof vi.fn> } }>).get(guildId);
   return g ? g.commands.create.mock.calls.length : 0;
 }
 
@@ -153,7 +153,7 @@ describe("diff-based sync (PM-7.3)", () => {
       row,
       makeManifest([{ name: "m-play", description: "play" }]),
     );
-    const g1 = (bot.guilds.cache as Map<string, { commands: { delete: ReturnType<typeof vi.fn> } }>).get("g1")!;
+    const g1 = (bot.guilds.cache as unknown as Map<string, { commands: { delete: ReturnType<typeof vi.fn> } }>).get("g1")!;
     expect(g1.commands.delete).toHaveBeenCalledTimes(1);
     const rows = await PluginCommand.findAll({ where: { pluginId: row.id } });
     expect(rows.map((r) => r.getDataValue("name"))).toEqual(["m-play"]);
@@ -171,7 +171,7 @@ describe("diff-based sync (PM-7.3)", () => {
 
   it("propagates a Discord rate limit as CommandSyncRateLimitedError", async () => {
     const bot = makeFakeBot(["g1"]);
-    const g1 = (bot.guilds.cache as Map<string, { commands: { create: ReturnType<typeof vi.fn> } }>).get("g1")!;
+    const g1 = (bot.guilds.cache as unknown as Map<string, { commands: { create: ReturnType<typeof vi.fn> } }>).get("g1")!;
     g1.commands.create.mockRejectedValue(
       new RateLimitError({
         timeToReset: 42_000,
