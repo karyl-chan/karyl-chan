@@ -92,14 +92,14 @@ describe("GuildChannelEventBus", () => {
       startedAt: 0,
     };
     bus.publish(event);
-    expect(listener).toHaveBeenCalledWith(event);
+    expect(listener).toHaveBeenCalledWith(event, expect.any(String));
     off();
     bus.publish(event);
     expect(listener).toHaveBeenCalledTimes(1);
   });
 
   it("allows subscribing up to the listener limit", () => {
-    const bus = new GuildChannelEventBus(3);
+    const bus = new GuildChannelEventBus({ maxListeners: 3 });
     expect(bus.isAtLimit()).toBe(false);
     bus.subscribe(vi.fn());
     bus.subscribe(vi.fn());
@@ -108,14 +108,14 @@ describe("GuildChannelEventBus", () => {
   });
 
   it("throws EmitterLimitError when the listener limit is exceeded", () => {
-    const bus = new GuildChannelEventBus(2);
+    const bus = new GuildChannelEventBus({ maxListeners: 2 });
     bus.subscribe(vi.fn());
     bus.subscribe(vi.fn());
     expect(() => bus.subscribe(vi.fn())).toThrow(GuildEmitterLimitError);
   });
 
   it("isAtLimit returns false after unsubscribe frees a slot", () => {
-    const bus = new GuildChannelEventBus(1);
+    const bus = new GuildChannelEventBus({ maxListeners: 1 });
     const off = bus.subscribe(vi.fn());
     expect(bus.isAtLimit()).toBe(true);
     off();

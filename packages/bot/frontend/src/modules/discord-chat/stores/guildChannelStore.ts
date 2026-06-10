@@ -159,8 +159,46 @@ export const useGuildChannelStore = defineStore('discord-guild-channel', () => {
                     }
                 }
             },
-            onError: () => {}
+            onError: () => {},
+            onResync() {
+                void resync();
+            }
         });
+    }
+
+    function findGuildIdForChannel(channelId: string): string | null {
+        for (const [guildId, entry] of Object.entries(guilds)) {
+            for (const cat of entry.categories) {
+                for (const ch of cat.channels) {
+                    if (ch.id === channelId) return guildId;
+                }
+            }
+        }
+        return null;
+    }
+
+    // The SSE server couldn't replay the reconnect gap (buffer overflow or a
+    // restart). Reconcile: reload every loaded guild's channel tree, and
+    // force-refetch the open conversation's messages so it can't stay stale.
+    async function resync() {
+        const openChannelId = useUnreadStore().currentChannelId;
+        const guildId = openChannelId ? findGuildIdForChannel(openChannelId) : null;
+        for (const id of Object.keys(guilds)) {
+            try {
+                await loadChannels(id);
+            } catch {
+                /* per-guild error already surfaced on its entry */
+            }
+        }
+        if (openChannelId && guildId) {
+            try {
+                await useMessageCacheStore().reload(openChannelId, (cid, opts) =>
+                    listMessages(guildId, cid, opts),
+                );
+            } catch {
+                /* keep the cached view; the next interaction retries */
+            }
+        }
     }
 
     // Closes the live event stream and drops every per-guild cache so the

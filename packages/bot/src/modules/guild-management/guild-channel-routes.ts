@@ -126,7 +126,7 @@ export async function registerGuildChannelRoutes(
   const events = options.eventBus ?? guildChannelEventBus;
 
   // Static path — Fastify prioritises it over /:guildId even when registered after.
-  server.get("/api/guilds/events", async (request, reply) => {
+  server.get<{ Querystring: { lastEventId?: string } }>("/api/guilds/events", async (request, reply) => {
     // Cross-guild stream — gate the connection itself on the user
     // having SOME guild scope, then filter each emitted event by
     // the caller's accessible guild ids.
@@ -171,26 +171,50 @@ export async function registerGuildChannelRoutes(
     heartbeat.unref();
 
     let unsubscribe: (() => void) | null = null;
-    unsubscribe = events.subscribe((event) => {
-      // Drop events for guilds this caller can't see — `message`
-      // scope is enough since these are all message-shaped events.
-      if (!caps || !hasGuildCapability(caps, event.guildId, "message")) return;
-      const payload = `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
-      const result = safeWriteSseEvent(reply, payload, {
-        path: "/api/guilds/events",
-      });
-      if (!result.ok) {
-        clearInterval(heartbeat);
-        unsubscribe?.();
-        unsubscribe = null;
-      }
-    });
-
-    request.raw.on("close", () => {
+    const teardown = () => {
       clearInterval(heartbeat);
       unsubscribe?.();
       unsubscribe = null;
+    };
+
+    // The caller may only receive events for guilds they can see — `message`
+    // scope suffices since these are all message-shaped events.
+    const canSee = (guildId: string): boolean =>
+      !!caps && hasGuildCapability(caps, guildId, "message");
+
+    const writeFrame = (id: string, name: string, data: unknown): boolean => {
+      const payload = `id: ${id}\nevent: ${name}\ndata: ${JSON.stringify(data)}\n\n`;
+      const result = safeWriteSseEvent(reply, payload, {
+        path: "/api/guilds/events",
+      });
+      if (!result.ok) teardown();
+      return result.ok;
+    };
+
+    // Reconnect replay: deliver the missed gap (filtered to visible guilds)
+    // BEFORE subscribing to live events. Synchronous — no event can slip in or
+    // double between replay and subscribe. See dm-routes for the full rationale.
+    const lastEventId =
+      request.query.lastEventId ??
+      (request.headers["last-event-id"] as string | undefined);
+    if (lastEventId) {
+      const replay = events.replaySince(lastEventId);
+      if (replay.kind === "resync") {
+        if (!writeFrame(events.latestId(), "resync", {})) return;
+      } else if (replay.kind === "replay") {
+        for (const { id, event } of replay.events) {
+          if (!canSee(event.guildId)) continue;
+          if (!writeFrame(id, event.type, event)) return;
+        }
+      }
+    }
+
+    unsubscribe = events.subscribe((event, id) => {
+      if (!canSee(event.guildId)) return;
+      writeFrame(id, event.type, event);
     });
+
+    request.raw.on("close", teardown);
   });
 
   server.get<{ Params: { guildId: string } }>(

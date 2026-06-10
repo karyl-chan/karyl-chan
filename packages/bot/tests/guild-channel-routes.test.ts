@@ -513,7 +513,7 @@ describe("message validation guards", () => {
 describe("GET /api/guilds/events SSE listener limit", () => {
   it("returns 503 when the event bus is at its listener limit", async () => {
     // Create a bus with limit=0 so the very first connection is rejected.
-    const eventBus = new GuildChannelEventBus(1);
+    const eventBus = new GuildChannelEventBus({ maxListeners: 1 });
     // Fill the single slot.
     eventBus.subscribe(() => {});
 
@@ -529,7 +529,7 @@ describe("GET /api/guilds/events SSE listener limit", () => {
   it("reports not at limit when below the listener cap", () => {
     // Sanity-check that isAtLimit() returns false for a fresh bus,
     // which is the precondition that makes the SSE handler proceed.
-    const eventBus = new GuildChannelEventBus(200);
+    const eventBus = new GuildChannelEventBus({ maxListeners: 200 });
     expect(eventBus.isAtLimit()).toBe(false);
   });
 });
