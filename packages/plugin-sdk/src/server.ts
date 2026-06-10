@@ -246,14 +246,20 @@ function classifyHttpStatus(status: number): BotRpcErrorReason {
  * fire-and-forget callers must wrap in `.catch(() => {})` if they want
  * to swallow.
  *
- * Retry policy: on a 503 / 429 / network failure we
- * retry up to MAX_RPC_RETRIES times with exponential backoff + jitter,
- * honouring a server-supplied `Retry-After` header when present. These
- * three failure modes share the same invariant: the bot has NOT yet
- * accepted the request body, so a retry is safe even for non-idempotent
- * RPCs (messages.send, interactions.respond, …). Any other 5xx is
- * surfaced immediately — once the bot has accepted the body we can't
- * know whether the side effect happened, so we don't double-send.
+ * Retry policy:
+ *  - 503 / 429 are retried unconditionally (up to MAX_RPC_RETRIES, with
+ *    backoff + jitter, honouring `Retry-After`): both mean the bot rejected
+ *    the request BEFORE processing it, so a retry can't duplicate a side
+ *    effect even for non-idempotent RPCs.
+ *  - A network failure (fetch threw) is AMBIGUOUS: it covers both "the bot
+ *    never received the body" (safe) AND "the connection dropped, or the
+ *    10 s timeout fired, AFTER the bot already committed" (a retry would
+ *    duplicate the side effect — double increment, duplicate message/DM).
+ *    We can't distinguish the two at the fetch layer, so a network error is
+ *    retried ONLY for idempotent paths (see NETWORK_RETRY_SAFE_PATHS);
+ *    everything else surfaces immediately.
+ *  - Any other status (4xx, 500, 502, 504) is surfaced immediately — once
+ *    the bot has the body we can't know whether the side effect happened.
  *
  * Total worst-case wall time on a fully degenerate path: ~3.5 s of
  * sleeps on top of the 10 s per-attempt fetch timeout. Plugin code
@@ -262,6 +268,37 @@ function classifyHttpStatus(status: number): BotRpcErrorReason {
 const MAX_RPC_RETRIES = 3;
 const RETRY_BASE_MS = 200;
 const RETRY_MAX_MS = 1_500;
+
+/**
+ * Paths whose effect is idempotent, so retrying after an AMBIGUOUS network
+ * error (which may have fired post-commit) can't duplicate a side effect:
+ * reads, and writes that converge to the same end state. NON-idempotent RPCs
+ * (storage.kv_increment, messages.send/send_dm, interactions.*, metrics.push,
+ * voice.play, voice.pause-as-toggle, …) are deliberately absent — a network error on those surfaces
+ * immediately rather than risk a duplicate. New methods are non-idempotent by
+ * DEFAULT (fail safe); add a path here only when a repeat is provably harmless.
+ */
+const NETWORK_RETRY_SAFE_PATHS = new Set<string>([
+  // reads
+  "/api/plugin/storage.kv_get",
+  "/api/plugin/storage.kv_list",
+  "/api/plugin/storage.kv_list_values",
+  "/api/plugin/me/enabled_guilds",
+  "/api/plugin/me/kv_usage",
+  "/api/plugin/members.get",
+  "/api/plugin/voice.status",
+  // idempotent writes (a repeat yields the same end state)
+  "/api/plugin/storage.kv_set",
+  "/api/plugin/storage.kv_delete",
+  "/api/plugin/messages.add_reaction",
+  "/api/plugin/messages.edit",
+  "/api/plugin/messages.delete",
+  "/api/plugin/voice.leave",
+  "/api/plugin/voice.stop",
+  // NOTE: voice.pause is intentionally NOT here — called with no `paused`
+  // arg it TOGGLES (voice-manager: `want = paused ?? !isPaused`), so a retry
+  // after a post-commit drop would flip it back.
+]);
 
 function computeBackoffMs(
   attempt: number,
@@ -322,12 +359,15 @@ export async function callBotRpc(
         signal: AbortSignal.timeout(10_000),
       });
     } catch (err) {
-      // Network errors are retryable: the bot definitionally never
-      // received the body, so re-sending can't duplicate side effects.
+      // A network error is ambiguous: the timeout/reset may have fired AFTER
+      // the bot committed. Retry only idempotent paths; for everything else
+      // surface the error immediately rather than risk duplicating the side
+      // effect (see NETWORK_RETRY_SAFE_PATHS).
       lastNetworkErr = err;
       lastHttpStatus = 0;
       lastRetryAfter = null;
-      continue;
+      if (NETWORK_RETRY_SAFE_PATHS.has(path)) continue;
+      break;
     }
 
     if (res.ok) {
