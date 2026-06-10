@@ -593,57 +593,87 @@ export async function registerDmRoutes(
     },
   );
 
-  server.get("/api/dm/events", async (request, reply) => {
-    if (!requireCapability(request, reply, "dm.message")) return;
+  server.get<{ Querystring: { lastEventId?: string } }>(
+    "/api/dm/events",
+    async (request, reply) => {
+      if (!requireCapability(request, reply, "dm.message")) return;
 
-    // Reject before hijacking the socket so we can still send a normal
-    // HTTP 503 response. Once hijack() is called + writeHead(200) is sent,
-    // we can no longer change the status code.
-    if (events.isAtLimit()) {
-      reply
-        .code(503)
-        .send({ error: "Too many SSE connections, try again later" });
-      return;
-    }
-
-    // Hand the socket to us — without this fastify auto-sends a body once
-    // the async handler returns, which races with our SSE writes and the
-    // browser sees the connection close immediately.
-    reply.hijack();
-    reply.raw.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-      "X-Accel-Buffering": "no",
-    });
-    reply.raw.write(": connected\n\n");
-
-    const heartbeat = setInterval(() => {
-      try {
-        reply.raw.write(": ping\n\n");
-      } catch {
-        /* ignore */
+      // Reject before hijacking the socket so we can still send a normal
+      // HTTP 503 response. Once hijack() is called + writeHead(200) is sent,
+      // we can no longer change the status code.
+      if (events.isAtLimit()) {
+        reply
+          .code(503)
+          .send({ error: "Too many SSE connections, try again later" });
+        return;
       }
-    }, 25_000);
-    heartbeat.unref();
 
-    let unsubscribe: (() => void) | null = null;
-    unsubscribe = events.subscribe((event) => {
-      const payload = `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
-      const result = safeWriteSseEvent(reply, payload, {
-        path: "/api/dm/events",
+      // Hand the socket to us — without this fastify auto-sends a body once
+      // the async handler returns, which races with our SSE writes and the
+      // browser sees the connection close immediately.
+      reply.hijack();
+      reply.raw.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
       });
-      if (!result.ok) {
+      reply.raw.write(": connected\n\n");
+
+      const heartbeat = setInterval(() => {
+        try {
+          reply.raw.write(": ping\n\n");
+        } catch {
+          /* ignore */
+        }
+      }, 25_000);
+      heartbeat.unref();
+
+      let unsubscribe: (() => void) | null = null;
+      const teardown = () => {
         clearInterval(heartbeat);
         unsubscribe?.();
         unsubscribe = null;
-      }
-    });
+      };
 
-    request.raw.on("close", () => {
-      clearInterval(heartbeat);
-      unsubscribe?.();
-      unsubscribe = null;
-    });
-  });
+      // Write one SSE frame, stamping it with the stream id so the client can
+      // resume from it after a reconnect. Returns false (and tears down) when
+      // the socket is closed or backpressured.
+      const writeFrame = (id: string, name: string, data: unknown): boolean => {
+        const payload = `id: ${id}\nevent: ${name}\ndata: ${JSON.stringify(data)}\n\n`;
+        const result = safeWriteSseEvent(reply, payload, {
+          path: "/api/dm/events",
+        });
+        if (!result.ok) teardown();
+        return result.ok;
+      };
+
+      // Reconnect replay: if the client sent its last-seen id, deliver the gap
+      // BEFORE subscribing to live events. publish() is synchronous and there
+      // is no await between replay and subscribe(), so no event can slip in
+      // unseen or be delivered twice.
+      const lastEventId =
+        request.query.lastEventId ??
+        (request.headers["last-event-id"] as string | undefined);
+      if (lastEventId) {
+        const replay = events.replaySince(lastEventId);
+        if (replay.kind === "resync") {
+          // Gap exceeds the retained buffer, or the server restarted: tell the
+          // client to do a full reload. Stamp with the head id so it resumes
+          // cleanly from here on.
+          if (!writeFrame(events.latestId(), "resync", {})) return;
+        } else if (replay.kind === "replay") {
+          for (const { id, event } of replay.events) {
+            if (!writeFrame(id, event.type, event)) return;
+          }
+        }
+      }
+
+      unsubscribe = events.subscribe((event, id) => {
+        writeFrame(id, event.type, event);
+      });
+
+      request.raw.on("close", teardown);
+    },
+  );
 }

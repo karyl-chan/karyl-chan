@@ -191,10 +191,18 @@ export interface EventStreamHandlers {
     onEvent: (event: DmEvent) => void;
     onError?: (event: Event) => void;
     onOpen?: () => void;
+    /** The server couldn't replay the reconnect gap (buffer overflow or a
+     *  restart) and asked the client to reconcile with a full reload. */
+    onResync?: () => void;
 }
 
 export function subscribeEvents(handlers: EventStreamHandlers): () => void {
+    // Track the last stream id the server stamped on a frame, so a reconnect
+    // can ask it to replay the gap (?lastEventId=). MessageEvent.lastEventId is
+    // set by the browser from each `id:` line, including the `resync` frame.
+    let lastEventId: string | undefined;
     const dispatch = (raw: MessageEvent) => {
+        if (raw.lastEventId) lastEventId = raw.lastEventId;
         try {
             const data = JSON.parse(raw.data) as DmEvent;
             handlers.onEvent(data);
@@ -202,16 +210,22 @@ export function subscribeEvents(handlers: EventStreamHandlers): () => void {
             // ignore malformed events
         }
     };
+    const onResync = (raw: MessageEvent) => {
+        if (raw.lastEventId) lastEventId = raw.lastEventId;
+        handlers.onResync?.();
+    };
     return openTicketedSse('/api/dm/events', {
         onEvent: dispatch,
         onOpen: handlers.onOpen,
         onError: handlers.onError,
+        getLastEventId: () => lastEventId,
         bindEventListeners(source) {
             source.addEventListener('message-created', dispatch as EventListener);
             source.addEventListener('message-updated', dispatch as EventListener);
             source.addEventListener('message-deleted', dispatch as EventListener);
             source.addEventListener('channel-touched', dispatch as EventListener);
             source.addEventListener('typing-start', dispatch as EventListener);
+            source.addEventListener('resync', onResync as EventListener);
         }
     });
 }

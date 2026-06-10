@@ -25,8 +25,9 @@ describe("DmEventBus", () => {
       startedAt: 0,
     };
     bus.publish(event);
-    expect(a).toHaveBeenCalledWith(event);
-    expect(b).toHaveBeenCalledWith(event);
+    // Listeners now receive (event, streamId).
+    expect(a).toHaveBeenCalledWith(event, expect.any(String));
+    expect(b).toHaveBeenCalledWith(event, expect.any(String));
   });
 
   it("unsubscribe stops further deliveries to that listener", () => {
@@ -51,7 +52,7 @@ describe("DmEventBus", () => {
   });
 
   it("allows subscribing up to the listener limit", () => {
-    const bus = new DmEventBus(3);
+    const bus = new DmEventBus({ maxListeners: 3 });
     expect(bus.isAtLimit()).toBe(false);
     bus.subscribe(vi.fn());
     bus.subscribe(vi.fn());
@@ -60,14 +61,14 @@ describe("DmEventBus", () => {
   });
 
   it("throws EmitterLimitError when the listener limit is exceeded", () => {
-    const bus = new DmEventBus(2);
+    const bus = new DmEventBus({ maxListeners: 2 });
     bus.subscribe(vi.fn());
     bus.subscribe(vi.fn());
     expect(() => bus.subscribe(vi.fn())).toThrow(EmitterLimitError);
   });
 
   it("isAtLimit returns false after unsubscribe frees a slot", () => {
-    const bus = new DmEventBus(1);
+    const bus = new DmEventBus({ maxListeners: 1 });
     const off = bus.subscribe(vi.fn());
     expect(bus.isAtLimit()).toBe(true);
     off();
