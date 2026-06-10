@@ -1,0 +1,25 @@
+{
+  "name": "__PLUGIN_KEY__",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "__PLUGIN_NAME__ — a karyl-chan plugin.",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@karyl-chan/plugin-sdk": "__SDK_VERSION__",
+    "fastify": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.9.3"
+  }
+}
