@@ -31,8 +31,25 @@ const state: Record<ReadinessSignal, boolean> = {
 
 let draining = false;
 
+/**
+ * How the `bot` signal got satisfied. "gateway" = the real Discord
+ * ready event; "skipped" = BOT_SKIP_DISCORD dev mode, where there is
+ * no gateway to wait for — readiness then means "web + db are up"
+ * (PM-7.5; previously skip mode could never turn ready and wedged
+ * any sibling container using `depends_on: service_healthy`).
+ */
+export type BotReadyMode = "gateway" | "skipped";
+
+let botMode: BotReadyMode = "gateway";
+
 export function setReady(signal: ReadinessSignal, value: boolean): void {
   state[signal] = value;
+}
+
+/** BOT_SKIP_DISCORD dev mode: satisfy the bot signal without a gateway. */
+export function setBotSkipped(): void {
+  botMode = "skipped";
+  state.bot = true;
 }
 
 /**
@@ -51,12 +68,14 @@ export function isDraining(): boolean {
 export function getReadiness(): {
   db: boolean;
   bot: boolean;
+  botMode: BotReadyMode;
   draining: boolean;
   ready: boolean;
 } {
   return {
     db: state.db,
     bot: state.bot,
+    botMode,
     draining,
     ready: state.db && state.bot && !draining,
   };
@@ -70,5 +89,6 @@ export function getReadiness(): {
 export function __resetReadinessForTests(): void {
   state.db = false;
   state.bot = false;
+  botMode = "gateway";
   draining = false;
 }

@@ -9,7 +9,7 @@ import { moduleLogger } from "../logger.js";
 import { setVoiceClient } from "../modules/voice/voice-backend.js";
 import { installVoiceGatewayRelay } from "../modules/voice/voice-gateway-relay.js";
 import { startWebServer } from "../modules/web-core/server.js";
-import { setReady } from "../modules/web-core/readiness.js";
+import { setBotSkipped, setReady } from "../modules/web-core/readiness.js";
 import {
   setMetricsBotClient,
   botEventLogWritesTotal,
@@ -169,6 +169,10 @@ export async function runStartup(ctx: RuntimeContext): Promise<void> {
       log.warn(
         "BOT_SKIP_DISCORD=true — skipping Discord gateway login (dev only)",
       );
+      // No gateway will ever fire `ready`, so satisfy the bot signal
+      // here — otherwise /api/health/ready stays 503 forever and any
+      // sibling `depends_on: service_healthy` deadlocks (PM-7.5).
+      setBotSkipped();
     } else {
       await bot.login(config.bot.token);
     }
