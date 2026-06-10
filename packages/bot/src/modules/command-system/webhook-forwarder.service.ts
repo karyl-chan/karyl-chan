@@ -90,6 +90,29 @@ export class WebhookForwarder {
       ? this.safeDecrypt(behavior.webhookSecret, behavior.id)
       : null;
 
+    // hmac mode is fail-CLOSED by contract (see doPost's response-verification
+    // note). Without a usable secret we can neither sign the outbound request
+    // nor verify the response, so refuse to forward rather than silently
+    // sending unsigned + relaying an unverified response into the user's DM.
+    // safeDecrypt returns null on a rotated-out key id / corrupt ciphertext —
+    // a reachable operational state, not merely a missing secret (which the
+    // model's CHECK already forbids for hmac mode).
+    if (behavior.webhookAuthMode === "hmac" && rawSecret === null) {
+      botEventLog.record(
+        "warn",
+        "bot",
+        `webhook-forwarder: behavior ${behavior.id} is hmac mode but its webhookSecret could not be decrypted — refusing to forward (fail closed).`,
+        { behaviorId: behavior.id },
+      );
+      return {
+        ok: false,
+        ended: false,
+        relayContent: "",
+        error:
+          "hmac mode: webhook secret unavailable (rotated key or corrupt ciphertext) — refusing to forward unsigned",
+      };
+    }
+
     return this.doPost(webhookUrl, payload, behavior, rawSecret);
   }
 
