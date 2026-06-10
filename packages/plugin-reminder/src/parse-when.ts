@@ -9,6 +9,8 @@ const UNIT_MS: Record<string, number> = {
   day: 86_400_000,
 };
 
+import { MAX_DUE_MS } from "./key-format.js";
+
 export function parseWhen(input: string, nowMs: number): number | null {
   const trimmed = input.trim().toLowerCase();
   const m = trimmed.match(/^(\d+)\s*([a-z]+)$/);
@@ -16,5 +18,7 @@ export function parseWhen(input: string, nowMs: number): number | null {
   const n = Number(m[1]);
   const unit = UNIT_MS[m[2]];
   if (!unit || !Number.isFinite(n) || n <= 0) return null;
-  return nowMs + n * unit;
+  const dueAtMs = nowMs + n * unit;
+  if (!Number.isFinite(dueAtMs) || dueAtMs >= MAX_DUE_MS) return null;
+  return dueAtMs;
 }

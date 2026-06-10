@@ -8,7 +8,8 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "rm -rf dist && tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "test": "rm -rf dist-test && tsc -p tsconfig.test.json && node --test \"dist-test/tests/**/*.test.js\""
   },
   "engines": {
     "node": ">=22"

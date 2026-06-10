@@ -8,11 +8,10 @@ import {
   type CommandReply,
   type PluginContext,
 } from "@karyl-chan/plugin-sdk";
+import { DUE_DIGITS, KEY_PREFIX } from "./key-format.js";
 import { parseWhen } from "./parse-when.js";
 
 const PLUGIN_KEY = "karyl-reminder";
-const KEY_PREFIX = "r:";
-const DUE_DIGITS = 13;
 const TICK_MS = 30_000;
 
 export interface ReminderRow {
