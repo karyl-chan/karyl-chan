@@ -15,6 +15,7 @@ import { botEventLog } from "../modules/bot-events/bot-event-log.js";
 import { setReady } from "../modules/web-core/readiness.js";
 import { dispatchEventToPlugins } from "../modules/plugin-system/plugin-event-bridge.service.js";
 import { pluginCommandRegistry } from "../modules/plugin-system/plugin-command-registry.service.js";
+import { deletePluginCommandsByGuild } from "../modules/plugin-system/models/plugin-command.model.js";
 import {
   syncInProcessCommandsForGuild,
   syncInProcessCommandsToDiscord,
@@ -214,6 +215,24 @@ export function registerRuntimeEvents(ctx: RuntimeContext): void {
       guildId: guild.id,
       guildName: guild.name,
     });
+    // DB-only: Discord drops an app's guild commands itself on leave.
+    // Required because sync()'s stale guard (PM-7.4) deliberately
+    // never deletes rows for guilds outside this process's cache.
+    void deletePluginCommandsByGuild(guild.id)
+      .then((n) => {
+        if (n > 0) {
+          log.info(
+            { guildId: guild.id, rows: n },
+            "cleaned plugin command rows for departed guild",
+          );
+        }
+      })
+      .catch((err: unknown) => {
+        log.error(
+          { err, guildId: guild.id },
+          "failed to clean plugin command rows for departed guild",
+        );
+      });
   });
 
   bot.on("interactionCreate", async (interaction: Interaction) => {

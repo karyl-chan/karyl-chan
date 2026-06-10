@@ -494,7 +494,24 @@ export class PluginCommandRegistry {
     // ── Cleanup: anything left in `stale` is a row that did not get
     // re-confirmed this pass (manifest dropped the command, feature
     // got disabled in that guild, etc.). Delete from Discord + DB.
+    //
+    // Guard (PM-7.4): a guild-scoped row whose guild is NOT in this
+    // process's cache is unverifiable, not stale — the cache may
+    // still be filling right after ready, or the guild may belong to
+    // another shard entirely (multi-shard reconcile used to silently
+    // wipe sibling shards' rows here, orphaning their Discord-side
+    // commands). Rows for guilds the bot truly left are cleaned
+    // DB-only by the guildDelete handler instead.
     for (const r of stale.values()) {
+      if (r.guildId && !bot.guilds.cache.has(r.guildId)) {
+        botEventLog.record(
+          "info",
+          "bot",
+          `plugin-commands: keeping row '${r.name}' for unverifiable guild ${r.guildId} (not in this process's cache)`,
+          { pluginId: r.pluginId, cmd: r.name, guildId: r.guildId },
+        );
+        continue;
+      }
       await this.deleteOne(r);
     }
   }

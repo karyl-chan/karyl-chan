@@ -204,6 +204,34 @@ describe("diff-based sync (PM-7.3)", () => {
   });
 });
 
+describe("stale-cleanup guard (PM-7.4)", () => {
+  it("does not delete rows whose guild is missing from the cache", async () => {
+    // Register commands while g1 is visible…
+    const botFull = makeFakeBot(["g1"]);
+    setPluginCommandBotClient(botFull);
+    const row = await makePluginRow();
+    const manifest = makeManifest([{ name: "m-play", description: "play" }]);
+    await pluginCommandRegistry.sync(row, manifest);
+    expect(await PluginCommand.count({ where: { pluginId: row.id } })).toBe(1);
+
+    // …then re-sync from a process that can't see g1 (cache still
+    // filling after ready, or g1 lives on a sibling shard). The row
+    // must survive untouched — pre-guard this wiped it (and couldn't
+    // delete the Discord side either: orphaned command).
+    const botEmpty = makeFakeBot([]);
+    setPluginCommandBotClient(botEmpty);
+    await pluginCommandRegistry.sync(row, manifest);
+    expect(await PluginCommand.count({ where: { pluginId: row.id } })).toBe(1);
+
+    // Back on the full-visibility process, dropping the command from
+    // the manifest still cleans it (guard only skips unverifiable
+    // guilds, it doesn't disable cleanup).
+    setPluginCommandBotClient(botFull);
+    await pluginCommandRegistry.sync(row, makeManifest([]));
+    expect(await PluginCommand.count({ where: { pluginId: row.id } })).toBe(0);
+  });
+});
+
 describe("rate-limited state in background runner (PM-7.3)", () => {
   it("CommandSyncRateLimitedError carries retryAfterMs for the runner", () => {
     const err = new CommandSyncRateLimitedError(60_000);
