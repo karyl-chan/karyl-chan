@@ -11,7 +11,9 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
 import { createPluginServer } from "../src/server.js";
-import { sign, TIMESTAMP_HEADER, SIGNATURE_HEADER } from "../src/hmac.js";
+import { sign, TIMESTAMP_HEADER,
+  NONCE_HEADER,
+  generateNonce, SIGNATURE_HEADER } from "../src/hmac.js";
 import { definePluginCommand } from "../src/plugin.js";
 
 const SECRET = "dispatch-secret";
@@ -77,6 +79,7 @@ describe("ctx.sendModal returns false when the bot rejects the modal", () => {
         member: { capabilities: [] },
       });
       const ts = String(Math.floor(Date.now() / 1000));
+      const nonce = generateNonce();
       const path = "/commands/openmodal";
       const res = await server.inject({
         method: "POST",
@@ -84,7 +87,8 @@ describe("ctx.sendModal returns false when the bot rejects the modal", () => {
         headers: {
           "content-type": "application/json",
           [TIMESTAMP_HEADER]: ts,
-          [SIGNATURE_HEADER]: sign(SECRET, "POST", path, ts, body),
+          [NONCE_HEADER]: nonce,
+          [SIGNATURE_HEADER]: sign(SECRET, "POST", path, ts, nonce, body),
         },
         payload: body,
       });

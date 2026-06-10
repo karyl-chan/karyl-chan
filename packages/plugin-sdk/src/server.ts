@@ -6,8 +6,7 @@ import Fastify, {
 import {
   SIGNATURE_HEADER,
   TIMESTAMP_HEADER,
-  isFreshTimestamp,
-  verify,
+  verifyDispatchHmac,
 } from "./hmac.js";
 import type {
   PluginCommandDefinition,
@@ -156,31 +155,19 @@ function verifyDispatchAuth(
   rawBody: string,
   secret: string,
 ): { ok: true } | { ok: false; reason: string } {
-  const tsHeader = request.headers[TIMESTAMP_HEADER];
-  const sigHeader = request.headers[SIGNATURE_HEADER];
-  if (typeof tsHeader !== "string") {
-    return { ok: false, reason: "missing timestamp header" };
-  }
-  if (typeof sigHeader !== "string") {
-    return { ok: false, reason: "missing signature header" };
-  }
-  if (!isFreshTimestamp(tsHeader, Math.floor(Date.now() / 1000))) {
-    return { ok: false, reason: "timestamp outside replay window" };
-  }
+  // Single source of truth: the same helper plugin authors are told to
+  // use for their own routes (signature + freshness + nonce replay
+  // tracking, BH-2.4).
   const urlPath = request.url.split("?")[0];
-  if (
-    !verify({
-      secret,
-      method: request.method,
-      path: urlPath,
-      body: rawBody,
-      ts: tsHeader,
-      presented: sigHeader,
-    })
-  ) {
-    return { ok: false, reason: "signature mismatch" };
-  }
-  return { ok: true };
+  const check = verifyDispatchHmac({
+    secret,
+    method: request.method,
+    path: urlPath,
+    body: rawBody,
+    headers: request.headers,
+  });
+  if (check.ok) return { ok: true };
+  return { ok: false, reason: check.reason.replace(/_/g, " ") };
 }
 
 /**

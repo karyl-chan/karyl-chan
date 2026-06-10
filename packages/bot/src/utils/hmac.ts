@@ -1,19 +1,33 @@
-import { createHmac, timingSafeEqual } from "crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "crypto";
 
 /**
  * HMAC signature helpers for bot ↔ plugin / webhook communication.
  *
- * Signed payload  : `<METHOD>:<url-path>:<timestamp>:<body>`
+ * Signed payload  : `<METHOD>:<url-path>:<timestamp>:<nonce>:<body>`
  * Header layout   : `x-karyl-signature: <hex>`
  *                   `x-karyl-timestamp: <unix-seconds>`
+ *                   `x-karyl-nonce: <hex>`
  *
  * Binding METHOD + URL path into the signed payload prevents a
  * signature captured on one endpoint from being replayed against a
- * different endpoint or HTTP verb within the replay window.
+ * different endpoint or HTTP verb within the replay window. The nonce
+ * (BH-2.4) closes the remaining window: receivers that require it also
+ * remember seen nonces for the freshness window and reject duplicates.
+ *
+ * RESPONSE verification stays nonce-OPTIONAL for compatibility — a
+ * response rides the request's own connection, so response replay isn't
+ * a stored-request attack the way request replay is. When a response
+ * does carry the nonce header, the new format is enforced.
  */
 
 export const SIGNATURE_HEADER = "x-karyl-signature";
 export const TIMESTAMP_HEADER = "x-karyl-timestamp";
+export const NONCE_HEADER = "x-karyl-nonce";
+
+/** Fresh random nonce for one outbound request. */
+export function generateNonce(): string {
+  return randomBytes(16).toString("hex");
+}
 
 // Replay window is deliberately not configurable here — it is a
 // security constant, not a tuning knob. Callers that need visibility
@@ -23,7 +37,9 @@ export const REPLAY_WINDOW_SECONDS = 300;
 // ─── Low-level sign ───────────────────────────────────────────────────
 
 /**
- * Compute HMAC over `<METHOD>:<url-path>:<timestamp>:<body>`.
+ * Compute HMAC over `<METHOD>:<url-path>:<timestamp>:<nonce>:<body>`
+ * (or the legacy nonce-less form when `nonce` is null — response
+ * verification keeps accepting it).
  * `method` should be upper-cased (e.g. "POST").
  * `path` should be the URL pathname only (e.g. "/dm/greet/dispatch").
  * Returns the raw hex digest.
@@ -33,11 +49,38 @@ export function signBody(
   method: string,
   path: string,
   timestamp: string,
+  nonce: string | null,
   body: string,
 ): string {
-  return createHmac("sha256", secret)
-    .update(`${method.toUpperCase()}:${path}:${timestamp}:${body}`)
-    .digest("hex");
+  const payload =
+    nonce === null
+      ? `${method.toUpperCase()}:${path}:${timestamp}:${body}`
+      : `${method.toUpperCase()}:${path}:${timestamp}:${nonce}:${body}`;
+  return createHmac("sha256", secret).update(payload).digest("hex");
+}
+
+// ── Nonce replay tracking（受 requireNonce 的驗證點使用）─────────────────
+
+const seenNonces = new Map<string, number>();
+let lastPrune = 0;
+
+function markNonceSeen(nonce: string, nowSec: number): boolean {
+  if (nowSec - lastPrune >= REPLAY_WINDOW_SECONDS) {
+    lastPrune = nowSec;
+    for (const [n, expiry] of seenNonces) {
+      if (expiry <= nowSec) seenNonces.delete(n);
+    }
+  }
+  const expiry = seenNonces.get(nonce);
+  if (expiry !== undefined && expiry > nowSec) return false;
+  seenNonces.set(nonce, nowSec + REPLAY_WINDOW_SECONDS);
+  return true;
+}
+
+/** Test hook: clear the nonce replay store. */
+export function __resetNonceStoreForTests(): void {
+  seenNonces.clear();
+  lastPrune = 0;
 }
 
 // ─── Timing-safe equality ─────────────────────────────────────────────
@@ -66,12 +109,15 @@ export function buildOutboundSignatureHeaders(
   urlPath: string,
   body: string,
   ts?: string,
+  nonce?: string,
 ): Record<string, string> {
   const timestamp = ts ?? Math.floor(Date.now() / 1000).toString();
-  const sig = signBody(secret, method, urlPath, timestamp, body);
+  const n = nonce ?? generateNonce();
+  const sig = signBody(secret, method, urlPath, timestamp, n, body);
   return {
     [TIMESTAMP_HEADER]: timestamp,
     [SIGNATURE_HEADER]: sig,
+    [NONCE_HEADER]: n,
   };
 }
 
@@ -99,15 +145,20 @@ export function verifyInboundSignature(
   nowSec: number,
   method: string,
   urlPath: string,
+  opts?: { requireNonce?: boolean },
 ): SignatureCheck {
   const sigHeader = headers.get(SIGNATURE_HEADER);
   const tsHeader = headers.get(TIMESTAMP_HEADER);
+  const nonceHeader = headers.get(NONCE_HEADER);
 
   if (!tsHeader) {
     return { ok: false, reason: "missing X-Karyl-Timestamp on response" };
   }
   if (!sigHeader) {
     return { ok: false, reason: "missing X-Karyl-Signature on response" };
+  }
+  if (opts?.requireNonce && !nonceHeader) {
+    return { ok: false, reason: "missing X-Karyl-Nonce" };
   }
 
   const tsNum = Number.parseInt(tsHeader, 10);
@@ -118,9 +169,23 @@ export function verifyInboundSignature(
     return { ok: false, reason: "response timestamp outside replay window" };
   }
 
-  const expected = signBody(secret, method, urlPath, tsHeader, rawBody);
+  // nonce 帶了就用新格式驗；沒帶（且不強制）走 legacy 格式 —— 僅限
+  // response 驗證的相容窗口，request 驗證點一律 requireNonce。
+  const expected = signBody(
+    secret,
+    method,
+    urlPath,
+    tsHeader,
+    nonceHeader ?? null,
+    rawBody,
+  );
   if (!constantTimeEq(sigHeader, expected)) {
     return { ok: false, reason: "response signature mismatch" };
+  }
+  if (opts?.requireNonce && nonceHeader) {
+    if (!markNonceSeen(nonceHeader, nowSec)) {
+      return { ok: false, reason: "replayed nonce" };
+    }
   }
   return { ok: true };
 }
@@ -150,6 +215,7 @@ export function verifyInboundSignatureWithKeys(
   nowSec: number,
   method: string,
   urlPath: string,
+  opts?: { requireNonce?: boolean },
 ): SignatureCheck {
   if (secrets.length === 0) {
     return { ok: false, reason: "no verification key configured" };
@@ -163,6 +229,7 @@ export function verifyInboundSignatureWithKeys(
       nowSec,
       method,
       urlPath,
+      opts,
     );
     if (last.ok) return last;
     // A timestamp-level failure (missing/malformed/outside-window) is the
@@ -188,6 +255,7 @@ export function verifyInboundSignatureFromHeadersWithKeys(
   nowSec: number,
   method: string,
   urlPath: string,
+  opts?: { requireNonce?: boolean },
 ): SignatureCheck {
   return verifyInboundSignatureWithKeys(
     secrets,
@@ -196,6 +264,7 @@ export function verifyInboundSignatureFromHeadersWithKeys(
     nowSec,
     method,
     urlPath,
+    opts,
   );
 }
 
@@ -212,8 +281,10 @@ function recordHeadersToFetch(
   const h = new Headers();
   const ts = one(headers[TIMESTAMP_HEADER]);
   const sig = one(headers[SIGNATURE_HEADER]);
+  const nonce = one(headers[NONCE_HEADER]);
   if (ts) h.set(TIMESTAMP_HEADER, ts);
   if (sig) h.set(SIGNATURE_HEADER, sig);
+  if (nonce) h.set(NONCE_HEADER, nonce);
   return h;
 }
 

@@ -563,7 +563,7 @@ roughly 30 seconds.
 
 ## Protocol alignment
 
-- **HMAC.** Signed payload is `<METHOD>:<path>:<ts>:<body>`; binding the
+- **HMAC.** Signed payload is `<METHOD>:<path>:<ts>:<nonce>:<body>`; binding the
   method and URL path prevents a captured signature from being replayed
   against a different endpoint. Headers: `x-karyl-signature` (hex
   SHA-256), `x-karyl-timestamp` (unix seconds). Replay window ±300 s.

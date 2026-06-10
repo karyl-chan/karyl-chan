@@ -6,7 +6,13 @@
  * guild on destroy. Reuses the exact bot↔plugin HMAC scheme from
  * @karyl-chan/plugin-sdk so the bot can verify with `verifyDispatchHmac`.
  */
-import { sign, SIGNATURE_HEADER, TIMESTAMP_HEADER } from "@karyl-chan/plugin-sdk";
+import {
+  sign,
+  generateNonce,
+  SIGNATURE_HEADER,
+  TIMESTAMP_HEADER,
+  NONCE_HEADER,
+} from "@karyl-chan/plugin-sdk";
 
 export interface BotClient {
   /** POST a signed JSON body to a bot internal path. Resolves to the HTTP
@@ -22,14 +28,16 @@ export function createBotClient(opts: {
   return {
     async post(path, body): Promise<number> {
       const ts = Math.floor(Date.now() / 1000).toString();
+      const nonce = generateNonce();
       const raw = JSON.stringify(body ?? {});
-      const sig = sign(opts.secret, "POST", path, ts, raw);
+      const sig = sign(opts.secret, "POST", path, ts, nonce, raw);
       const res = await fetch(`${base}${path}`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
           [TIMESTAMP_HEADER]: ts,
           [SIGNATURE_HEADER]: sig,
+          [NONCE_HEADER]: nonce,
         },
         body: raw,
       });

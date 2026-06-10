@@ -187,38 +187,58 @@ Each custom behavior picks one authentication mode:
 | `token` | Header `x-plugin-webhook-token: <secret>` on the outbound request. Response signatures are verified if present (optional). |
 | `hmac` | HMAC-SHA256 mutual signing and verification (see below). |
 
-In `hmac` mode the bot sends two headers on the outbound request:
+In `hmac` mode the bot sends three headers on the outbound request:
 
 | Header | Value |
 |--------|-------|
 | `X-Karyl-Timestamp` | Unix seconds. |
-| `X-Karyl-Signature` | `<hex>` = `HMAC_SHA256(secret, "<METHOD>:<path>:<ts>:<body>")`. |
+| `X-Karyl-Nonce` | 32-hex random per request (BH-2.4). |
+| `X-Karyl-Signature` | `<hex>` = `HMAC_SHA256(secret, "<METHOD>:<path>:<ts>:<nonce>:<body>")`. |
+
+Receivers verifying requests should include the nonce in the signed
+string and remember seen nonces for the 300 s window to reject replays.
 
 The webhook **response** is verified the same way (the bot binds the
 original request's method + path into the expected payload, which blocks
-cross-endpoint replay). Timestamps that differ from local time by more
-than 300 seconds are rejected; comparisons use `timingSafeEqual`. In
-`hmac` mode a missing or invalid response signature counts as a
-dispatch failure and **content is not relayed** to the caller.
+cross-endpoint replay). For responses the nonce is OPTIONAL — a response
+rides the request's own connection, so response replay isn't a
+stored-request attack; sign with the legacy
+`"<METHOD>:<path>:<ts>:<body>"` form or include an `X-Karyl-Nonce`
+header and the nonced form, either verifies. Timestamps that differ from
+local time by more than 300 seconds are rejected; comparisons use
+`timingSafeEqual`. In `hmac` mode a missing or invalid response
+signature counts as a dispatch failure and **content is not relayed**
+to the caller.
 
 ### Reference webhook receiver (Node.js)
 
 ```js
 import crypto from 'node:crypto';
 
+const seenNonces = new Map(); // nonce -> expiry (unix sec)
+
 function verify(headers, body, method, path, secret) {
   const ts = headers['x-karyl-timestamp'];
   const sig = headers['x-karyl-signature'];
-  if (!ts || !sig) return false;
-  if (Math.abs(Math.floor(Date.now() / 1000) - Number(ts)) > 300) return false;
+  const nonce = headers['x-karyl-nonce'];
+  if (!ts || !sig || !nonce) return false;
+  const now = Math.floor(Date.now() / 1000);
+  if (Math.abs(now - Number(ts)) > 300) return false;
   const expected = crypto
     .createHmac('sha256', secret)
-    .update(`${method.toUpperCase()}:${path}:${ts}:${body}`)
+    .update(`${method.toUpperCase()}:${path}:${ts}:${nonce}:${body}`)
     .digest('hex');
-  return (
-    sig.length === expected.length &&
-    crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))
-  );
+  if (
+    sig.length !== expected.length ||
+    !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))
+  ) {
+    return false;
+  }
+  // replay check AFTER the signature passes
+  for (const [n, exp] of seenNonces) if (exp <= now) seenNonces.delete(n);
+  if (seenNonces.has(nonce)) return false;
+  seenNonces.set(nonce, now + 300);
+  return true;
 }
 ```
 

@@ -71,6 +71,7 @@ interface ContractFixtures {
       path: string;
       ts: string;
       body: string;
+      nonce: string;
       expectedHex: string;
     }>;
   };
@@ -100,7 +101,7 @@ describe("contract: hmac headers + window", () => {
 describe("contract: hmac sign reproduces golden hex", () => {
   for (const g of fixtures.hmac.golden) {
     it(`sign() matches golden for '${g.name}'`, () => {
-      assert.equal(sign(g.secret, g.method, g.path, g.ts, g.body), g.expectedHex);
+      assert.equal(sign(g.secret, g.method, g.path, g.ts, g.nonce, g.body), g.expectedHex);
     });
     it(`verify() accepts the golden signature for '${g.name}'`, () => {
       assert.equal(
@@ -109,6 +110,7 @@ describe("contract: hmac sign reproduces golden hex", () => {
           method: g.method,
           path: g.path,
           ts: g.ts,
+          nonce: g.nonce,
           body: g.body,
           presented: g.expectedHex,
         }),
@@ -122,6 +124,7 @@ describe("contract: hmac sign reproduces golden hex", () => {
           method: g.method,
           path: g.path,
           ts: g.ts,
+          nonce: g.nonce,
           body: g.body + "X",
           presented: g.expectedHex,
         }),

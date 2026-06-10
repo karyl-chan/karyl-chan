@@ -163,9 +163,12 @@ export type {
 export {
   SIGNATURE_HEADER,
   TIMESTAMP_HEADER,
+  NONCE_HEADER,
   sign,
   verify,
   isFreshTimestamp,
+  generateNonce,
+  markNonceSeen,
   verifyDispatchHmac,
 } from "./hmac.js";
 

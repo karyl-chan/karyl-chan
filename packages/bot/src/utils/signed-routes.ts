@@ -42,6 +42,9 @@ export function makeSignedVerify(
       Math.floor(Date.now() / 1000),
       request.method,
       request.url.split("?")[0] ?? request.url,
+      // 對內簽章路由（voice→bot / shard→shard）：發送端皆已升級新格式，
+      // request 驗證一律要求 nonce 並做重放追蹤（BH-2.4）。
+      { requireNonce: true },
     );
     if (!check.ok) {
       reply.code(401).send({ error: check.reason });

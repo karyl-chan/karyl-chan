@@ -41,6 +41,7 @@ interface ContractFixtures {
   hmac: {
     signatureHeader: string;
     timestampHeader: string;
+    nonceHeader: string;
     replayWindowSeconds: number;
     golden: Array<{
       name: string;
@@ -49,6 +50,7 @@ interface ContractFixtures {
       path: string;
       ts: string;
       body: string;
+      nonce: string;
       expectedHex: string;
     }>;
   };
@@ -120,7 +122,7 @@ describe("contract: hmac headers + window (bot side)", () => {
 describe("contract: bot signBody reproduces golden hex", () => {
   for (const g of fixtures.hmac.golden) {
     it(`signBody() matches golden for '${g.name}'`, () => {
-      expect(signBody(g.secret, g.method, g.path, g.ts, g.body)).toBe(
+      expect(signBody(g.secret, g.method, g.path, g.ts, g.nonce, g.body)).toBe(
         g.expectedHex,
       );
     });
@@ -128,6 +130,7 @@ describe("contract: bot signBody reproduces golden hex", () => {
     it(`verifyInboundSignature accepts the golden signature for '${g.name}'`, () => {
       const headers = new Headers({
         [fixtures.hmac.timestampHeader]: g.ts,
+        [fixtures.hmac.nonceHeader]: g.nonce,
         [fixtures.hmac.signatureHeader]: g.expectedHex,
       });
       const result = verifyInboundSignature(
@@ -144,6 +147,7 @@ describe("contract: bot signBody reproduces golden hex", () => {
     it(`verifyInboundSignature rejects a tampered body for '${g.name}'`, () => {
       const headers = new Headers({
         [fixtures.hmac.timestampHeader]: g.ts,
+        [fixtures.hmac.nonceHeader]: g.nonce,
         [fixtures.hmac.signatureHeader]: g.expectedHex,
       });
       const result = verifyInboundSignature(

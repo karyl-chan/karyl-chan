@@ -10,7 +10,9 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { Client } from "discord.js";
-import { signBody, SIGNATURE_HEADER, TIMESTAMP_HEADER } from "../src/utils/hmac.js";
+import { signBody,
+  generateNonce,
+  NONCE_HEADER, SIGNATURE_HEADER, TIMESTAMP_HEADER } from "../src/utils/hmac.js";
 import {
   registerVoiceInternalRoutes,
   activeRemoteGuilds,
@@ -21,10 +23,12 @@ const SECRET = "shared-voice-secret";
 
 function signed(path: string, body: string): Record<string, string> {
   const ts = Math.floor(Date.now() / 1000).toString();
+  const nonce = generateNonce();
   return {
     "content-type": "application/json",
     [TIMESTAMP_HEADER]: ts,
-    [SIGNATURE_HEADER]: signBody(SECRET, "POST", path, ts, body),
+    [NONCE_HEADER]: nonce,
+    [SIGNATURE_HEADER]: signBody(SECRET, "POST", path, ts, nonce, body),
   };
 }
 

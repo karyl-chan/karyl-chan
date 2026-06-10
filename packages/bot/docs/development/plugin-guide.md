@@ -50,7 +50,7 @@ endpoint with these headers:
 | Header | Value |
 |--------|-------|
 | `X-Karyl-Timestamp` | Unix seconds. |
-| `X-Karyl-Signature` | `<hex>` = `HMAC_SHA256(dispatchHmacKey, "<METHOD>:<path>:<ts>:<body>")`. |
+| `X-Karyl-Signature` | `<hex>` = `HMAC_SHA256(dispatchHmacKey, "<METHOD>:<path>:<ts>:<nonce>:<body>")`. |
 
 Method + path are bound into the signed payload, which prevents a
 captured signature from being replayed against a different endpoint or
