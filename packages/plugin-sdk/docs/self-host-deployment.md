@@ -124,7 +124,8 @@ failed or got rate-limited.
 | Symptom | Likely cause | Check |
 |---|---|---|
 | Register answers `401 invalid setup secret` | Secret never minted for this plugin key, or key mismatch with `definePlugin` | Bot event log: `Plugin registration rejected (...)`; compare keys exactly |
-| Register answers `400` | Manifest problem — including a command name colliding with a reserved/other plugin's command | The 400 body carries the reason; fix the manifest |
+| Register answers `400` | Manifest problem — common ones: a command missing `scope` / `integrationTypes` / `contexts` (V-06/07/08, all mandatory), or a command name colliding with a reserved/other plugin's command | The 400 body carries the exact reason; fix the manifest |
+| Plugin-side RPC answers `403` | Scope not declared/approved (note: scope names are snake_case wire-side, e.g. `me.enabled_guilds`), or the plugin simply isn't **enabled** yet — every RPC is gated on the admin enable switch | The 403 body says which; check `rpcMethodsUsed` and the admin enable toggle |
 | Register answers `429` | Register loop — the bot throttles per-plugin registers (10/min) | Stop the restart loop; the SDK backs off by itself, just wait |
 | Plugin log: `register timed out after 30000ms` (3× escalates to error) | Bot-side register handler wedged or unreachable | Bot log: an `/api/plugins/register` "incoming request" with no completion; bot event log warns after 10s |
 | Commands visible in Discord but every use fails fast | Plugin restarted and hasn't completed its register handshake — it refuses dispatches (503) until then | Plugin log: `dispatch refused: register handshake not completed`; bot event log names the same state; it self-heals when register succeeds |
