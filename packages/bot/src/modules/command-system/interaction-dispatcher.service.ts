@@ -34,7 +34,7 @@ import {
   endSession,
   startSession,
 } from "../behavior/models/behavior-session.model.js";
-import { findAudienceMembers } from "../behavior/models/behavior-audience-member.model.js";
+import { findGroupMembers } from "../behavior/models/behavior-group-member.model.js";
 import type { DispatchOutcome } from "./types.js";
 import type { WebhookForwarder } from "./webhook-forwarder.service.js";
 import { collectApplicableBehaviorsForUser } from "./message-pattern-matcher.service.js";
@@ -341,8 +341,10 @@ export class InteractionDispatcher {
         : "not_in_audience";
     }
     if (behaviorRow.audienceKind === "group") {
+      // groupName null = 設定不完整（audienceShape validator 應已擋）→ deny
+      if (behaviorRow.audienceGroupName === null) return "not_in_audience";
       try {
-        const members = await findAudienceMembers(behaviorRow.id);
+        const members = await findGroupMembers(behaviorRow.audienceGroupName);
         return members.includes(interaction.user.id)
           ? "ok"
           : "not_in_audience";

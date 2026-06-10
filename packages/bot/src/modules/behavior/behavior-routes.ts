@@ -37,6 +37,10 @@ import {
   rowOf as tabRowOf,
 } from "./models/behavior-scope-tab.model.js";
 import { BehaviorSession } from "./models/behavior-session.model.js";
+import {
+  findGroupMembers,
+  replaceGroupMembers,
+} from "./models/behavior-group-member.model.js";
 import { Op, fn, col } from "sequelize";
 import { sequelize } from "../../db.js";
 import { encryptSecret } from "../../utils/crypto.js";
@@ -841,5 +845,65 @@ export async function registerBehaviorRoutes(
     });
 
     return reply.send({ ok: true });
+  });
+
+  // ── audience group 成員管理（BH-1）─────────────────────────────────────────
+  //
+  // group 以名字為單位（behaviors.audienceGroupName / specific_group tab 的
+  // groupName），名單存 behavior_group_members，同名 group 的 behaviors 共享。
+
+  // GET /api/behavior-groups/:groupName/members
+  server.get("/api/behavior-groups/:groupName/members", async (request, reply) => {
+    if (!requireBehaviorAdmin(request, reply)) return;
+    const groupName = decodeURIComponent(
+      (request.params as { groupName: string }).groupName,
+    ).trim();
+    if (!groupName) {
+      return reply.code(400).send({ error: "groupName 為必填" });
+    }
+    const members = await findGroupMembers(groupName);
+    return reply.send({ groupName, members });
+  });
+
+  // PUT /api/behavior-groups/:groupName/members { userIds: string[] }
+  // 全量替換（與 UI 的編輯-儲存模型一致；增/刪都走同一條）。
+  server.put("/api/behavior-groups/:groupName/members", async (request, reply) => {
+    if (!requireBehaviorAdmin(request, reply)) return;
+    const groupName = decodeURIComponent(
+      (request.params as { groupName: string }).groupName,
+    ).trim();
+    if (!groupName || groupName.length > 200) {
+      return reply.code(400).send({ error: "groupName 為必填（max 200）" });
+    }
+    const body = request.body as { userIds?: unknown };
+    if (!Array.isArray(body?.userIds)) {
+      return reply.code(400).send({ error: "userIds 為必填陣列" });
+    }
+    if (body.userIds.length > 1000) {
+      return reply.code(400).send({ error: "userIds 過長 (max 1000)" });
+    }
+    const userIds: string[] = [];
+    for (const raw of body.userIds) {
+      if (typeof raw !== "string") {
+        return reply.code(400).send({ error: "userIds 必須是字串陣列" });
+      }
+      const id = raw.trim();
+      if (!id) continue;
+      if (!/^\d{5,25}$/.test(id)) {
+        return reply
+          .code(400)
+          .send({ error: `無效的 user id：${id.slice(0, 30)}` });
+      }
+      userIds.push(id);
+    }
+    await replaceGroupMembers(groupName, userIds);
+    const members = await findGroupMembers(groupName);
+    botEventLog.record(
+      "info",
+      "bot",
+      `behavior-group: '${groupName}' 成員更新為 ${members.length} 人`,
+      { groupName, count: members.length, actor: request.authUserId ?? null },
+    );
+    return reply.send({ groupName, members });
   });
 }

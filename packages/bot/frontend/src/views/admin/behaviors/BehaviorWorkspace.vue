@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { Icon } from '@iconify/vue';
 import Sortable from 'sortablejs';
 import BehaviorCard from './BehaviorCard.vue';
+import GroupMembersPanel from './GroupMembersPanel.vue';
 import { AppConfirmDialog } from '@karyl-chan/ui';
 import { AppButton } from '@karyl-chan/ui';
 import {
@@ -208,6 +209,13 @@ const kindBadge = computed(() => {
                 @click="onDeleteTab"
             />
         </header>
+
+        <!-- specific_group tab：成員管理（BH-1.2）。名單掛 groupName,
+             tab 上所有 behaviors 共享。 -->
+        <GroupMembersPanel
+            v-if="tab.tabType === 'specific_group' && tab.groupName"
+            :group-name="tab.groupName"
+        />
 
         <p v-if="loading && behaviors.length === 0" class="muted loading">{{ t('common.loading') }}</p>
         <p v-else-if="!loading && behaviors.length === 0" class="muted empty">

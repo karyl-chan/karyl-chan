@@ -1261,6 +1261,15 @@
             "forwardLabel": "Forward",
             "forwardWebhook": "Webhook",
             "forwardPlugin": "Plugin"
+        },
+        "groupMembers": {
+            "title": "Group members",
+            "count": "{count} member(s)",
+            "empty": "No members yet — behaviors on this tab won't fire for anyone until you add some.",
+            "placeholder": "Discord user ID",
+            "add": "Add",
+            "remove": "Remove",
+            "invalidId": "Invalid Discord user ID."
         }
     },
     "config": {

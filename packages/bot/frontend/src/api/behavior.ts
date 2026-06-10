@@ -192,6 +192,33 @@ export async function reorderBehaviors(orderedIds: number[]): Promise<void> {
   await jsonOrThrow<unknown>(r);
 }
 
+// ── Audience group members API（BH-1）───────────────────────────────────────
+// group 以名字為單位，同名 group 的 behaviors 共享名單。
+
+export async function getGroupMembers(groupName: string): Promise<string[]> {
+  const r = await authedFetch(
+    `/api/behavior-groups/${encodeURIComponent(groupName)}/members`,
+  );
+  const body = await jsonOrThrow<{ members: string[] }>(r);
+  return body.members;
+}
+
+export async function setGroupMembers(
+  groupName: string,
+  userIds: string[],
+): Promise<string[]> {
+  const r = await authedFetch(
+    `/api/behavior-groups/${encodeURIComponent(groupName)}/members`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userIds }),
+    },
+  );
+  const body = await jsonOrThrow<{ members: string[] }>(r);
+  return body.members;
+}
+
 // ── Scope Tab API ───────────────────────────────────────────────────────────
 
 export async function listScopeTabs(): Promise<ScopeTabRow[]> {

@@ -1260,6 +1260,15 @@
             "forwardLabel": "转发设定",
             "forwardWebhook": "Webhook",
             "forwardPlugin": "Plugin"
+        },
+        "groupMembers": {
+            "title": "群组成员",
+            "count": "{count} 位成员",
+            "empty": "尚无成员——加入成员前，该分页上的 behaviors 不会对任何人触发。",
+            "placeholder": "Discord 用户 ID",
+            "add": "加入",
+            "remove": "移除",
+            "invalidId": "无效的 Discord 用户 ID。"
         }
     },
     "config": {

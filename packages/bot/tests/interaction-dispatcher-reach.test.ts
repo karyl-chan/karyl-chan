@@ -36,7 +36,7 @@ vi.mock("../src/modules/bot-events/bot-event-log.js", () => ({
 import type { Interaction } from "discord.js";
 import { sequelize } from "../src/db.js";
 import { Behavior } from "../src/modules/behavior/models/behavior.model.js";
-import { addAudienceMember } from "../src/modules/behavior/models/behavior-audience-member.model.js";
+import { addGroupMember } from "../src/modules/behavior/models/behavior-group-member.model.js";
 import { InteractionDispatcher } from "../src/modules/command-system/interaction-dispatcher.service.js";
 import type { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
 
@@ -169,11 +169,11 @@ describe("InteractionDispatcher — behavior reach enforcement", () => {
   });
 
   it("audience=group forwards members and denies non-members", async () => {
-    const id = await seedCustomSlash({
+    await seedCustomSlash({
       audienceKind: "group",
       audienceGroupName: "vip",
     });
-    await addAudienceMember(id, "M1");
+    await addGroupMember("vip", "M1");
 
     const forwarder = makeForwarder();
     const d = new InteractionDispatcher(forwarder as unknown as WebhookForwarder);

@@ -31,7 +31,7 @@ import {
   startSession,
   endSession,
 } from "../behavior/models/behavior-session.model.js";
-import { findAudienceMembersBulk } from "../behavior/models/behavior-audience-member.model.js";
+import { findGroupMembersBulk } from "../behavior/models/behavior-group-member.model.js";
 import { matchesTrigger } from "../behavior/behavior-trigger.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import type { MessageMatchOutcome } from "./types.js";
@@ -618,17 +618,23 @@ export async function collectApplicableBehaviorsForUser(
   });
 
   const behaviors = allRows.map(rowOfBehavior);
-  const groupIds = behaviors
-    .filter((b) => b.audienceKind === "group")
-    .map((b) => b.id);
-  const memberMap = await findAudienceMembersBulk(groupIds);
+  // group 成員以 groupName 為鍵（BH-1）— 同名 group 的 behaviors 共享名單
+  const groupNames = behaviors
+    .filter((b) => b.audienceKind === "group" && b.audienceGroupName !== null)
+    .map((b) => b.audienceGroupName as string);
+  const memberMap = await findGroupMembersBulk(groupNames);
 
   const result: BehaviorRow[] = [];
   for (const behavior of behaviors) {
     if (behavior.audienceKind === "user") {
       if (behavior.audienceUserId === userId) result.push(behavior);
     } else if (behavior.audienceKind === "group") {
-      if (memberMap.get(behavior.id)?.includes(userId)) result.push(behavior);
+      if (
+        behavior.audienceGroupName !== null &&
+        memberMap.get(behavior.audienceGroupName)?.includes(userId)
+      ) {
+        result.push(behavior);
+      }
     } else if (behavior.audienceKind === "all") {
       result.push(behavior);
     }
