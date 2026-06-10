@@ -49,6 +49,45 @@ const DM_LOCALE = "en" as const;
 
 // BH-0.3 multi-match：一則訊息可以連發多條 one_time behavior，
 // outcome 取聯集；behaviorId 報第一條命中的（log 用途）。
+// BH-3：guild 頻道 forward 的 per-channel rate limit（防高頻頻道把 webhook
+// 刷爆 / webhook 回貼造成的迴圈放大）。sliding window，超量靜默丟棄並記
+// botEventLog（每 channel 每 window 至多記一次）。DM 不限流。
+const GUILD_FORWARD_LIMIT = 5;
+const GUILD_FORWARD_WINDOW_MS = 10_000;
+const guildForwardWindows = new Map<string, number[]>();
+const guildForwardWarned = new Map<string, number>();
+
+function guildForwardAllowed(channelId: string): boolean {
+  const now = Date.now();
+  const stamps = (guildForwardWindows.get(channelId) ?? []).filter(
+    (ts) => now - ts < GUILD_FORWARD_WINDOW_MS,
+  );
+  if (stamps.length >= GUILD_FORWARD_LIMIT) {
+    guildForwardWindows.set(channelId, stamps);
+    const lastWarn = guildForwardWarned.get(channelId) ?? 0;
+    if (now - lastWarn >= GUILD_FORWARD_WINDOW_MS) {
+      guildForwardWarned.set(channelId, now);
+      botEventLog.record(
+        "warn",
+        "bot",
+        `message-pattern-matcher: guild channel ${channelId} 觸發超過 ${GUILD_FORWARD_LIMIT}/${GUILD_FORWARD_WINDOW_MS / 1000}s，rate limit 丟棄`,
+        { channelId },
+      );
+    }
+    return false;
+  }
+  stamps.push(now);
+  guildForwardWindows.set(channelId, stamps);
+  if (stamps.length === 1) guildForwardWarned.delete(channelId);
+  return true;
+}
+
+/** 測試用：清空 rate limit 視窗。 */
+export function __resetGuildForwardWindowsForTests(): void {
+  guildForwardWindows.clear();
+  guildForwardWarned.clear();
+}
+
 function mergeOutcomes(
   a: MessageMatchOutcome,
   b: MessageMatchOutcome,
@@ -129,27 +168,41 @@ export class MessagePatternMatcher {
    * 處理一條 DjsMessage（供 testing 直接呼叫；production 由 register 的 listener 呼叫）。
    */
   async onMessage(djsMessage: DjsMessage): Promise<MessageMatchOutcome> {
-    // ─ DM-only gate（C-runtime §5.1）
-    if (djsMessage.channel.type !== ChannelType.DM) {
-      return { handled: false };
-    }
+    const isDm = djsMessage.channel.type === ChannelType.DM;
 
-    // 忽略 bot 自己發的訊息
-    if (djsMessage.author.bot) {
-      return { handled: false };
+    if (isDm) {
+      // DM：bot 訊息無條件丟棄（bot 之間不會 DM；防 echo）
+      if (djsMessage.author.bot) {
+        return { handled: false };
+      }
+    } else {
+      // BH-3：guild 文字頻道。其他型別（group DM 等）不處理。
+      if (!djsMessage.guildId) {
+        return { handled: false };
+      }
+      // 本 bot 自身訊息無條件丟棄（防自我迴圈）——即使 behavior 取消勾選
+      // ignoreBots 也擋。其他 bot/webhook 作者由 per-behavior ignoreBots
+      // 在比對階段決定。
+      if (
+        djsMessage.author.id !== undefined &&
+        djsMessage.author.id === djsMessage.client?.user?.id
+      ) {
+        return { handled: false };
+      }
     }
 
     const userId = djsMessage.author.id;
     return this.withUserLock(userId, () =>
-      this.onMessageLocked(djsMessage, userId),
+      this.onMessageLocked(djsMessage, userId, isDm),
     );
   }
 
   private async onMessageLocked(
     djsMessage: DjsMessage,
     userId: string,
+    isDm: boolean,
   ): Promise<MessageMatchOutcome> {
-    const channelId = (djsMessage.channel as DMChannel).id;
+    const channelId = djsMessage.channel.id;
     const content = djsMessage.content ?? "";
 
     // ─ M-1 修：session 優先路徑下，DM 文字觸發的 `break` system behavior
@@ -157,7 +210,12 @@ export class MessagePatternMatcher {
     // 為了讓 admin 設的「!break」之類 DM 觸發確實能逃出 session，先比對
     // enabled 的 source='system' systemKey='break' message_pattern：命中
     // 就 endSession + 回 ack，再 return。沒命中才繼續走 session 路徑。
-    const breakEscape = await this.tryDmBreakEscape(djsMessage, userId, content);
+    const breakEscape = await this.tryBreakEscape(
+      djsMessage,
+      userId,
+      content,
+      isDm,
+    );
     if (breakEscape) return breakEscape;
 
     // ─ 查 active session（C-runtime §5.2 session 優先）
@@ -190,6 +248,26 @@ export class MessagePatternMatcher {
       if (behavior.triggerType !== "message_pattern") continue;
       if (!behavior.messagePatternKind || !behavior.messagePatternValue)
         continue;
+
+      // ─ BH-3 reach 過濾：contexts 決定 DM / guild 哪邊生效；guild 再按
+      //   placement（specific_guild/channel tab 的承諾）與 ignoreBots 過濾。
+      const contexts = behavior.contexts ?? "";
+      if (isDm) {
+        if (!contexts.includes("BotDM")) continue;
+      } else {
+        if (!contexts.includes("Guild")) continue;
+        if (
+          behavior.placementGuildId !== null &&
+          behavior.placementGuildId !== djsMessage.guildId
+        )
+          continue;
+        if (
+          behavior.placementChannelId !== null &&
+          behavior.placementChannelId !== channelId
+        )
+          continue;
+        if (djsMessage.author.bot && behavior.ignoreBots) continue;
+      }
 
       const matched = matchesTrigger(
         behavior.messagePatternKind,
@@ -280,6 +358,14 @@ export class MessagePatternMatcher {
       return { handled: false, sessionEnded: true };
     }
 
+    // BH-3：guild 頻道 session 也受 per-channel rate limit
+    if (
+      djsMessage.guildId &&
+      !guildForwardAllowed(session.channelId)
+    ) {
+      return { handled: false };
+    }
+
     const payload = this.buildPayload(djsMessage, behavior, session);
     const result = await this.forwarder.forward(behavior, payload);
 
@@ -329,6 +415,11 @@ export class MessagePatternMatcher {
     channelId: string,
     content: string,
   ): Promise<MessageMatchOutcome> {
+    // BH-3：guild 頻道 forward 受 per-channel rate limit
+    if (djsMessage.guildId && !guildForwardAllowed(channelId)) {
+      return { handled: false };
+    }
+
     const payload = this.buildPayload(djsMessage, behavior);
     const result = await this.forwarder.forward(behavior, payload);
     const dmChannel = djsMessage.channel as DMChannel;
@@ -374,12 +465,12 @@ export class MessagePatternMatcher {
     };
   }
 
-  // ── 私有：DM-text break escape ────────────────────────────────────────────
+  // ── 私有：break escape（DM + guild，BH-3 擴）────────────────────────────
 
   /**
    * M-1 修：在 session shortcircuit 之前先檢查使用者是否輸入符合 `break`
    * system behavior 的 message_pattern 觸發。命中即 endSession + 回 ack，
-   * 讓 DM 文字 break 不被 session 吞掉。
+   * 讓文字 break 不被 session 吞掉。
    *
    * 沒命中（最常見路徑：使用者不是想 break，只是正常回覆 session）回 null，
    * 呼叫端繼續走 session shortcircuit / matcher loop。
@@ -387,11 +478,16 @@ export class MessagePatternMatcher {
    * 範圍：只看 enabled + source='system' + systemKey='break' +
    * triggerType='message_pattern'。audienceKind 不過濾（system break 預設
    * audienceKind='all'，且 admin 改不到該欄位）。
+   *
+   * BH-3：guild 頻道也吃 break escape（逃生門通用性優先於 contexts 過濾），
+   * 但 guild 內**沒有 session 可結束時不回覆也不 claim**（避免一般訊息
+   * 恰好匹配 break pattern 時對整個頻道刷「No active session」）。
    */
-  private async tryDmBreakEscape(
+  private async tryBreakEscape(
     djsMessage: DjsMessage,
     userId: string,
     content: string,
+    isDm: boolean,
   ): Promise<MessageMatchOutcome | null> {
     const row = await Behavior.findOne({
       where: {
@@ -415,17 +511,24 @@ export class MessagePatternMatcher {
     ) {
       return null;
     }
+    // guild：先看這個頻道有沒有 session，沒有就完全不出聲、不 claim
+    if (!isDm) {
+      const active = await findActiveSession(userId, djsMessage.channel.id);
+      if (!active) return null;
+    }
     const ended = await breakSessions(userId, djsMessage.channel.id);
-    const dmChannel = djsMessage.channel as DMChannel;
-    await dmChannel
-      .send({
-        content: t(
-          DM_LOCALE,
-          ended ? "system.session-ended" : "system.no-session",
-        ),
-        allowedMentions: { parse: [] },
-      })
-      .catch(() => {});
+    const channel = djsMessage.channel as DMChannel;
+    if (isDm || ended) {
+      await channel
+        .send({
+          content: t(
+            DM_LOCALE,
+            ended ? "system.session-ended" : "system.no-session",
+          ),
+          allowedMentions: { parse: [] },
+        })
+        .catch(() => {});
+    }
     return {
       handled: true,
       sessionEnded: ended,
@@ -548,6 +651,7 @@ export class MessagePatternMatcher {
         },
         message_id: djsMessage.id,
         channel_id: djsMessage.channel.id,
+        guild_id: djsMessage.guildId ?? null,
         behavior_id: behavior.id,
         session: session
           ? { active: true, started_at: session.startedAt }
@@ -567,6 +671,7 @@ export class MessagePatternMatcher {
       enabled: !!model.getDataValue("enabled"),
       sortOrder: model.getDataValue("sortOrder") as number,
       stopOnMatch: !!model.getDataValue("stopOnMatch"),
+    ignoreBots: !!model.getDataValue("ignoreBots"),
       forwardType: model.getDataValue(
         "forwardType",
       ) as BehaviorRow["forwardType"],

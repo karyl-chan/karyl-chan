@@ -70,6 +70,13 @@ export const Behavior = sequelize.define(
       allowNull: false,
       defaultValue: false,
     },
+    // BH-3：guild 頻道 pattern 是否忽略 bot/webhook 作者的訊息。預設忽略
+    // （防 bot 迴圈）；取消勾選也擋不掉本 bot 自身訊息（matcher 無條件丟棄）。
+    ignoreBots: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: true,
+    },
     forwardType: {
       // ENUM → sync() 發出 CHECK(forwardType IN ('one_time','continuous'))
       type: DataTypes.ENUM("one_time", "continuous"),
@@ -386,23 +393,8 @@ export const Behavior = sequelize.define(
           throw new Error("placementGuildId requires scope = 'guild'");
         }
       },
-      // CHECK：message_pattern trigger 的 contexts 不可含 'Guild'
-      messagePatternContexts(this: {
-        triggerType?: string;
-        contexts?: string;
-      }) {
-        if (this.triggerType === undefined || this.contexts === undefined) {
-          return;
-        }
-        if (
-          this.triggerType === "message_pattern" &&
-          (this.contexts ?? "").includes("Guild")
-        ) {
-          throw new Error(
-            "message_pattern behavior contexts must not include 'Guild'",
-          );
-        }
-      },
+      // （BH-3 移除舊的 messagePatternContexts CHECK：guild 頻道 pattern
+      //   已是正式能力，contexts 可含 'Guild'。）
     },
   },
 );
@@ -416,6 +408,7 @@ export interface BehaviorRow {
   enabled: boolean;
   sortOrder: number;
   stopOnMatch: boolean;
+  ignoreBots: boolean;
   forwardType: BehaviorForwardType;
   source: BehaviorSource;
   triggerType: BehaviorTriggerType;
@@ -448,6 +441,7 @@ export function rowOfBehavior(
     enabled: !!model.getDataValue("enabled"),
     sortOrder: model.getDataValue("sortOrder") as number,
     stopOnMatch: !!model.getDataValue("stopOnMatch"),
+    ignoreBots: !!model.getDataValue("ignoreBots"),
     forwardType: model.getDataValue("forwardType") as BehaviorForwardType,
     source: model.getDataValue("source") as BehaviorSource,
     triggerType: model.getDataValue("triggerType") as BehaviorTriggerType,

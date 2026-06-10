@@ -1234,7 +1234,9 @@
             "sourceNoticPluginLink": "查看 Plugin 详情",
             "sourceNoticSystem": "系统内建 behavior，可修改触发类型与内容（其余字段锁定）",
             "saveTrigger": "保存触发",
-            "stopOnMatchHint": "命中后，这条消息不再比对后续 pattern。"
+            "stopOnMatchHint": "命中后，这条消息不再比对后续 pattern。",
+            "ignoreBots": "忽略 bot 消息",
+            "ignoreBotsHint": "bot／webhook 发的消息不触发此 pattern。本 bot 自身的消息无论如何都会被忽略。"
         },
         "addTab": {
             "title": "新增范围分页",

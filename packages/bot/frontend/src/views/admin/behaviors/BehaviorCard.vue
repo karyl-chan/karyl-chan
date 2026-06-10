@@ -61,6 +61,7 @@ interface Draft {
     enabled: boolean;
     forwardType: BehaviorForwardType;
     stopOnMatch: boolean;
+    ignoreBots: boolean;
     // trigger（custom 全可改；system 只能改 value）
     triggerType: BehaviorTriggerType;
     messagePatternKind: string;
@@ -88,6 +89,7 @@ function draftFrom(row: BehaviorRow): Draft {
         enabled: row.enabled,
         forwardType: row.forwardType,
         stopOnMatch: row.stopOnMatch,
+        ignoreBots: row.ignoreBots,
         triggerType: row.triggerType,
         messagePatternKind: row.messagePatternKind ?? 'startswith',
         messagePatternValue: row.messagePatternValue ?? '',
@@ -241,7 +243,8 @@ const dirty = computed(() => {
         draft.webhookSecret !== (b.webhookSecret ?? '') ||
         draft.webhookAuthMode !== (b.webhookAuthMode ?? '') ||
         draft.forwardType !== b.forwardType ||
-        draft.stopOnMatch !== b.stopOnMatch
+        draft.stopOnMatch !== b.stopOnMatch ||
+        draft.ignoreBots !== b.ignoreBots
     );
 });
 
@@ -332,9 +335,10 @@ async function onSave() {
                 audienceGroupName: draft.audienceKind === 'group' ? (draft.audienceGroupName.trim() || null) : null,
                 forwardType: draft.forwardType,
             };
-            // stopOnMatch 是 pattern 專屬語意(BH-0.3) — slash 不送。
+            // stopOnMatch / ignoreBots 是 pattern 專屬語意(BH-0.3/BH-3) — slash 不送。
             if (draft.triggerType === 'message_pattern') {
                 patch.stopOnMatch = draft.stopOnMatch;
+                patch.ignoreBots = draft.ignoreBots;
             }
             // 只在 global_all tab + slash trigger 才送 integrationTypes —
             // 其他 tab 由後端 deriveFieldsFromTab() 寫死、message_pattern
@@ -640,6 +644,18 @@ const saveLabel = computed(() => {
                             <input type="checkbox" v-model="draft.stopOnMatch" />
                             <span>{{ t('behaviors.card.stopOnMatch') }}</span>
                             <span class="hint">{{ t('behaviors.card.stopOnMatchHint') }}</span>
+                        </label>
+
+                        <!-- ignoreBots 僅對 guild 頻道 pattern 有意義(BH-3)：
+                             DM 裡 bot 互傳不存在。本 bot 自身訊息無論如何
+                             都會被忽略。 -->
+                        <label
+                            v-if="draft.triggerType === 'message_pattern' && draft.contexts.includes('Guild')"
+                            class="field full inline"
+                        >
+                            <input type="checkbox" v-model="draft.ignoreBots" />
+                            <span>{{ t('behaviors.card.ignoreBots') }}</span>
+                            <span class="hint">{{ t('behaviors.card.ignoreBotsHint') }}</span>
                         </label>
                     </div>
                 </template>

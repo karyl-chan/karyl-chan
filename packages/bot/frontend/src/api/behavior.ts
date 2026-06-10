@@ -29,6 +29,7 @@ export interface BehaviorRow {
   enabled: boolean;
   sortOrder: number;
   stopOnMatch: boolean;
+  ignoreBots: boolean;
   forwardType: BehaviorForwardType;
   source: BehaviorSource;
   triggerType: BehaviorTriggerType;
@@ -88,6 +89,7 @@ export interface BehaviorCreatePayload {
   webhookAuthMode?: BehaviorWebhookAuthMode;
   forwardType?: BehaviorForwardType;
   stopOnMatch?: boolean;
+  ignoreBots?: boolean;
   enabled?: boolean;
   scopeTabId?: number;
 }
@@ -109,6 +111,7 @@ export interface BehaviorPatchPayload {
   enabled?: boolean;
   forwardType?: BehaviorForwardType;
   stopOnMatch?: boolean;
+  ignoreBots?: boolean;
   webhookUrl?: string | null;
   webhookSecret?: string | null;
   webhookAuthMode?: BehaviorWebhookAuthMode | null;

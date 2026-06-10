@@ -217,6 +217,7 @@ export class InteractionDispatcher {
         enabled: !!row.getDataValue("enabled"),
         sortOrder: row.getDataValue("sortOrder") as number,
         stopOnMatch: !!row.getDataValue("stopOnMatch"),
+        ignoreBots: !!row.getDataValue("ignoreBots"),
         forwardType: row.getDataValue(
           "forwardType",
         ) as BehaviorRow["forwardType"],

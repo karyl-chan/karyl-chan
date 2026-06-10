@@ -198,6 +198,7 @@ export async function registerBehaviorRoutes(
       webhookAuthMode?: BehaviorWebhookAuthMode;
       forwardType?: string;
       stopOnMatch?: boolean;
+      ignoreBots?: boolean;
       enabled?: boolean;
       scopeTabId?: number;
     };
@@ -350,6 +351,11 @@ export async function registerBehaviorRoutes(
       // stopOnMatch 僅 message_pattern 有語意（BH-0.3）；slash 一律存 false
       stopOnMatch:
         body.triggerType === "message_pattern" ? !!body.stopOnMatch : false,
+      // ignoreBots 僅 guild-context pattern 有語意（BH-3）；預設 true（防 bot 迴圈）
+      ignoreBots:
+        body.triggerType === "message_pattern"
+          ? (body.ignoreBots ?? true)
+          : true,
       enabled: body.enabled !== undefined ? !!body.enabled : true,
       sortOrder: nextSortOrder,
       scopeTabId: resolvedTabId,
@@ -664,6 +670,18 @@ export async function registerBehaviorRoutes(
           });
         }
         patch["stopOnMatch"] = !!body["stopOnMatch"];
+      }
+      if ("ignoreBots" in body) {
+        // ignoreBots 是 guild-context pattern 的旗標（BH-3）；slash 不適用。
+        const effectiveTrigger =
+          (body["triggerType"] as string | undefined) ??
+          existingRow.triggerType;
+        if (effectiveTrigger !== "message_pattern") {
+          return reply.code(400).send({
+            error: "ignoreBots 僅對 message_pattern behavior 有效",
+          });
+        }
+        patch["ignoreBots"] = !!body["ignoreBots"];
       }
       if ("webhookUrl" in body) {
         const url = (body["webhookUrl"] as string | null)?.trim();

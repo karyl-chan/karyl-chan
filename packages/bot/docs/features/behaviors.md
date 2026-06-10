@@ -5,8 +5,16 @@ A **behavior** is a "Discord trigger → action" rule stored in the
 
 - **Trigger types (`triggerType`)**
   - `slash_command` — fires when a specific slash command is invoked.
-  - `message_pattern` — fires when a DM matches a pattern (startswith,
-    endswith, or regex).
+  - `message_pattern` — fires when a message matches a pattern
+    (startswith, endswith, or regex). The behavior's `contexts` decide
+    the surface: `BotDM` patterns match DMs, `Guild` patterns match
+    guild text channels (BH-3), narrowed further by placement
+    (specific_guild / specific_channel tabs) and audience.
+
+    Guild guardrails: the bot's own messages never trigger anything;
+    other bot/webhook authors are skipped unless the behavior unchecks
+    `ignoreBots` (default on); forwards are rate-limited per channel
+    (5 per 10 s window, silently dropped and noted in `bot_events`).
 - **Sources (`source`)**
   - `custom` — pack the trigger as an HTTP webhook POST, forward to the
     configured URL, and relay the response back to the caller.

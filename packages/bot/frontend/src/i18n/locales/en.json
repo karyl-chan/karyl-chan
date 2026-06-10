@@ -1235,7 +1235,9 @@
             "sourceNoticPluginLink": "View Plugin details",
             "sourceNoticSystem": "System built-in behavior. The trigger type and its values can be edited; other fields are locked.",
             "saveTrigger": "Save trigger",
-            "stopOnMatchHint": "Block later patterns from also firing on this message."
+            "stopOnMatchHint": "Block later patterns from also firing on this message.",
+            "ignoreBots": "Ignore bot messages",
+            "ignoreBotsHint": "Messages from bots and webhooks won't trigger this pattern. The bot always ignores its own messages."
         },
         "addTab": {
             "title": "Add Scope Tab",
