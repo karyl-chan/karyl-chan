@@ -26,10 +26,7 @@ import {
 } from "./plugin-lookup-cache.js";
 import { pluginEndpointRegistry } from "./plugin-endpoint-registry.js";
 import { deactivatePluginByKey } from "./models/plugin.model.js";
-import {
-  ManifestCommandError,
-  pluginCommandRegistry,
-} from "./plugin-command-registry.service.js";
+import { pluginCommandRegistry } from "./plugin-command-registry.service.js";
 import {
   assertPluginTarget,
   HostPolicyError,
@@ -536,12 +533,107 @@ export interface RegisterResult {
   dispatchHmacKey: string;
 }
 
+/**
+ * Background command-sync bookkeeping (PM-7.1). In-memory by design:
+ * a bot restart re-runs reconcileAll() from the ready handler, which
+ * makes any persisted state stale immediately. Multi-replica setups
+ * see per-replica state only — acceptable because only the replica
+ * that accepted the register performs the sync.
+ */
+export type CommandSyncStatus = "pending" | "ok" | "failed";
+
+export interface CommandSyncState {
+  status: CommandSyncStatus;
+  /** Epoch ms when the current/most recent sync run started. */
+  startedAt: number;
+  finishedAt?: number;
+  error?: string;
+}
+
 export class PluginRegistry {
   private reaperTimer: NodeJS.Timeout | null = null;
   private auth: PluginAuthStore;
+  /** pluginKey → latest sync state, for admin UI / diagnostics. */
+  private commandSyncStates = new Map<string, CommandSyncState>();
+  /**
+   * pluginKey → in-flight marker. Presence means a sync loop is
+   * running for that plugin; `pending` holds the latest manifest that
+   * arrived while it ran (older intermediates are dropped —
+   * latest-wins). This is the single-flight guard that keeps a
+   * re-register storm from racing concurrent syncs (whose stale-row
+   * cleanup would delete each other's writes) and from amplifying
+   * into Discord rate-limit pressure.
+   */
+  private commandSyncRuns = new Map<
+    string,
+    { pending: { plugin: PluginRow; manifest: PluginManifest } | null }
+  >();
 
   constructor(auth: PluginAuthStore) {
     this.auth = auth;
+  }
+
+  getCommandSyncState(pluginKey: string): CommandSyncState | null {
+    return this.commandSyncStates.get(pluginKey) ?? null;
+  }
+
+  /**
+   * Run pluginCommandRegistry.sync in the background, single-flight
+   * per pluginKey with latest-wins coalescing. Never throws; outcomes
+   * land in `commandSyncStates` + botEventLog. Callers (register) get
+   * their HTTP response without waiting on any Discord REST call.
+   */
+  private scheduleCommandSync(plugin: PluginRow, manifest: PluginManifest): void {
+    const key = plugin.pluginKey;
+    const inFlight = this.commandSyncRuns.get(key);
+    if (inFlight) {
+      inFlight.pending = { plugin, manifest };
+      this.commandSyncStates.set(key, {
+        status: "pending",
+        startedAt: Date.now(),
+      });
+      return;
+    }
+    const marker: {
+      pending: { plugin: PluginRow; manifest: PluginManifest } | null;
+    } = { pending: null };
+    this.commandSyncRuns.set(key, marker);
+    void (async () => {
+      let task: { plugin: PluginRow; manifest: PluginManifest } | null = {
+        plugin,
+        manifest,
+      };
+      while (task) {
+        const startedAt = Date.now();
+        this.commandSyncStates.set(key, { status: "pending", startedAt });
+        try {
+          await pluginCommandRegistry.sync(task.plugin, task.manifest);
+          this.commandSyncStates.set(key, {
+            status: "ok",
+            startedAt,
+            finishedAt: Date.now(),
+          });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          this.commandSyncStates.set(key, {
+            status: "failed",
+            startedAt,
+            finishedAt: Date.now(),
+            error: msg,
+          });
+          log.error({ err }, `plugin-commands: background sync failed for ${key}`);
+          botEventLog.record(
+            "warn",
+            "bot",
+            `plugin-commands: background sync failed for ${key}: ${msg}`,
+            { pluginId: task.plugin.id },
+          );
+        }
+        task = marker.pending;
+        marker.pending = null;
+      }
+      this.commandSyncRuns.delete(key);
+    })();
   }
 
   /**
@@ -574,6 +666,18 @@ export class PluginRegistry {
     // pending for an admin to approve.
     const requestedScopes = manifest.rpc_methods_used ?? [];
     const existing = await findPluginByKey(manifest.plugin.id);
+    // Command-name collision check runs BEFORE anything is persisted
+    // (this is what its doc comment always promised): a manifest that
+    // shadows a reserved command or another plugin's command gets an
+    // immediate 400 and leaves no row/token behind. Previously this
+    // ran after the upsert with the error swallowed, so a colliding
+    // plugin registered "successfully" with its commands silently
+    // skipped. ManifestCommandError propagates to the route → 400.
+    await pluginCommandRegistry.assertNoCollisions(
+      manifest.plugin.id,
+      existing?.id ?? -1,
+      manifest,
+    );
     const prevApproved = existing?.approvedRpcScopes ?? [];
     const approvedScopes = config.plugin.autoApproveScopes
       ? requestedScopes
@@ -702,39 +806,6 @@ export class PluginRegistry {
         "applyPluginChange after register failed",
       );
     }
-    // Sync slash commands. We do this AFTER the plugin row is
-    // persisted because the command registry's collision check needs
-    // a real pluginId to exclude itself from the lookup. Failures
-    // here are logged inside the command registry; we don't roll
-    // back the registration — partial-functioning plugin (events ok,
-    // commands stuck) is more useful than no plugin at all.
-    try {
-      await pluginCommandRegistry.assertNoCollisions(
-        manifest.plugin.id,
-        persisted.id,
-        manifest,
-      );
-      await pluginCommandRegistry.sync(persisted, manifest);
-    } catch (err) {
-      if (err instanceof ManifestCommandError) {
-        botEventLog.record(
-          "warn",
-          "bot",
-          `plugin-commands: refused commands for ${manifest.plugin.id}: ${err.message}`,
-          { pluginId: persisted.id },
-        );
-      } else {
-        log.error(
-          { err },
-          `plugin-commands: sync failed for ${manifest.plugin.id}`,
-        );
-        botEventLog.record(
-          "warn",
-          "bot",
-          `plugin-commands: sync failed for ${manifest.plugin.id}`,
-        );
-      }
-    }
     // ── Dispatch HMAC key ──────────────────────────────────────────────
     // Generate once and persist. On re-registration the existing key is
     // reused so plugins that have cached it don't break. The cleartext
@@ -750,6 +821,15 @@ export class PluginRegistry {
       await setPluginDispatchHmacKey(persisted.id, dispatchHmacKeyCleartext);
       persisted.dispatchHmacKey = dispatchHmacKeyCleartext;
     }
+
+    // Sync slash commands in the BACKGROUND (PM-7.1). The handshake's
+    // job ends at credentials; a wedged or rate-limited Discord REST
+    // call must not hold the register response hostage (2026-06-11
+    // incident: a plugin hung forever on this await and answered every
+    // dispatch 503). Single-flight + latest-wins lives in
+    // scheduleCommandSync; failures land in botEventLog + sync state,
+    // never roll back the registration.
+    this.scheduleCommandSync(persisted, manifest);
 
     return {
       plugin: persisted,

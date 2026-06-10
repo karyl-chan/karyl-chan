@@ -29,7 +29,10 @@ import {
 } from "./models/plugin-config.model.js";
 import { encryptSecret } from "../../utils/crypto.js";
 import type { PluginManifest } from "./plugin-registry.service.js";
-import { pluginCommandRegistry } from "./plugin-command-registry.service.js";
+import {
+  ManifestCommandError,
+  pluginCommandRegistry,
+} from "./plugin-command-registry.service.js";
 import {
   dropDispatchPoolForPlugin,
   removePluginFromIndex,
@@ -77,6 +80,49 @@ import { createHash, randomBytes } from "crypto";
  */
 
 const PLUGIN_SETUP_SECRET_HEADER = "x-plugin-setup-secret";
+
+/**
+ * Sliding-window throttle for authenticated register calls, keyed by
+ * pluginKey (PM-7.1). 10/min is far above any legitimate cadence —
+ * the SDK registers once per process start and re-registers on 401
+ * with ≥2s backoff — while keeping a re-register loop from turning
+ * the now-cheap register endpoint into a background-sync amplifier.
+ * In-memory: per-replica budgets are fine for a brake (N replicas
+ * just mean an N× budget, still tiny).
+ */
+export class RegisterThrottle {
+  constructor(
+    private readonly limit = 10,
+    private readonly windowMs = 60_000,
+    private readonly now: () => number = Date.now,
+  ) {}
+  private hits = new Map<string, number[]>();
+
+  /**
+   * Record a hit for `key`. Returns `null` when allowed, or the
+   * suggested Retry-After in seconds when over budget.
+   */
+  hit(key: string): number | null {
+    const t = this.now();
+    const windowStart = t - this.windowMs;
+    const entries = (this.hits.get(key) ?? []).filter((h) => h > windowStart);
+    if (entries.length >= this.limit) {
+      this.hits.set(key, entries);
+      const oldest = entries[0];
+      return Math.max(1, Math.ceil((oldest + this.windowMs - t) / 1000));
+    }
+    entries.push(t);
+    this.hits.set(key, entries);
+    return null;
+  }
+
+  /** Test hook. */
+  reset(): void {
+    this.hits.clear();
+  }
+}
+
+export const registerThrottle = new RegisterThrottle();
 
 /**
  * Return the public reverse-proxy base URL for a plugin, or `undefined`
@@ -215,6 +261,21 @@ export async function registerPluginRoutes(
         return;
       }
 
+      // Per-plugin register throttle (PM-7.1). The old synchronous
+      // Discord sync acted as a natural brake on re-register storms;
+      // with the sync backgrounded, an authenticated-but-buggy plugin
+      // could loop register cheaply and amplify into Discord-API
+      // pressure. Counted only AFTER secret verification so
+      // unauthenticated 401s can't consume a plugin's budget.
+      const throttled = registerThrottle.hit(manifestPluginId);
+      if (throttled !== null) {
+        reply
+          .header("Retry-After", String(throttled))
+          .code(429)
+          .send({ error: "register rate limited", retryAfterSeconds: throttled });
+        return;
+      }
+
       try {
         const result = await pluginRegistry.register(request.body?.manifest);
         // publicBaseUrl is the browser-reachable URL for this plugin's
@@ -248,9 +309,22 @@ export async function registerPluginRoutes(
           // Echo back the heartbeat path/cadence so a fresh plugin
           // doesn't need to hardcode anything.
           heartbeat: { path: "/api/plugins/heartbeat", interval_seconds: 30 },
+          // Informational (PM-7.1): slash-command sync runs in the
+          // background after this response; status is visible to the
+          // operator via the admin plugin views.
+          commandSync: "deferred",
         };
       } catch (err) {
         if (err instanceof ManifestError) {
+          reply.code(400).send({ error: err.message });
+          return;
+        }
+        // Command-name collision (reserved name / another plugin's
+        // command) is a manifest-level authoring error: 400 so the
+        // author sees it in the SDK's "register rejected" log line,
+        // instead of a half-registered plugin with silently missing
+        // commands.
+        if (err instanceof ManifestCommandError) {
           reply.code(400).send({ error: err.message });
           return;
         }
