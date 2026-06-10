@@ -30,6 +30,7 @@ import {
   findActiveSession,
   startSession,
   endSession,
+  breakSessions,
 } from "../behavior/models/behavior-session.model.js";
 import { findGroupMembersBulk } from "../behavior/models/behavior-group-member.model.js";
 import { matchesTrigger } from "../behavior/behavior-trigger.js";
@@ -160,7 +161,7 @@ export class MessagePatternMatcher {
     if (breakEscape) return breakEscape;
 
     // ─ 查 active session（C-runtime §5.2 session 優先）
-    const activeSession = await findActiveSession(userId);
+    const activeSession = await findActiveSession(userId, channelId);
     if (activeSession) {
       return this.handleWithSession(
         activeSession,
@@ -250,7 +251,7 @@ export class MessagePatternMatcher {
         `message-pattern-matcher: orphan session userId=${userId} behaviorId=${session.behaviorId}，behavior 不存在，強制清除 session`,
         { userId, behaviorId: session.behaviorId },
       );
-      await endSession(userId);
+      await endSession(userId, session.channelId);
       return {
         handled: false,
         sessionEnded: true,
@@ -260,7 +261,7 @@ export class MessagePatternMatcher {
 
     if (!behavior.enabled) {
       // behavior 被 disable，清除 session
-      await endSession(userId);
+      await endSession(userId, session.channelId);
       return { handled: false, sessionEnded: true };
     }
 
@@ -275,7 +276,7 @@ export class MessagePatternMatcher {
         `message-pattern-matcher: session behaviorId=${behavior.id} forwardType 已改為 ${behavior.forwardType}，清除 session`,
         { userId, behaviorId: behavior.id },
       );
-      await endSession(userId);
+      await endSession(userId, session.channelId);
       return { handled: false, sessionEnded: true };
     }
 
@@ -285,7 +286,7 @@ export class MessagePatternMatcher {
     const dmChannel = djsMessage.channel as DMChannel;
 
     if (result.ended) {
-      await endSession(userId);
+      await endSession(userId, session.channelId);
       if (result.relayContent) {
         // No allowed_mentions parsing — the response content comes from
         // an external webhook server, which we don't trust to set ping
@@ -414,7 +415,7 @@ export class MessagePatternMatcher {
     ) {
       return null;
     }
-    const ended = await endSession(userId);
+    const ended = await breakSessions(userId, djsMessage.channel.id);
     const dmChannel = djsMessage.channel as DMChannel;
     await dmChannel
       .send({
@@ -448,7 +449,7 @@ export class MessagePatternMatcher {
     }
 
     if (systemKey === "break") {
-      const ended = await endSession(userId);
+      const ended = await breakSessions(userId, djsMessage.channel.id);
       await dmChannel
         .send({
           content: t(

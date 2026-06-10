@@ -99,7 +99,7 @@ describe("migrateLegacyExpiresAt", () => {
     // BEFORE the migration: findActiveSession would have destroyed this row.
     // AFTER the migration: the row is preserved and returned.
     await migrateLegacyExpiresAt();
-    const active = await findActiveSession("u2");
+    const active = await findActiveSession("u2", "dm-channel");
     expect(active).not.toBeNull();
     expect(active?.behaviorId).toBe(2);
   });

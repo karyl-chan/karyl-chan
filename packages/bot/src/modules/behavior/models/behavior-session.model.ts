@@ -4,27 +4,29 @@ import { config } from "../../../config.js";
 import { botEventLog } from "../../bot-events/bot-event-log.js";
 import { Behavior } from "./behavior.model.js";
 
-// behavior-session.model.ts：v2 schema 不變（PK=userId，FK=behaviorId→behaviors.id）
-// v2 behaviors 表名稱相同，FK 仍正確對齊。
+// behavior-session.model.ts：BH-4.3 起 PK=(userId, channelId)，
+// FK=behaviorId→behaviors.id。
 
 /**
- * Active continuous-forward state for a user. Persisted in DB so a bot
- * restart resumes forwarding on the next DM from that user — the
- * contract is "if a session row exists, the next inbound DM gets POSTed
- * to that behavior's webhook regardless of triggers."
+ * Active continuous-forward state. Persisted in DB so a bot restart
+ * resumes forwarding on the next message — the contract is "if a session
+ * row exists for (user, channel), the next inbound message there gets
+ * POSTed to that behavior's webhook regardless of triggers."
  *
- * One row per user (PK = userId): a user can only run one continuous
- * session at a time. Starting a new continuous behavior while a session
- * is active is forbidden by the event handler — the user must /break
- * first or the prior webhook must reply with [BEHAVIOR:END].
- *
- * `channelId` is captured so the relay-back path can DM the user even
- * if Discord's cache cold-misses on a subsequent restart.
+ * One row per (userId, channelId) — BH-4.3: DM sessions behave exactly
+ * as the old PK=userId model (a user's DMs with the bot are one channel),
+ * while guild-channel patterns (BH-3) give the same user independent
+ * sessions per channel. Starting a new continuous behavior in the same
+ * channel upserts (replaces) that channel's session.
  */
 export const BehaviorSession = sequelize.define(
   "BehaviorSession",
   {
     userId: {
+      type: DataTypes.STRING,
+      primaryKey: true,
+    },
+    channelId: {
       type: DataTypes.STRING,
       primaryKey: true,
     },
@@ -34,10 +36,6 @@ export const BehaviorSession = sequelize.define(
       references: { model: Behavior, key: "id" },
       onDelete: "CASCADE",
       onUpdate: "CASCADE",
-    },
-    channelId: {
-      type: DataTypes.STRING,
-      allowNull: false,
     },
     startedAt: {
       type: DataTypes.STRING,
@@ -94,6 +92,7 @@ function rowOf(
 
 export const findActiveSession = async (
   userId: string,
+  channelId: string,
 ): Promise<BehaviorSessionRow | null> => {
   // ISO 8601 字串可 lexicographic 比較（與 DateTime 排序語意一致）。
   // 用 string 而非 Date 物件以對齊 column type，避免 Sequelize 對 STRING
@@ -104,6 +103,7 @@ export const findActiveSession = async (
   await BehaviorSession.destroy({
     where: {
       userId,
+      channelId,
       expiresAt: { [Op.lt]: nowIso },
     },
   });
@@ -112,6 +112,7 @@ export const findActiveSession = async (
   const row = await BehaviorSession.findOne({
     where: {
       userId,
+      channelId,
       [Op.or]: [{ expiresAt: null }, { expiresAt: { [Op.gt]: nowIso } }],
     },
   });
@@ -137,9 +138,37 @@ export const startSession = async (
   return { userId, behaviorId, channelId, startedAt, expiresAt };
 };
 
-export const endSession = async (userId: string): Promise<boolean> => {
-  const removed = await BehaviorSession.destroy({ where: { userId } });
+export const endSession = async (
+  userId: string,
+  channelId: string,
+): Promise<boolean> => {
+  const removed = await BehaviorSession.destroy({
+    where: { userId, channelId },
+  });
   return removed > 0;
+};
+
+/** 結束一個 user 的全部 session（跨 channel）。 */
+export const endAllSessionsForUser = async (
+  userId: string,
+): Promise<number> => {
+  return BehaviorSession.destroy({ where: { userId } });
+};
+
+/**
+ * break 逃生語意（/break、break pattern）：優先結束「當前 channel」的
+ * session；當前 channel 沒有時退回清掉該 user 的全部 session —— 逃生門
+ * 寧可多清也不可讓使用者被卡住。channelId 為 null（理論上不會）時直接全清。
+ */
+export const breakSessions = async (
+  userId: string,
+  channelId: string | null,
+): Promise<boolean> => {
+  if (channelId !== null) {
+    const exact = await endSession(userId, channelId);
+    if (exact) return true;
+  }
+  return (await endAllSessionsForUser(userId)) > 0;
 };
 
 export const endSessionsForBehavior = async (

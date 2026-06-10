@@ -138,7 +138,7 @@ describe("MessagePatternMatcher — stopOnMatch multi-match", () => {
     expect(outcome.handled).toBe(true);
     expect(outcome.sessionStarted).toBe(true);
     expect(forwarder.forward).toHaveBeenCalledTimes(1);
-    expect(await findActiveSession("U1")).not.toBeNull();
+    expect(await findActiveSession("U1", "DM-U1")).not.toBeNull();
   });
 
   it("a non-matching first behavior does not stop the second from firing", async () => {

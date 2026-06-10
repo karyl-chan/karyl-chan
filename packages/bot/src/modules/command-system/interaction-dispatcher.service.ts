@@ -31,8 +31,8 @@ import { dispatchModalToPlugin } from "../plugin-system/plugin-modal-dispatch.se
 import { dispatchInProcessInteraction } from "../builtin-features/in-process-command-registry.service.js";
 import { issueLoginLinkForInteraction } from "../admin/admin-login.service.js";
 import {
-  endSession,
   startSession,
+  breakSessions,
 } from "../behavior/models/behavior-session.model.js";
 import { findGroupMembers } from "../behavior/models/behavior-group-member.model.js";
 import type { DispatchOutcome } from "./types.js";
@@ -373,7 +373,8 @@ export class InteractionDispatcher {
    *   manual      → manual 語意為「開始 continuous forward session 到特定 behavior」，
    *                 但需要 behaviorRow 提供目標 behavior id（admin/behaviors UI 補），
    *                 此版本回 ephemeral 說明暫不支援。
-   *   break       → endSession(userId)（清除 active session）
+   *   break       → breakSessions(userId, channelId)（清除當前 channel 的
+   *                 session，無則清全部 — 逃生門語意，BH-4.3）
    */
   private async dispatchSystemBehavior(
     interaction: ChatInputCommandInteraction,
@@ -387,7 +388,10 @@ export class InteractionDispatcher {
     }
 
     if (systemKey === "break") {
-      const ended = await endSession(interaction.user.id);
+      const ended = await breakSessions(
+        interaction.user.id,
+        interaction.channelId,
+      );
       const key = ended ? "system.session-ended" : "system.no-session";
       await interaction
         .reply({ content: tForInteraction(interaction, key), ephemeral: true })
