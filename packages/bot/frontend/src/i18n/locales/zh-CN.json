@@ -1236,7 +1236,27 @@
             "sourceNoticPlugin": "此 behavior 由 Plugin「{name}」提供，部分字段不可修改",
             "sourceNoticPluginLink": "查看 Plugin 详情",
             "sourceNoticSystem": "系统内建 behavior，可修改触发类型与内容（其余字段锁定）",
-            "saveTrigger": "保存触发"
+            "saveTrigger": "保存触发",
+            "stopOnMatchHint": "命中后，这条消息不再比对后续 pattern。",
+            "ignoreBots": "忽略 bot 消息",
+            "ignoreBotsHint": "bot／webhook 发的消息不触发此 pattern。本 bot 自身的消息无论如何都会被忽略。",
+            "options": "指令参数",
+            "optionName": "名称",
+            "optionDescription": "说明",
+            "optionRequired": "必填",
+            "optionAdd": "新增参数",
+            "optionInvalid": "参数「{name}」无效：名称须为 1-32 字的 [a-z0-9_-]，且说明必填。",
+            "testFire": "测试 webhook",
+            "testRunning": "测试中…",
+            "testOk": "Webhook 正常——响应：{content}",
+            "testFail": "Webhook 失败：{error}",
+            "resync": "重新同步 Discord 指令",
+            "resyncDone": "指令已重新同步。",
+            "unhealthy": "连续失败",
+            "statsLine": "上次触发 {when} · 成功 {ok} / 失败 {fail}",
+            "statsLastError": "最近错误：{error}",
+            "sessionTtl": "Session 时限（小时）",
+            "sessionTtlHint": "1–720；留空＝全局默认"
         },
         "addTab": {
             "title": "新增范围分页",
@@ -1262,6 +1282,26 @@
             "forwardLabel": "转发设定",
             "forwardWebhook": "Webhook",
             "forwardPlugin": "Plugin"
+        },
+        "groupMembers": {
+            "title": "群组成员",
+            "count": "{count} 位成员",
+            "empty": "尚无成员——加入成员前，该分页上的 behaviors 不会对任何人触发。",
+            "placeholder": "Discord 用户 ID",
+            "add": "加入",
+            "remove": "移除",
+            "invalidId": "无效的 Discord 用户 ID。"
+        },
+        "sessions": {
+            "title": "进行中的 sessions",
+            "open": "Sessions",
+            "empty": "当前没有进行中的 continuous session。",
+            "user": "用户",
+            "behavior": "Behavior",
+            "channel": "频道",
+            "started": "开始于",
+            "expires": "到期",
+            "end": "结束"
         }
     },
     "config": {

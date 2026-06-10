@@ -17,7 +17,7 @@
     "signatureHeader": "x-karyl-signature",
     "timestampHeader": "x-karyl-timestamp",
     "replayWindowSeconds": 300,
-    "payloadFormat": "<METHOD>:<path>:<ts>:<body>",
+    "payloadFormat": "<METHOD>:<path>:<ts>:<nonce>:<body>",
     "golden": [
       {
         "name": "command-dispatch",
@@ -26,7 +26,8 @@
         "path": "/commands/uuid",
         "ts": "1700000000",
         "body": "{\"command_name\":\"uuid\"}",
-        "expectedHex": "6a166bdc2687da6fd0e6a3860e20fdda31eb3bef8259168f28bcdcf9b3cc8617"
+        "expectedHex": "f43255c0ed65ebee20d9019e301daa1d87d470fa8dfdbe285782390ecb80967b",
+        "nonce": "cafe0000000000000000000000000000"
       },
       {
         "name": "events-dispatch",
@@ -35,7 +36,8 @@
         "path": "/events",
         "ts": "1700001234",
         "body": "{\"type\":\"guild.message_create\",\"data\":{\"id\":\"1\"}}",
-        "expectedHex": "113ab9990c0759ebc5af99625488bb3eef655b1feca88f47cf913536bde750d9"
+        "expectedHex": "6b0f37b8a3b33115492829acfaf2a254ed336def3a4ce8eb77f94e49c5ae5094",
+        "nonce": "cafe0000000000000000000000000001"
       },
       {
         "name": "lifecycle-dispatch",
@@ -44,7 +46,8 @@
         "path": "/_kc/lifecycle",
         "ts": "1699999999",
         "body": "{\"type\":\"plugin.guild.enabled\"}",
-        "expectedHex": "0638f90d23e27b1e08e94c539e651d70e863912d3ddb709190b14e51c9c00db8"
+        "expectedHex": "09b3799ca1d41f14c97ae40701fa0becb90f5264f6f4a4068d3273cd645ca553",
+        "nonce": "cafe0000000000000000000000000002"
       },
       {
         "name": "empty-body-get",
@@ -53,14 +56,21 @@
         "path": "/health",
         "ts": "1699999999",
         "body": "",
-        "expectedHex": "2a1fc539d2df463c667b42ed4f9c6777becfa2b4af3d438897a573f502210e7c"
+        "expectedHex": "429e2465eb3eec41087ad807fdb0068a7e5a02c96b2e9014e4bdd480e8f6dc3f",
+        "nonce": "cafe0000000000000000000000000003"
       }
-    ]
+    ],
+    "nonceHeader": "x-karyl-nonce"
   },
   "streams": {
     "streamPrefix": "karyl:events:",
     "dlqSuffix": ":dlq",
-    "fields": ["type", "data", "trace", "traceparent"],
+    "fields": [
+      "type",
+      "data",
+      "trace",
+      "traceparent"
+    ],
     "samples": [
       {
         "eventType": "guild.message_create",
@@ -90,7 +100,10 @@
   },
   "dispatchEnvelope": {
     "$comment": "Shape the bot POSTs to the SDK-mounted /events and /_kc/lifecycle routes (HTTP fan-out) AND the field layout of the Redis-Streams transport. Both carry { type, data }.",
-    "httpBodyKeys": ["type", "data"]
+    "httpBodyKeys": [
+      "type",
+      "data"
+    ]
   },
   "rpc": {
     "$comment": "Every RPC path the SDK typed facade (rpc/*.ts) calls. The bot MUST serve each one (registerPluginRpcRoutes + voice-rpc). Drift = a plugin call that 404s. botRpc escape hatch can reach others not listed here.",
@@ -124,7 +137,9 @@
     "$comment": "POST /api/plugins/register response fields the SDK client consumes (client.ts). `token` is required; the rest are optional but the bot currently sends them.",
     "endpoint": "/api/plugins/register",
     "setupSecretHeader": "X-Plugin-Setup-Secret",
-    "requiredResponseFields": ["token"],
+    "requiredResponseFields": [
+      "token"
+    ],
     "optionalResponseFields": [
       "plugin",
       "dispatchHmacKey",
@@ -133,5 +148,80 @@
       "heartbeat"
     ],
     "heartbeatEndpoint": "/api/plugins/heartbeat"
+  },
+  "behaviorWebhook": {
+    "_comment": "BH-2.3 \u2014 the behavior custom-webhook contract. The bot-side test (behavior-webhook-contract.test.ts) locks payload/response shape against these; external webhook authors can read this file as the canonical schema.",
+    "endSentinel": "[BEHAVIOR:END]",
+    "endSentinelCaseInsensitive": true,
+    "request": {
+      "topLevelKeys": [
+        "content",
+        "username",
+        "avatar_url",
+        "_meta"
+      ],
+      "patternMetaKeys": [
+        "user",
+        "message_id",
+        "channel_id",
+        "guild_id",
+        "behavior_id",
+        "session",
+        "attachments"
+      ],
+      "slashMetaKeys": [
+        "interaction_id",
+        "application_id",
+        "command_name",
+        "guild_id",
+        "channel_id",
+        "user",
+        "locale",
+        "options",
+        "behavior_id"
+      ],
+      "userKeys": [
+        "id",
+        "username",
+        "global_name",
+        "discriminator",
+        "avatar"
+      ],
+      "sessionKeys": {
+        "inactive": [
+          "active"
+        ],
+        "active": [
+          "active",
+          "started_at"
+        ]
+      },
+      "attachmentKeys": [
+        "url",
+        "filename",
+        "content_type",
+        "size"
+      ]
+    },
+    "response": {
+      "fields": [
+        "content",
+        "embeds"
+      ],
+      "embedWhitelist": [
+        "title",
+        "description",
+        "url",
+        "color",
+        "timestamp",
+        "footer",
+        "image",
+        "thumbnail",
+        "author",
+        "fields"
+      ],
+      "maxEmbeds": 10,
+      "maxFields": 25
+    }
   }
 }

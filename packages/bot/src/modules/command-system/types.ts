@@ -116,6 +116,22 @@ export interface MessageMatchOutcome {
   error?: string;
 }
 
+// ── SanitizedEmbed（BH-2.2A）────────────────────────────────────────────────
+// webhook 回應 embeds 的白名單形狀（Discord APIEmbed 子集；長度已截斷）。
+
+export interface SanitizedEmbed {
+  title?: string;
+  description?: string;
+  url?: string;
+  color?: number;
+  timestamp?: string;
+  footer?: { text: string; icon_url?: string };
+  image?: { url: string };
+  thumbnail?: { url: string };
+  author?: { name: string; url?: string; icon_url?: string };
+  fields?: Array<{ name: string; value: string; inline?: boolean }>;
+}
+
 // ── ForwardResult（C-runtime §2.5 / §7.4）───────────────────────────────────
 
 export interface ForwardResult {
@@ -124,6 +140,8 @@ export interface ForwardResult {
   ended: boolean;
   /** 已 strip sentinel + trim 的 content，可直接 relay 給用戶 */
   relayContent: string;
+  /** BH-2.2A：webhook 回應的 embeds（已白名單清洗 + 截斷），可直接 relay */
+  relayEmbeds?: SanitizedEmbed[];
   /** HTTP 狀態（失敗時） */
   status?: number;
   /** 錯誤描述（失敗時） */

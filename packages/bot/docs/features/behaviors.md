@@ -5,8 +5,16 @@ A **behavior** is a "Discord trigger → action" rule stored in the
 
 - **Trigger types (`triggerType`)**
   - `slash_command` — fires when a specific slash command is invoked.
-  - `message_pattern` — fires when a DM matches a pattern (startswith,
-    endswith, or regex).
+  - `message_pattern` — fires when a message matches a pattern
+    (startswith, endswith, or regex). The behavior's `contexts` decide
+    the surface: `BotDM` patterns match DMs, `Guild` patterns match
+    guild text channels (BH-3), narrowed further by placement
+    (specific_guild / specific_channel tabs) and audience.
+
+    Guild guardrails: the bot's own messages never trigger anything;
+    other bot/webhook authors are skipped unless the behavior unchecks
+    `ignoreBots` (default on); forwards are rate-limited per channel
+    (5 per 10 s window, silently dropped and noted in `bot_events`).
 - **Sources (`source`)**
   - `custom` — pack the trigger as an HTTP webhook POST, forward to the
     configured URL, and relay the response back to the caller.
@@ -59,15 +67,29 @@ off it); they do not appear in the guild command UI.
 
 - `one_time` — fire once on match, end.
 - `continuous` — fire on match, open a session in `behavior_sessions`
-  (keyed by user, one per user). Subsequent DMs from the same user go
-  directly to the same webhook until the session ends. Sessions persist
-  across bot restarts.
+  (keyed by `(userId, channelId)`, BH-4.3 — one per user per channel; a
+  user's DMs with the bot are one channel, so DM behaviour matches the
+  old one-per-user model, while guild patterns give the same user
+  independent sessions per channel). Subsequent messages from that user
+  in that channel go directly to the same webhook until the session
+  ends. Sessions persist across bot restarts.
 
-`stopOnMatch` is persisted and editable but **not currently wired into
-evaluation**: the DM matcher returns on the first match, and slash dispatch
-is first-claim-wins over a unique `(slashCommandName, scope, contexts)`
-index, so there is never a "next behavior" to keep or skip. Treat the field
-as reserved.
+### Multi-match and `stopOnMatch` (message_pattern only)
+
+The DM matcher walks every applicable `message_pattern` behavior in
+`sortOrder` and can fire more than one per message:
+
+- `system` match → always stops (terminal UX: login link / manual / break).
+- `continuous` match → always stops (the new session owns the conversation;
+  evaluating further patterns would be meaningless).
+- `one_time` match → `stopOnMatch=true` stops the walk; `false` (default)
+  keeps evaluating, so several one_time behaviors can each fire on the same
+  message.
+
+`stopOnMatch` has no meaning for `slash_command` behaviors — dispatch is
+first-claim-wins over a unique `(slashCommandName, scope, contexts)` index,
+so there is never a "next behavior" to keep or skip. The API rejects setting
+it on slash behaviors and the editor only shows it for patterns.
 
 ## Evaluation and dispatch
 
@@ -84,23 +106,28 @@ The slash command registration and synchronisation in Discord are handled
 by `CommandReconciler`; see the `command-system` module in
 [`../architecture.md`](../architecture.md).
 
-### DM message_pattern trigger
+### message_pattern trigger (DMs + guild channels)
 
-`MessagePatternMatcher` mounts a `messageCreate` listener (DM only):
+`MessagePatternMatcher` mounts a `messageCreate` listener:
 
-1. If the caller has an active session, the message is forwarded to that
-   session's bound behavior directly.
+1. If the caller has an active session in this channel, the message is
+   forwarded to that session's bound behavior directly.
 2. Otherwise, collect the `message_pattern` behaviors applicable to the
-   caller (filtered by `audienceKind`, ordered by `sortOrder` ascending).
+   caller (filtered by `audienceKind`, ordered by `sortOrder` ascending),
+   then by surface (`contexts`), placement, and — for bot authors in
+   guilds — `ignoreBots`.
 3. Evaluate each via `matchesTrigger` (`startswith` / `endswith` /
-   `regex`); forward on the first match.
-4. If the matched behavior has `forwardType='continuous'`, open a session.
+   `regex`); forward per the multi-match rules above (`stopOnMatch`).
+4. If a matched behavior has `forwardType='continuous'`, open a session
+   for `(user, channel)` and stop the walk.
 
 ### Ending a continuous forward
 
 Two independent end points:
 
-- **Caller side** — DM `/break`.
+- **Caller side** — `/break` (or the break text pattern); ends the
+  current channel's session, falling back to all of the caller's
+  sessions so the escape hatch can never leave someone stuck.
 - **Webhook side** — the webhook's response `content` contains the token
   `[BEHAVIOR:END]` (case-insensitive). The session ends and the token is
   stripped from the content before relay.
@@ -117,14 +144,34 @@ obtain a synchronous response):
 
 - `content` — the DM message body (`message.content`, verbatim).
 - `username` and `avatar_url` — caller's display name and avatar.
+- `_meta` — structured metadata (BH-2.1), aligned with the slash path:
+  - `user` — `{ id, username, global_name, discriminator, avatar }`. Use
+    `user.id` to tell callers apart — `username` is mutable and not a key.
+  - `message_id`, `channel_id`, `behavior_id`
+  - `session` — `{ active: false }` on the triggering match;
+    `{ active: true, started_at }` for messages routed through an open
+    continuous session.
+  - `attachments` — `[{ url, filename, content_type, size }]` for any
+    files attached to the DM.
 
-(The outbound payload carries only those three fields — no `embeds`,
-`allowed_mentions`, or appended attachment URLs. The `allowed_mentions: { parse: [] }`
-guard is applied to the bot's *response* relayed back into the DM, not to
-this outbound webhook call.)
+(The top-level shape stays Discord-webhook compatible — no `embeds` or
+`allowed_mentions` outbound. The `allowed_mentions: { parse: [] }` guard is
+applied to the bot's *response* relayed back into the DM, not to this
+outbound webhook call. The slash path's `_meta` additionally carries the
+interaction fields and now also `behavior_id`.)
 
-Webhook → bot — the response (`APIMessage`)'s `content` is relayed back
-to the caller's DM.
+Webhook → bot — the response's `content` is relayed back to the caller.
+The response may also carry `embeds` (BH-2.2A): an array of Discord-shaped
+embed objects, sanitized through a whitelist (title/description/url/color/
+timestamp/footer/image/thumbnail/author/fields), truncated to Discord's
+length limits, capped at 10, with non-http(s) urls dropped. A response may
+be embeds-only.
+
+Slash behaviors may define command options (BH-2.2C,
+`slashCommandOptions`): a flat list of scalar options (string / integer /
+number / boolean / user / channel / role / mentionable / attachment) edited
+in the admin UI, registered to Discord by the reconciler, and delivered to
+the webhook in `_meta.options` as `{ name, type, value }` entries.
 
 Failed dispatch (network error, non-2xx, signature failure) is recorded
 in `bot_events`; a continuous session is **not** auto-ended. The caller
@@ -140,38 +187,58 @@ Each custom behavior picks one authentication mode:
 | `token` | Header `x-plugin-webhook-token: <secret>` on the outbound request. Response signatures are verified if present (optional). |
 | `hmac` | HMAC-SHA256 mutual signing and verification (see below). |
 
-In `hmac` mode the bot sends two headers on the outbound request:
+In `hmac` mode the bot sends three headers on the outbound request:
 
 | Header | Value |
 |--------|-------|
 | `X-Karyl-Timestamp` | Unix seconds. |
-| `X-Karyl-Signature` | `<hex>` = `HMAC_SHA256(secret, "<METHOD>:<path>:<ts>:<body>")`. |
+| `X-Karyl-Nonce` | 32-hex random per request (BH-2.4). |
+| `X-Karyl-Signature` | `<hex>` = `HMAC_SHA256(secret, "<METHOD>:<path>:<ts>:<nonce>:<body>")`. |
+
+Receivers verifying requests should include the nonce in the signed
+string and remember seen nonces for the 300 s window to reject replays.
 
 The webhook **response** is verified the same way (the bot binds the
 original request's method + path into the expected payload, which blocks
-cross-endpoint replay). Timestamps that differ from local time by more
-than 300 seconds are rejected; comparisons use `timingSafeEqual`. In
-`hmac` mode a missing or invalid response signature counts as a
-dispatch failure and **content is not relayed** to the caller.
+cross-endpoint replay). For responses the nonce is OPTIONAL — a response
+rides the request's own connection, so response replay isn't a
+stored-request attack; sign with the legacy
+`"<METHOD>:<path>:<ts>:<body>"` form or include an `X-Karyl-Nonce`
+header and the nonced form, either verifies. Timestamps that differ from
+local time by more than 300 seconds are rejected; comparisons use
+`timingSafeEqual`. In `hmac` mode a missing or invalid response
+signature counts as a dispatch failure and **content is not relayed**
+to the caller.
 
 ### Reference webhook receiver (Node.js)
 
 ```js
 import crypto from 'node:crypto';
 
+const seenNonces = new Map(); // nonce -> expiry (unix sec)
+
 function verify(headers, body, method, path, secret) {
   const ts = headers['x-karyl-timestamp'];
   const sig = headers['x-karyl-signature'];
-  if (!ts || !sig) return false;
-  if (Math.abs(Math.floor(Date.now() / 1000) - Number(ts)) > 300) return false;
+  const nonce = headers['x-karyl-nonce'];
+  if (!ts || !sig || !nonce) return false;
+  const now = Math.floor(Date.now() / 1000);
+  if (Math.abs(now - Number(ts)) > 300) return false;
   const expected = crypto
     .createHmac('sha256', secret)
-    .update(`${method.toUpperCase()}:${path}:${ts}:${body}`)
+    .update(`${method.toUpperCase()}:${path}:${ts}:${nonce}:${body}`)
     .digest('hex');
-  return (
-    sig.length === expected.length &&
-    crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))
-  );
+  if (
+    sig.length !== expected.length ||
+    !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))
+  ) {
+    return false;
+  }
+  // replay check AFTER the signature passes
+  for (const [n, exp] of seenNonces) if (exp <= now) seenNonces.delete(n);
+  if (seenNonces.has(nonce)) return false;
+  seenNonces.set(nonce, now + 300);
+  return true;
 }
 ```
 

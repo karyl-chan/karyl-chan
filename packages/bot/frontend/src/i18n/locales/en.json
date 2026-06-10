@@ -1237,7 +1237,27 @@
             "sourceNoticPlugin": "This behavior is provided by Plugin \"{name}\". Some fields are read-only.",
             "sourceNoticPluginLink": "View Plugin details",
             "sourceNoticSystem": "System built-in behavior. The trigger type and its values can be edited; other fields are locked.",
-            "saveTrigger": "Save trigger"
+            "saveTrigger": "Save trigger",
+            "stopOnMatchHint": "Block later patterns from also firing on this message.",
+            "ignoreBots": "Ignore bot messages",
+            "ignoreBotsHint": "Messages from bots and webhooks won't trigger this pattern. The bot always ignores its own messages.",
+            "options": "Command options",
+            "optionName": "name",
+            "optionDescription": "description",
+            "optionRequired": "required",
+            "optionAdd": "Add option",
+            "optionInvalid": "Option '{name}' is invalid: name must be 1-32 [a-z0-9_-] chars and description is required.",
+            "testFire": "Test webhook",
+            "testRunning": "Testing webhook…",
+            "testOk": "Webhook OK — response: {content}",
+            "testFail": "Webhook failed: {error}",
+            "resync": "Resync Discord command",
+            "resyncDone": "Command resynced.",
+            "unhealthy": "failing",
+            "statsLine": "Last fired {when} · {ok} ok / {fail} failed",
+            "statsLastError": "last error: {error}",
+            "sessionTtl": "Session TTL (hours)",
+            "sessionTtlHint": "1–720; empty = global default"
         },
         "addTab": {
             "title": "Add Scope Tab",
@@ -1263,6 +1283,26 @@
             "forwardLabel": "Forward",
             "forwardWebhook": "Webhook",
             "forwardPlugin": "Plugin"
+        },
+        "groupMembers": {
+            "title": "Group members",
+            "count": "{count} member(s)",
+            "empty": "No members yet — behaviors on this tab won't fire for anyone until you add some.",
+            "placeholder": "Discord user ID",
+            "add": "Add",
+            "remove": "Remove",
+            "invalidId": "Invalid Discord user ID."
+        },
+        "sessions": {
+            "title": "Active sessions",
+            "open": "Sessions",
+            "empty": "No active continuous sessions.",
+            "user": "User",
+            "behavior": "Behavior",
+            "channel": "Channel",
+            "started": "Started",
+            "expires": "Expires",
+            "end": "End"
         }
     },
     "config": {

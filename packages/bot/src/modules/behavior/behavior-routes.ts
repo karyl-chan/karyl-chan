@@ -18,9 +18,13 @@ import type { FastifyInstance } from "fastify";
 import type { BehaviorRoutesOptions } from "./behavior-helpers.js";
 import {
   requireBehaviorAdmin,
+  requireAnyBehaviorAccess,
+  hasGlobalBehaviorManage,
+  behaviorScopeAllowed,
   decryptedView,
   isValidWebhookUrl,
   isValidRegex,
+  parseSlashCommandOptions,
 } from "./behavior-helpers.js";
 import { sortJoin } from "../../utils/sort-join.js";
 import {
@@ -34,9 +38,20 @@ import {
 import {
   BehaviorScopeTab,
   deriveFieldsFromTab,
+  scopeKeyOf,
   rowOf as tabRowOf,
 } from "./models/behavior-scope-tab.model.js";
-import { BehaviorSession } from "./models/behavior-session.model.js";
+import {
+  BehaviorSession,
+  endSession,
+} from "./models/behavior-session.model.js";
+import { findStatsBulk } from "./models/behavior-stats.model.js";
+import type { BehaviorStatRow } from "./models/behavior-stats.model.js";
+import { WebhookForwarder } from "../command-system/webhook-forwarder.service.js";
+import {
+  findGroupMembers,
+  replaceGroupMembers,
+} from "./models/behavior-group-member.model.js";
 import { Op, fn, col } from "sequelize";
 import { sequelize } from "../../db.js";
 import { encryptSecret } from "../../utils/crypto.js";
@@ -49,12 +64,37 @@ export type { BehaviorRoutesOptions };
  *  validation site in this module (create, PATCH switch, PATCH sub-field). */
 const MESSAGE_PATTERN_KINDS = ["startswith", "endswith", "regex"];
 
+/** BH-4.2：session TTL 驗證 — 1..720 小時的整數，其他一律當 null（全域預設）。 */
+function validSessionTtl(v: unknown): number | null {
+  if (typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= 720) {
+    return v;
+  }
+  return null;
+}
+
 // ── 主函式 ────────────────────────────────────────────────────────────────────
 
 export async function registerBehaviorRoutes(
   server: FastifyInstance,
   options: BehaviorRoutesOptions = {},
 ): Promise<void> {
+  /**
+   * BH-5：per-row scope 守衛。全域 token 直接過；scoped token 比對該
+   * behavior 所屬 tab 的 scopeKey。tab 消失（理論上 FK 擋住）按拒絕處理。
+   */
+  async function guardRowScope(
+    request: Parameters<typeof requireAnyBehaviorAccess>[0],
+    reply: Parameters<typeof requireAnyBehaviorAccess>[1],
+    scopeTabId: number,
+  ): Promise<boolean> {
+    if (hasGlobalBehaviorManage(request)) return true;
+    const tabRow = await BehaviorScopeTab.findByPk(scopeTabId);
+    const key = tabRow ? scopeKeyOf(tabRowOf(tabRow)) : null;
+    if (key && behaviorScopeAllowed(request, key)) return true;
+    void reply.code(403).send({ error: "缺少此範圍的 behavior 管理權限" });
+    return false;
+  }
+
   function getReconciler(): CommandReconciler {
     if (!options.reconciler) {
       throw new Error("CommandReconciler not provided to behavior routes");
@@ -100,7 +140,7 @@ export async function registerBehaviorRoutes(
   // ── GET /api/behaviors ──────────────────────────────────────────────────────
 
   server.get("/api/behaviors", async (request, reply) => {
-    if (!requireBehaviorAdmin(request, reply)) return;
+    if (!requireAnyBehaviorAccess(request, reply)) return;
 
     const query = request.query as {
       scopeTabId?: string;
@@ -146,14 +186,35 @@ export async function registerBehaviorRoutes(
       ],
     });
 
-    const behaviors = rows.map((r) => decryptedView(rowOfBehavior(r)));
+    // BH-5：scoped token 只看得到自己 tab 的 rows
+    let visible = rows;
+    if (!hasGlobalBehaviorManage(request)) {
+      const tabRows = await BehaviorScopeTab.findAll();
+      const allowedTabIds = new Set(
+        tabRows
+          .filter((t) => behaviorScopeAllowed(request, scopeKeyOf(tabRowOf(t))))
+          .map((t) => t.getDataValue("id") as number),
+      );
+      visible = rows.filter((r) =>
+        allowedTabIds.has(r.getDataValue("scopeTabId") as number),
+      );
+    }
+
+    // BH-6.1：附上 forward 統計（admin UI 顯示 last-fired / 健康警示）
+    const stats = await findStatsBulk(
+      visible.map((r) => r.getDataValue("id") as number),
+    );
+    const behaviors = visible.map((r) => ({
+      ...decryptedView(rowOfBehavior(r)),
+      stats: stats.get(r.getDataValue("id") as number) ?? null,
+    }));
     return reply.send({ behaviors });
   });
 
   // ── GET /api/behaviors/:id ──────────────────────────────────────────────────
 
   server.get("/api/behaviors/:id", async (request, reply) => {
-    if (!requireBehaviorAdmin(request, reply)) return;
+    if (!requireAnyBehaviorAccess(request, reply)) return;
 
     const { id } = request.params as { id: string };
     const numId = parseInt(id, 10);
@@ -165,6 +226,15 @@ export async function registerBehaviorRoutes(
     if (!row) {
       return reply.code(404).send({ error: "Behavior 不存在" });
     }
+    if (
+      !(await guardRowScope(
+        request,
+        reply,
+        row.getDataValue("scopeTabId") as number,
+      ))
+    ) {
+      return;
+    }
 
     return reply.send({ behavior: decryptedView(rowOfBehavior(row)) });
   });
@@ -173,7 +243,13 @@ export async function registerBehaviorRoutes(
   // admin 只能建立 source=custom（webhook URL）的 behavior；system 由系統 seed。
 
   server.post("/api/behaviors", async (request, reply) => {
-    if (!requireBehaviorAdmin(request, reply)) return;
+    if (!requireAnyBehaviorAccess(request, reply)) return;
+    // BH-5：建立目標 tab 的 scope 檢查（未帶 scopeTabId 時預設 global_all=1）
+    {
+      const tabId =
+        (request.body as { scopeTabId?: number } | null)?.scopeTabId ?? 1;
+      if (!(await guardRowScope(request, reply, tabId))) return;
+    }
 
     const body = request.body as {
       title?: string;
@@ -183,6 +259,7 @@ export async function registerBehaviorRoutes(
       messagePatternValue?: string;
       slashCommandName?: string;
       slashCommandDescription?: string;
+      slashCommandOptions?: unknown;
       scope?: string;
       integrationTypes?: string;
       contexts?: string;
@@ -194,6 +271,8 @@ export async function registerBehaviorRoutes(
       webhookAuthMode?: BehaviorWebhookAuthMode;
       forwardType?: string;
       stopOnMatch?: boolean;
+      ignoreBots?: boolean;
+      sessionExpireHours?: number | null;
       enabled?: boolean;
       scopeTabId?: number;
     };
@@ -283,8 +362,15 @@ export async function registerBehaviorRoutes(
 
     // integrationTypes:tab 寫死的優先（admin 在非 global_all tab 上的
     // 設定會被覆蓋）；tab 沒寫死才採 body 給的值，最後才落到預設。
+    // message_pattern 不經指令註冊、沒有安裝面 — body 給的值一律忽略，
+    // 只存 tab 衍生/預設值（BH-0.2；PATCH 端對顯式設定則直接 400）。
     const integrationTypes =
-      tabIntegrationTypes ?? sortJoin(body.integrationTypes || "guild_install");
+      tabIntegrationTypes ??
+      sortJoin(
+        (body.triggerType === "message_pattern"
+          ? ""
+          : body.integrationTypes || "") || "guild_install",
+      );
     const contexts = body.scopeTabId
       ? derivedContexts
       : sortJoin(body.contexts || "Guild");
@@ -297,6 +383,16 @@ export async function registerBehaviorRoutes(
     const nextSortOrder = maxSortRow
       ? (maxSortRow.getDataValue("sortOrder") as number) + 1
       : 0;
+
+    // BH-2.2C：slash options 定義（pattern 不適用）
+    let slashOptionsJson: string | null = null;
+    if (body.triggerType === "slash_command" && body.slashCommandOptions !== undefined) {
+      const parsed = parseSlashCommandOptions(body.slashCommandOptions);
+      if (!parsed.ok) {
+        return reply.code(400).send({ error: parsed.reason });
+      }
+      slashOptionsJson = parsed.options.length > 0 ? JSON.stringify(parsed.options) : null;
+    }
 
     const row = await Behavior.create({
       title: body.title.trim(),
@@ -317,6 +413,7 @@ export async function registerBehaviorRoutes(
         body.triggerType === "slash_command"
           ? (body.slashCommandDescription ?? "")
           : null,
+      slashCommandOptions: slashOptionsJson,
       scope: derivedScope,
       integrationTypes,
       contexts,
@@ -336,7 +433,16 @@ export async function registerBehaviorRoutes(
         : null,
       systemKey: null,
       forwardType: body.forwardType ?? "one_time",
-      stopOnMatch: !!body.stopOnMatch,
+      // stopOnMatch 僅 message_pattern 有語意（BH-0.3）；slash 一律存 false
+      stopOnMatch:
+        body.triggerType === "message_pattern" ? !!body.stopOnMatch : false,
+      // ignoreBots 僅 guild-context pattern 有語意（BH-3）；預設 true（防 bot 迴圈）
+      ignoreBots:
+        body.triggerType === "message_pattern"
+          ? (body.ignoreBots ?? true)
+          : true,
+      // BH-4.2：per-behavior session TTL（null = 全域預設）
+      sessionExpireHours: validSessionTtl(body.sessionExpireHours),
       enabled: body.enabled !== undefined ? !!body.enabled : true,
       sortOrder: nextSortOrder,
       scopeTabId: resolvedTabId,
@@ -363,7 +469,7 @@ export async function registerBehaviorRoutes(
   // system：只能改 trigger value（slashCommandName / messagePatternValue）+ enabled
 
   server.patch("/api/behaviors/:id", async (request, reply) => {
-    if (!requireBehaviorAdmin(request, reply)) return;
+    if (!requireAnyBehaviorAccess(request, reply)) return;
 
     const { id } = request.params as { id: string };
     const numId = parseInt(id, 10);
@@ -377,6 +483,9 @@ export async function registerBehaviorRoutes(
     }
 
     const existingRow = rowOfBehavior(existing);
+    if (!(await guardRowScope(request, reply, existingRow.scopeTabId))) {
+      return;
+    }
     const body = request.body as Record<string, unknown>;
     const patch: Record<string, unknown> = {};
 
@@ -508,6 +617,27 @@ export async function registerBehaviorRoutes(
       if ("slashCommandDescription" in body)
         patch["slashCommandDescription"] =
           body["slashCommandDescription"] ?? null;
+      if ("slashCommandOptions" in body) {
+        // BH-2.2C：僅 slash trigger 有 options 定義
+        const effectiveTrigger =
+          (body["triggerType"] as string | undefined) ??
+          existingRow.triggerType;
+        if (effectiveTrigger !== "slash_command") {
+          return reply.code(400).send({
+            error: "slashCommandOptions 僅對 slash_command behavior 有效",
+          });
+        }
+        if (body["slashCommandOptions"] === null) {
+          patch["slashCommandOptions"] = null;
+        } else {
+          const parsed = parseSlashCommandOptions(body["slashCommandOptions"]);
+          if (!parsed.ok) {
+            return reply.code(400).send({ error: parsed.reason });
+          }
+          patch["slashCommandOptions"] =
+            parsed.options.length > 0 ? JSON.stringify(parsed.options) : null;
+        }
+      }
       // When triggerType is (re)set, enforce the cross-field invariant the
       // model validates on save (triggerTypeShape): a row must carry ONLY
       // its trigger type's columns, with the required one present. The
@@ -530,6 +660,7 @@ export async function registerBehaviorRoutes(
           patch["messagePatternKind"] = null;
           patch["messagePatternValue"] = null;
         } else {
+          patch["slashCommandOptions"] = null;
           const kind =
             (patch["messagePatternKind"] as string | null | undefined) ??
             existingRow.messagePatternKind ??
@@ -600,6 +731,18 @@ export async function registerBehaviorRoutes(
       }
       if ("scope" in body) patch["scope"] = body["scope"];
       if ("integrationTypes" in body) {
+        // integrationTypes 是 slash 指令的安裝面設定（Discord application
+        // command install scope）；message_pattern 不經指令註冊，設定它
+        // 沒有任何效果 — 拒絕，不留「看似生效」的假象（BH-0.2）。
+        const effectiveTrigger =
+          (body["triggerType"] as string | undefined) ??
+          existingRow.triggerType;
+        if (effectiveTrigger === "message_pattern") {
+          return reply.code(400).send({
+            error:
+              "message_pattern behavior 不使用 integrationTypes（僅 slash command 有安裝面）",
+          });
+        }
         // integrationTypes 只在 global_all tab 上可自選 — 其他 tab 由
         // deriveFieldsFromTab() 寫死。若 admin 嘗試覆蓋,拒絕並告知。
         const tabRow = await BehaviorScopeTab.findByPk(existingRow.scopeTabId);
@@ -626,7 +769,41 @@ export async function registerBehaviorRoutes(
         patch["audienceGroupName"] = body["audienceGroupName"] ?? null;
       if ("enabled" in body) patch["enabled"] = !!body["enabled"];
       if ("forwardType" in body) patch["forwardType"] = body["forwardType"];
-      if ("stopOnMatch" in body) patch["stopOnMatch"] = !!body["stopOnMatch"];
+      if ("stopOnMatch" in body) {
+        // stopOnMatch 是 message_pattern 的 multi-match 停止旗標（BH-0.3）；
+        // slash 指令名唯一、天然單一匹配，設定它沒有任何效果 — 拒絕。
+        const effectiveTrigger =
+          (body["triggerType"] as string | undefined) ??
+          existingRow.triggerType;
+        if (effectiveTrigger !== "message_pattern") {
+          return reply.code(400).send({
+            error:
+              "stopOnMatch 僅對 message_pattern behavior 有效（slash 指令名唯一、單一匹配）",
+          });
+        }
+        patch["stopOnMatch"] = !!body["stopOnMatch"];
+      }
+      if ("ignoreBots" in body) {
+        // ignoreBots 是 guild-context pattern 的旗標（BH-3）；slash 不適用。
+        const effectiveTrigger =
+          (body["triggerType"] as string | undefined) ??
+          existingRow.triggerType;
+        if (effectiveTrigger !== "message_pattern") {
+          return reply.code(400).send({
+            error: "ignoreBots 僅對 message_pattern behavior 有效",
+          });
+        }
+        patch["ignoreBots"] = !!body["ignoreBots"];
+      }
+      if ("sessionExpireHours" in body) {
+        const v = body["sessionExpireHours"];
+        if (v !== null && (typeof v !== "number" || !Number.isInteger(v) || v < 1 || v > 720)) {
+          return reply
+            .code(400)
+            .send({ error: "sessionExpireHours 必須是 1–720 的整數或 null" });
+        }
+        patch["sessionExpireHours"] = v;
+      }
       if ("webhookUrl" in body) {
         const url = (body["webhookUrl"] as string | null)?.trim();
         if (url) {
@@ -704,7 +881,7 @@ export async function registerBehaviorRoutes(
   // ── DELETE /api/behaviors/:id ───────────────────────────────────────────────
 
   server.delete("/api/behaviors/:id", async (request, reply) => {
-    if (!requireBehaviorAdmin(request, reply)) return;
+    if (!requireAnyBehaviorAccess(request, reply)) return;
 
     const { id } = request.params as { id: string };
     const numId = parseInt(id, 10);
@@ -718,6 +895,9 @@ export async function registerBehaviorRoutes(
     }
 
     const existingRow = rowOfBehavior(existing);
+    if (!(await guardRowScope(request, reply, existingRow.scopeTabId))) {
+      return;
+    }
     if (existingRow.source === "system") {
       return reply.code(403).send({ error: "system behavior 不可刪除" });
     }
@@ -746,7 +926,7 @@ export async function registerBehaviorRoutes(
   // ── POST /api/behaviors/:id/resync ──────────────────────────────────────────
 
   server.post("/api/behaviors/:id/resync", async (request, reply) => {
-    if (!requireBehaviorAdmin(request, reply)) return;
+    if (!requireAnyBehaviorAccess(request, reply)) return;
 
     const { id } = request.params as { id: string };
     const numId = parseInt(id, 10);
@@ -757,6 +937,15 @@ export async function registerBehaviorRoutes(
     const existing = await Behavior.findByPk(numId);
     if (!existing) {
       return reply.code(404).send({ error: "Behavior 不存在" });
+    }
+    if (
+      !(await guardRowScope(
+        request,
+        reply,
+        existing.getDataValue("scopeTabId") as number,
+      ))
+    ) {
+      return;
     }
 
     const result = await getReconciler().reconcileForBehavior(numId);
@@ -807,5 +996,191 @@ export async function registerBehaviorRoutes(
     });
 
     return reply.send({ ok: true });
+  });
+
+  // ── BH-6.2：test-fire ───────────────────────────────────────────────────────
+  // 對 behavior 的 webhook 發一發測試 payload（_meta.test=true），把結果
+  // 直接回給 admin —— 「裝好了有沒有通」從猜變成按一下。不開 session、
+  // 不 relay 到任何頻道、不計入統計。
+
+  server.post("/api/behaviors/:id/test", async (request, reply) => {
+    if (!requireAnyBehaviorAccess(request, reply)) return;
+    const { id } = request.params as { id: string };
+    const numId = parseInt(id, 10);
+    if (isNaN(numId)) {
+      return reply.code(400).send({ error: "無效的 behavior ID" });
+    }
+    const row = await Behavior.findByPk(numId);
+    if (!row) {
+      return reply.code(404).send({ error: "Behavior 不存在" });
+    }
+    if (
+      !(await guardRowScope(
+        request,
+        reply,
+        row.getDataValue("scopeTabId") as number,
+      ))
+    ) {
+      return;
+    }
+    const behaviorRow = rowOfBehavior(row);
+    if (behaviorRow.source !== "custom") {
+      return reply
+        .code(400)
+        .send({ error: "system behavior 走 in-process handler，無 webhook 可測" });
+    }
+    const forwarder = options.forwarder ?? new WebhookForwarder();
+    const payload = {
+      content: "(test fire from admin UI)",
+      username: "karyl-admin-test",
+      avatar_url: "",
+      _meta: {
+        test: true,
+        behavior_id: behaviorRow.id,
+        user: {
+          id: request.authUserId ?? "admin",
+          username: "admin-test",
+          global_name: null,
+          discriminator: "0",
+          avatar: null,
+        },
+      },
+    };
+    const result = await forwarder.forward(behaviorRow, payload);
+    return reply.send({
+      ok: result.ok,
+      relayContent: result.relayContent,
+      relayEmbeds: result.relayEmbeds ?? [],
+      ended: result.ended,
+      error: result.error ?? null,
+    });
+  });
+
+  // ── BH-4.1：session 可見性 ──────────────────────────────────────────────────
+  // 全域 behavior.manage（session 跨 tab，不做 scoped 細分）。
+
+  server.get("/api/behavior-sessions", async (request, reply) => {
+    if (!requireBehaviorAdmin(request, reply)) return;
+    const rows = await BehaviorSession.findAll({
+      order: [["startedAt", "DESC"]],
+    });
+    const behaviorIds = Array.from(
+      new Set(rows.map((r) => r.getDataValue("behaviorId") as number)),
+    );
+    const titleRows = await Behavior.findAll({
+      where: { id: behaviorIds },
+      attributes: ["id", "title"],
+    });
+    const titles = new Map(
+      titleRows.map((b) => [
+        b.getDataValue("id") as number,
+        b.getDataValue("title") as string,
+      ]),
+    );
+    return reply.send({
+      sessions: rows.map((r) => ({
+        userId: r.getDataValue("userId") as string,
+        channelId: r.getDataValue("channelId") as string,
+        behaviorId: r.getDataValue("behaviorId") as number,
+        behaviorTitle:
+          titles.get(r.getDataValue("behaviorId") as number) ?? "(deleted)",
+        startedAt: r.getDataValue("startedAt") as string,
+        expiresAt: (r.getDataValue("expiresAt") as string | null) ?? null,
+      })),
+    });
+  });
+
+  server.delete(
+    "/api/behavior-sessions/:userId/:channelId",
+    async (request, reply) => {
+      if (!requireBehaviorAdmin(request, reply)) return;
+      const { userId, channelId } = request.params as {
+        userId: string;
+        channelId: string;
+      };
+      const ended = await endSession(userId, channelId);
+      if (!ended) {
+        return reply.code(404).send({ error: "Session 不存在" });
+      }
+      botEventLog.record(
+        "info",
+        "web",
+        `behavior-session: admin 強制結束 session userId=${userId} channelId=${channelId}`,
+        { userId, channelId, actor: request.authUserId ?? null },
+      );
+      return reply.send({ ok: true });
+    },
+  );
+
+  // ── audience group 成員管理（BH-1）─────────────────────────────────────────
+  //
+  // group 以名字為單位（behaviors.audienceGroupName / specific_group tab 的
+  // groupName），名單存 behavior_group_members，同名 group 的 behaviors 共享。
+
+  // GET /api/behavior-groups/:groupName/members
+  server.get("/api/behavior-groups/:groupName/members", async (request, reply) => {
+    if (!requireAnyBehaviorAccess(request, reply)) return;
+    const groupName = decodeURIComponent(
+      (request.params as { groupName: string }).groupName,
+    ).trim();
+    if (!groupName) {
+      return reply.code(400).send({ error: "groupName 為必填" });
+    }
+    if (
+      !hasGlobalBehaviorManage(request) &&
+      !behaviorScopeAllowed(request, `group:${groupName}`)
+    ) {
+      return reply.code(403).send({ error: "缺少此 group 的管理權限" });
+    }
+    const members = await findGroupMembers(groupName);
+    return reply.send({ groupName, members });
+  });
+
+  // PUT /api/behavior-groups/:groupName/members { userIds: string[] }
+  // 全量替換（與 UI 的編輯-儲存模型一致；增/刪都走同一條）。
+  server.put("/api/behavior-groups/:groupName/members", async (request, reply) => {
+    if (!requireAnyBehaviorAccess(request, reply)) return;
+    const groupName = decodeURIComponent(
+      (request.params as { groupName: string }).groupName,
+    ).trim();
+    if (!groupName || groupName.length > 200) {
+      return reply.code(400).send({ error: "groupName 為必填（max 200）" });
+    }
+    if (
+      !hasGlobalBehaviorManage(request) &&
+      !behaviorScopeAllowed(request, `group:${groupName}`)
+    ) {
+      return reply.code(403).send({ error: "缺少此 group 的管理權限" });
+    }
+    const body = request.body as { userIds?: unknown };
+    if (!Array.isArray(body?.userIds)) {
+      return reply.code(400).send({ error: "userIds 為必填陣列" });
+    }
+    if (body.userIds.length > 1000) {
+      return reply.code(400).send({ error: "userIds 過長 (max 1000)" });
+    }
+    const userIds: string[] = [];
+    for (const raw of body.userIds) {
+      if (typeof raw !== "string") {
+        return reply.code(400).send({ error: "userIds 必須是字串陣列" });
+      }
+      const id = raw.trim();
+      if (!id) continue;
+      if (!/^\d{5,25}$/.test(id)) {
+        return reply
+          .code(400)
+          .send({ error: `無效的 user id：${id.slice(0, 30)}` });
+      }
+      userIds.push(id);
+    }
+    await replaceGroupMembers(groupName, userIds);
+    const members = await findGroupMembers(groupName);
+    botEventLog.record(
+      "info",
+      "bot",
+      `behavior-group: '${groupName}' 成員更新為 ${members.length} 人`,
+      { groupName, count: members.length, actor: request.authUserId ?? null },
+    );
+    return reply.send({ groupName, members });
   });
 }

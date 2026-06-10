@@ -236,7 +236,7 @@ describe("verifyInboundSignatureWithKeys (rotation window)", () => {
   function headersFor(secret: string, ts: string): Headers {
     const h = new Headers();
     h.set(TIMESTAMP_HEADER, ts);
-    h.set(SIGNATURE_HEADER, signBody(secret, "POST", PATH, ts, BODY));
+    h.set(SIGNATURE_HEADER, signBody(secret, "POST", PATH, ts, null, BODY));
     return h;
   }
 

@@ -14,7 +14,12 @@
 import type { FastifyInstance } from "fastify";
 import { Op } from "sequelize";
 import { sequelize } from "../../db.js";
-import { requireBehaviorAdmin } from "./behavior-helpers.js";
+import {
+  requireBehaviorAdmin,
+  requireAnyBehaviorAccess,
+  hasGlobalBehaviorManage,
+  behaviorScopeAllowed,
+} from "./behavior-helpers.js";
 import {
   BehaviorScopeTab,
   FIXED_TAB_IDS,
@@ -50,7 +55,7 @@ export async function registerScopeTabRoutes(
   // ── GET /api/behavior-tabs ─────────────────────────────────────────────────
 
   server.get("/api/behavior-tabs", async (request, reply) => {
-    if (!requireBehaviorAdmin(request, reply)) return;
+    if (!requireAnyBehaviorAccess(request, reply)) return;
 
     const rows = await BehaviorScopeTab.findAll({
       order: [
@@ -73,7 +78,11 @@ export async function registerScopeTabRoutes(
     })) as unknown as Array<{ scopeTabId: number; cnt: string | number }>;
 
     const countMap = new Map(counts.map((c) => [c.scopeTabId, Number(c.cnt)]));
-    const tabsWithCount = tabs.map((t) => ({
+    // BH-5：scoped token 只看得到自己的 tabs
+    const visible = hasGlobalBehaviorManage(request)
+      ? tabs
+      : tabs.filter((t) => behaviorScopeAllowed(request, scopeKeyOf(t)));
+    const tabsWithCount = visible.map((t) => ({
       ...t,
       scopeKey: scopeKeyOf(t),
       behaviorCount: countMap.get(t.id) ?? 0,

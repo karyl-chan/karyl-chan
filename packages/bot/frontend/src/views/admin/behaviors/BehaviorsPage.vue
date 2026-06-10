@@ -10,6 +10,7 @@ import BehaviorSidebar from './BehaviorSidebar.vue';
 import BehaviorWorkspace from './BehaviorWorkspace.vue';
 import AddBehaviorModal from './AddBehaviorModal.vue';
 import AddScopeTabModal from './AddScopeTabModal.vue';
+import BehaviorSessionsModal from './BehaviorSessionsModal.vue';
 import {
     listScopeTabs,
     type ScopeTabRow,
@@ -33,6 +34,7 @@ const error = ref<string | null>(null);
 
 const addBehaviorModalOpen = ref(false);
 const addTabModalOpen = ref(false);
+const sessionsModalOpen = ref(false);
 
 const selectedTab = computed((): ScopeTabRow | null =>
     tabs.value.find(t => t.id === selectedTabId.value) ?? null
@@ -103,6 +105,12 @@ async function onTabCreated(tab: ScopeTabRow) {
             @tab-deleted="onTabDeleted"
             @add-behavior="addBehaviorModalOpen = true"
             @behavior-deleted="onBehaviorDeleted"
+            @open-sessions="sessionsModalOpen = true"
+        />
+
+        <BehaviorSessionsModal
+            :visible="sessionsModalOpen"
+            @close="sessionsModalOpen = false"
         />
 
         <AddBehaviorModal

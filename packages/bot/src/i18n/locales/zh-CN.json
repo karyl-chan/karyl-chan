@@ -20,7 +20,9 @@
     "cannot-load-manual": "⚠ 无法获取行为列表，请稍后再试。",
     "unknown-system-command": "⚙ 未知的系统指令。",
     "webhook-failed": "⚠ Behavior 转发失败：{{error}}",
-    "continuous-dm-warning": "\n\n⚠ 此行为设为持续转发，但无法开启与您的私聊频道。请在 Discord 隐私设置中允许服务器/应用私聊后再试一次。"
+    "continuous-dm-warning": "\n\n⚠ 此行为设为持续转发，但无法开启与您的私聊频道。请在 Discord 隐私设置中允许服务器/应用私聊后再试一次。",
+    "behavior-wrong-place": "该指令不能在此处使用。",
+    "behavior-not-allowed": "你没有使用该指令的权限。"
   },
   "manual": {
     "embed-title": "私聊可用行为列表",

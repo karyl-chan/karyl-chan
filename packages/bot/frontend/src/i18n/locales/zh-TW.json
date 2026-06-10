@@ -1237,7 +1237,27 @@
             "sourceNoticPlugin": "此 behavior 由 Plugin「{name}」提供，部分欄位不可修改",
             "sourceNoticPluginLink": "查看 Plugin 詳情",
             "sourceNoticSystem": "系統內建 behavior，可修改觸發類型與內容（其餘欄位鎖定）",
-            "saveTrigger": "儲存觸發"
+            "saveTrigger": "儲存觸發",
+            "stopOnMatchHint": "命中後，這則訊息不再比對後續 pattern。",
+            "ignoreBots": "忽略 bot 訊息",
+            "ignoreBotsHint": "bot／webhook 發的訊息不觸發此 pattern。本 bot 自身的訊息無論如何都會被忽略。",
+            "options": "指令參數",
+            "optionName": "名稱",
+            "optionDescription": "說明",
+            "optionRequired": "必填",
+            "optionAdd": "新增參數",
+            "optionInvalid": "參數「{name}」無效：名稱須為 1-32 字的 [a-z0-9_-]，且說明必填。",
+            "testFire": "測試 webhook",
+            "testRunning": "測試中…",
+            "testOk": "Webhook 正常——回應：{content}",
+            "testFail": "Webhook 失敗：{error}",
+            "resync": "重新同步 Discord 指令",
+            "resyncDone": "指令已重新同步。",
+            "unhealthy": "連續失敗",
+            "statsLine": "上次觸發 {when} · 成功 {ok} / 失敗 {fail}",
+            "statsLastError": "最近錯誤：{error}",
+            "sessionTtl": "Session 時限（小時）",
+            "sessionTtlHint": "1–720；留空＝全域預設"
         },
         "addTab": {
             "title": "新增範圍分頁",
@@ -1263,6 +1283,26 @@
             "forwardLabel": "轉發設定",
             "forwardWebhook": "Webhook",
             "forwardPlugin": "Plugin"
+        },
+        "groupMembers": {
+            "title": "群組成員",
+            "count": "{count} 位成員",
+            "empty": "尚無成員——加入成員前，這個分頁上的 behaviors 不會對任何人觸發。",
+            "placeholder": "Discord 使用者 ID",
+            "add": "加入",
+            "remove": "移除",
+            "invalidId": "無效的 Discord 使用者 ID。"
+        },
+        "sessions": {
+            "title": "進行中的 sessions",
+            "open": "Sessions",
+            "empty": "目前沒有進行中的 continuous session。",
+            "user": "使用者",
+            "behavior": "Behavior",
+            "channel": "頻道",
+            "started": "開始於",
+            "expires": "到期",
+            "end": "結束"
         }
     },
     "config": {

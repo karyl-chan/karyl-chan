@@ -70,6 +70,20 @@ export const Behavior = sequelize.define(
       allowNull: false,
       defaultValue: false,
     },
+    // BH-3：guild 頻道 pattern 是否忽略 bot/webhook 作者的訊息。預設忽略
+    // （防 bot 迴圈）；取消勾選也擋不掉本 bot 自身訊息（matcher 無條件丟棄）。
+    ignoreBots: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: true,
+    },
+    // BH-4.2：continuous session 的 TTL（小時）。null = 用全域
+    // config.behavior.sessionExpireHours。對話代理（長）與一次性流程（短）
+    // 的需求天然不同，下放為 per-behavior。
+    sessionExpireHours: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
     forwardType: {
       // ENUM → sync() 發出 CHECK(forwardType IN ('one_time','continuous'))
       type: DataTypes.ENUM("one_time", "continuous"),
@@ -100,6 +114,12 @@ export const Behavior = sequelize.define(
       allowNull: true,
     },
     slashCommandDescription: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    // BH-2.2C：slash 指令的 options 定義（JSON 陣列，ManifestCommandOption
+    // 的扁平 scalar 子集）。null = 無參數。pattern 行為一律 null。
+    slashCommandOptions: {
       type: DataTypes.TEXT,
       allowNull: true,
     },
@@ -386,23 +406,8 @@ export const Behavior = sequelize.define(
           throw new Error("placementGuildId requires scope = 'guild'");
         }
       },
-      // CHECK：message_pattern trigger 的 contexts 不可含 'Guild'
-      messagePatternContexts(this: {
-        triggerType?: string;
-        contexts?: string;
-      }) {
-        if (this.triggerType === undefined || this.contexts === undefined) {
-          return;
-        }
-        if (
-          this.triggerType === "message_pattern" &&
-          (this.contexts ?? "").includes("Guild")
-        ) {
-          throw new Error(
-            "message_pattern behavior contexts must not include 'Guild'",
-          );
-        }
-      },
+      // （BH-3 移除舊的 messagePatternContexts CHECK：guild 頻道 pattern
+      //   已是正式能力，contexts 可含 'Guild'。）
     },
   },
 );
@@ -416,6 +421,8 @@ export interface BehaviorRow {
   enabled: boolean;
   sortOrder: number;
   stopOnMatch: boolean;
+  ignoreBots: boolean;
+  sessionExpireHours: number | null;
   forwardType: BehaviorForwardType;
   source: BehaviorSource;
   triggerType: BehaviorTriggerType;
@@ -423,6 +430,7 @@ export interface BehaviorRow {
   messagePatternValue: string | null;
   slashCommandName: string | null;
   slashCommandDescription: string | null;
+  slashCommandOptions: string | null;
   scope: BehaviorScope;
   integrationTypes: string;
   contexts: string;
@@ -448,6 +456,9 @@ export function rowOfBehavior(
     enabled: !!model.getDataValue("enabled"),
     sortOrder: model.getDataValue("sortOrder") as number,
     stopOnMatch: !!model.getDataValue("stopOnMatch"),
+    ignoreBots: !!model.getDataValue("ignoreBots"),
+    sessionExpireHours:
+      (model.getDataValue("sessionExpireHours") as number | null) ?? null,
     forwardType: model.getDataValue("forwardType") as BehaviorForwardType,
     source: model.getDataValue("source") as BehaviorSource,
     triggerType: model.getDataValue("triggerType") as BehaviorTriggerType,
@@ -461,6 +472,8 @@ export function rowOfBehavior(
       (model.getDataValue("slashCommandName") as string | null) ?? null,
     slashCommandDescription:
       (model.getDataValue("slashCommandDescription") as string | null) ?? null,
+    slashCommandOptions:
+      (model.getDataValue("slashCommandOptions") as string | null) ?? null,
     scope: model.getDataValue("scope") as BehaviorScope,
     integrationTypes: model.getDataValue("integrationTypes") as string,
     contexts: model.getDataValue("contexts") as string,

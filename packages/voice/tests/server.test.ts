@@ -10,7 +10,7 @@
  */
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
-import { sign, SIGNATURE_HEADER, TIMESTAMP_HEADER } from "@karyl-chan/plugin-sdk";
+import { sign, generateNonce, SIGNATURE_HEADER, TIMESTAMP_HEADER, NONCE_HEADER } from "@karyl-chan/plugin-sdk";
 import { buildServer } from "../src/server.js";
 import { GatewayBridge } from "../src/gateway-bridge.js";
 import type { BotClient } from "../src/bot-client.js";
@@ -19,10 +19,12 @@ const SECRET = "test-secret";
 
 function signedHeaders(path: string, body: string) {
   const ts = Math.floor(Date.now() / 1000).toString();
+  const nonce = generateNonce();
   return {
     "content-type": "application/json",
     [TIMESTAMP_HEADER]: ts,
-    [SIGNATURE_HEADER]: sign(SECRET, "POST", path, ts, body),
+    [NONCE_HEADER]: nonce,
+    [SIGNATURE_HEADER]: sign(SECRET, "POST", path, ts, nonce, body),
   };
 }
 
@@ -73,13 +75,15 @@ describe("voice server HMAC gate", () => {
     const path = "/internal/voice/status";
     const body = JSON.stringify({ guildId: "g1" });
     const ts = (Math.floor(Date.now() / 1000) - 100_000).toString();
+    const staleNonce = generateNonce();
     const res = await server.inject({
       method: "POST",
       url: path,
       headers: {
         "content-type": "application/json",
         [TIMESTAMP_HEADER]: ts,
-        [SIGNATURE_HEADER]: sign(SECRET, "POST", path, ts, body),
+        [NONCE_HEADER]: staleNonce,
+        [SIGNATURE_HEADER]: sign(SECRET, "POST", path, ts, staleNonce, body),
       },
       payload: body,
     });

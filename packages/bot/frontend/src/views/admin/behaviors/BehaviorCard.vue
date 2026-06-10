@@ -11,9 +11,13 @@ import {
     type BehaviorScope,
     type BehaviorWebhookAuthMode,
     type BehaviorPatchPayload,
+    type BehaviorCommandOption,
     type ScopeTabRow,
     updateBehavior,
     deleteBehavior,
+    resyncBehavior,
+    testBehavior,
+    type BehaviorTestResult,
 } from '../../../api/behavior';
 
 /**
@@ -61,12 +65,15 @@ interface Draft {
     enabled: boolean;
     forwardType: BehaviorForwardType;
     stopOnMatch: boolean;
+    ignoreBots: boolean;
+    sessionExpireHours: number | null;
     // trigger（custom 全可改；system 只能改 value）
     triggerType: BehaviorTriggerType;
     messagePatternKind: string;
     messagePatternValue: string;
     slashCommandName: string;
     slashCommandDescription: string;
+    slashCommandOptions: BehaviorCommandOption[];
     // 三軸（custom 可改；system 唯讀）
     scope: BehaviorScope;
     integrationTypes: string;
@@ -81,6 +88,21 @@ interface Draft {
     webhookAuthMode: BehaviorWebhookAuthMode | '';
 }
 
+// BH-2.2C：slash options 定義（DB 存 JSON 字串 → 編輯用陣列）
+function parseOptionsJson(raw: string | null): BehaviorCommandOption[] {
+    if (!raw) return [];
+    try {
+        const parsed = JSON.parse(raw) as BehaviorCommandOption[];
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
+    }
+}
+
+const OPTION_TYPE_CHOICES = [
+    'string', 'integer', 'number', 'boolean', 'user', 'channel', 'role', 'mentionable', 'attachment',
+] as const;
+
 function draftFrom(row: BehaviorRow): Draft {
     return {
         title: row.title,
@@ -88,11 +110,14 @@ function draftFrom(row: BehaviorRow): Draft {
         enabled: row.enabled,
         forwardType: row.forwardType,
         stopOnMatch: row.stopOnMatch,
+        ignoreBots: row.ignoreBots,
+        sessionExpireHours: row.sessionExpireHours,
         triggerType: row.triggerType,
         messagePatternKind: row.messagePatternKind ?? 'startswith',
         messagePatternValue: row.messagePatternValue ?? '',
         slashCommandName: row.slashCommandName ?? '',
         slashCommandDescription: row.slashCommandDescription ?? '',
+        slashCommandOptions: parseOptionsJson(row.slashCommandOptions),
         scope: row.scope,
         integrationTypes: row.integrationTypes,
         contexts: row.contexts,
@@ -106,6 +131,14 @@ function draftFrom(row: BehaviorRow): Draft {
 }
 
 const draft = reactive<Draft>(draftFrom(props.behavior));
+
+const optionTypeOptions = OPTION_TYPE_CHOICES.map((v) => ({ value: v, label: v }));
+function addOption() {
+    draft.slashCommandOptions.push({ type: 'string', name: '', description: '', required: false });
+}
+function removeOption(index: number) {
+    draft.slashCommandOptions.splice(index, 1);
+}
 const saving = ref(false);
 const error = ref<string | null>(null);
 
@@ -147,6 +180,11 @@ const scopeOptions = [
 const canEditIntegrationTypes = computed(
     () => props.scopeTab?.tabType === 'global_all',
 );
+// integrationTypes 是 slash 指令的安裝面設定;message_pattern 不經指令
+// 註冊,顯示這個欄位會誤導 admin 以為有效(BH-0.2),整塊隱藏。
+const showIntegrationTypes = computed(
+    () => draft.triggerType === 'slash_command',
+);
 // 3 種有意義的組合（單獨 guild / 單獨 user / 兩者皆可），computed 把
 // 存進 DB 的 comma-joined 字串（sortJoin 排序過）映射回 enum。
 type IntegrationMode = 'both' | 'guild_only' | 'user_only';
@@ -183,6 +221,69 @@ const webhookAuthModeOptions = computed(() => [
 const showAuthModeSelect = computed(() =>
     isCustom.value && draft.webhookSecret.length > 0
 );
+
+// ── BH-6.2 test-fire / BH-6.3 resync ────────────────────────────────────────
+
+const testing = ref(false);
+const testResult = ref<BehaviorTestResult | null>(null);
+async function onTestFire() {
+    testing.value = true;
+    testResult.value = null;
+    try {
+        testResult.value = await testBehavior(props.behavior.id);
+    } catch (err) {
+        testResult.value = {
+            ok: false,
+            relayContent: '',
+            relayEmbeds: [],
+            ended: false,
+            error: err instanceof Error ? err.message : String(err),
+        };
+    } finally {
+        testing.value = false;
+    }
+}
+
+const resyncing = ref(false);
+const resyncDone = ref(false);
+async function onResync() {
+    resyncing.value = true;
+    resyncDone.value = false;
+    try {
+        await resyncBehavior(props.behavior.id);
+        resyncDone.value = true;
+    } catch (err) {
+        error.value = err instanceof Error ? err.message : String(err);
+    } finally {
+        resyncing.value = false;
+    }
+}
+
+// ── BH-6.1/6.4 stats 顯示 ────────────────────────────────────────────────────
+
+const statsSummary = computed(() => {
+    const st = props.behavior.stats;
+    if (!st || (st.successCount === 0 && st.failureCount === 0)) return null;
+    return st;
+});
+const unhealthy = computed(
+    () => (props.behavior.stats?.consecutiveFailures ?? 0) >= 3,
+);
+function formatWhen(iso: string | null): string {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString();
+}
+
+// ── TTL 數字輸入（continuous 才顯示）────────────────────────────────────────
+
+const sessionTtlInput = computed<string>({
+    get: () => (draft.sessionExpireHours == null ? '' : String(draft.sessionExpireHours)),
+    set: (v) => {
+        const n = parseInt(v, 10);
+        draft.sessionExpireHours = Number.isInteger(n) && n >= 1 && n <= 720 ? n : null;
+    },
+});
 
 // ── trigger summary（卡片頭部）───────────────────────────────────────────────
 
@@ -226,6 +327,7 @@ const dirty = computed(() => {
         draft.messagePatternValue !== (b.messagePatternValue ?? '') ||
         draft.slashCommandName !== (b.slashCommandName ?? '') ||
         draft.slashCommandDescription !== (b.slashCommandDescription ?? '') ||
+        JSON.stringify(draft.slashCommandOptions) !== JSON.stringify(parseOptionsJson(b.slashCommandOptions)) ||
         draft.scope !== b.scope ||
         draft.integrationTypes !== b.integrationTypes ||
         draft.contexts !== b.contexts ||
@@ -236,7 +338,9 @@ const dirty = computed(() => {
         draft.webhookSecret !== (b.webhookSecret ?? '') ||
         draft.webhookAuthMode !== (b.webhookAuthMode ?? '') ||
         draft.forwardType !== b.forwardType ||
-        draft.stopOnMatch !== b.stopOnMatch
+        draft.stopOnMatch !== b.stopOnMatch ||
+        draft.ignoreBots !== b.ignoreBots ||
+        draft.sessionExpireHours !== b.sessionExpireHours
     );
 });
 
@@ -326,11 +430,17 @@ async function onSave() {
                 audienceUserId: draft.audienceKind === 'user' ? (draft.audienceUserId.trim() || null) : null,
                 audienceGroupName: draft.audienceKind === 'group' ? (draft.audienceGroupName.trim() || null) : null,
                 forwardType: draft.forwardType,
-                stopOnMatch: draft.stopOnMatch,
+                sessionExpireHours: draft.sessionExpireHours,
             };
-            // 只在 global_all tab 才送 integrationTypes — 其他 tab 由
-            // 後端 deriveFieldsFromTab() 寫死,送過去後端會 400 拒絕。
-            if (canEditIntegrationTypes.value) {
+            // stopOnMatch / ignoreBots 是 pattern 專屬語意(BH-0.3/BH-3) — slash 不送。
+            if (draft.triggerType === 'message_pattern') {
+                patch.stopOnMatch = draft.stopOnMatch;
+                patch.ignoreBots = draft.ignoreBots;
+            }
+            // 只在 global_all tab + slash trigger 才送 integrationTypes —
+            // 其他 tab 由後端 deriveFieldsFromTab() 寫死、message_pattern
+            // 沒有安裝面,送過去後端都會 400 拒絕。
+            if (canEditIntegrationTypes.value && draft.triggerType === 'slash_command') {
                 patch.integrationTypes = draft.integrationTypes;
             }
             if (draft.triggerType === 'slash_command') {
@@ -340,6 +450,15 @@ async function onSave() {
                 }
                 patch.slashCommandName = draft.slashCommandName.trim();
                 patch.slashCommandDescription = draft.slashCommandDescription;
+                // BH-2.2C：options 定義（空陣列 → null 清除）
+                for (const opt of draft.slashCommandOptions) {
+                    if (!/^[a-z0-9_-]{1,32}$/.test(opt.name) || !opt.description.trim()) {
+                        error.value = t('behaviors.card.optionInvalid', { name: opt.name || '?' });
+                        return;
+                    }
+                }
+                patch.slashCommandOptions =
+                    draft.slashCommandOptions.length > 0 ? draft.slashCommandOptions : null;
                 patch.messagePatternKind = null;
                 patch.messagePatternValue = null;
             } else {
@@ -471,10 +590,21 @@ const saveLabel = computed(() => {
                 {{ t('behaviors.card.tagContinuousShort') }}
             </AppBadge>
 
-            <!-- stop-on-match tag — message_pattern 路徑硬寫 stop，欄位無語意，
-                 避免顯示誤導 admin。 -->
+            <!-- BH-6.4：連續失敗 ≥3 的健康警示 -->
             <AppBadge
-                v-if="behavior.stopOnMatch && behavior.triggerType !== 'message_pattern'"
+                v-if="unhealthy"
+                size="sm"
+                tone="danger"
+                icon="material-symbols:heart-broken-rounded"
+                :title="behavior.stats?.lastError ?? ''"
+            >
+                {{ t('behaviors.card.unhealthy') }}
+            </AppBadge>
+
+            <!-- stop-on-match tag — pattern 專屬語意(BH-0.3)：命中後擋住
+                 後續比對。slash 指令名唯一、天然單一匹配,不顯示。 -->
+            <AppBadge
+                v-if="behavior.stopOnMatch && behavior.triggerType === 'message_pattern'"
                 size="sm"
                 tone="warn"
                 icon="material-symbols:stop-circle-outline-rounded"
@@ -510,6 +640,18 @@ const saveLabel = computed(() => {
                         <Icon icon="material-symbols:more-vert" width="18" height="18" />
                     </button>
                 </template>
+                <AppMenuItem :disabled="testing" @click="onTestFire">
+                    <Icon icon="material-symbols:send-rounded" />
+                    {{ t('behaviors.card.testFire') }}
+                </AppMenuItem>
+                <AppMenuItem
+                    v-if="behavior.triggerType === 'slash_command'"
+                    :disabled="resyncing"
+                    @click="onResync"
+                >
+                    <Icon icon="material-symbols:sync-rounded" />
+                    {{ t('behaviors.card.resync') }}
+                </AppMenuItem>
                 <AppMenuItem :disabled="saving" danger @click="onDelete">
                     <Icon icon="material-symbols:delete-outline-rounded" width="16" height="16" />
                     {{ t('common.delete') }}
@@ -559,6 +701,35 @@ const saveLabel = computed(() => {
                                 :maxlength="200"
                                 fullWidth
                             />
+
+                            <!-- BH-2.2C：slash options 定義 -->
+                            <div class="field full options-editor">
+                                <span class="label">{{ t('behaviors.card.options') }}</span>
+                                <div v-for="(opt, i) in draft.slashCommandOptions" :key="i" class="option-row">
+                                    <AppTextField
+                                        v-model="opt.name"
+                                        :placeholder="t('behaviors.card.optionName')"
+                                        :maxlength="32"
+                                    />
+                                    <AppTextField
+                                        v-model="opt.description"
+                                        :placeholder="t('behaviors.card.optionDescription')"
+                                        :maxlength="100"
+                                    />
+                                    <AppSelectField v-model="opt.type" :options="optionTypeOptions" />
+                                    <label class="inline">
+                                        <input type="checkbox" v-model="opt.required" />
+                                        <span>{{ t('behaviors.card.optionRequired') }}</span>
+                                    </label>
+                                    <button type="button" class="option-remove" @click="removeOption(i)">
+                                        <Icon icon="material-symbols:close-rounded" />
+                                    </button>
+                                </div>
+                                <button type="button" class="option-add" @click="addOption">
+                                    <Icon icon="material-symbols:add-rounded" />
+                                    {{ t('behaviors.card.optionAdd') }}
+                                </button>
+                            </div>
                         </template>
 
                         <template v-else>
@@ -573,15 +744,16 @@ const saveLabel = computed(() => {
                             />
                         </template>
 
-                        <!-- 可安裝範圍 — 只有 global_all tab 可自選。其他
-                             tab 由 deriveFieldsFromTab() 寫死,這裡顯示
-                             readonly 提示讓 admin 知道為何不能改。 -->
-                        <div v-if="canEditIntegrationTypes" class="field">
+                        <!-- 可安裝範圍 — 僅 slash command 有安裝面;
+                             message_pattern 整塊隱藏(BH-0.2)。global_all
+                             tab 可自選,其他 tab 由 deriveFieldsFromTab()
+                             寫死,顯示 readonly 提示讓 admin 知道為何不能改。 -->
+                        <div v-if="showIntegrationTypes && canEditIntegrationTypes" class="field">
                             <span class="label">{{ t('behaviors.card.integrationTypes') }}</span>
                             <AppSelectField v-model="integrationMode" :options="integrationModeOptions" />
                         </div>
                         <AppTextField
-                            v-else
+                            v-else-if="showIntegrationTypes"
                             :modelValue="integrationModeOptions.find((o) => o.value === integrationMode)?.label ?? ''"
                             :label="t('behaviors.card.integrationTypes')"
                             :hint="t('behaviors.card.integrationTypesLocked')"
@@ -594,6 +766,16 @@ const saveLabel = computed(() => {
                             <span class="label">{{ t('behaviors.card.forwardType') }}</span>
                             <AppSelectField v-model="draft.forwardType" :options="forwardTypeOptions" />
                         </div>
+
+                        <!-- BH-4.2：continuous session TTL（小時，空 = 全域預設） -->
+                        <AppTextField
+                            v-if="draft.forwardType === 'continuous'"
+                            v-model="sessionTtlInput"
+                            :label="t('behaviors.card.sessionTtl')"
+                            :hint="t('behaviors.card.sessionTtlHint')"
+                            :maxlength="3"
+                            placeholder="—"
+                        />
 
                         <!-- webhook 設定 -->
                         <AppTextField
@@ -619,14 +801,29 @@ const saveLabel = computed(() => {
                             <AppSelectField v-model="draft.webhookAuthMode" :options="webhookAuthModeOptions" />
                         </div>
 
-                        <!-- stopOnMatch 僅在 slash_command 有效；message_pattern
-                             路徑命中即 return，不消費此欄位。 -->
+                        <!-- stopOnMatch 是 message_pattern 專屬(BH-0.3)：
+                             一則訊息依 sortOrder 比對所有 pattern,勾選後
+                             命中即擋住後續比對(continuous/system 命中必停,
+                             不受此欄位影響)。slash 指令名唯一,無此語意。 -->
                         <label
-                            v-if="draft.triggerType !== 'message_pattern'"
+                            v-if="draft.triggerType === 'message_pattern'"
                             class="field full inline"
                         >
                             <input type="checkbox" v-model="draft.stopOnMatch" />
                             <span>{{ t('behaviors.card.stopOnMatch') }}</span>
+                            <span class="hint">{{ t('behaviors.card.stopOnMatchHint') }}</span>
+                        </label>
+
+                        <!-- ignoreBots 僅對 guild 頻道 pattern 有意義(BH-3)：
+                             DM 裡 bot 互傳不存在。本 bot 自身訊息無論如何
+                             都會被忽略。 -->
+                        <label
+                            v-if="draft.triggerType === 'message_pattern' && draft.contexts.includes('Guild')"
+                            class="field full inline"
+                        >
+                            <input type="checkbox" v-model="draft.ignoreBots" />
+                            <span>{{ t('behaviors.card.ignoreBots') }}</span>
+                            <span class="hint">{{ t('behaviors.card.ignoreBotsHint') }}</span>
                         </label>
                     </div>
                 </template>
@@ -664,6 +861,35 @@ const saveLabel = computed(() => {
                                 :maxlength="200"
                                 fullWidth
                             />
+
+                            <!-- BH-2.2C：slash options 定義 -->
+                            <div class="field full options-editor">
+                                <span class="label">{{ t('behaviors.card.options') }}</span>
+                                <div v-for="(opt, i) in draft.slashCommandOptions" :key="i" class="option-row">
+                                    <AppTextField
+                                        v-model="opt.name"
+                                        :placeholder="t('behaviors.card.optionName')"
+                                        :maxlength="32"
+                                    />
+                                    <AppTextField
+                                        v-model="opt.description"
+                                        :placeholder="t('behaviors.card.optionDescription')"
+                                        :maxlength="100"
+                                    />
+                                    <AppSelectField v-model="opt.type" :options="optionTypeOptions" />
+                                    <label class="inline">
+                                        <input type="checkbox" v-model="opt.required" />
+                                        <span>{{ t('behaviors.card.optionRequired') }}</span>
+                                    </label>
+                                    <button type="button" class="option-remove" @click="removeOption(i)">
+                                        <Icon icon="material-symbols:close-rounded" />
+                                    </button>
+                                </div>
+                                <button type="button" class="option-add" @click="addOption">
+                                    <Icon icon="material-symbols:add-rounded" />
+                                    {{ t('behaviors.card.optionAdd') }}
+                                </button>
+                            </div>
                         </template>
                         <template v-else>
                             <div class="field">
@@ -682,6 +908,33 @@ const saveLabel = computed(() => {
 
                 <!-- error 訊息 -->
                 <p v-if="error" class="error" role="alert">{{ error }}</p>
+
+                <!-- BH-6.1：forward 統計 -->
+                <p v-if="statsSummary" class="stats-line">
+                    {{ t('behaviors.card.statsLine', {
+                        when: formatWhen(statsSummary.lastFiredAt),
+                        ok: statsSummary.successCount,
+                        fail: statsSummary.failureCount,
+                    }) }}
+                    <span v-if="statsSummary.lastError" class="stats-error">
+                        {{ t('behaviors.card.statsLastError', { error: statsSummary.lastError }) }}
+                    </span>
+                </p>
+
+                <!-- BH-6.2：test-fire 結果 -->
+                <p v-if="testing" class="muted">{{ t('behaviors.card.testRunning') }}</p>
+                <p
+                    v-else-if="testResult"
+                    :class="testResult.ok ? 'test-ok' : 'error'"
+                    role="status"
+                >
+                    {{ testResult.ok
+                        ? t('behaviors.card.testOk', { content: testResult.relayContent || '∅' })
+                        : t('behaviors.card.testFail', { error: testResult.error ?? '?' }) }}
+                </p>
+                <p v-if="resyncDone" class="test-ok" role="status">
+                    {{ t('behaviors.card.resyncDone') }}
+                </p>
 
                 <!-- actions footer -->
                 <footer class="actions">
@@ -849,4 +1102,39 @@ const saveLabel = computed(() => {
 @media (max-width: 640px) {
     .grid { grid-template-columns: 1fr; }
 }
+
+/* BH-2.2C options editor */
+.options-editor .option-row {
+    display: grid;
+    grid-template-columns: 1fr 2fr auto auto auto;
+    gap: 0.5rem;
+    align-items: center;
+    margin-bottom: 0.4rem;
+}
+.options-editor .option-remove,
+.options-editor .option-add {
+    background: none;
+    border: 1px solid var(--border, #444);
+    border-radius: 6px;
+    color: inherit;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.3rem 0.5rem;
+    opacity: 0.8;
+}
+.options-editor .option-remove:hover,
+.options-editor .option-add:hover { opacity: 1; }
+.options-editor label.inline {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    white-space: nowrap;
+}
+
+/* BH-6 stats / test-fire */
+.stats-line { font-size: 0.82em; opacity: 0.75; margin: 0.25rem 0; }
+.stats-error { color: var(--danger, #e66); margin-left: 0.5rem; }
+.test-ok { color: var(--success, #6c6); font-size: 0.85em; }
 </style>

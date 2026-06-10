@@ -29,6 +29,8 @@ export interface BehaviorRow {
   enabled: boolean;
   sortOrder: number;
   stopOnMatch: boolean;
+  ignoreBots: boolean;
+  sessionExpireHours: number | null;
   forwardType: BehaviorForwardType;
   source: BehaviorSource;
   triggerType: BehaviorTriggerType;
@@ -36,6 +38,8 @@ export interface BehaviorRow {
   messagePatternValue: string | null;
   slashCommandName: string | null;
   slashCommandDescription: string | null;
+  /** JSON 字串（BehaviorCommandOption[]）；null = 無參數 */
+  slashCommandOptions: string | null;
   scope: BehaviorScope;
   integrationTypes: string;
   contexts: string;
@@ -49,6 +53,18 @@ export interface BehaviorRow {
   webhookAuthMode: BehaviorWebhookAuthMode | null;
   systemKey: string | null;
   scopeTabId: number;
+  /** BH-6.1 forward 統計（list 回應附帶；無紀錄為 null） */
+  stats?: BehaviorStats | null;
+}
+
+export interface BehaviorStats {
+  behaviorId: number;
+  lastFiredAt: string | null;
+  successCount: number;
+  failureCount: number;
+  consecutiveFailures: number;
+  lastError: string | null;
+  lastErrorAt: string | null;
 }
 
 // ── Scope Tab（sidebar 用）─────────────────────────────────────────────────
@@ -69,6 +85,22 @@ export interface ScopeTabRow {
 
 // ── Create / Patch payload ──────────────────────────────────────────────────
 
+export interface BehaviorCommandOption {
+  type:
+    | "string"
+    | "integer"
+    | "number"
+    | "boolean"
+    | "user"
+    | "channel"
+    | "role"
+    | "mentionable"
+    | "attachment";
+  name: string;
+  description: string;
+  required: boolean;
+}
+
 export interface BehaviorCreatePayload {
   title: string;
   description?: string;
@@ -77,6 +109,7 @@ export interface BehaviorCreatePayload {
   messagePatternValue?: string;
   slashCommandName?: string;
   slashCommandDescription?: string;
+  slashCommandOptions?: BehaviorCommandOption[];
   scope?: BehaviorScope;
   integrationTypes?: string;
   contexts?: string;
@@ -88,6 +121,7 @@ export interface BehaviorCreatePayload {
   webhookAuthMode?: BehaviorWebhookAuthMode;
   forwardType?: BehaviorForwardType;
   stopOnMatch?: boolean;
+  ignoreBots?: boolean;
   enabled?: boolean;
   scopeTabId?: number;
 }
@@ -100,6 +134,7 @@ export interface BehaviorPatchPayload {
   messagePatternValue?: string | null;
   slashCommandName?: string | null;
   slashCommandDescription?: string | null;
+  slashCommandOptions?: BehaviorCommandOption[] | null;
   scope?: BehaviorScope;
   integrationTypes?: string;
   contexts?: string;
@@ -109,6 +144,8 @@ export interface BehaviorPatchPayload {
   enabled?: boolean;
   forwardType?: BehaviorForwardType;
   stopOnMatch?: boolean;
+  ignoreBots?: boolean;
+  sessionExpireHours?: number | null;
   webhookUrl?: string | null;
   webhookSecret?: string | null;
   webhookAuthMode?: BehaviorWebhookAuthMode | null;
@@ -190,6 +227,74 @@ export async function reorderBehaviors(orderedIds: number[]): Promise<void> {
     body: JSON.stringify({ orderedIds }),
   });
   await jsonOrThrow<unknown>(r);
+}
+
+// ── Test-fire / sessions（BH-6.2 / BH-4.1）──────────────────────────────────
+
+export interface BehaviorTestResult {
+  ok: boolean;
+  relayContent: string;
+  relayEmbeds: unknown[];
+  ended: boolean;
+  error: string | null;
+}
+
+export async function testBehavior(id: number): Promise<BehaviorTestResult> {
+  const r = await authedFetch(`/api/behaviors/${id}/test`, { method: "POST" });
+  return jsonOrThrow<BehaviorTestResult>(r);
+}
+
+export interface BehaviorSessionView {
+  userId: string;
+  channelId: string;
+  behaviorId: number;
+  behaviorTitle: string;
+  startedAt: string;
+  expiresAt: string | null;
+}
+
+export async function listBehaviorSessions(): Promise<BehaviorSessionView[]> {
+  const r = await authedFetch("/api/behavior-sessions");
+  const body = await jsonOrThrow<{ sessions: BehaviorSessionView[] }>(r);
+  return body.sessions;
+}
+
+export async function endBehaviorSession(
+  userId: string,
+  channelId: string,
+): Promise<void> {
+  const r = await authedFetch(
+    `/api/behavior-sessions/${encodeURIComponent(userId)}/${encodeURIComponent(channelId)}`,
+    { method: "DELETE" },
+  );
+  await jsonOrThrow<unknown>(r);
+}
+
+// ── Audience group members API（BH-1）───────────────────────────────────────
+// group 以名字為單位，同名 group 的 behaviors 共享名單。
+
+export async function getGroupMembers(groupName: string): Promise<string[]> {
+  const r = await authedFetch(
+    `/api/behavior-groups/${encodeURIComponent(groupName)}/members`,
+  );
+  const body = await jsonOrThrow<{ members: string[] }>(r);
+  return body.members;
+}
+
+export async function setGroupMembers(
+  groupName: string,
+  userIds: string[],
+): Promise<string[]> {
+  const r = await authedFetch(
+    `/api/behavior-groups/${encodeURIComponent(groupName)}/members`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userIds }),
+    },
+  );
+  const body = await jsonOrThrow<{ members: string[] }>(r);
+  return body.members;
 }
 
 // ── Scope Tab API ───────────────────────────────────────────────────────────

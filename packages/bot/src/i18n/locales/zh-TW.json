@@ -20,7 +20,9 @@
     "cannot-load-manual": "⚠ 無法取得行為清單，請稍後再試。",
     "unknown-system-command": "⚙ 未知的系統指令。",
     "webhook-failed": "⚠ Behavior 轉發失敗：{{error}}",
-    "continuous-dm-warning": "\n\n⚠ 此行為設為持續轉發，但無法開啟與您的私訊頻道。請在 Discord 隱私設定中允許伺服器/應用程式私訊後再試一次。"
+    "continuous-dm-warning": "\n\n⚠ 此行為設為持續轉發，但無法開啟與您的私訊頻道。請在 Discord 隱私設定中允許伺服器/應用程式私訊後再試一次。",
+    "behavior-wrong-place": "這個指令不能在此處使用。",
+    "behavior-not-allowed": "你沒有使用這個指令的權限。"
   },
   "manual": {
     "embed-title": "私訊可用行為清單",
