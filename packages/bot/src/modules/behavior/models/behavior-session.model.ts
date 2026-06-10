@@ -124,9 +124,12 @@ export const startSession = async (
   userId: string,
   behaviorId: number,
   channelId: string,
+  ttlHours?: number | null,
 ): Promise<BehaviorSessionRow> => {
   const startedAt = new Date().toISOString();
-  const expireMs = config.behavior.sessionExpireHours * 60 * 60 * 1000;
+  // BH-4.2：per-behavior TTL 優先，未設則用全域 config
+  const hours = ttlHours ?? config.behavior.sessionExpireHours;
+  const expireMs = hours * 60 * 60 * 1000;
   const expiresAt = new Date(Date.now() + expireMs).toISOString();
   await BehaviorSession.upsert({
     userId,

@@ -77,6 +77,13 @@ export const Behavior = sequelize.define(
       allowNull: false,
       defaultValue: true,
     },
+    // BH-4.2：continuous session 的 TTL（小時）。null = 用全域
+    // config.behavior.sessionExpireHours。對話代理（長）與一次性流程（短）
+    // 的需求天然不同，下放為 per-behavior。
+    sessionExpireHours: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
     forwardType: {
       // ENUM → sync() 發出 CHECK(forwardType IN ('one_time','continuous'))
       type: DataTypes.ENUM("one_time", "continuous"),
@@ -415,6 +422,7 @@ export interface BehaviorRow {
   sortOrder: number;
   stopOnMatch: boolean;
   ignoreBots: boolean;
+  sessionExpireHours: number | null;
   forwardType: BehaviorForwardType;
   source: BehaviorSource;
   triggerType: BehaviorTriggerType;
@@ -449,6 +457,8 @@ export function rowOfBehavior(
     sortOrder: model.getDataValue("sortOrder") as number,
     stopOnMatch: !!model.getDataValue("stopOnMatch"),
     ignoreBots: !!model.getDataValue("ignoreBots"),
+    sessionExpireHours:
+      (model.getDataValue("sessionExpireHours") as number | null) ?? null,
     forwardType: model.getDataValue("forwardType") as BehaviorForwardType,
     source: model.getDataValue("source") as BehaviorSource,
     triggerType: model.getDataValue("triggerType") as BehaviorTriggerType,

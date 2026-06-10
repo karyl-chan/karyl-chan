@@ -41,7 +41,13 @@ import {
   scopeKeyOf,
   rowOf as tabRowOf,
 } from "./models/behavior-scope-tab.model.js";
-import { BehaviorSession } from "./models/behavior-session.model.js";
+import {
+  BehaviorSession,
+  endSession,
+} from "./models/behavior-session.model.js";
+import { findStatsBulk } from "./models/behavior-stats.model.js";
+import type { BehaviorStatRow } from "./models/behavior-stats.model.js";
+import { WebhookForwarder } from "../command-system/webhook-forwarder.service.js";
 import {
   findGroupMembers,
   replaceGroupMembers,
@@ -57,6 +63,14 @@ export type { BehaviorRoutesOptions };
 /** The valid `messagePatternKind` values, single-sourced for every
  *  validation site in this module (create, PATCH switch, PATCH sub-field). */
 const MESSAGE_PATTERN_KINDS = ["startswith", "endswith", "regex"];
+
+/** BH-4.2：session TTL 驗證 — 1..720 小時的整數，其他一律當 null（全域預設）。 */
+function validSessionTtl(v: unknown): number | null {
+  if (typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= 720) {
+    return v;
+  }
+  return null;
+}
 
 // ── 主函式 ────────────────────────────────────────────────────────────────────
 
@@ -186,7 +200,14 @@ export async function registerBehaviorRoutes(
       );
     }
 
-    const behaviors = visible.map((r) => decryptedView(rowOfBehavior(r)));
+    // BH-6.1：附上 forward 統計（admin UI 顯示 last-fired / 健康警示）
+    const stats = await findStatsBulk(
+      visible.map((r) => r.getDataValue("id") as number),
+    );
+    const behaviors = visible.map((r) => ({
+      ...decryptedView(rowOfBehavior(r)),
+      stats: stats.get(r.getDataValue("id") as number) ?? null,
+    }));
     return reply.send({ behaviors });
   });
 
@@ -251,6 +272,7 @@ export async function registerBehaviorRoutes(
       forwardType?: string;
       stopOnMatch?: boolean;
       ignoreBots?: boolean;
+      sessionExpireHours?: number | null;
       enabled?: boolean;
       scopeTabId?: number;
     };
@@ -419,6 +441,8 @@ export async function registerBehaviorRoutes(
         body.triggerType === "message_pattern"
           ? (body.ignoreBots ?? true)
           : true,
+      // BH-4.2：per-behavior session TTL（null = 全域預設）
+      sessionExpireHours: validSessionTtl(body.sessionExpireHours),
       enabled: body.enabled !== undefined ? !!body.enabled : true,
       sortOrder: nextSortOrder,
       scopeTabId: resolvedTabId,
@@ -771,6 +795,15 @@ export async function registerBehaviorRoutes(
         }
         patch["ignoreBots"] = !!body["ignoreBots"];
       }
+      if ("sessionExpireHours" in body) {
+        const v = body["sessionExpireHours"];
+        if (v !== null && (typeof v !== "number" || !Number.isInteger(v) || v < 1 || v > 720)) {
+          return reply
+            .code(400)
+            .send({ error: "sessionExpireHours 必須是 1–720 的整數或 null" });
+        }
+        patch["sessionExpireHours"] = v;
+      }
       if ("webhookUrl" in body) {
         const url = (body["webhookUrl"] as string | null)?.trim();
         if (url) {
@@ -964,6 +997,120 @@ export async function registerBehaviorRoutes(
 
     return reply.send({ ok: true });
   });
+
+  // ── BH-6.2：test-fire ───────────────────────────────────────────────────────
+  // 對 behavior 的 webhook 發一發測試 payload（_meta.test=true），把結果
+  // 直接回給 admin —— 「裝好了有沒有通」從猜變成按一下。不開 session、
+  // 不 relay 到任何頻道、不計入統計。
+
+  server.post("/api/behaviors/:id/test", async (request, reply) => {
+    if (!requireAnyBehaviorAccess(request, reply)) return;
+    const { id } = request.params as { id: string };
+    const numId = parseInt(id, 10);
+    if (isNaN(numId)) {
+      return reply.code(400).send({ error: "無效的 behavior ID" });
+    }
+    const row = await Behavior.findByPk(numId);
+    if (!row) {
+      return reply.code(404).send({ error: "Behavior 不存在" });
+    }
+    if (
+      !(await guardRowScope(
+        request,
+        reply,
+        row.getDataValue("scopeTabId") as number,
+      ))
+    ) {
+      return;
+    }
+    const behaviorRow = rowOfBehavior(row);
+    if (behaviorRow.source !== "custom") {
+      return reply
+        .code(400)
+        .send({ error: "system behavior 走 in-process handler，無 webhook 可測" });
+    }
+    const forwarder = options.forwarder ?? new WebhookForwarder();
+    const payload = {
+      content: "(test fire from admin UI)",
+      username: "karyl-admin-test",
+      avatar_url: "",
+      _meta: {
+        test: true,
+        behavior_id: behaviorRow.id,
+        user: {
+          id: request.authUserId ?? "admin",
+          username: "admin-test",
+          global_name: null,
+          discriminator: "0",
+          avatar: null,
+        },
+      },
+    };
+    const result = await forwarder.forward(behaviorRow, payload);
+    return reply.send({
+      ok: result.ok,
+      relayContent: result.relayContent,
+      relayEmbeds: result.relayEmbeds ?? [],
+      ended: result.ended,
+      error: result.error ?? null,
+    });
+  });
+
+  // ── BH-4.1：session 可見性 ──────────────────────────────────────────────────
+  // 全域 behavior.manage（session 跨 tab，不做 scoped 細分）。
+
+  server.get("/api/behavior-sessions", async (request, reply) => {
+    if (!requireBehaviorAdmin(request, reply)) return;
+    const rows = await BehaviorSession.findAll({
+      order: [["startedAt", "DESC"]],
+    });
+    const behaviorIds = Array.from(
+      new Set(rows.map((r) => r.getDataValue("behaviorId") as number)),
+    );
+    const titleRows = await Behavior.findAll({
+      where: { id: behaviorIds },
+      attributes: ["id", "title"],
+    });
+    const titles = new Map(
+      titleRows.map((b) => [
+        b.getDataValue("id") as number,
+        b.getDataValue("title") as string,
+      ]),
+    );
+    return reply.send({
+      sessions: rows.map((r) => ({
+        userId: r.getDataValue("userId") as string,
+        channelId: r.getDataValue("channelId") as string,
+        behaviorId: r.getDataValue("behaviorId") as number,
+        behaviorTitle:
+          titles.get(r.getDataValue("behaviorId") as number) ?? "(deleted)",
+        startedAt: r.getDataValue("startedAt") as string,
+        expiresAt: (r.getDataValue("expiresAt") as string | null) ?? null,
+      })),
+    });
+  });
+
+  server.delete(
+    "/api/behavior-sessions/:userId/:channelId",
+    async (request, reply) => {
+      if (!requireBehaviorAdmin(request, reply)) return;
+      const { userId, channelId } = request.params as {
+        userId: string;
+        channelId: string;
+      };
+      const ended = await endSession(userId, channelId);
+      if (!ended) {
+        return reply.code(404).send({ error: "Session 不存在" });
+      }
+      botEventLog.record(
+        "info",
+        "web",
+        `behavior-session: admin 強制結束 session userId=${userId} channelId=${channelId}`,
+        { userId, channelId, actor: request.authUserId ?? null },
+      );
+      return reply.send({ ok: true });
+    },
+  );
 
   // ── audience group 成員管理（BH-1）─────────────────────────────────────────
   //

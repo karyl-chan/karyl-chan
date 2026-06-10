@@ -15,6 +15,9 @@ import {
     type ScopeTabRow,
     updateBehavior,
     deleteBehavior,
+    resyncBehavior,
+    testBehavior,
+    type BehaviorTestResult,
 } from '../../../api/behavior';
 
 /**
@@ -63,6 +66,7 @@ interface Draft {
     forwardType: BehaviorForwardType;
     stopOnMatch: boolean;
     ignoreBots: boolean;
+    sessionExpireHours: number | null;
     // trigger（custom 全可改；system 只能改 value）
     triggerType: BehaviorTriggerType;
     messagePatternKind: string;
@@ -107,6 +111,7 @@ function draftFrom(row: BehaviorRow): Draft {
         forwardType: row.forwardType,
         stopOnMatch: row.stopOnMatch,
         ignoreBots: row.ignoreBots,
+        sessionExpireHours: row.sessionExpireHours,
         triggerType: row.triggerType,
         messagePatternKind: row.messagePatternKind ?? 'startswith',
         messagePatternValue: row.messagePatternValue ?? '',
@@ -217,6 +222,69 @@ const showAuthModeSelect = computed(() =>
     isCustom.value && draft.webhookSecret.length > 0
 );
 
+// ── BH-6.2 test-fire / BH-6.3 resync ────────────────────────────────────────
+
+const testing = ref(false);
+const testResult = ref<BehaviorTestResult | null>(null);
+async function onTestFire() {
+    testing.value = true;
+    testResult.value = null;
+    try {
+        testResult.value = await testBehavior(props.behavior.id);
+    } catch (err) {
+        testResult.value = {
+            ok: false,
+            relayContent: '',
+            relayEmbeds: [],
+            ended: false,
+            error: err instanceof Error ? err.message : String(err),
+        };
+    } finally {
+        testing.value = false;
+    }
+}
+
+const resyncing = ref(false);
+const resyncDone = ref(false);
+async function onResync() {
+    resyncing.value = true;
+    resyncDone.value = false;
+    try {
+        await resyncBehavior(props.behavior.id);
+        resyncDone.value = true;
+    } catch (err) {
+        error.value = err instanceof Error ? err.message : String(err);
+    } finally {
+        resyncing.value = false;
+    }
+}
+
+// ── BH-6.1/6.4 stats 顯示 ────────────────────────────────────────────────────
+
+const statsSummary = computed(() => {
+    const st = props.behavior.stats;
+    if (!st || (st.successCount === 0 && st.failureCount === 0)) return null;
+    return st;
+});
+const unhealthy = computed(
+    () => (props.behavior.stats?.consecutiveFailures ?? 0) >= 3,
+);
+function formatWhen(iso: string | null): string {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString();
+}
+
+// ── TTL 數字輸入（continuous 才顯示）────────────────────────────────────────
+
+const sessionTtlInput = computed<string>({
+    get: () => (draft.sessionExpireHours == null ? '' : String(draft.sessionExpireHours)),
+    set: (v) => {
+        const n = parseInt(v, 10);
+        draft.sessionExpireHours = Number.isInteger(n) && n >= 1 && n <= 720 ? n : null;
+    },
+});
+
 // ── trigger summary（卡片頭部）───────────────────────────────────────────────
 
 const triggerSummary = computed(() => {
@@ -271,7 +339,8 @@ const dirty = computed(() => {
         draft.webhookAuthMode !== (b.webhookAuthMode ?? '') ||
         draft.forwardType !== b.forwardType ||
         draft.stopOnMatch !== b.stopOnMatch ||
-        draft.ignoreBots !== b.ignoreBots
+        draft.ignoreBots !== b.ignoreBots ||
+        draft.sessionExpireHours !== b.sessionExpireHours
     );
 });
 
@@ -361,6 +430,7 @@ async function onSave() {
                 audienceUserId: draft.audienceKind === 'user' ? (draft.audienceUserId.trim() || null) : null,
                 audienceGroupName: draft.audienceKind === 'group' ? (draft.audienceGroupName.trim() || null) : null,
                 forwardType: draft.forwardType,
+                sessionExpireHours: draft.sessionExpireHours,
             };
             // stopOnMatch / ignoreBots 是 pattern 專屬語意(BH-0.3/BH-3) — slash 不送。
             if (draft.triggerType === 'message_pattern') {
@@ -520,6 +590,17 @@ const saveLabel = computed(() => {
                 {{ t('behaviors.card.tagContinuousShort') }}
             </AppBadge>
 
+            <!-- BH-6.4：連續失敗 ≥3 的健康警示 -->
+            <AppBadge
+                v-if="unhealthy"
+                size="sm"
+                tone="danger"
+                icon="material-symbols:heart-broken-rounded"
+                :title="behavior.stats?.lastError ?? ''"
+            >
+                {{ t('behaviors.card.unhealthy') }}
+            </AppBadge>
+
             <!-- stop-on-match tag — pattern 專屬語意(BH-0.3)：命中後擋住
                  後續比對。slash 指令名唯一、天然單一匹配,不顯示。 -->
             <AppBadge
@@ -559,6 +640,18 @@ const saveLabel = computed(() => {
                         <Icon icon="material-symbols:more-vert" width="18" height="18" />
                     </button>
                 </template>
+                <AppMenuItem :disabled="testing" @click="onTestFire">
+                    <Icon icon="material-symbols:send-rounded" />
+                    {{ t('behaviors.card.testFire') }}
+                </AppMenuItem>
+                <AppMenuItem
+                    v-if="behavior.triggerType === 'slash_command'"
+                    :disabled="resyncing"
+                    @click="onResync"
+                >
+                    <Icon icon="material-symbols:sync-rounded" />
+                    {{ t('behaviors.card.resync') }}
+                </AppMenuItem>
                 <AppMenuItem :disabled="saving" danger @click="onDelete">
                     <Icon icon="material-symbols:delete-outline-rounded" width="16" height="16" />
                     {{ t('common.delete') }}
@@ -673,6 +766,16 @@ const saveLabel = computed(() => {
                             <span class="label">{{ t('behaviors.card.forwardType') }}</span>
                             <AppSelectField v-model="draft.forwardType" :options="forwardTypeOptions" />
                         </div>
+
+                        <!-- BH-4.2：continuous session TTL（小時，空 = 全域預設） -->
+                        <AppTextField
+                            v-if="draft.forwardType === 'continuous'"
+                            v-model="sessionTtlInput"
+                            :label="t('behaviors.card.sessionTtl')"
+                            :hint="t('behaviors.card.sessionTtlHint')"
+                            :maxlength="3"
+                            placeholder="—"
+                        />
 
                         <!-- webhook 設定 -->
                         <AppTextField
@@ -805,6 +908,33 @@ const saveLabel = computed(() => {
 
                 <!-- error 訊息 -->
                 <p v-if="error" class="error" role="alert">{{ error }}</p>
+
+                <!-- BH-6.1：forward 統計 -->
+                <p v-if="statsSummary" class="stats-line">
+                    {{ t('behaviors.card.statsLine', {
+                        when: formatWhen(statsSummary.lastFiredAt),
+                        ok: statsSummary.successCount,
+                        fail: statsSummary.failureCount,
+                    }) }}
+                    <span v-if="statsSummary.lastError" class="stats-error">
+                        {{ t('behaviors.card.statsLastError', { error: statsSummary.lastError }) }}
+                    </span>
+                </p>
+
+                <!-- BH-6.2：test-fire 結果 -->
+                <p v-if="testing" class="muted">{{ t('behaviors.card.testRunning') }}</p>
+                <p
+                    v-else-if="testResult"
+                    :class="testResult.ok ? 'test-ok' : 'error'"
+                    role="status"
+                >
+                    {{ testResult.ok
+                        ? t('behaviors.card.testOk', { content: testResult.relayContent || '∅' })
+                        : t('behaviors.card.testFail', { error: testResult.error ?? '?' }) }}
+                </p>
+                <p v-if="resyncDone" class="test-ok" role="status">
+                    {{ t('behaviors.card.resyncDone') }}
+                </p>
 
                 <!-- actions footer -->
                 <footer class="actions">
@@ -1002,4 +1132,9 @@ const saveLabel = computed(() => {
     gap: 0.3rem;
     white-space: nowrap;
 }
+
+/* BH-6 stats / test-fire */
+.stats-line { font-size: 0.82em; opacity: 0.75; margin: 0.25rem 0; }
+.stats-error { color: var(--danger, #e66); margin-left: 0.5rem; }
+.test-ok { color: var(--success, #6c6); font-size: 0.85em; }
 </style>

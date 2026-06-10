@@ -28,6 +28,7 @@ const emit = defineEmits<{
     (e: 'tab-deleted'): void;
     (e: 'add-behavior'): void;
     (e: 'behavior-deleted'): void;
+    (e: 'open-sessions'): void;
 }>();
 
 // ── behaviors data ───────────────────────────────────────────────────────────
@@ -191,6 +192,13 @@ const kindBadge = computed(() => {
             <h2 class="title">{{ headerTitle }}</h2>
             <span class="kind-badge">{{ kindBadge }}</span>
             <span class="spacer" />
+            <AppButton
+                v-if="canManageCatalog"
+                size="sm"
+                icon="material-symbols:forum-outline-rounded"
+                :title="t('behaviors.sessions.open')"
+                @click="emit('open-sessions')"
+            >{{ t('behaviors.sessions.open') }}</AppButton>
             <AppButton
                 variant="primary"
                 size="sm"

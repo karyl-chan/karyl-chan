@@ -35,6 +35,7 @@ import {
   breakSessions,
 } from "../behavior/models/behavior-session.model.js";
 import { findGroupMembers } from "../behavior/models/behavior-group-member.model.js";
+import { recordForwardOutcome } from "../behavior/models/behavior-stats.model.js";
 import type { DispatchOutcome } from "./types.js";
 import type { WebhookForwarder } from "./webhook-forwarder.service.js";
 import { collectApplicableBehaviorsForUser } from "./message-pattern-matcher.service.js";
@@ -218,6 +219,8 @@ export class InteractionDispatcher {
         sortOrder: row.getDataValue("sortOrder") as number,
         stopOnMatch: !!row.getDataValue("stopOnMatch"),
         ignoreBots: !!row.getDataValue("ignoreBots"),
+        sessionExpireHours:
+          (row.getDataValue("sessionExpireHours") as number | null) ?? null,
         forwardType: row.getDataValue(
           "forwardType",
         ) as BehaviorRow["forwardType"],
@@ -509,6 +512,7 @@ export class InteractionDispatcher {
         behaviorRow,
         payload as Record<string, unknown>,
       );
+      await recordForwardOutcome(behaviorRow.id, result.ok, result.error);
 
       if (!result.ok) {
         await interaction
@@ -538,7 +542,12 @@ export class InteractionDispatcher {
       if (behaviorRow.forwardType === "continuous" && !result.ended) {
         try {
           const dm = await interaction.user.createDM();
-          await startSession(interaction.user.id, behaviorRow.id, dm.id);
+          await startSession(
+            interaction.user.id,
+            behaviorRow.id,
+            dm.id,
+            behaviorRow.sessionExpireHours,
+          );
         } catch (err) {
           dmStartFailed = true;
           botEventLog.record(

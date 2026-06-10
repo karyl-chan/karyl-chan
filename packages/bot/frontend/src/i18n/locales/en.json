@@ -1243,7 +1243,18 @@
             "optionDescription": "description",
             "optionRequired": "required",
             "optionAdd": "Add option",
-            "optionInvalid": "Option '{name}' is invalid: name must be 1-32 [a-z0-9_-] chars and description is required."
+            "optionInvalid": "Option '{name}' is invalid: name must be 1-32 [a-z0-9_-] chars and description is required.",
+            "testFire": "Test webhook",
+            "testRunning": "Testing webhook…",
+            "testOk": "Webhook OK — response: {content}",
+            "testFail": "Webhook failed: {error}",
+            "resync": "Resync Discord command",
+            "resyncDone": "Command resynced.",
+            "unhealthy": "failing",
+            "statsLine": "Last fired {when} · {ok} ok / {fail} failed",
+            "statsLastError": "last error: {error}",
+            "sessionTtl": "Session TTL (hours)",
+            "sessionTtlHint": "1–720; empty = global default"
         },
         "addTab": {
             "title": "Add Scope Tab",
@@ -1278,6 +1289,17 @@
             "add": "Add",
             "remove": "Remove",
             "invalidId": "Invalid Discord user ID."
+        },
+        "sessions": {
+            "title": "Active sessions",
+            "open": "Sessions",
+            "empty": "No active continuous sessions.",
+            "user": "User",
+            "behavior": "Behavior",
+            "channel": "Channel",
+            "started": "Started",
+            "expires": "Expires",
+            "end": "End"
         }
     },
     "config": {

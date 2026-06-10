@@ -33,6 +33,7 @@ import {
   breakSessions,
 } from "../behavior/models/behavior-session.model.js";
 import { findGroupMembersBulk } from "../behavior/models/behavior-group-member.model.js";
+import { recordForwardOutcome } from "../behavior/models/behavior-stats.model.js";
 import { matchesTrigger } from "../behavior/behavior-trigger.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import type { MessageMatchOutcome } from "./types.js";
@@ -368,6 +369,7 @@ export class MessagePatternMatcher {
 
     const payload = this.buildPayload(djsMessage, behavior, session);
     const result = await this.forwarder.forward(behavior, payload);
+    await recordForwardOutcome(behavior.id, result.ok, result.error);
 
     const dmChannel = djsMessage.channel as DMChannel;
 
@@ -424,6 +426,7 @@ export class MessagePatternMatcher {
 
     const payload = this.buildPayload(djsMessage, behavior);
     const result = await this.forwarder.forward(behavior, payload);
+    await recordForwardOutcome(behavior.id, result.ok, result.error);
     const dmChannel = djsMessage.channel as DMChannel;
 
     let sessionStarted = false;
@@ -432,7 +435,12 @@ export class MessagePatternMatcher {
     if (result.ok) {
       // continuous forward：建立 session
       if (behavior.forwardType === "continuous" && !result.ended) {
-        await startSession(userId, behavior.id, channelId);
+        await startSession(
+          userId,
+          behavior.id,
+          channelId,
+          behavior.sessionExpireHours,
+        );
         sessionStarted = true;
       }
 
@@ -678,6 +686,8 @@ export class MessagePatternMatcher {
       sortOrder: model.getDataValue("sortOrder") as number,
       stopOnMatch: !!model.getDataValue("stopOnMatch"),
     ignoreBots: !!model.getDataValue("ignoreBots"),
+    sessionExpireHours:
+      (model.getDataValue("sessionExpireHours") as number | null) ?? null,
       forwardType: model.getDataValue(
         "forwardType",
       ) as BehaviorRow["forwardType"],

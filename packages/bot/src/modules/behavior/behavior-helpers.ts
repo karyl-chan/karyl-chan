@@ -15,6 +15,8 @@ import {
 export interface BehaviorRoutesOptions {
   bot?: Client;
   reconciler?: import("../command-system/reconcile.service.js").CommandReconciler;
+  /** BH-6.2 test-fire 用；未提供時 route 自建（測試注入 stub 用）。 */
+  forwarder?: import("../command-system/webhook-forwarder.service.js").WebhookForwarder;
 }
 
 /**

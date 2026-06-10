@@ -1217,6 +1217,8 @@ function rowOfBehavior(model: InstanceType<typeof Behavior>): BehaviorRow {
     sortOrder: model.getDataValue("sortOrder") as number,
     stopOnMatch: !!model.getDataValue("stopOnMatch"),
     ignoreBots: !!model.getDataValue("ignoreBots"),
+    sessionExpireHours:
+      (model.getDataValue("sessionExpireHours") as number | null) ?? null,
     forwardType: model.getDataValue(
       "forwardType",
     ) as BehaviorRow["forwardType"],
