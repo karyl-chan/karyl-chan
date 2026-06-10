@@ -1233,7 +1233,8 @@
             "sourceNoticPlugin": "此 behavior 由 Plugin「{name}」提供，部分字段不可修改",
             "sourceNoticPluginLink": "查看 Plugin 详情",
             "sourceNoticSystem": "系统内建 behavior，可修改触发类型与内容（其余字段锁定）",
-            "saveTrigger": "保存触发"
+            "saveTrigger": "保存触发",
+            "stopOnMatchHint": "命中后，这条消息不再比对后续 pattern。"
         },
         "addTab": {
             "title": "新增范围分页",

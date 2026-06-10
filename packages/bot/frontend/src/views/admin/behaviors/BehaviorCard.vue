@@ -331,8 +331,11 @@ async function onSave() {
                 audienceUserId: draft.audienceKind === 'user' ? (draft.audienceUserId.trim() || null) : null,
                 audienceGroupName: draft.audienceKind === 'group' ? (draft.audienceGroupName.trim() || null) : null,
                 forwardType: draft.forwardType,
-                stopOnMatch: draft.stopOnMatch,
             };
+            // stopOnMatch 是 pattern 專屬語意(BH-0.3) — slash 不送。
+            if (draft.triggerType === 'message_pattern') {
+                patch.stopOnMatch = draft.stopOnMatch;
+            }
             // 只在 global_all tab + slash trigger 才送 integrationTypes —
             // 其他 tab 由後端 deriveFieldsFromTab() 寫死、message_pattern
             // 沒有安裝面,送過去後端都會 400 拒絕。
@@ -477,10 +480,10 @@ const saveLabel = computed(() => {
                 {{ t('behaviors.card.tagContinuousShort') }}
             </AppBadge>
 
-            <!-- stop-on-match tag — message_pattern 路徑硬寫 stop，欄位無語意，
-                 避免顯示誤導 admin。 -->
+            <!-- stop-on-match tag — pattern 專屬語意(BH-0.3)：命中後擋住
+                 後續比對。slash 指令名唯一、天然單一匹配,不顯示。 -->
             <AppBadge
-                v-if="behavior.stopOnMatch && behavior.triggerType !== 'message_pattern'"
+                v-if="behavior.stopOnMatch && behavior.triggerType === 'message_pattern'"
                 size="sm"
                 tone="warn"
                 icon="material-symbols:stop-circle-outline-rounded"
@@ -626,14 +629,17 @@ const saveLabel = computed(() => {
                             <AppSelectField v-model="draft.webhookAuthMode" :options="webhookAuthModeOptions" />
                         </div>
 
-                        <!-- stopOnMatch 僅在 slash_command 有效；message_pattern
-                             路徑命中即 return，不消費此欄位。 -->
+                        <!-- stopOnMatch 是 message_pattern 專屬(BH-0.3)：
+                             一則訊息依 sortOrder 比對所有 pattern,勾選後
+                             命中即擋住後續比對(continuous/system 命中必停,
+                             不受此欄位影響)。slash 指令名唯一,無此語意。 -->
                         <label
-                            v-if="draft.triggerType !== 'message_pattern'"
+                            v-if="draft.triggerType === 'message_pattern'"
                             class="field full inline"
                         >
                             <input type="checkbox" v-model="draft.stopOnMatch" />
                             <span>{{ t('behaviors.card.stopOnMatch') }}</span>
+                            <span class="hint">{{ t('behaviors.card.stopOnMatchHint') }}</span>
                         </label>
                     </div>
                 </template>

@@ -63,11 +63,22 @@ off it); they do not appear in the guild command UI.
   directly to the same webhook until the session ends. Sessions persist
   across bot restarts.
 
-`stopOnMatch` is persisted and editable but **not currently wired into
-evaluation**: the DM matcher returns on the first match, and slash dispatch
-is first-claim-wins over a unique `(slashCommandName, scope, contexts)`
-index, so there is never a "next behavior" to keep or skip. Treat the field
-as reserved.
+### Multi-match and `stopOnMatch` (message_pattern only)
+
+The DM matcher walks every applicable `message_pattern` behavior in
+`sortOrder` and can fire more than one per message:
+
+- `system` match → always stops (terminal UX: login link / manual / break).
+- `continuous` match → always stops (the new session owns the conversation;
+  evaluating further patterns would be meaningless).
+- `one_time` match → `stopOnMatch=true` stops the walk; `false` (default)
+  keeps evaluating, so several one_time behaviors can each fire on the same
+  message.
+
+`stopOnMatch` has no meaning for `slash_command` behaviors — dispatch is
+first-claim-wins over a unique `(slashCommandName, scope, contexts)` index,
+so there is never a "next behavior" to keep or skip. The API rejects setting
+it on slash behaviors and the editor only shows it for patterns.
 
 ## Evaluation and dispatch
 

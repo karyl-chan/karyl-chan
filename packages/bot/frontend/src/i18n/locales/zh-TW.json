@@ -1234,7 +1234,8 @@
             "sourceNoticPlugin": "此 behavior 由 Plugin「{name}」提供，部分欄位不可修改",
             "sourceNoticPluginLink": "查看 Plugin 詳情",
             "sourceNoticSystem": "系統內建 behavior，可修改觸發類型與內容（其餘欄位鎖定）",
-            "saveTrigger": "儲存觸發"
+            "saveTrigger": "儲存觸發",
+            "stopOnMatchHint": "命中後，這則訊息不再比對後續 pattern。"
         },
         "addTab": {
             "title": "新增範圍分頁",

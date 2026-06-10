@@ -1234,7 +1234,8 @@
             "sourceNoticPlugin": "This behavior is provided by Plugin \"{name}\". Some fields are read-only.",
             "sourceNoticPluginLink": "View Plugin details",
             "sourceNoticSystem": "System built-in behavior. The trigger type and its values can be edited; other fields are locked.",
-            "saveTrigger": "Save trigger"
+            "saveTrigger": "Save trigger",
+            "stopOnMatchHint": "Block later patterns from also firing on this message."
         },
         "addTab": {
             "title": "Add Scope Tab",

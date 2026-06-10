@@ -46,6 +46,21 @@ import { t } from "../../i18n/index.js";
 // isn't possible either — these messages come from a DM channel.
 const DM_LOCALE = "en" as const;
 
+// BH-0.3 multi-match：一則訊息可以連發多條 one_time behavior，
+// outcome 取聯集；behaviorId 報第一條命中的（log 用途）。
+function mergeOutcomes(
+  a: MessageMatchOutcome,
+  b: MessageMatchOutcome,
+): MessageMatchOutcome {
+  return {
+    handled: a.handled || b.handled,
+    sessionStarted: (a.sessionStarted ?? false) || (b.sessionStarted ?? false),
+    sessionEnded: (a.sessionEnded ?? false) || (b.sessionEnded ?? false),
+    behaviorId: a.behaviorId ?? b.behaviorId,
+    error: a.error ?? b.error,
+  };
+}
+
 // ── MessagePatternMatcher ─────────────────────────────────────────────────────
 
 export class MessagePatternMatcher {
@@ -162,7 +177,14 @@ export class MessagePatternMatcher {
       return { handled: false };
     }
 
-    // ─ 匹配 trigger
+    // ─ 匹配 trigger（BH-0.3 multi-match：依 sortOrder 走訪，stopOnMatch
+    //   決定 one_time 行為命中後是否擋住後續比對）
+    //
+    // 停止規則：
+    //   system     → 必停（terminal UX，admin-login/manual/break 都是收尾動作）
+    //   continuous → 必停（session 接管對話，後續比對沒有意義）
+    //   one_time   → stopOnMatch=true 停；false 繼續比對下一條
+    let aggregate: MessageMatchOutcome | null = null;
     for (const behavior of applicableBehaviors) {
       if (behavior.triggerType !== "message_pattern") continue;
       if (!behavior.messagePatternKind || !behavior.messagePatternValue)
@@ -177,20 +199,30 @@ export class MessagePatternMatcher {
 
       // ─ system source 不走 webhook，直接 dispatch 到對應 system handler
       if (behavior.source === "system") {
-        return this.handleMatchedSystemBehavior(behavior, djsMessage, userId);
+        const outcome = await this.handleMatchedSystemBehavior(
+          behavior,
+          djsMessage,
+          userId,
+        );
+        return aggregate ? mergeOutcomes(aggregate, outcome) : outcome;
       }
 
       // ─ 呼叫 WebhookForwarder + session 管理
-      return this.handleMatchedBehavior(
+      const outcome = await this.handleMatchedBehavior(
         behavior,
         djsMessage,
         userId,
         channelId,
         content,
       );
+      aggregate = aggregate ? mergeOutcomes(aggregate, outcome) : outcome;
+
+      if (behavior.forwardType === "continuous" || behavior.stopOnMatch) {
+        return aggregate;
+      }
     }
 
-    return { handled: false };
+    return aggregate ?? { handled: false };
   }
 
   // ── 私有：active session 路徑 ────────────────────────────────────────────

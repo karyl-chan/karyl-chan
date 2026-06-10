@@ -343,7 +343,9 @@ export async function registerBehaviorRoutes(
         : null,
       systemKey: null,
       forwardType: body.forwardType ?? "one_time",
-      stopOnMatch: !!body.stopOnMatch,
+      // stopOnMatch 僅 message_pattern 有語意（BH-0.3）；slash 一律存 false
+      stopOnMatch:
+        body.triggerType === "message_pattern" ? !!body.stopOnMatch : false,
       enabled: body.enabled !== undefined ? !!body.enabled : true,
       sortOrder: nextSortOrder,
       scopeTabId: resolvedTabId,
@@ -645,7 +647,20 @@ export async function registerBehaviorRoutes(
         patch["audienceGroupName"] = body["audienceGroupName"] ?? null;
       if ("enabled" in body) patch["enabled"] = !!body["enabled"];
       if ("forwardType" in body) patch["forwardType"] = body["forwardType"];
-      if ("stopOnMatch" in body) patch["stopOnMatch"] = !!body["stopOnMatch"];
+      if ("stopOnMatch" in body) {
+        // stopOnMatch 是 message_pattern 的 multi-match 停止旗標（BH-0.3）；
+        // slash 指令名唯一、天然單一匹配，設定它沒有任何效果 — 拒絕。
+        const effectiveTrigger =
+          (body["triggerType"] as string | undefined) ??
+          existingRow.triggerType;
+        if (effectiveTrigger !== "message_pattern") {
+          return reply.code(400).send({
+            error:
+              "stopOnMatch 僅對 message_pattern behavior 有效（slash 指令名唯一、單一匹配）",
+          });
+        }
+        patch["stopOnMatch"] = !!body["stopOnMatch"];
+      }
       if ("webhookUrl" in body) {
         const url = (body["webhookUrl"] as string | null)?.trim();
         if (url) {
