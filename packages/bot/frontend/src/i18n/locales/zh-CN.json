@@ -1005,6 +1005,8 @@
             },
             "statusActive": "在线",
             "statusInactive": "离线",
+            "commandSyncFailed": "指令同步失败",
+            "commandSyncStalled": "指令同步卡住",
             "toggleEnabled": "已启用 (点击停用)",
             "toggleDisabled": "已停用 (点击启用)",
             "url": "URL",

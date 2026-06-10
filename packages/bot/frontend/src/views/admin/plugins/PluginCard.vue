@@ -124,6 +124,20 @@ const lastHeartbeat = computed(() => {
     return d.toLocaleString();
 });
 
+// Background command-sync state (PM-7.6): surface a failed sync, or a
+// pending one that has been running suspiciously long (rate-limited
+// Discord call). A fresh/ok sync renders nothing — quiet by default.
+const SYNC_STALL_MS = 60_000;
+const commandSyncProblem = computed<null | { kind: 'failed' | 'stalled'; detail: string }>(() => {
+    const s = props.plugin.commandSync;
+    if (!s) return null;
+    if (s.status === 'failed') return { kind: 'failed', detail: s.error ?? '' };
+    if (s.status === 'pending' && Date.now() - s.startedAt > SYNC_STALL_MS) {
+        return { kind: 'stalled', detail: '' };
+    }
+    return null;
+});
+
 const guildFeatureCount = computed(() => props.plugin.manifest?.guild_features?.length ?? 0);
 // Top-level (truly global) commands and per-feature commands count
 // separately — they have different runtime gating semantics, so the
@@ -232,6 +246,19 @@ async function confirmDelete() {
                 </AppBadge>
                 <AppBadge v-if="commandCount > 0" variant="outline" icon="material-symbols:terminal">
                     {{ t('admin.plugins.commandsCount', { n: commandCount }) }}
+                </AppBadge>
+                <AppBadge
+                    v-if="commandSyncProblem"
+                    variant="outline"
+                    icon="material-symbols:sync-problem"
+                    class="sync-problem-badge"
+                    :title="commandSyncProblem.detail"
+                >
+                    {{
+                        commandSyncProblem.kind === 'failed'
+                            ? t('admin.plugins.commandSyncFailed')
+                            : t('admin.plugins.commandSyncStalled')
+                    }}
                 </AppBadge>
             </div>
 
@@ -471,6 +498,11 @@ async function confirmDelete() {
 }
 
 /* ── Pending badge in card header ───────────────────────────────── */
+.sync-problem-badge {
+    color: var(--warning, #d97706);
+    border-color: var(--warning, #d97706);
+}
+
 .pending-badge {
     display: inline-flex;
     align-items: center;

@@ -144,6 +144,19 @@ export interface PluginRecord {
   approvedRpcScopes?: string[];
   /** requested − approved: scopes still awaiting admin approval. */
   pendingRpcScopes?: string[];
+  /**
+   * Background slash-command sync state (PM-7.1/7.6). null when no
+   * sync ran since the bot process started.
+   */
+  commandSync?: PluginCommandSyncState | null;
+}
+
+export interface PluginCommandSyncState {
+  status: "pending" | "ok" | "failed";
+  /** Epoch ms when the current/most recent sync run started. */
+  startedAt: number;
+  finishedAt?: number;
+  error?: string;
 }
 
 /** RPC scope approval state returned by the approve/deny endpoint. */

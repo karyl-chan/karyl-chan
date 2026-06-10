@@ -267,10 +267,19 @@ async function dispatchChatInputCommand(
     });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
+      // SDK answers 503 "dispatch HMAC key not available" while its
+      // register handshake hasn't completed (plugin restarted and the
+      // bot is dispatching on persisted command rows). Name that state
+      // for the operator — the 2026-06-11 incident sat in it for hours
+      // with only a bare status code on either side.
+      const isAwaitingRegister =
+        res.status === 503 && text.includes("dispatch HMAC key");
       botEventLog.record(
         "warn",
         "bot",
-        `plugin-interaction: ${plugin.pluginKey}/${interaction.commandName} POST returned ${res.status}: ${text.slice(0, 200)}`,
+        isAwaitingRegister
+          ? `plugin-interaction: ${plugin.pluginKey}/${interaction.commandName} refused — plugin is up but has NOT completed its register handshake; check its register attempts (401/429/timeout?) and this bot's /api/plugins/register handling`
+          : `plugin-interaction: ${plugin.pluginKey}/${interaction.commandName} POST returned ${res.status}: ${text.slice(0, 200)}`,
         { pluginId: plugin.id },
       );
       // For modal commands, we deliberately do NOT call replyError
@@ -282,7 +291,11 @@ async function dispatchChatInputCommand(
       // expected plugin's sendModal can still hit Discord in time.
       // Operator log above is the canonical signal.
       if (!isModal) {
-        await replyError(`⚠ Plugin 拒絕了此指令 (HTTP ${res.status})`);
+        await replyError(
+          isAwaitingRegister
+            ? "⚠ Plugin 正在重新連線（註冊未完成），請稍後再試"
+            : `⚠ Plugin 拒絕了此指令 (HTTP ${res.status})`,
+        );
       }
     }
     // We do NOT consume res body. Plugin completes the deferred

@@ -276,6 +276,21 @@ export async function registerPluginRoutes(
         return;
       }
 
+      // Duration watchdog (PM-7.6). The 2026-06-11 incident's register
+      // hang was invisible: an "incoming request" log line with no
+      // completion, ever. Surface a wedged handler while it is still
+      // wedged instead of leaving the operator to diff log lines.
+      const registerStartedAt = Date.now();
+      const slowWatchdog = setTimeout(() => {
+        botEventLog.record(
+          "warn",
+          "bot",
+          `Plugin register for '${manifestPluginId}' still in flight after 10s — handler may be wedged (DB lock? host-policy DNS?)`,
+          { pluginKey: manifestPluginId },
+        );
+      }, 10_000);
+      slowWatchdog.unref();
+
       try {
         const result = await pluginRegistry.register(request.body?.manifest);
         // publicBaseUrl is the browser-reachable URL for this plugin's
@@ -336,6 +351,22 @@ export async function registerPluginRoutes(
           `Plugin registration failed: ${msg}`,
         );
         reply.code(500).send({ error: "registration failed" });
+      } finally {
+        clearTimeout(slowWatchdog);
+        const durationMs = Date.now() - registerStartedAt;
+        // Post-PM-7.1 the handler does no Discord I/O, so anything
+        // slow here is DB/DNS trouble worth a louder line.
+        if (durationMs > 2_000) {
+          request.log.warn(
+            { durationMs, pluginKey: manifestPluginId },
+            "plugin register slow",
+          );
+        } else {
+          request.log.info(
+            { durationMs, pluginKey: manifestPluginId },
+            "plugin register completed",
+          );
+        }
       }
     },
   );
@@ -449,6 +480,10 @@ export async function registerPluginRoutes(
         pendingRpcScopes: manifestRpcMethods(p.manifestJson).filter(
           (m) => !p.approvedRpcScopes.includes(m),
         ),
+        // Background command-sync state (PM-7.1/7.6). null = no sync
+        // attempted since this bot process started (e.g. plugin
+        // registered before the last bot restart).
+        commandSync: pluginRegistry.getCommandSyncState(p.pluginKey),
       })),
     };
   });
@@ -487,6 +522,7 @@ export async function registerPluginRoutes(
           lastHeartbeatAt: p.lastHeartbeatAt,
           manifest: safeParse(p.manifestJson),
         },
+        commandSync: pluginRegistry.getCommandSyncState(p.pluginKey),
         ...(health ? { health } : {}),
         ...(metrics ? { metrics } : {}),
       };
