@@ -148,5 +148,80 @@
       "heartbeat"
     ],
     "heartbeatEndpoint": "/api/plugins/heartbeat"
+  },
+  "behaviorWebhook": {
+    "_comment": "BH-2.3 \u2014 the behavior custom-webhook contract. The bot-side test (behavior-webhook-contract.test.ts) locks payload/response shape against these; external webhook authors can read this file as the canonical schema.",
+    "endSentinel": "[BEHAVIOR:END]",
+    "endSentinelCaseInsensitive": true,
+    "request": {
+      "topLevelKeys": [
+        "content",
+        "username",
+        "avatar_url",
+        "_meta"
+      ],
+      "patternMetaKeys": [
+        "user",
+        "message_id",
+        "channel_id",
+        "guild_id",
+        "behavior_id",
+        "session",
+        "attachments"
+      ],
+      "slashMetaKeys": [
+        "interaction_id",
+        "application_id",
+        "command_name",
+        "guild_id",
+        "channel_id",
+        "user",
+        "locale",
+        "options",
+        "behavior_id"
+      ],
+      "userKeys": [
+        "id",
+        "username",
+        "global_name",
+        "discriminator",
+        "avatar"
+      ],
+      "sessionKeys": {
+        "inactive": [
+          "active"
+        ],
+        "active": [
+          "active",
+          "started_at"
+        ]
+      },
+      "attachmentKeys": [
+        "url",
+        "filename",
+        "content_type",
+        "size"
+      ]
+    },
+    "response": {
+      "fields": [
+        "content",
+        "embeds"
+      ],
+      "embedWhitelist": [
+        "title",
+        "description",
+        "url",
+        "color",
+        "timestamp",
+        "footer",
+        "image",
+        "thumbnail",
+        "author",
+        "fields"
+      ],
+      "maxEmbeds": 10,
+      "maxFields": 25
+    }
   }
 }
