@@ -366,6 +366,17 @@ export const CONFIG_METADATA: Record<string, ConfigFieldMeta> = {
     productionRequired: false,
     descriptionKey: "config.plugin.dmWindowMs",
   },
+  "plugin.autoApproveScopes": {
+    group: "plugin",
+    envVar: "PLUGIN_AUTO_APPROVE",
+    sensitivity: "public",
+    // Security posture toggle — keep it env-only so it can't be flipped
+    // open from the admin UI at runtime; a public deployment sets it
+    // false in the environment.
+    editability: "env-only",
+    productionRequired: false,
+    descriptionKey: "config.plugin.autoApproveScopes",
+  },
 
   // ── behavior ─────────────────────────────────────────────────────────────
   "behavior.profileCacheTtlMs": {

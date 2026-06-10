@@ -3,6 +3,7 @@ import {
   findAllPlugins,
   findPluginById,
   findPluginByKey,
+  setPluginApprovedRpcScopes,
   setPluginEnabled as setEnabledModel,
   setPluginDispatchHmacKey,
   touchHeartbeat,
@@ -548,11 +549,14 @@ export class PluginRegistry {
    * issue a fresh token and update the manifest snapshot — admin's
    * `enabled` flag stays where they last set it.
    *
-   * RPC scopes: the manifest's declared `rpc_methods_used` ARE the
-   * granted scopes. There's no approval step — the token is always
-   * issued carrying exactly those methods, so the per-RPC-call scope
-   * check (`requireScope`) still rejects a method the plugin didn't
-   * declare.
+   * RPC scopes: the manifest's declared `rpc_methods_used` are the
+   * *requested* scopes. The token is signed with only the *approved*
+   * subset (`plugins.approvedRpcScopes`), so the per-RPC-call scope
+   * check (`requireScope`) rejects any method that isn't both declared
+   * and approved. With `config.plugin.autoApproveScopes` on (self-host /
+   * dev default) every requested scope is approved on the spot; with it
+   * off, newly-requested scopes stay pending until an admin approves
+   * them and only the previously-approved subset is granted meanwhile.
    */
   async register(rawManifest: unknown): Promise<RegisterResult> {
     const v = await validateManifest(rawManifest);
@@ -561,15 +565,27 @@ export class PluginRegistry {
     }
     const manifest = v.manifest;
 
-    // ── Declared RPC scopes ────────────────────────────────────────
-    // The manifest's rpc_methods_used are the granted scopes — no
-    // admin approval, no pending/approved distinction.
-    const declaredScopes = manifest.rpc_methods_used ?? [];
+    // ── Requested vs approved RPC scopes ───────────────────────────
+    // Requested = what this manifest declares. Approved = what the
+    // token will actually carry. Under auto-approve they're equal;
+    // otherwise approval is sticky across re-registers: keep the
+    // previously-approved scopes that are still requested (drop ones the
+    // manifest no longer asks for), and leave any newly-requested scope
+    // pending for an admin to approve.
+    const requestedScopes = manifest.rpc_methods_used ?? [];
+    const existing = await findPluginByKey(manifest.plugin.id);
+    const prevApproved = existing?.approvedRpcScopes ?? [];
+    const approvedScopes = config.plugin.autoApproveScopes
+      ? requestedScopes
+      : requestedScopes.filter((s) => prevApproved.includes(s));
+    const pendingScopes = requestedScopes.filter(
+      (s) => !approvedScopes.includes(s),
+    );
 
     // ── Token issue ────────────────────────────────────────────────
     // Mint token first, persist hash. Cleartext goes back to the
     // plugin in the response and is never stored.
-    // Token is signed with the declared scopes.
+    // Token is signed with the *approved* scopes only.
     // Stable id for token cache: we can't use the not-yet-known
     // plugins.id row id, so we use pluginKey as identity here, then
     // reissue with the real id once we have it. The auth store keys
@@ -577,7 +593,7 @@ export class PluginRegistry {
     const placeholderToken = this.auth.issue({
       pluginId: -1,
       pluginKey: manifest.plugin.id,
-      scopes: declaredScopes,
+      scopes: approvedScopes,
     });
     const persisted = await upsertPluginRegistration({
       pluginKey: manifest.plugin.id,
@@ -586,6 +602,7 @@ export class PluginRegistry {
       url: manifest.plugin.url,
       manifestJson: JSON.stringify(manifest),
       tokenHash: placeholderToken.tokenHash,
+      approvedRpcScopes: approvedScopes,
     });
     // Re-issue with the real plugins.id so the auth record carries the
     // db-backed id (used by RPC handlers to filter scopes per plugin).
@@ -593,7 +610,7 @@ export class PluginRegistry {
     const real = this.auth.issue({
       pluginId: persisted.id,
       pluginKey: manifest.plugin.id,
-      scopes: declaredScopes,
+      scopes: approvedScopes,
     });
     // Persist the real hash in place of the placeholder.
     persisted.tokenHash = real.tokenHash;
@@ -604,7 +621,16 @@ export class PluginRegistry {
       url: manifest.plugin.url,
       manifestJson: JSON.stringify(manifest),
       tokenHash: real.tokenHash,
+      approvedRpcScopes: approvedScopes,
     });
+    if (pendingScopes.length > 0) {
+      botEventLog.record(
+        "warn",
+        "bot",
+        `Plugin '${manifest.plugin.id}' requests ${pendingScopes.length} unapproved RPC scope(s): ${pendingScopes.join(", ")} — pending admin approval`,
+        { pluginId: persisted.id, pendingScopes },
+      );
+    }
 
     botEventLog.record(
       "info",
@@ -882,6 +908,87 @@ export class PluginRegistry {
       invalidatePluginByKey(row.pluginKey);
     }
     return row;
+  }
+
+  /**
+   * Admin view of a plugin's RPC scope state: what the current manifest
+   * requests, what's approved, and the still-pending delta. Returns null
+   * if the plugin doesn't exist.
+   */
+  async getScopeState(pluginId: number): Promise<{
+    requested: string[];
+    approved: string[];
+    pending: string[];
+  } | null> {
+    const row = await findPluginById(pluginId);
+    if (!row) return null;
+    const requested = (() => {
+      try {
+        return (
+          (JSON.parse(row.manifestJson) as PluginManifest).rpc_methods_used ??
+          []
+        );
+      } catch {
+        return [];
+      }
+    })();
+    const approved = row.approvedRpcScopes;
+    const pending = requested.filter((s) => !approved.includes(s));
+    return { requested, approved, pending };
+  }
+
+  /**
+   * Set a plugin's approved RPC scope set (admin approve / deny). The
+   * approved set is intersected with what the manifest actually requests
+   * — an admin can't grant a scope the plugin never declared. Persists
+   * the result and updates the plugin's live token in place so the change
+   * takes effect immediately, without waiting for a re-register. Returns
+   * the new scope state, or null if the plugin doesn't exist.
+   */
+  async setApprovedScopes(
+    pluginId: number,
+    scopes: string[],
+  ): Promise<{
+    requested: string[];
+    approved: string[];
+    pending: string[];
+  } | null> {
+    const state = await this.getScopeState(pluginId);
+    if (!state) return null;
+    // Clamp to the requested set and de-dup; an admin can only approve
+    // what the manifest declares.
+    const approved = [...new Set(scopes)].filter((s) =>
+      state.requested.includes(s),
+    );
+    const row = await setPluginApprovedRpcScopes(pluginId, approved);
+    if (!row) return null;
+    // Live-update the cached token's scopes so RPC calls see the new
+    // grant at once. No-op if the plugin has no live token (it'll pick
+    // the set up from the persisted column on its next register).
+    this.auth.setScopesByPluginId(pluginId, approved);
+    invalidatePluginById(pluginId);
+    botEventLog.record(
+      "info",
+      "bot",
+      `Plugin '${row.pluginKey}' approved RPC scopes updated: [${approved.join(", ")}]`,
+      { pluginId, approved },
+    );
+    const pending = state.requested.filter((s) => !approved.includes(s));
+    return { requested: state.requested, approved, pending };
+  }
+
+  /**
+   * Approve every scope the plugin currently requests. Convenience over
+   * `setApprovedScopes` for the common "approve all" admin action.
+   */
+  async approveAllScopes(pluginId: number): Promise<{
+    requested: string[];
+    approved: string[];
+    pending: string[];
+  } | null> {
+    const state = await this.getScopeState(pluginId);
+    if (!state) return null;
+    return this.setApprovedScopes(pluginId, state.requested);
   }
 
   async list(): Promise<PluginRow[]> {

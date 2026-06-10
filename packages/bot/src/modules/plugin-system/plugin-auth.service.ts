@@ -103,6 +103,26 @@ export class PluginAuthStore {
     return true;
   }
 
+  /**
+   * Replace the scope set on a plugin's live token without minting a new
+   * one. Used by the admin approve/deny path so a scope change takes
+   * effect on the plugin's *current* token immediately — no re-register
+   * required (scopes are checked server-side, not carried in the token).
+   * No-op (returns false) if the plugin has no live token cached, in
+   * which case the new scope set lands on its next registration via the
+   * persisted approvedRpcScopes column.
+   */
+  setScopesByPluginId(pluginId: number, scopes: string[]): boolean {
+    let updated = false;
+    for (const rec of this.byHash.values()) {
+      if (rec.pluginId === pluginId) {
+        rec.scopes = new Set(scopes);
+        updated = true;
+      }
+    }
+    return updated;
+  }
+
   /** Drop a specific plugin's token (admin disable / unregister). */
   revokeByPluginId(pluginId: number): void {
     for (const [h, rec] of this.byHash) {
