@@ -90,8 +90,10 @@ are in [`architecture.md`](architecture.md).
 - Explicit register pattern (no decorators). Each `events/*.events.ts`
   and `*.commands.ts` exports a `register*` function; the two
   `bootstrap-*.ts` files wire them to the client.
-- One Sequelize model per file; the model is the single source of truth
-  for its table's schema.
+- One Sequelize model per file; the model is the source of truth for the
+  table's **fresh-install** schema (`sync()` creates it). Altering an
+  **existing** table's schema needs an Umzug migration — see
+  [operations.md](operations.md#upgrades).
 - Module boundary rules are documented in
   [`architecture.md`](architecture.md#dependency-rules).
 

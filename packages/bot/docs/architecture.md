@@ -485,8 +485,10 @@ To add, for example, a `slow-mode-channel` feature similar to
 
 A new feature touches **one new directory + four wiring points**
 (bootstrap × 2, feature-toggle key, guild-management facade). The new
-table is created by `sequelize.sync()` automatically; no migration file
-is needed.
+table is created by `sequelize.sync()` automatically — no migration file
+is needed for a brand-new table (`sync()` creates missing tables on every
+boot, on fresh and existing DBs alike). A migration is only needed when
+**altering an existing** table; see [operations.md](operations.md#upgrades).
 
 ---
 
@@ -528,8 +530,11 @@ is needed.
 4. The model must be imported on the startup path (directly or
    transitively) so sequelize.sync() registers it.
 5. Express the full schema (columns, indexes including partial,
-   ENUMs) in the model definition. Models are the single source of
-   truth for schema; there are no migration files.
+   ENUMs) in the model definition. The model is the source of truth
+   for the **fresh-install** schema — `sequelize.sync()` creates the
+   table from it. Later changes to an **existing** table (new column,
+   altered index/type) need an Umzug migration (`src/migrations/NNN-*.ts`),
+   because `sync()` only creates missing tables and never ALTERs.
 6. Don't export the raw sequelize; route all access through model
    methods or services.
 ```
