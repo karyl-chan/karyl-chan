@@ -1370,6 +1370,14 @@
         "cmdStatus": "查看 bot 語音狀態"
     },
     "pluginSecurity": {
-        "setupSecretDesc": "重新產生 Setup Secret 後，舊的 secret 立即失效。Plugin 必須使用新 secret 重新向 bot 登記。"
+        "setupSecretDesc": "重新產生 Setup Secret 後，舊的 secret 立即失效。Plugin 必須使用新 secret 重新向 bot 登記。",
+        "rpcScopesTitle": "RPC 權限範圍",
+        "rpcScopesDesc": "Plugin 在 manifest 宣告它想呼叫的 RPC 方法；只有你核可的範圍才會寫進它的 token。未核可的範圍即使已宣告也會被拒。",
+        "rpcScopesNone": "此 plugin 未宣告任何 RPC 範圍。",
+        "rpcScopesSummary": "已核可 {approved} / 共請求 {requested}（待核可 {pending}）",
+        "rpcScopesPendingBadge": "待核可",
+        "rpcScopesApproveAll": "全部核可",
+        "rpcScopesSave": "儲存",
+        "rpcScopesSaved": "已儲存"
     }
 }

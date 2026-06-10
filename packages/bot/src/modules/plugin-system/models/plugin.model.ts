@@ -42,6 +42,12 @@ export const Plugin = sequelize.define(
     lastHeartbeatAt: { type: DataTypes.DATE, allowNull: true },
     setupSecretHash: { type: DataTypes.TEXT, allowNull: true },
     dispatchHmacKey: { type: DataTypes.TEXT, allowNull: true },
+    // JSON array of the RPC scopes an admin has approved for this
+    // plugin. The issued token is signed with exactly these (a subset
+    // of the manifest's declared rpc_methods_used). NULL on rows that
+    // predate scope-approval; read as the empty set. Stored as raw
+    // JSON text (like manifestJson) for deterministic cross-engine diffs.
+    approvedRpcScopes: { type: DataTypes.TEXT, allowNull: true },
   },
   {
     tableName: "plugins",
@@ -66,8 +72,25 @@ export interface PluginRow {
   setupSecretHash: string | null;
   /** Cleartext HMAC key for signing outbound dispatches to this plugin. NULL means use global fallback. */
   dispatchHmacKey: string | null;
+  /** RPC scopes an admin has approved. The issued token carries exactly
+   *  these. Always a (possibly empty) array — a NULL column reads as []. */
+  approvedRpcScopes: string[];
   createdAt: Date;
   updatedAt: Date;
+}
+
+/** Parse a stored JSON-array TEXT column into a string[], tolerating
+ *  NULL / malformed values by returning the empty array. */
+function parseScopeArray(raw: unknown): string[] {
+  if (typeof raw !== "string" || raw.length === 0) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter((s): s is string => typeof s === "string")
+      : [];
+  } catch {
+    return [];
+  }
 }
 
 function rowOf(model: InstanceType<typeof Plugin>): PluginRow {
@@ -87,6 +110,7 @@ function rowOf(model: InstanceType<typeof Plugin>): PluginRow {
       (model.getDataValue("setupSecretHash") as string | null) ?? null,
     dispatchHmacKey:
       (model.getDataValue("dispatchHmacKey") as string | null) ?? null,
+    approvedRpcScopes: parseScopeArray(model.getDataValue("approvedRpcScopes")),
     createdAt: model.getDataValue("createdAt") as Date,
     updatedAt: model.getDataValue("updatedAt") as Date,
   };
@@ -138,6 +162,10 @@ export interface UpsertPluginInput {
   tokenHash: string;
   /** Initial value for newly-created rows. Existing rows preserve their setting. */
   defaultEnabled?: boolean;
+  /** RPC scopes approved for this plugin. Written on every register so the
+   *  persisted set always matches the scopes the just-issued token carries.
+   *  Omitted → left untouched on update, defaults to [] on insert. */
+  approvedRpcScopes?: string[];
 }
 
 /**
@@ -165,6 +193,11 @@ export const upsertPluginRegistration = async (
       tokenHash: input.tokenHash,
       status: "active",
       lastHeartbeatAt: now,
+      // Only overwrite approved scopes when the caller supplies them, so
+      // a bare upsert (e.g. tokenHash refresh) can't wipe the approval.
+      ...(input.approvedRpcScopes !== undefined
+        ? { approvedRpcScopes: JSON.stringify(input.approvedRpcScopes) }
+        : {}),
     });
     return rowOf(existing);
   }
@@ -178,6 +211,7 @@ export const upsertPluginRegistration = async (
     status: "active",
     enabled: input.defaultEnabled ?? true,
     lastHeartbeatAt: now,
+    approvedRpcScopes: JSON.stringify(input.approvedRpcScopes ?? []),
   });
   return rowOf(created);
 };
@@ -230,6 +264,22 @@ export const touchHeartbeat = async (
   const wasActive = inst.getDataValue("status") === "active";
   await inst.update({ lastHeartbeatAt: now, status: "active" });
   return { revived: !wasActive, row: rowOf(inst) };
+};
+
+/**
+ * Persist the admin-approved RPC scope set for a plugin. Pass the full
+ * approved set (not a delta). Returns the updated row, or null if the
+ * plugin does not exist. The caller is responsible for also updating the
+ * live auth record so the change takes effect without a re-register.
+ */
+export const setPluginApprovedRpcScopes = async (
+  id: number,
+  scopes: string[],
+): Promise<PluginRow | null> => {
+  const row = await Plugin.findByPk(id);
+  if (!row) return null;
+  await row.update({ approvedRpcScopes: JSON.stringify(scopes) });
+  return rowOf(row);
 };
 
 export const setPluginEnabled = async (

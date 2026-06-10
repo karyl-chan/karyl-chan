@@ -1370,6 +1370,14 @@
         "cmdStatus": "View bot voice status"
     },
     "pluginSecurity": {
-        "setupSecretDesc": "Regenerating the Setup Secret immediately invalidates the old one. The plugin must re-register with the bot using the new secret."
+        "setupSecretDesc": "Regenerating the Setup Secret immediately invalidates the old one. The plugin must re-register with the bot using the new secret.",
+        "rpcScopesTitle": "RPC Scopes",
+        "rpcScopesDesc": "The plugin declares the RPC methods it wants to call in its manifest; only the scopes you approve are written into its token. An unapproved scope is rejected even when declared.",
+        "rpcScopesNone": "This plugin declares no RPC scopes.",
+        "rpcScopesSummary": "{approved} approved / {requested} requested ({pending} pending)",
+        "rpcScopesPendingBadge": "pending",
+        "rpcScopesApproveAll": "Approve all",
+        "rpcScopesSave": "Save",
+        "rpcScopesSaved": "Saved"
     }
 }
