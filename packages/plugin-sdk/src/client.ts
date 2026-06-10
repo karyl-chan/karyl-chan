@@ -26,6 +26,19 @@ export interface PluginClientOptions {
   pluginUrl?: string;
   logger?: Logger;
   /**
+   * Per-call timeouts for the lifecycle fetches. A bot whose register
+   * handler wedges (e.g. blocked on a rate-limited Discord call) must
+   * not wedge the plugin with it: an aborted call is treated exactly
+   * like a network error, so the existing backoff/retry loop owns
+   * recovery. Defaults: register 30s, heartbeat 10s, deregister 5s.
+   * Override mainly for tests.
+   */
+  lifecycleTimeoutsMs?: {
+    register?: number;
+    heartbeat?: number;
+    deregister?: number;
+  };
+  /**
    * Called once, after the very first successful register. Receives no
    * arguments — `token()` / `getDispatchHmacKey()` etc. on the client
    * handle are populated by the time this fires. Used by the SDK to
@@ -71,6 +84,22 @@ export interface PluginClient {
 const REGISTER_BACKOFF_BASE_MS = 2_000;
 const REGISTER_BACKOFF_MAX_MS = 60_000;
 
+const REGISTER_TIMEOUT_MS = 30_000;
+const HEARTBEAT_TIMEOUT_MS = 10_000;
+const DEREGISTER_TIMEOUT_MS = 5_000;
+// After this many consecutive register timeouts the problem is almost
+// certainly a wedged bot-side handler (not a blip), so escalate from
+// warn to error with a pointer at the bot.
+const TIMEOUT_ESCALATION_THRESHOLD = 3;
+
+/** True when `err` is the rejection produced by `AbortSignal.timeout`. */
+function isTimeoutError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    (err.name === "TimeoutError" || err.name === "AbortError")
+  );
+}
+
 export function startPluginClient(opts: PluginClientOptions): PluginClient {
   const log = opts.logger ?? consoleLogger();
   const botUrl = opts.botUrl.replace(/\/+$/, "");
@@ -85,6 +114,12 @@ export function startPluginClient(opts: PluginClientOptions): PluginClient {
   let heartbeatTimer: NodeJS.Timeout | null = null;
   let stopped = false;
   let registerAttempt = 0;
+  let consecutiveRegisterTimeouts = 0;
+  const timeoutsMs = {
+    register: opts.lifecycleTimeoutsMs?.register ?? REGISTER_TIMEOUT_MS,
+    heartbeat: opts.lifecycleTimeoutsMs?.heartbeat ?? HEARTBEAT_TIMEOUT_MS,
+    deregister: opts.lifecycleTimeoutsMs?.deregister ?? DEREGISTER_TIMEOUT_MS,
+  };
   // `onFirstRegister` fires exactly once across the client's lifetime —
   // re-register after a 401 must not re-fire `onStart` (which would
   // double-seed state / double-flush metrics).
@@ -99,7 +134,9 @@ export function startPluginClient(opts: PluginClientOptions): PluginClient {
           "X-Plugin-Setup-Secret": opts.setupSecret,
         },
         body: JSON.stringify({ manifest: opts.manifest }),
+        signal: AbortSignal.timeout(timeoutsMs.register),
       });
+      consecutiveRegisterTimeouts = 0;
       if (!res.ok) {
         const text = await res.text().catch(() => "");
         log.warn(
@@ -158,7 +195,21 @@ export function startPluginClient(opts: PluginClientOptions): PluginClient {
       return true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      log.warn(`register network error: ${msg}`);
+      if (isTimeoutError(err)) {
+        consecutiveRegisterTimeouts++;
+        if (consecutiveRegisterTimeouts >= TIMEOUT_ESCALATION_THRESHOLD) {
+          log.error(
+            `register timed out ${consecutiveRegisterTimeouts}x in a row after ${timeoutsMs.register}ms — ` +
+              "the bot accepted the connection but never answered; its register handler is likely wedged. " +
+              "Check the bot's logs for a /api/plugins/register request without a completion.",
+            { consecutiveTimeouts: consecutiveRegisterTimeouts },
+          );
+        } else {
+          log.warn(`register timed out after ${timeoutsMs.register}ms`);
+        }
+      } else {
+        log.warn(`register network error: ${msg}`);
+      }
       return false;
     }
   }
@@ -197,6 +248,7 @@ export function startPluginClient(opts: PluginClientOptions): PluginClient {
         // multi-endpoint registry slides THIS endpoint's TTL forward
         // (PR-3.1), keeping sibling replicas tracked independently.
         body: JSON.stringify({ url: pluginUrl }),
+        signal: AbortSignal.timeout(timeoutsMs.heartbeat),
       });
       if (res.status === 401) {
         log.warn("heartbeat 401, re-registering");
@@ -238,7 +290,11 @@ export function startPluginClient(opts: PluginClientOptions): PluginClient {
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      log.warn(`heartbeat network error: ${msg}`);
+      if (isTimeoutError(err)) {
+        log.warn(`heartbeat timed out after ${timeoutsMs.heartbeat}ms`);
+      } else {
+        log.warn(`heartbeat network error: ${msg}`);
+      }
     }
   }
 
@@ -264,6 +320,7 @@ export function startPluginClient(opts: PluginClientOptions): PluginClient {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ url: pluginUrl }),
+        signal: AbortSignal.timeout(timeoutsMs.deregister),
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
