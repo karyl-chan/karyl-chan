@@ -34,6 +34,7 @@ import {
   endSession,
   startSession,
 } from "../behavior/models/behavior-session.model.js";
+import { findAudienceMembers } from "../behavior/models/behavior-audience-member.model.js";
 import type { DispatchOutcome } from "./types.js";
 import type { WebhookForwarder } from "./webhook-forwarder.service.js";
 import { collectApplicableBehaviorsForUser } from "./message-pattern-matcher.service.js";
@@ -273,6 +274,26 @@ export class InteractionDispatcher {
     if (!behaviorRow) return { claimed: false };
 
     const source = behaviorRow.source;
+    const claimedBy =
+      source === "system"
+        ? ("behavior_system" as const)
+        : ("behavior_custom" as const);
+
+    // Reach 執法：placement（在哪）與 audience（誰）必須在轉發前檢查。
+    // pattern 路徑由 collectApplicableBehaviorsForUser 過濾；slash 註冊面
+    // （Discord 指令可見性）只能控到 guild 粒度，specific user/group/channel
+    // 的限制必須在 dispatch 端把關，否則看得到指令的人都能觸發。
+    const reach = await this.checkBehaviorReach(interaction, behaviorRow);
+    if (reach !== "ok") {
+      const key =
+        reach === "wrong_place"
+          ? "system.behavior-wrong-place"
+          : "system.behavior-not-allowed";
+      await interaction
+        .reply({ content: tForInteraction(interaction, key), ephemeral: true })
+        .catch(() => {});
+      return { claimed: true, claimedBy };
+    }
 
     if (source === "system") {
       return this.dispatchSystemBehavior(interaction, behaviorRow);
@@ -283,6 +304,59 @@ export class InteractionDispatcher {
     }
 
     return { claimed: false };
+  }
+
+  // ── reach 執法（placement + audience）────────────────────────────────────
+
+  /**
+   * 檢查 invoker 是否在此 behavior 的 reach 內。
+   *
+   * placement：placementGuildId/ChannelId 非空時，interaction 必須發生在該處
+   *            （specific_guild / specific_channel tab 的承諾）。
+   * audience：user → 比對 invoker id；group → 查 behavior_audience_members；
+   *           all → 放行。
+   *
+   * group 查詢失敗時 fail-closed（deny）——這是授權閘，寧可誤拒不可誤放。
+   */
+  private async checkBehaviorReach(
+    interaction: ChatInputCommandInteraction,
+    behaviorRow: BehaviorRow,
+  ): Promise<"ok" | "wrong_place" | "not_in_audience"> {
+    if (
+      behaviorRow.placementGuildId !== null &&
+      interaction.guildId !== behaviorRow.placementGuildId
+    ) {
+      return "wrong_place";
+    }
+    if (
+      behaviorRow.placementChannelId !== null &&
+      interaction.channelId !== behaviorRow.placementChannelId
+    ) {
+      return "wrong_place";
+    }
+
+    if (behaviorRow.audienceKind === "user") {
+      return behaviorRow.audienceUserId === interaction.user.id
+        ? "ok"
+        : "not_in_audience";
+    }
+    if (behaviorRow.audienceKind === "group") {
+      try {
+        const members = await findAudienceMembers(behaviorRow.id);
+        return members.includes(interaction.user.id)
+          ? "ok"
+          : "not_in_audience";
+      } catch (err) {
+        botEventLog.record(
+          "error",
+          "bot",
+          `interaction-dispatcher: audience 成員查詢失敗（fail-closed deny）：${err instanceof Error ? err.message : String(err)}`,
+          { behaviorId: behaviorRow.id, userId: interaction.user.id },
+        );
+        return "not_in_audience";
+      }
+    }
+    return "ok";
   }
 
   // ── source=system dispatch ────────────────────────────────────────────────
