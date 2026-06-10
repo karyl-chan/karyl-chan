@@ -1,0 +1,20 @@
+{
+  "name": "create-karyl-plugin",
+  "version": "0.1.0",
+  "description": "Scaffold a new karyl-chan plugin — a minimal hello-world that responds to a slash command.",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "create-karyl-plugin": "index.js"
+  },
+  "files": [
+    "index.js",
+    "template"
+  ],
+  "scripts": {
+    "test": "node --test \"tests/*.test.js\""
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

@@ -4,6 +4,12 @@ Shared SDK for karyl-chan plugins. The SDK lives in the same monorepo as the
 bot (`packages/bot/`); the bot side of the plugin protocol is documented at
 [`packages/bot/docs/development/plugin-guide.md`](../bot/docs/development/plugin-guide.md).
 
+> **New here?** Scaffold a plugin in ~10 minutes with
+> [`create-karyl-plugin`](../create-karyl-plugin/README.md), then read the
+> task guides in [`docs/`](docs/README.md): [getting-started](docs/getting-started.md),
+> [plugin-lifecycle](docs/plugin-lifecycle.md), [permissions](docs/permissions.md).
+> This README is the API reference.
+
 The SDK encapsulates the boilerplate every plugin needs:
 
 - A Fastify server with HMAC-verified dispatch on `/commands/:commandName`
