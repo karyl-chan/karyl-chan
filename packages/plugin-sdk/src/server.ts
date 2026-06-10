@@ -582,6 +582,24 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
   );
 
   const server = Fastify({ logger: true });
+
+  // Shared refusal for every bot-dispatched route while the register
+  // handshake hasn't completed (no dispatch HMAC key yet). The warn
+  // names the state explicitly: the 2026-06-11 incident showed up
+  // plugin-side as bare 503 statusCode lines with no hint that the
+  // plugin had been waiting on its register response the whole time.
+  const refuseUnregistered = (
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ): FastifyReply => {
+    request.log.warn(
+      { path: request.url },
+      "dispatch refused: register handshake not completed (no dispatch HMAC key yet) — still waiting on /api/plugins/register? check earlier register/timeout logs",
+    );
+    return reply.code(503).send({
+      error: "dispatch HMAC key not available; plugin must re-register",
+    });
+  };
   server.addContentTypeParser(
     "application/json",
     { parseAs: "string" },
@@ -617,11 +635,7 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
       "/events",
       async (request: FastifyRequest, reply: FastifyReply) => {
         const signingKey = opts.getDispatchHmacKey?.() ?? null;
-        if (!signingKey) {
-          return reply.code(503).send({
-            error: "dispatch HMAC key not available; plugin must re-register",
-          });
-        }
+        if (!signingKey) return refuseUnregistered(request, reply);
         const rawBody = typeof request.body === "string" ? request.body : "";
         const auth = verifyDispatchAuth(request, rawBody, signingKey);
         if (!auth.ok) return reply.code(401).send({ error: auth.reason });
@@ -658,12 +672,7 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
       "/_kc/lifecycle",
       async (request: FastifyRequest, reply: FastifyReply) => {
         const signingKey = opts.getDispatchHmacKey?.() ?? null;
-        if (!signingKey) {
-          return reply.code(503).send({
-            error:
-              "dispatch HMAC key not available; plugin must re-register",
-          });
-        }
+        if (!signingKey) return refuseUnregistered(request, reply);
         const rawBody = typeof request.body === "string" ? request.body : "";
         const auth = verifyDispatchAuth(request, rawBody, signingKey);
         if (!auth.ok) return reply.code(401).send({ error: auth.reason });
@@ -701,11 +710,7 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
       reply: FastifyReply,
     ) => {
       const signingKey = opts.getDispatchHmacKey?.() ?? null;
-      if (!signingKey) {
-        return reply.code(503).send({
-          error: "dispatch HMAC key not available; plugin must re-register",
-        });
-      }
+      if (!signingKey) return refuseUnregistered(request, reply);
       const rawBody = typeof request.body === "string" ? request.body : "";
       const auth = verifyDispatchAuth(request, rawBody, signingKey);
       if (!auth.ok) return reply.code(401).send({ error: auth.reason });
@@ -924,11 +929,7 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
     "/components",
     async (request: FastifyRequest, reply: FastifyReply) => {
       const signingKey = opts.getDispatchHmacKey?.() ?? null;
-      if (!signingKey) {
-        return reply.code(503).send({
-          error: "dispatch HMAC key not available; plugin must re-register",
-        });
-      }
+      if (!signingKey) return refuseUnregistered(request, reply);
       const rawBody = typeof request.body === "string" ? request.body : "";
       const auth = verifyDispatchAuth(request, rawBody, signingKey);
       if (!auth.ok) return reply.code(401).send({ error: auth.reason });
@@ -1081,11 +1082,7 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
     "/commands/:commandName/autocomplete",
     async (request, reply) => {
       const signingKey = opts.getDispatchHmacKey?.() ?? null;
-      if (!signingKey) {
-        return reply.code(503).send({
-          error: "dispatch HMAC key not available; plugin must re-register",
-        });
-      }
+      if (!signingKey) return refuseUnregistered(request, reply);
       const rawBody = typeof request.body === "string" ? request.body : "";
       const auth = verifyDispatchAuth(request, rawBody, signingKey);
       if (!auth.ok) return reply.code(401).send({ error: auth.reason });
@@ -1157,11 +1154,7 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
     "/modals/:modalId",
     async (request, reply) => {
       const signingKey = opts.getDispatchHmacKey?.() ?? null;
-      if (!signingKey) {
-        return reply.code(503).send({
-          error: "dispatch HMAC key not available; plugin must re-register",
-        });
-      }
+      if (!signingKey) return refuseUnregistered(request, reply);
       const rawBody = typeof request.body === "string" ? request.body : "";
       const auth = verifyDispatchAuth(request, rawBody, signingKey);
       if (!auth.ok) return reply.code(401).send({ error: auth.reason });

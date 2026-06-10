@@ -203,3 +203,16 @@ export const deletePluginCommandsByPlugin = async (
   await PluginCommand.destroy({ where: { pluginId } });
   return rows;
 };
+
+/**
+ * DB-only cleanup for a guild the bot left (PM-7.4). Discord removes
+ * an app's guild commands itself when the app leaves, so there is no
+ * Discord call to make — without this the guard in sync() (rows whose
+ * guild isn't in this process's cache are never treated as stale)
+ * would keep departed guilds' rows forever.
+ */
+export const deletePluginCommandsByGuild = async (
+  guildId: string,
+): Promise<number> => {
+  return PluginCommand.destroy({ where: { guildId } });
+};

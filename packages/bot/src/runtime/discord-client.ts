@@ -39,6 +39,18 @@ export function createBotClient(): Client {
         : []),
     ],
     partials: [Partials.Message, Partials.Channel, Partials.Reaction],
+    rest: {
+      // PM-7.3: guild application-command writes REJECT on rate limit
+      // instead of @discordjs/rest silently sleeping out retry_after
+      // (observed up to hours for the daily command-create cap; that
+      // sleep is what wedged the 2026-06-11 register handler). Scoped
+      // to /guilds/.../commands routes only — message sends, role
+      // edits, the global command route etc. keep the default
+      // queue-and-wait behaviour. The plugin command registry maps
+      // the rejection to CommandSyncRateLimitedError and reschedules.
+      rejectOnRateLimit: (rl) =>
+        rl.route.includes("/guilds/") && rl.route.includes("/commands"),
+    },
   });
 }
 

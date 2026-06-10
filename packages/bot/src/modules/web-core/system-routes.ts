@@ -54,6 +54,10 @@ export async function registerSystemRoutes(
       status: allReady ? "ready" : r.draining ? "draining" : "not_ready",
       checks: {
         bot: r.bot,
+        // "skipped" = BOT_SKIP_DISCORD dev mode: ready without a
+        // gateway. Lets an operator probing a dev bot tell the two
+        // ready states apart.
+        botMode: r.botMode,
         bootDb: r.db,
         liveDb: dbOk,
         draining: r.draining,

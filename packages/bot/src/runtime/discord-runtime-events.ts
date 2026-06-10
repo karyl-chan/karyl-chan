@@ -15,6 +15,7 @@ import { botEventLog } from "../modules/bot-events/bot-event-log.js";
 import { setReady } from "../modules/web-core/readiness.js";
 import { dispatchEventToPlugins } from "../modules/plugin-system/plugin-event-bridge.service.js";
 import { pluginCommandRegistry } from "../modules/plugin-system/plugin-command-registry.service.js";
+import { deletePluginCommandsByGuild } from "../modules/plugin-system/models/plugin-command.model.js";
 import {
   syncInProcessCommandsForGuild,
   syncInProcessCommandsToDiscord,
@@ -90,7 +91,20 @@ export function registerRuntimeEvents(ctx: RuntimeContext): void {
     // registry — discordx no longer owns any @Slash classes, so calling
     // initApplicationCommands now would just delete-then-recreate the
     // commands. Skip it; the registry handles sync.
-    await syncInProcessCommandsToDiscord(bot);
+    // Guild-command routes can now reject on rate limit (PM-7.3,
+    // rejectOnRateLimit in discord-client.ts) instead of sleeping —
+    // catch so a cold-start rate limit degrades to a logged warning,
+    // not an unhandledRejection. The next boot/reconcile repairs.
+    try {
+      await syncInProcessCommandsToDiscord(bot);
+    } catch (err) {
+      log.error({ err }, "syncInProcessCommandsToDiscord failed");
+      botEventLog.record(
+        "warn",
+        "bot",
+        "in-process command sync failed at boot (rate limit?) — will repair on next boot/reconcile",
+      );
+    }
 
     // Pre-cache each owner's DM channel. Originally a correctness fix
     // for the old DM-message-based /login handler; that path has been
@@ -167,7 +181,14 @@ export function registerRuntimeEvents(ctx: RuntimeContext): void {
       memberCount: guild.memberCount,
     });
     // 軌一：in-process（built-in）guild feature 指令
-    await syncInProcessCommandsForGuild(guild);
+    try {
+      await syncInProcessCommandsForGuild(guild);
+    } catch (err) {
+      log.error(
+        { err, guildId: guild.id },
+        "syncInProcessCommandsForGuild failed",
+      );
+    }
     // plugin guild-feature 指令：把每個 active plugin 在這個新 guild 解析為 on 的
     // feature 指令註冊起來（新 guild 還沒有 per-guild row → 跟 operator / manifest 預設）。
     pluginCommandRegistry
@@ -194,6 +215,24 @@ export function registerRuntimeEvents(ctx: RuntimeContext): void {
       guildId: guild.id,
       guildName: guild.name,
     });
+    // DB-only: Discord drops an app's guild commands itself on leave.
+    // Required because sync()'s stale guard (PM-7.4) deliberately
+    // never deletes rows for guilds outside this process's cache.
+    void deletePluginCommandsByGuild(guild.id)
+      .then((n) => {
+        if (n > 0) {
+          log.info(
+            { guildId: guild.id, rows: n },
+            "cleaned plugin command rows for departed guild",
+          );
+        }
+      })
+      .catch((err: unknown) => {
+        log.error(
+          { err, guildId: guild.id },
+          "failed to clean plugin command rows for departed guild",
+        );
+      });
   });
 
   bot.on("interactionCreate", async (interaction: Interaction) => {
