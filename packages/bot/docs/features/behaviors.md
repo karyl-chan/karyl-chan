@@ -128,11 +128,21 @@ obtain a synchronous response):
 
 - `content` — the DM message body (`message.content`, verbatim).
 - `username` and `avatar_url` — caller's display name and avatar.
+- `_meta` — structured metadata (BH-2.1), aligned with the slash path:
+  - `user` — `{ id, username, global_name, discriminator, avatar }`. Use
+    `user.id` to tell callers apart — `username` is mutable and not a key.
+  - `message_id`, `channel_id`, `behavior_id`
+  - `session` — `{ active: false }` on the triggering match;
+    `{ active: true, started_at }` for messages routed through an open
+    continuous session.
+  - `attachments` — `[{ url, filename, content_type, size }]` for any
+    files attached to the DM.
 
-(The outbound payload carries only those three fields — no `embeds`,
-`allowed_mentions`, or appended attachment URLs. The `allowed_mentions: { parse: [] }`
-guard is applied to the bot's *response* relayed back into the DM, not to
-this outbound webhook call.)
+(The top-level shape stays Discord-webhook compatible — no `embeds` or
+`allowed_mentions` outbound. The `allowed_mentions: { parse: [] }` guard is
+applied to the bot's *response* relayed back into the DM, not to this
+outbound webhook call. The slash path's `_meta` additionally carries the
+interaction fields and now also `behavior_id`.)
 
 Webhook → bot — the response (`APIMessage`)'s `content` is relayed back
 to the caller's DM.

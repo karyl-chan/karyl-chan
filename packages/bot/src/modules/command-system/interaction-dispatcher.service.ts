@@ -486,6 +486,9 @@ export class InteractionDispatcher {
   ): Promise<DispatchOutcome> {
     const payload = buildWebhookPayload(interaction);
     delete (payload._meta as Record<string, unknown>).interaction_token;
+    // BH-2.1：與 pattern 路徑對齊 — _meta 帶 behavior_id 供 webhook 端
+    // 在多條 behavior 指向同一端點時辨識來源。
+    (payload._meta as Record<string, unknown>).behavior_id = behaviorRow.id;
 
     // Defer reply（slash command 需要在 3s 內 ack）
     try {

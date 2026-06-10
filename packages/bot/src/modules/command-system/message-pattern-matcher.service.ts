@@ -228,7 +228,12 @@ export class MessagePatternMatcher {
   // ── 私有：active session 路徑 ────────────────────────────────────────────
 
   private async handleWithSession(
-    session: { behaviorId: number; channelId: string; userId: string },
+    session: {
+      behaviorId: number;
+      channelId: string;
+      userId: string;
+      startedAt: string;
+    },
     djsMessage: DjsMessage,
     userId: string,
     channelId: string,
@@ -274,7 +279,7 @@ export class MessagePatternMatcher {
       return { handled: false, sessionEnded: true };
     }
 
-    const payload = this.buildPayload(djsMessage, behavior);
+    const payload = this.buildPayload(djsMessage, behavior, session);
     const result = await this.forwarder.forward(behavior, payload);
 
     const dmChannel = djsMessage.channel as DMChannel;
@@ -509,14 +514,45 @@ export class MessagePatternMatcher {
    * 從 DM message 建構 webhook POST body。
    * 對齊 RESTPostAPIWebhookWithTokenJSONBody 形狀（C-runtime §7.1）。
    */
+  /**
+   * BH-2.1 — pattern/session payload 與 slash 路徑同樣帶 `_meta`。
+   * 頂層 content/username/avatar_url 維持 Discord-webhook 形狀（既有
+   * 消費端不受影響）；`_meta.user.id` 讓同一個 webhook 服務多使用者時
+   * 能辨識誰在說話（username 可改名、不穩定）。
+   */
   private buildPayload(
     djsMessage: DjsMessage,
-    _behavior: BehaviorRow,
+    behavior: BehaviorRow,
+    session?: { startedAt: string } | null,
   ): Record<string, unknown> {
+    const attachments = djsMessage.attachments
+      ? [...djsMessage.attachments.values()].map((a) => ({
+          url: a.url,
+          filename: a.name ?? null,
+          content_type: a.contentType ?? null,
+          size: a.size ?? null,
+        }))
+      : [];
     return {
       content: djsMessage.content ?? "",
       username: djsMessage.author.username,
       avatar_url: djsMessage.author.displayAvatarURL(),
+      _meta: {
+        user: {
+          id: djsMessage.author.id,
+          username: djsMessage.author.username,
+          global_name: djsMessage.author.globalName ?? null,
+          discriminator: djsMessage.author.discriminator,
+          avatar: djsMessage.author.avatar ?? null,
+        },
+        message_id: djsMessage.id,
+        channel_id: djsMessage.channel.id,
+        behavior_id: behavior.id,
+        session: session
+          ? { active: true, started_at: session.startedAt }
+          : { active: false },
+        attachments,
+      },
     };
   }
 
