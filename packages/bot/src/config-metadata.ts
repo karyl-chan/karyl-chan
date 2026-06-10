@@ -499,6 +499,14 @@ export const CONFIG_METADATA: Record<string, ConfigFieldMeta> = {
     productionRequired: false,
     descriptionKey: "config.dm.sseMaxListeners",
   },
+  "dm.sseReplayBufferSize": {
+    group: "dm",
+    envVar: "DM_SSE_REPLAY_BUFFER_SIZE",
+    sensitivity: "public",
+    editability: "env-only",
+    productionRequired: false,
+    descriptionKey: "config.dm.sseReplayBufferSize",
+  },
   "logging.level": {
     group: "logging",
     envVar: "LOG_LEVEL",

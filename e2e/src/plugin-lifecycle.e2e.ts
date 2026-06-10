@@ -30,7 +30,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { spawn, type ChildProcess } from "node:child_process";
-import { createHmac } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import { createServer } from "node:net";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -293,8 +293,8 @@ describe("plugin lifecycle E2E (PM-2.1, path 3)", { skip: !DB_URL }, () => {
     assert.ok(Array.isArray(guilds), "me.enabledGuilds answers over RPC");
 
     // 6. Dispatch /commands/e2e-ping signed EXACTLY like the bot signs
-    //    (METHOD:path:ts:body, x-karyl-* headers) with the per-plugin
-    //    key from the register handshake.
+    //    (METHOD:path:ts:nonce:body, x-karyl-* headers) with the
+    //    per-plugin key from the register handshake.
     const dispatchKey = (started as StartedPluginLike).getDispatchHmacKey();
     assert.ok(dispatchKey, "plugin holds the dispatch HMAC key after register");
     const payload = JSON.stringify({
@@ -307,15 +307,18 @@ describe("plugin lifecycle E2E (PM-2.1, path 3)", { skip: !DB_URL }, () => {
       options: [],
     });
     const ts = String(Math.floor(Date.now() / 1000));
+    const nonce = randomBytes(16).toString("hex");
     const dispatchPath = "/commands/e2e-ping";
+    // Nonced scheme (BH-2.4): <METHOD>:<path>:<ts>:<nonce>:<body>.
     const sig = createHmac("sha256", dispatchKey as string)
-      .update(`POST:${dispatchPath}:${ts}:${payload}`)
+      .update(`POST:${dispatchPath}:${ts}:${nonce}:${payload}`)
       .digest("hex");
     const res = await fetch(`${pluginUrl}${dispatchPath}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "x-karyl-timestamp": ts,
+        "x-karyl-nonce": nonce,
         "x-karyl-signature": sig,
       },
       body: payload,
