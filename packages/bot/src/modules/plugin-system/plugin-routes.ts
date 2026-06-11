@@ -1179,6 +1179,13 @@ export async function registerPluginRoutes(
    * plus the refreshed dispatch-health window so the UI can render
    * both without a second round-trip. Side-effect-free on the plugin
    * (the probe payload 400s before any handler lookup).
+   *
+   * Gate: inactive plugins (no live endpoint) are skipped without
+   * traffic. DISABLED-but-active plugins ARE probed — the probe is a
+   * control-plane handshake check the admin explicitly requested
+   * (e.g. verifying the signature path BEFORE enabling), not a
+   * user-traffic dispatch, so the disabled-means-no-dispatch
+   * invariant deliberately doesn't apply here.
    */
   server.post<{ Params: { id: string } }>(
     "/api/plugins/:id/dispatch-probe",
@@ -1189,12 +1196,16 @@ export async function registerPluginRoutes(
         reply.code(400).send({ error: "invalid plugin id" });
         return;
       }
-      const plugin = (await pluginRegistry.list()).find(
-        (p) => p.id === pluginId,
-      );
+      const plugin = await pluginRegistry.findById(pluginId);
       if (!plugin) {
         reply.code(404).send({ error: "plugin not found" });
         return;
+      }
+      if (plugin.status !== "active") {
+        return {
+          probe: { outcome: "skipped", reason: "plugin inactive" },
+          dispatch: getDispatchHealth(plugin.pluginKey),
+        };
       }
       const probe = await probePluginDispatch(plugin);
       return { probe, dispatch: getDispatchHealth(plugin.pluginKey) };

@@ -29,18 +29,18 @@ import {
   findPluginByKey,
   type PluginRow,
 } from "./models/plugin.model.js";
-import type { PluginManifest } from "./plugin-registry.service.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import {
-  assertPluginTarget,
-  HostPolicyError,
-} from "../../utils/host-policy.js";
-import { buildOutboundSignatureHeaders } from "../../utils/hmac.js";
-import {
-  recordDispatchAttempt,
+  recordProbeResult,
   classifyDispatchFetchError,
   classifyDispatchHttpFailure,
 } from "./plugin-dispatch-health.service.js";
+import {
+  buildSignedDispatchHeaders,
+  parsePluginManifest,
+  preflightPluginTarget,
+  resolvePluginEndpoint,
+} from "./plugin-dispatch-util.js";
 
 /** Never collides with a real handler: the missing-user 400 fires
  *  before the SDK's handler lookup even for a same-named command. */
@@ -61,7 +61,10 @@ export type ProbeVerdict =
   | { outcome: "awaiting_register" }
   /** Transport error or a status that proves nothing either way. */
   | { outcome: "inconclusive"; status?: number; message: string }
-  /** Probe not attempted (no dispatch key / bad URL / host policy). */
+  /** Pre-flight refused: host-policy denial or DNS failure (plugin
+   *  container gone). The dispatch path is broken — recorded as such. */
+  | { outcome: "unreachable"; reason: string }
+  /** Probe not attempted (no dispatch key / bad URL). */
   | { outcome: "skipped"; reason: string };
 
 export async function probePluginDispatch(
@@ -70,33 +73,39 @@ export async function probePluginDispatch(
   const key = plugin.dispatchHmacKey;
   if (!key) return { outcome: "skipped", reason: "no dispatch HMAC key" };
 
-  let manifest: PluginManifest | null = null;
-  try {
-    manifest = JSON.parse(plugin.manifestJson) as PluginManifest;
-  } catch {
-    /* placeholder row — fall through to the default path template */
-  }
+  // Resolve and sign through the SAME helpers real dispatches use —
+  // the probe's verdict is only meaningful if it hits the exact URL
+  // with the exact signature a real command dispatch would.
+  const manifest = parsePluginManifest(plugin);
   const template =
     manifest?.endpoints?.plugin_command ?? DEFAULT_COMMAND_PATH;
-  const path = template
-    .split("{command_name}")
-    .join(encodeURIComponent(PROBE_COMMAND_NAME));
-  let url: URL;
-  try {
-    url = new URL(path, plugin.url);
-  } catch {
+  if (!template.includes("{command_name}")) {
+    // A fixed dispatch path (register doesn't validate the template):
+    // substituting nothing would aim the synthetic payload at the
+    // plugin's REAL endpoint, where a non-SDK implementation might
+    // execute it — the probe's no-side-effects promise only holds for
+    // per-command paths.
+    return {
+      outcome: "skipped",
+      reason: "endpoint template lacks {command_name} placeholder",
+    };
+  }
+  const url = resolvePluginEndpoint(plugin.url, template, {
+    command_name: PROBE_COMMAND_NAME,
+  });
+  if (!url) {
     return { outcome: "skipped", reason: "unresolvable plugin URL" };
   }
-  const port = url.port
-    ? Number(url.port)
-    : url.protocol === "https:"
-      ? 443
-      : 80;
-  try {
-    await assertPluginTarget(url.hostname, port);
-  } catch (err) {
-    if (!(err instanceof HostPolicyError)) throw err;
-    return { outcome: "skipped", reason: `host policy: ${err.message}` };
+  const preflight = await preflightPluginTarget(url);
+  if (!preflight.ok) {
+    // Host-policy refusal or DNS failure — for a probe this is a
+    // finding, not a skip: the dispatch path cannot reach the plugin.
+    recordProbeResult(plugin.pluginKey, {
+      ok: false,
+      failureClass: "unreachable",
+      message: `probe: ${preflight.reason}`,
+    });
+    return { outcome: "unreachable", reason: preflight.reason };
   }
 
   // `user` deliberately absent → the SDK answers 400 right after the
@@ -105,16 +114,13 @@ export async function probePluginDispatch(
     command_name: PROBE_COMMAND_NAME,
     probe: true,
   });
-  const headers = {
-    "Content-Type": "application/json",
-    ...buildOutboundSignatureHeaders(key, "POST", url.pathname, body),
-  };
+  const headers = buildSignedDispatchHeaders(key, url, body);
 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
   let verdict: ProbeVerdict;
   try {
-    const res = await fetch(url.toString(), {
+    const res = await fetch(url, {
       method: "POST",
       headers,
       body,
@@ -129,9 +135,15 @@ export async function probePluginDispatch(
       verdict = { outcome: "rejected_401" };
     } else if (failureClass === "awaiting_register") {
       verdict = { outcome: "awaiting_register" };
-    } else if (res.ok || res.status === 400) {
-      // Every 400 branch in the SDK's command route sits AFTER the
-      // signature gate, so a 400 proves the path as well as a 2xx.
+    } else if (res.ok) {
+      verdict = { outcome: "signature_ok", status: res.status };
+    } else if (res.status === 400 && isSdkPostAuth400(text)) {
+      // The SDK's 400s all sit AFTER the signature gate, so a 400
+      // proves the path — but ONLY when the body carries the SDK's
+      // own post-auth markers. A bare 400 can come from a reverse
+      // proxy / WAF / non-SDK endpoint that never ran the gate, and
+      // calling that "signature verified" would be a false green in
+      // the middle of the exact incident this probe exists to catch.
       verdict = { outcome: "signature_ok", status: res.status };
     } else {
       verdict = {
@@ -145,9 +157,8 @@ export async function probePluginDispatch(
       outcome: "inconclusive",
       message: err instanceof Error ? err.message : String(err),
     };
-    recordDispatchAttempt(plugin.pluginKey, {
+    recordProbeResult(plugin.pluginKey, {
       ok: false,
-      source: "probe",
       failureClass: classifyDispatchFetchError(err),
       message: `probe: ${verdict.message}`,
     });
@@ -158,35 +169,31 @@ export async function probePluginDispatch(
 
   switch (verdict.outcome) {
     case "signature_ok":
-      recordDispatchAttempt(plugin.pluginKey, {
+      recordProbeResult(plugin.pluginKey, {
         ok: true,
-        source: "probe",
         status: verdict.status,
         message: "probe: signature verified",
       });
       break;
     case "rejected_401":
-      recordDispatchAttempt(plugin.pluginKey, {
+      recordProbeResult(plugin.pluginKey, {
         ok: false,
-        source: "probe",
         status: 401,
         failureClass: "rejected_401",
         message: "probe: signature rejected",
       });
       break;
     case "awaiting_register":
-      recordDispatchAttempt(plugin.pluginKey, {
+      recordProbeResult(plugin.pluginKey, {
         ok: false,
-        source: "probe",
         status: 503,
         failureClass: "awaiting_register",
         message: "probe: plugin awaiting register",
       });
       break;
     case "inconclusive":
-      recordDispatchAttempt(plugin.pluginKey, {
+      recordProbeResult(plugin.pluginKey, {
         ok: false,
-        source: "probe",
         ...(verdict.status !== undefined ? { status: verdict.status } : {}),
         failureClass: "http_error",
         message: `probe: ${verdict.message}`,
@@ -197,15 +204,39 @@ export async function probePluginDispatch(
 }
 
 /**
+ * The SDK's post-signature-gate 400 bodies for a user-less probe
+ * payload. Pinned on the SDK side by the route-order contract test
+ * (plugin-sdk tests) — keep the two in sync.
+ */
+function isSdkPostAuth400(bodyText: string): boolean {
+  return (
+    bodyText.includes("missing user.id") ||
+    bodyText.includes("command_name mismatch")
+  );
+}
+
+/**
  * Fire-and-forget probe a few seconds after a successful register —
  * the moment the wire format CAN be wrong is the moment we check it.
  * One retry when the plugin hasn't finished storing its key yet.
  * Never throws; failures land in dispatch health + botEventLog.
+ *
+ * Latest-wins per pluginKey (mirroring scheduleCommandSync): a
+ * crash-looping plugin re-registering every few seconds replaces its
+ * pending probe timer instead of stacking one — and one probe per
+ * settled register is all the verdict needs anyway.
  */
+const pendingRegisterProbes = new Map<string, NodeJS.Timeout>();
+
 export function scheduleRegisterProbe(pluginKey: string): void {
-  setTimeout(() => {
+  const prior = pendingRegisterProbes.get(pluginKey);
+  if (prior) clearTimeout(prior);
+  const timer = setTimeout(() => {
+    pendingRegisterProbes.delete(pluginKey);
     void runRegisterProbe(pluginKey, 1);
-  }, REGISTER_PROBE_DELAY_MS).unref();
+  }, REGISTER_PROBE_DELAY_MS);
+  timer.unref();
+  pendingRegisterProbes.set(pluginKey, timer);
 }
 
 async function runRegisterProbe(
@@ -217,9 +248,16 @@ async function runRegisterProbe(
     if (!row || row.status !== "active") return;
     const verdict = await probePluginDispatch(row);
     if (verdict.outcome === "awaiting_register" && attempt === 1) {
-      setTimeout(() => {
+      // The retry shares the latest-wins map so a re-register during
+      // the retry window replaces it instead of double-probing.
+      const prior = pendingRegisterProbes.get(pluginKey);
+      if (prior) clearTimeout(prior);
+      const retry = setTimeout(() => {
+        pendingRegisterProbes.delete(pluginKey);
         void runRegisterProbe(pluginKey, 2);
-      }, REGISTER_PROBE_RETRY_DELAY_MS).unref();
+      }, REGISTER_PROBE_RETRY_DELAY_MS);
+      retry.unref();
+      pendingRegisterProbes.set(pluginKey, retry);
       return;
     }
     if (verdict.outcome === "rejected_401") {

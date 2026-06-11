@@ -33,7 +33,24 @@ export interface DispatchProblem {
 export function dispatchProblem(
   dispatch: PluginDispatchHealth | null | undefined,
 ): DispatchProblem | null {
-  if (!dispatch || dispatch.consecutiveFailures < DISPATCH_FAILING_THRESHOLD) {
+  if (!dispatch) return null;
+  // A probe rejected_401 alarms IMMEDIATELY — it is deterministic
+  // (signature verification doesn't flake) and the register-time
+  // probe only ever records one attempt, so a streak threshold would
+  // never fire for it. Real-traffic failures keep the streak
+  // threshold to ride out one-off blips.
+  if (
+    dispatch.lastProbe &&
+    !dispatch.lastProbe.ok &&
+    dispatch.lastProbe.failureClass === "rejected_401"
+  ) {
+    return {
+      kind: "rejected401",
+      streak: Math.max(1, dispatch.consecutiveFailures),
+      detail: dispatch.lastProbe.message ?? "",
+    };
+  }
+  if (dispatch.consecutiveFailures < DISPATCH_FAILING_THRESHOLD) {
     return null;
   }
   const latest = dispatch.recent[0];

@@ -381,3 +381,63 @@ describe("messages.send — reply_to", () => {
     expect(channel._send).not.toHaveBeenCalled();
   });
 });
+
+describe("messages.send — reply ping opt-out semantics (review #5)", () => {
+  let server: FastifyInstance;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    stubPluginAuth(["messages.send"]);
+    stubActivePlugin();
+  });
+
+  afterEach(async () => {
+    if (server) await server.close();
+  });
+
+  async function send(payload: Record<string, unknown>) {
+    const channel = fakeGuildChannel();
+    server = await createWebServer({
+      staticRoot: undefined,
+      bot: fakeBot(channel) as never,
+    });
+    await server.ready();
+    featureGateOpen();
+    const res = await server.inject({
+      method: "POST",
+      url: "/api/plugin/messages.send",
+      headers: { authorization: "Bearer fake-token" },
+      payload: { channel_id: CHANNEL_ID, content: "hi", ...payload },
+    });
+    expect(res.statusCode).toBe(200);
+    return channel._send.mock.calls[0]![0] as {
+      allowedMentions: Record<string, unknown>;
+    };
+  }
+
+  it("honors the wire-native snake_case replied_user:false opt-out", async () => {
+    const arg = await send({
+      reply_to: REPLY_TO_ID,
+      allowed_mentions: { replied_user: false },
+    });
+    expect(arg.allowedMentions.repliedUser).toBe(false);
+  });
+
+  it("an explicit allowlist without replied_user keeps Discord's no-ping default", async () => {
+    // {users: [], roles: []} = "ping nobody" — the route must not
+    // force the reply ping over an explicit (even empty) allowlist.
+    const arg = await send({
+      reply_to: REPLY_TO_ID,
+      allowed_mentions: { users: [], roles: [] },
+    });
+    expect("repliedUser" in arg.allowedMentions).toBe(false);
+  });
+
+  it("snake_case replied_user:true also works with a provided allowlist", async () => {
+    const arg = await send({
+      reply_to: REPLY_TO_ID,
+      allowed_mentions: { users: [], replied_user: true },
+    });
+    expect(arg.allowedMentions.repliedUser).toBe(true);
+  });
+});

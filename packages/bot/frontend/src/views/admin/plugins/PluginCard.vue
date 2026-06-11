@@ -146,21 +146,34 @@ const commandSyncProblem = computed<null | { kind: 'failed' | 'stalled' | 'rateL
 // and dispatch are separate signals — a plugin can heartbeat green
 // while rejecting every dispatch (HMAC scheme mismatch). Quiet unless
 // a failure streak crosses the threshold.
-const dispatchAlarm = computed(() => dispatchProblem(props.plugin.dispatch));
+//
+// The probe response carries the refreshed health window; we overlay
+// it on top of the prop (which the parent only refreshes on a full
+// list reload) so the badge and the inline verdict can't contradict
+// each other. A fresh prop from a parent reload clears the overlay.
+const dispatchOverride = ref<PluginRecord['dispatch']>(undefined);
+watch(() => props.plugin.dispatch, () => { dispatchOverride.value = undefined; });
+const dispatchState = computed(() => dispatchOverride.value !== undefined ? dispatchOverride.value : props.plugin.dispatch);
+const dispatchAlarm = computed(() => dispatchProblem(dispatchState.value));
 const sdkAlarm = computed(() => sdkCompatProblem(props.plugin.sdkCompat, props.plugin.version));
 const dispatchStateText = computed(() => {
-    const d = props.plugin.dispatch;
+    const d = dispatchState.value;
     if (!d) return t('admin.plugins.dispatchNone');
     if (dispatchAlarm.value) {
         return t('admin.plugins.dispatchFailingShort', { n: dispatchAlarm.value.streak });
+    }
+    // Below the alarm threshold but with zero successes, "OK" would be
+    // a lie — a path whose only attempts all failed is not OK.
+    if (d.okCount === 0 && d.total > 0) {
+        return t('admin.plugins.dispatchNoSuccess', { total: d.total });
     }
     return t('admin.plugins.dispatchOk', { ok: d.okCount, total: d.total });
 });
 
 // Manual dispatch probe (PM-7.9.4): same signed no-op check the bot
 // fires after register; lets the operator verify the HMAC path on
-// demand. The verdict renders inline; the badge state refreshes on
-// the next list reload.
+// demand. The verdict renders inline and the returned health window
+// refreshes the row's dispatch state immediately.
 const probing = ref(false);
 const probeResult = ref<PluginDispatchProbeResult | null>(null);
 async function onProbe() {
@@ -170,6 +183,7 @@ async function onProbe() {
     try {
         const r = await probePluginDispatch(props.plugin.id);
         probeResult.value = r.probe;
+        dispatchOverride.value = r.dispatch;
     } catch (err) {
         probeResult.value = {
             outcome: 'inconclusive',
@@ -186,6 +200,7 @@ const probeText = computed(() => {
         case 'signature_ok': return t('admin.plugins.probeOk', { status: p.status });
         case 'rejected_401': return t('admin.plugins.probeRejected');
         case 'awaiting_register': return t('admin.plugins.probeAwaiting');
+        case 'unreachable': return t('admin.plugins.probeUnreachable', { reason: p.reason });
         case 'skipped': return t('admin.plugins.probeSkipped', { reason: p.reason });
         default: return t('admin.plugins.probeInconclusive', { m: p.message ?? '' });
     }

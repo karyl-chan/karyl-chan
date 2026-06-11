@@ -12,18 +12,20 @@ import { findPluginById, type PluginRow } from "./models/plugin.model.js";
 import type { PluginManifest } from "./plugin-registry.service.js";
 import { resolveUserCapabilities } from "../admin/authorized-user.service.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
-import {
-  assertPluginTarget,
-  HostPolicyError,
-} from "../../utils/host-policy.js";
-import { buildOutboundSignatureHeaders } from "../../utils/hmac.js";
 import { recordPluginDeferReply } from "./plugin-defer-state.js";
 import {
   classifyDispatchHttpFailure,
   recordDispatchFetchFailure,
   recordDispatchHttpFailure,
   recordDispatchOk,
+  recordDispatchUnreachable,
 } from "./plugin-dispatch-health.service.js";
+import {
+  buildSignedDispatchHeaders,
+  parsePluginManifest,
+  preflightPluginTarget,
+  resolvePluginEndpoint,
+} from "./plugin-dispatch-util.js";
 
 /**
  * Inbound Discord interaction → plugin dispatcher.
@@ -53,42 +55,8 @@ const DEFAULT_AUTOCOMPLETE_PATH = "/commands/{command_name}/autocomplete";
 const COMMAND_DISPATCH_TIMEOUT_MS = config.plugin.commandDispatchTimeoutMs;
 const AUTOCOMPLETE_TIMEOUT_MS = config.plugin.autocompleteTimeoutMs;
 
-function parseManifest(plugin: PluginRow): PluginManifest | null {
-  try {
-    return JSON.parse(plugin.manifestJson) as PluginManifest;
-  } catch {
-    return null;
-  }
-}
-
-function buildHeaders(
-  secret: string,
-  url: string,
-  body: string,
-): Record<string, string> {
-  const urlPath = new URL(url).pathname;
-  return {
-    "Content-Type": "application/json",
-    ...buildOutboundSignatureHeaders(secret, "POST", urlPath, body),
-  };
-}
-
-function resolveUrl(
-  plugin: PluginRow,
-  manifest: PluginManifest,
-  template: string,
-  variables: Record<string, string>,
-): string | null {
-  let path = template;
-  for (const [k, v] of Object.entries(variables)) {
-    path = path.split(`{${k}}`).join(encodeURIComponent(v));
-  }
-  try {
-    return new URL(path, plugin.url).toString();
-  } catch {
-    return null;
-  }
-}
+const parseManifest = parsePluginManifest;
+const buildHeaders = buildSignedDispatchHeaders;
 
 interface OptionEntry {
   name: string;
@@ -180,34 +148,37 @@ async function dispatchChatInputCommand(
       ? interaction.reply({ content, ephemeral: true }).catch(() => {})
       : interaction.editReply({ content }).catch(() => {});
 
-  const url = resolveUrl(
-    plugin,
-    manifest,
+  const url = resolvePluginEndpoint(
+    plugin.url,
     manifest.endpoints?.plugin_command ?? DEFAULT_COMMAND_PATH,
     { command_name: interaction.commandName },
   );
   if (!url) {
+    recordDispatchUnreachable(
+      plugin.pluginKey,
+      "command",
+      interaction.commandName,
+      "unresolvable plugin endpoint URL",
+    );
     await replyError("⚠ 無法解析 plugin 的指令端點。");
     return;
   }
 
-  const parsedCmdUrl = new URL(url);
-  const cmdPort = parsedCmdUrl.port
-    ? Number(parsedCmdUrl.port)
-    : parsedCmdUrl.protocol === "https:"
-      ? 443
-      : 80;
-  try {
-    await assertPluginTarget(parsedCmdUrl.hostname, cmdPort);
-  } catch (err) {
-    if (!(err instanceof HostPolicyError)) throw err;
+  const preflight = await preflightPluginTarget(url);
+  if (!preflight.ok) {
+    recordDispatchUnreachable(
+      plugin.pluginKey,
+      "command",
+      interaction.commandName,
+      preflight.reason,
+    );
     botEventLog.record(
       "warn",
       "bot",
-      `plugin-interaction: pre-flight host-policy 拒絕 ${plugin.pluginKey}/${interaction.commandName}: ${err.message}`,
+      `plugin-interaction: pre-flight host-policy 拒絕 ${plugin.pluginKey}/${interaction.commandName}: ${preflight.reason}`,
       { pluginId: plugin.id },
     );
-    await replyError(`⚠ Plugin 端點不被允許: ${err.message}`);
+    await replyError(`⚠ Plugin 端點不被允許: ${preflight.reason}`);
     return;
   }
 
@@ -338,24 +309,28 @@ async function dispatchAutocomplete(
     await interaction.respond([]).catch(() => {});
     return;
   }
-  const url = resolveUrl(plugin, manifest, DEFAULT_AUTOCOMPLETE_PATH, {
+  const url = resolvePluginEndpoint(plugin.url, DEFAULT_AUTOCOMPLETE_PATH, {
     command_name: interaction.commandName,
   });
   if (!url) {
+    recordDispatchUnreachable(
+      plugin.pluginKey,
+      "autocomplete",
+      interaction.commandName,
+      "unresolvable plugin endpoint URL",
+    );
     await interaction.respond([]).catch(() => {});
     return;
   }
 
-  const parsedAcUrl = new URL(url);
-  const acPort = parsedAcUrl.port
-    ? Number(parsedAcUrl.port)
-    : parsedAcUrl.protocol === "https:"
-      ? 443
-      : 80;
-  try {
-    await assertPluginTarget(parsedAcUrl.hostname, acPort);
-  } catch (err) {
-    if (!(err instanceof HostPolicyError)) throw err;
+  const preflight = await preflightPluginTarget(url);
+  if (!preflight.ok) {
+    recordDispatchUnreachable(
+      plugin.pluginKey,
+      "autocomplete",
+      interaction.commandName,
+      preflight.reason,
+    );
     await interaction.respond([]).catch(() => {});
     return;
   }

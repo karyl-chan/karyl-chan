@@ -89,7 +89,15 @@ function safeAllowedMentions(raw: unknown): Record<string, unknown> {
       (v): v is string => typeof v === "string" && SNOWFLAKE_RE.test(v),
     );
   }
-  if (typeof m.repliedUser === "boolean") out.repliedUser = m.repliedUser;
+  // Accept both spellings of the reply-ping opt-out: the wire protocol
+  // is snake_case (`replied_user`, matching Discord's own field) but
+  // discord.js — and therefore early consumers of this route — uses
+  // camelCase. Snake_case wins when both are present.
+  if (typeof m.replied_user === "boolean") {
+    out.repliedUser = m.replied_user;
+  } else if (typeof m.repliedUser === "boolean") {
+    out.repliedUser = m.repliedUser;
+  }
   return out;
 }
 
@@ -348,11 +356,11 @@ export async function registerPluginRpcRoutes(
    * Discord reply to that message. `failIfNotExists: false` so a
    * since-deleted target degrades to a plain send instead of erroring
    * — deliberate: delayed replies (the main reply_to consumer) may
-   * outlive their anchor. Replies ping their author by default (like a
-   * human reply): we always attach an allowed_mentions object, and with
-   * one present Discord defaults `replied_user` to FALSE — so unless the
-   * plugin explicitly set `allowed_mentions.repliedUser`, we set it true
-   * on replies.
+   * outlive their anchor. Reply ping defaults: a reply with NO
+   * allowed_mentions in the request pings its author (like a human
+   * reply); a request that provides allowed_mentions keeps raw
+   * Discord semantics — `replied_user` (or camelCase `repliedUser`)
+   * boolean is honored, absent means no ping.
    *
    * The plugin can target any text channel the bot has access to in
    * any guild it's in, plus DM channels of any user. A future revision
@@ -435,10 +443,26 @@ export async function registerPluginRpcRoutes(
     // role X must list `<@&X>` in the content AND `roles: ["X"]`
     // explicitly — no bulk opt-in.
     const allowedMentions = safeAllowedMentions(body.allowed_mentions);
-    // Native replies notify their author unless the plugin opted out:
-    // with an allowed_mentions object present, Discord defaults
-    // replied_user to false, which would make every reply_to silent.
-    if (replyTo && allowedMentions.repliedUser === undefined) {
+    // Reply-ping rule (three-way, matching raw Discord semantics for
+    // anyone who crafted allowed_mentions themselves):
+    //   - no allowed_mentions in the request → replies ping their
+    //     author by default, like a human reply (we always attach an
+    //     allowed_mentions object for the parse-stripping above, and
+    //     with one present Discord would default replied_user to
+    //     false — so we set it true here);
+    //   - allowed_mentions provided WITH replied_user/repliedUser
+    //     boolean → honored verbatim;
+    //   - allowed_mentions provided WITHOUT it → Discord's own
+    //     default (no ping): a plugin that wrote an explicit mention
+    //     allowlist (even an empty one) said exactly who to ping.
+    const pluginProvidedMentions =
+      typeof body.allowed_mentions === "object" &&
+      body.allowed_mentions !== null;
+    if (
+      replyTo &&
+      !pluginProvidedMentions &&
+      allowedMentions.repliedUser === undefined
+    ) {
       allowedMentions.repliedUser = true;
     }
     try {

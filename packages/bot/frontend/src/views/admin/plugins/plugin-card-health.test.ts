@@ -94,3 +94,59 @@ describe("sdkCompatProblem", () => {
     expect(sdkCompatProblem(undefined, "1.0.0")).toBeNull();
   });
 });
+
+describe("dispatchProblem — probe verdicts", () => {
+  it("alarms immediately on a probe rejected_401, even with zero streak", () => {
+    const d: PluginDispatchHealth = {
+      total: 0,
+      okCount: 0,
+      consecutiveFailures: 0,
+      lastOkAt: null,
+      recent: [],
+      lastProbe: {
+        at: Date.now(),
+        ok: false,
+        source: "probe",
+        status: 401,
+        failureClass: "rejected_401",
+        message: "probe: signature rejected",
+      },
+    };
+    const p = dispatchProblem(d);
+    expect(p).not.toBeNull();
+    expect(p!.kind).toBe("rejected401");
+    expect(p!.streak).toBe(1);
+  });
+
+  it("a passing probe does not suppress a real-traffic alarm", () => {
+    const d = health(DISPATCH_FAILING_THRESHOLD, {
+      ok: false,
+      failureClass: "http_error",
+    });
+    d.lastProbe = {
+      at: Date.now(),
+      ok: true,
+      source: "probe",
+      status: 400,
+      message: "probe: signature verified",
+    };
+    expect(dispatchProblem(d)!.kind).toBe("failing");
+  });
+
+  it("non-401 probe failures alone do not alarm", () => {
+    const d: PluginDispatchHealth = {
+      total: 0,
+      okCount: 0,
+      consecutiveFailures: 0,
+      lastOkAt: null,
+      recent: [],
+      lastProbe: {
+        at: Date.now(),
+        ok: false,
+        source: "probe",
+        failureClass: "network",
+      },
+    };
+    expect(dispatchProblem(d)).toBeNull();
+  });
+});

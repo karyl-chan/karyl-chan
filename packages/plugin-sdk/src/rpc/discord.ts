@@ -24,7 +24,20 @@ export interface MessageSendArgs {
   embeds?: APIEmbed[];
   components?: MessageActionRow[];
   attachments?: MessageAttachment[];
-  allowedMentions?: { users?: string[]; roles?: string[] };
+  /**
+   * Explicit mention allowlist. Reply-ping interplay with `replyTo`:
+   * omit `allowedMentions` entirely and a reply pings its author
+   * (like a human reply); provide it and raw Discord semantics apply —
+   * set `repliedUser` to control the reply ping, absent = no ping.
+   */
+  allowedMentions?: {
+    users?: string[];
+    roles?: string[];
+    repliedUser?: boolean;
+  };
+  /** Message id to send this as a native Discord reply to. A deleted
+   *  target degrades to a plain send (failIfNotExists: false). */
+  replyTo?: string;
 }
 
 export interface MessageEditArgs {
@@ -138,6 +151,7 @@ export function createDiscord(call: RpcCaller): Discord {
           ...(args.allowedMentions !== undefined
             ? { allowed_mentions: args.allowedMentions }
             : {}),
+          ...(args.replyTo !== undefined ? { reply_to: args.replyTo } : {}),
         })) as MessageHandle;
         return res;
       },

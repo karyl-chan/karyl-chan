@@ -173,14 +173,20 @@ export type PluginDispatchFailureClass =
   | "http_error"
   | "timeout"
   | "network"
-  | "breaker_open"
-  | "shed";
+  | "unreachable";
 
 export interface PluginDispatchAttempt {
   /** Epoch ms. */
   at: number;
   ok: boolean;
-  source: "command" | "autocomplete" | "component" | "modal" | "event" | "probe";
+  source:
+    | "command"
+    | "autocomplete"
+    | "component"
+    | "modal"
+    | "event"
+    | "lifecycle"
+    | "probe";
   status?: number;
   failureClass?: PluginDispatchFailureClass;
   message?: string;
@@ -193,6 +199,13 @@ export interface PluginDispatchHealth {
   lastOkAt: number | null;
   /** Newest-first window of recent attempts. */
   recent: PluginDispatchAttempt[];
+  /**
+   * Most recent probe verdict — kept outside the traffic counters
+   * (a probe verifies less than real traffic; its result must not
+   * reset or build the failure streak). A failed probe with
+   * failureClass rejected_401 is alarm-worthy on its own.
+   */
+  lastProbe?: PluginDispatchAttempt | null;
 }
 
 export interface PluginSdkCompat {
@@ -208,6 +221,7 @@ export type PluginDispatchProbeResult =
   | { outcome: "rejected_401" }
   | { outcome: "awaiting_register" }
   | { outcome: "inconclusive"; status?: number; message: string }
+  | { outcome: "unreachable"; reason: string }
   | { outcome: "skipped"; reason: string };
 
 /**
