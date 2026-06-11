@@ -16,7 +16,14 @@
  * registered) — callers must treat `unknown` accordingly.
  */
 
-export const MIN_COMPAT_SDK_VERSION = "0.10.0";
+import { DISPATCH_HMAC_MIN_SDK_VERSION } from "../../utils/hmac.js";
+
+/**
+ * Re-exported from utils/hmac.ts so the floor physically lives next
+ * to the signed-payload format it tracks — the next wire-format break
+ * can't update the scheme without staring at this constant.
+ */
+export const MIN_COMPAT_SDK_VERSION = DISPATCH_HMAC_MIN_SDK_VERSION;
 
 export interface SdkCompat {
   /** As stamped in the registered manifest; null when absent. */

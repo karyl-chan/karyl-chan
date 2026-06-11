@@ -220,11 +220,23 @@ function isSdkPostAuth400(bodyText: string): boolean {
  * the moment the wire format CAN be wrong is the moment we check it.
  * One retry when the plugin hasn't finished storing its key yet.
  * Never throws; failures land in dispatch health + botEventLog.
+ *
+ * Latest-wins per pluginKey (mirroring scheduleCommandSync): a
+ * crash-looping plugin re-registering every few seconds replaces its
+ * pending probe timer instead of stacking one — and one probe per
+ * settled register is all the verdict needs anyway.
  */
+const pendingRegisterProbes = new Map<string, NodeJS.Timeout>();
+
 export function scheduleRegisterProbe(pluginKey: string): void {
-  setTimeout(() => {
+  const prior = pendingRegisterProbes.get(pluginKey);
+  if (prior) clearTimeout(prior);
+  const timer = setTimeout(() => {
+    pendingRegisterProbes.delete(pluginKey);
     void runRegisterProbe(pluginKey, 1);
-  }, REGISTER_PROBE_DELAY_MS).unref();
+  }, REGISTER_PROBE_DELAY_MS);
+  timer.unref();
+  pendingRegisterProbes.set(pluginKey, timer);
 }
 
 async function runRegisterProbe(
@@ -236,9 +248,16 @@ async function runRegisterProbe(
     if (!row || row.status !== "active") return;
     const verdict = await probePluginDispatch(row);
     if (verdict.outcome === "awaiting_register" && attempt === 1) {
-      setTimeout(() => {
+      // The retry shares the latest-wins map so a re-register during
+      // the retry window replaces it instead of double-probing.
+      const prior = pendingRegisterProbes.get(pluginKey);
+      if (prior) clearTimeout(prior);
+      const retry = setTimeout(() => {
+        pendingRegisterProbes.delete(pluginKey);
         void runRegisterProbe(pluginKey, 2);
-      }, REGISTER_PROBE_RETRY_DELAY_MS).unref();
+      }, REGISTER_PROBE_RETRY_DELAY_MS);
+      retry.unref();
+      pendingRegisterProbes.set(pluginKey, retry);
       return;
     }
     if (verdict.outcome === "rejected_401") {
