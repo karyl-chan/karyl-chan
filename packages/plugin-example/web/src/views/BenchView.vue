@@ -220,7 +220,6 @@ section h2 {
   font-size: 0.85rem;
 }
 .modal-body {
-  padding: 0.8rem 1rem;
   display: flex;
   flex-direction: column;
   gap: 0.6rem;

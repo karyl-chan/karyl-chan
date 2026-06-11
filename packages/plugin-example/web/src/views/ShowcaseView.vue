@@ -914,7 +914,6 @@ section h2 {
 
 /* ── Modal / popover bodies ─────────────────────────────────────── */
 .modal-body {
-  padding: 0.8rem 1rem 0.6rem;
   display: flex;
   flex-direction: column;
   gap: 0.7rem;

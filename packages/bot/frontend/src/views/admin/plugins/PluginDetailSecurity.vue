@@ -400,7 +400,6 @@ function closeSecretResult() {
 
 /* Secret result modal */
 .secret-result-body {
-    padding: 0.9rem 1rem 0.75rem;
     display: flex;
     flex-direction: column;
     gap: 0.7rem;

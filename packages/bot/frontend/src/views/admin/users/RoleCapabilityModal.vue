@@ -625,7 +625,6 @@ function onConfirm() {
     flex-direction: column;
     min-height: 380px;
     max-height: 78vh;
-    padding: 16px;
 }
 .pane {
     padding: 0.75rem 0;

@@ -85,11 +85,9 @@ const emit = defineEmits<{
 </template>
 
 <style scoped>
-/* Inner wrapper: provides padding + flex-column layout + gap.
-   AppModal's body slots are structural-only (no padding), so each leaf
-   component is responsible for its own spacing. */
+/* Inner wrapper: flex-column layout + gap. Padding comes from
+   AppModal's body default. */
 .acd-body {
-    padding: 0.9rem 1rem 0.75rem;
     display: flex;
     flex-direction: column;
     gap: 0.75rem;

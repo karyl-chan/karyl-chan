@@ -299,7 +299,6 @@ const totalSelected = computed(() => permissionFlags.value.size);
 
 <style scoped>
 .body {
-    padding: 0.85rem 0.95rem;
     display: flex;
     flex-direction: column;
     gap: 0.6rem;

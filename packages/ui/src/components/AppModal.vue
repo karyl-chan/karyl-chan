@@ -13,7 +13,11 @@ import { useDrawer } from '../composables/use-drawer';
  * The caller owns everything inside the slot — typical usage is to drop
  * a `<form @submit.prevent>` containing fields + an actions footer
  * directly into the default slot. AppModal supplies the chrome (backdrop,
- * panel, optional title header, close button) only.
+ * panel, optional title header, close button) and pads the body with
+ * `padding` (default `0.8rem 0.9rem`, both viewport branches). Slot
+ * content therefore needs no padding of its own; pass `padding="0"` for
+ * full-bleed content (tables, pickers, croppers) that manages its own
+ * edges.
  *
  * `closeOnBackdrop` / `closeOnEscape` default to true. Escape closure on
  * desktop is wired locally; on mobile it's handled by useDrawer's escape
@@ -27,11 +31,17 @@ const props = withDefaults(defineProps<{
     closeOnEscape?: boolean;
     /** Width of the desktop panel; mobile drawer ignores this. */
     width?: string;
+    /**
+     * CSS padding of the scrollable body around the default slot. Use
+     * `'0'` for full-bleed content that manages its own edges.
+     */
+    padding?: string;
 }>(), {
     title: '',
     closeOnBackdrop: true,
     closeOnEscape: true,
-    width: 'min(440px, 92vw)'
+    width: 'min(440px, 92vw)',
+    padding: '0.8rem 0.9rem'
 });
 
 const emit = defineEmits<{
@@ -101,7 +111,7 @@ function onBackdropClick() {
                             <Icon icon="material-symbols:close-rounded" width="18" height="18" />
                         </button>
                     </header>
-                    <div class="app-modal-body">
+                    <div class="app-modal-body" :style="{ padding }">
                         <slot />
                     </div>
                 </div>
@@ -141,7 +151,7 @@ function onBackdropClick() {
                         <Icon icon="material-symbols:close-rounded" width="18" height="18" />
                     </button>
                 </header>
-                <div class="app-modal-drawer-body">
+                <div class="app-modal-drawer-body" :style="{ padding }">
                     <slot />
                 </div>
             </div>
@@ -245,9 +255,8 @@ function onBackdropClick() {
 
 /* ── Desktop body wrapper ───────────────────────────────────────── */
 /* Structural wrapper that matches the mobile .app-modal-drawer-body.
-   Padding is intentionally 0 — callers are responsible for spacing
-   their slot content. AppConfirmDialog and similar leaf components
-   supply their own inner padding. */
+   Padding comes from the `padding` prop (inline style) on both
+   branches so slot content needs none of its own. */
 .app-modal-body {
     flex: 1;
     min-height: 0;

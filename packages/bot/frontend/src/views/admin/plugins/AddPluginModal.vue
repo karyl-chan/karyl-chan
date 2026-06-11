@@ -214,7 +214,6 @@ function onClose() {
 <style scoped>
 /* ── Step 1 ─────────────────────────────────────────────────────── */
 .modal-body {
-    padding: 1rem;
     display: flex;
     flex-direction: column;
     gap: 0.85rem;
@@ -290,7 +289,6 @@ function onClose() {
 
 /* ── Step 2 (mirrors PluginCard secret result) ───────────────────── */
 .secret-result-body {
-    padding: 0.9rem 1rem 0.75rem;
     display: flex;
     flex-direction: column;
     gap: 0.7rem;

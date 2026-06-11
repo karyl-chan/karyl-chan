@@ -240,7 +240,6 @@ const titleText = computed(() => {
 
 <style scoped>
 .body {
-    padding: 0.8rem 0.9rem;
     display: flex;
     flex-direction: column;
     gap: 0.6rem;
