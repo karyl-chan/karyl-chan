@@ -1,6 +1,6 @@
 {
   "name": "@karyl-chan/ui",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Shared Vue UI primitives, composables, and design tokens used by karyl-chan's bot frontend and plugin webuis.",
   "type": "module",
   "license": "MIT",
