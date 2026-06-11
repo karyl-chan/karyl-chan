@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.10.0](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.9.0...plugin-sdk-v0.10.0) (2026-06-10)
+
+
+### Features
+
+* **bot,plugin-sdk:** name the awaiting-register failure state everywhere (PM-7.6) ([d034865](https://github.com/karyl-chan/karyl-chan/commit/d03486539f12e542360a8f4ef4d45479bd00fe2c))
+* **bot:** pr-3.1 plugin dynamic registration — address TTL + multi-endpoint + graceful deregister ([a4aa980](https://github.com/karyl-chan/karyl-chan/commit/a4aa9801fad91b4a621594294020d2fa373d34e9))
+* **plugin-sdk:** add timeouts to lifecycle fetches (PM-7.2) ([92095f2](https://github.com/karyl-chan/karyl-chan/commit/92095f25b0d88dfe068eed6aef49f4942db94e61))
+* **sdk:** create-karyl-plugin scaffold + SDK task guides (PM-5) ([bdac16e](https://github.com/karyl-chan/karyl-chan/commit/bdac16eeab308b923ef13e7f05eebbab0355507a))
+* **sdk:** pr-1.1 redis-streams consumer (XREADGROUP) + DLQ ([8d5c75e](https://github.com/karyl-chan/karyl-chan/commit/8d5c75e1b5a54e40fdda1a5a3fd850a8e067638c))
+* **sdk:** pr-1.3 surface consumer lag + DLQ rate through metrics ([20938e7](https://github.com/karyl-chan/karyl-chan/commit/20938e777a71d50834043c945674e3ff41cdaca8))
+* **security:** add a nonce to the bot↔plugin/webhook HMAC scheme ([a9459df](https://github.com/karyl-chan/karyl-chan/commit/a9459dfb3b04b1b307c430988de6ee79a100f43d))
+
+
+### Bug Fixes
+
+* **plugin-sdk:** ctx.sendModal returns false on bot rejection instead of throwing ([0102848](https://github.com/karyl-chan/karyl-chan/commit/01028486562696683fa2c9aa368483952ffeeef8))
+* **plugin-sdk:** gate callBotRpc network-error retry by idempotency ([7e5d3b5](https://github.com/karyl-chan/karyl-chan/commit/7e5d3b56565dc17e46a5e1fad9ae15cfcc1e0cb5))
+* **plugin-sdk:** make verifyWebhookToken an exact compare (was NUL-blind) ([e8eb2c0](https://github.com/karyl-chan/karyl-chan/commit/e8eb2c0ebd2f55e0a5f1b0c58eb4eff70318a9d8))
+* **plugin-sdk:** repair ctx.discord.members.get to match the bot's API ([04bd934](https://github.com/karyl-chan/karyl-chan/commit/04bd934c29c13ea4c2f0ddfe3d88187dd1a96ed4))
+
 ## [0.9.0](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.8.0...plugin-sdk-v0.9.0) (2026-05-28)
 
 
