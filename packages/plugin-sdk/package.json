@@ -1,6 +1,6 @@
 {
   "name": "@karyl-chan/plugin-sdk",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "Shared SDK for karyl-chan plugins — handles HMAC, server boilerplate, register/heartbeat lifecycle.",
   "type": "module",
   "main": "./dist/index.js",

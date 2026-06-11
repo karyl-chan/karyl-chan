@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.1](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.10.0...plugin-sdk-v0.10.1) (2026-06-11)
+
+
+### Bug Fixes
+
+* **bot,sdk:** dispatch-health streak semantics — probe isolation, breaker noise, 400 trust ([019a03f](https://github.com/karyl-chan/karyl-chan/commit/019a03f05d4d642c992edee3d84773769d0e1cff))
+* **bot,sdk:** reply_to ping opt-out holes — snake_case, explicit allowlists, SDK types ([3f43a7e](https://github.com/karyl-chan/karyl-chan/commit/3f43a7eb1b4c9c9b769e4eb0cf92bc52dfcc96d1))
+
 ## [0.10.0](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.9.0...plugin-sdk-v0.10.0) (2026-06-10)
 
 
