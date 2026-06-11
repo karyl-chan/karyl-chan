@@ -39,6 +39,7 @@ import { buildOutboundSignatureHeaders } from "../../utils/hmac.js";
 import {
   recordDispatchAttempt,
   classifyDispatchFetchError,
+  classifyDispatchHttpFailure,
 } from "./plugin-dispatch-health.service.js";
 
 /** Never collides with a real handler: the missing-user 400 fires
@@ -121,9 +122,12 @@ export async function probePluginDispatch(
       signal: ctrl.signal,
     });
     const text = await res.text().catch(() => "");
-    if (res.status === 401) {
+    // Reuse the shared classifier: the 503 awaiting-register body sniff must
+    // have exactly one owner (plugin-dispatch-health.service).
+    const failureClass = res.ok ? undefined : classifyDispatchHttpFailure(res.status, text);
+    if (failureClass === "rejected_401") {
       verdict = { outcome: "rejected_401" };
-    } else if (res.status === 503 && text.includes("dispatch HMAC key")) {
+    } else if (failureClass === "awaiting_register") {
       verdict = { outcome: "awaiting_register" };
     } else if (res.ok || res.status === 400) {
       // Every 400 branch in the SDK's command route sits AFTER the
@@ -147,10 +151,10 @@ export async function probePluginDispatch(
       failureClass: classifyDispatchFetchError(err),
       message: `probe: ${verdict.message}`,
     });
-    clearTimeout(timer);
     return verdict;
+  } finally {
+    clearTimeout(timer);
   }
-  clearTimeout(timer);
 
   switch (verdict.outcome) {
     case "signature_ok":

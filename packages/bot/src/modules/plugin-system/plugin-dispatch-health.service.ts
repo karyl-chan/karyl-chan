@@ -115,6 +115,39 @@ export function recordDispatchAttempt(
   }
 }
 
+/** The standard ok-outcome recorder for a dispatch fetch. */
+export function recordDispatchOk(pluginKey: string, source: DispatchSource, status: number): void {
+  recordDispatchAttempt(pluginKey, { ok: true, source, status });
+}
+
+/** The standard non-2xx recorder: classifies the failure from status+body. */
+export function recordDispatchHttpFailure(
+  pluginKey: string,
+  source: DispatchSource,
+  label: string,
+  status: number,
+  bodyText: string,
+): void {
+  recordDispatchAttempt(pluginKey, {
+    ok: false,
+    source,
+    status,
+    failureClass: classifyDispatchHttpFailure(status, bodyText),
+    message: `${label}: ${bodyText.slice(0, 120)}`,
+  });
+}
+
+/** The standard thrown-fetch recorder (timeout / connection refused / DNS). */
+export function recordDispatchFetchFailure(pluginKey: string, source: DispatchSource, label: string, err: unknown): void {
+  const msg = err instanceof Error ? err.message : String(err);
+  recordDispatchAttempt(pluginKey, {
+    ok: false,
+    source,
+    failureClass: classifyDispatchFetchError(err),
+    message: `${label}: ${msg}`,
+  });
+}
+
 /** `null` = no dispatch attempted since this bot process started. */
 export function getDispatchHealth(
   pluginKey: string,

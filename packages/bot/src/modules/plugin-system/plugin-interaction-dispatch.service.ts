@@ -19,9 +19,10 @@ import {
 import { buildOutboundSignatureHeaders } from "../../utils/hmac.js";
 import { recordPluginDeferReply } from "./plugin-defer-state.js";
 import {
-  recordDispatchAttempt,
   classifyDispatchHttpFailure,
-  classifyDispatchFetchError,
+  recordDispatchFetchFailure,
+  recordDispatchHttpFailure,
+  recordDispatchOk,
 } from "./plugin-dispatch-health.service.js";
 
 /**
@@ -276,16 +277,10 @@ async function dispatchChatInputCommand(
       // register handshake hasn't completed (plugin restarted and the
       // bot is dispatching on persisted command rows). Name that state
       // for the operator — the 2026-06-11 incident sat in it for hours
-      // with only a bare status code on either side.
-      const isAwaitingRegister =
-        res.status === 503 && text.includes("dispatch HMAC key");
-      recordDispatchAttempt(plugin.pluginKey, {
-        ok: false,
-        source: "command",
-        status: res.status,
-        failureClass: classifyDispatchHttpFailure(res.status, text),
-        message: `${interaction.commandName}: ${text.slice(0, 120)}`,
-      });
+      // with only a bare status code on either side. The classifier is
+      // the single owner of that detection.
+      const isAwaitingRegister = classifyDispatchHttpFailure(res.status, text) === "awaiting_register";
+      recordDispatchHttpFailure(plugin.pluginKey, "command", interaction.commandName, res.status, text);
       botEventLog.record(
         "warn",
         "bot",
@@ -310,23 +305,14 @@ async function dispatchChatInputCommand(
         );
       }
     } else {
-      recordDispatchAttempt(plugin.pluginKey, {
-        ok: true,
-        source: "command",
-        status: res.status,
-      });
+      recordDispatchOk(plugin.pluginKey, "command", res.status);
     }
     // We do NOT consume res body. Plugin completes the deferred
     // reply via RPC interactions.respond. Synchronous body action
     // would race the plugin's own RPC call.
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    recordDispatchAttempt(plugin.pluginKey, {
-      ok: false,
-      source: "command",
-      failureClass: classifyDispatchFetchError(err),
-      message: `${interaction.commandName}: ${msg}`,
-    });
+    recordDispatchFetchFailure(plugin.pluginKey, "command", interaction.commandName, err);
     botEventLog.record(
       "warn",
       "bot",
@@ -413,32 +399,17 @@ async function dispatchAutocomplete(
     });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      recordDispatchAttempt(plugin.pluginKey, {
-        ok: false,
-        source: "autocomplete",
-        status: res.status,
-        failureClass: classifyDispatchHttpFailure(res.status, text),
-        message: `${interaction.commandName}: ${text.slice(0, 120)}`,
-      });
+      recordDispatchHttpFailure(plugin.pluginKey, "autocomplete", interaction.commandName, res.status, text);
       await interaction.respond([]).catch(() => {});
       return;
     }
-    recordDispatchAttempt(plugin.pluginKey, {
-      ok: true,
-      source: "autocomplete",
-      status: res.status,
-    });
+    recordDispatchOk(plugin.pluginKey, "autocomplete", res.status);
     const data = (await res.json().catch(() => null)) as {
       choices?: Array<{ name: string; value: string | number }>;
     } | null;
     await interaction.respond(data?.choices ?? []).catch(() => {});
   } catch (err) {
-    recordDispatchAttempt(plugin.pluginKey, {
-      ok: false,
-      source: "autocomplete",
-      failureClass: classifyDispatchFetchError(err),
-      message: `${interaction.commandName}: ${err instanceof Error ? err.message : String(err)}`,
-    });
+    recordDispatchFetchFailure(plugin.pluginKey, "autocomplete", interaction.commandName, err);
     await interaction.respond([]).catch(() => {});
   } finally {
     clearTimeout(timer);

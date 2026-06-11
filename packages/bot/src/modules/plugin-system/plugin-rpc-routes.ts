@@ -202,6 +202,53 @@ async function resolvePluginAttachments(
   return out;
 }
 
+/** Fetch a channel for a plugin RPC. `undefined` = the 404 was already sent;
+ *  `null` = Discord returned no channel (call sites 400 with their own message). */
+async function fetchChannelOr404(
+  bot: Client,
+  channelId: string,
+  reply: FastifyReply,
+): Promise<ReturnType<Client["channels"]["fetch"]> extends Promise<infer C> ? C | undefined : never> {
+  try {
+    return await bot.channels.fetch(channelId);
+  } catch (err) {
+    const m = err instanceof Error ? err.message : String(err);
+    reply.code(404).send({ error: `channel fetch failed: ${m}` });
+    return undefined;
+  }
+}
+
+/**
+ * Per-guild feature gate shared by every channel-targeted message RPC: the
+ * plugin must have at least one enabled feature in the channel's guild. DM
+ * and group-DM channels are exempt (no guildId); threads inherit guildId from
+ * their parent and go through the gate, which is the intended behaviour.
+ * Writes the 403 and returns false when blocked. `warnVerb` additionally
+ * records a deduped warn event (messages.send's historical behavior).
+ */
+async function passesGuildFeatureGate(
+  channel: NonNullable<Awaited<ReturnType<Client["channels"]["fetch"]>>>,
+  ctx: { pluginId: number; pluginKey: string },
+  reply: FastifyReply,
+  opts: { warnVerb?: string } = {},
+): Promise<boolean> {
+  const channelGuildId =
+    "guildId" in channel && typeof channel.guildId === "string" ? channel.guildId : null;
+  if (!channelGuildId || channel.isDMBased()) return true;
+  const enabledFeatures = await findEnabledFeaturesByPluginGuild(ctx.pluginId, channelGuildId);
+  if (enabledFeatures.length > 0) return true;
+  if (opts.warnVerb && shouldRecord(`plugin-rpc-feature-block:${ctx.pluginId}:${channelGuildId}`)) {
+    botEventLog.record(
+      "warn",
+      "feature",
+      `plugin ${ctx.pluginKey} tried to ${opts.warnVerb} to guild ${channelGuildId} without enabled feature`,
+      { pluginId: ctx.pluginId, guildId: channelGuildId },
+    );
+  }
+  reply.code(403).send({ error: "plugin not enabled in this guild" });
+  return false;
+}
+
 async function requireScope(
   request: FastifyRequest,
   reply: FastifyReply,
@@ -373,48 +420,13 @@ export async function registerPluginRpcRoutes(
       reply.code(400).send({ error: `attachment error: ${m}` });
       return;
     }
-    let channel;
-    try {
-      channel = await bot.channels.fetch(body.channel_id);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      reply.code(404).send({ error: `channel fetch failed: ${msg}` });
-      return;
-    }
+    const channel = await fetchChannelOr404(bot, body.channel_id, reply);
+    if (channel === undefined) return;
     if (!channel || !channel.isTextBased() || !("send" in channel)) {
       reply.code(400).send({ error: "channel is not text-sendable" });
       return;
     }
-    // Per-guild feature gate: plugin must have at least one enabled
-    // feature in the target guild. DM and group-DM channels are exempt
-    // (no guildId). Threads inherit guildId from their parent and go
-    // through the gate, which is the intended behaviour.
-    const channelGuildId =
-      "guildId" in channel && typeof channel.guildId === "string"
-        ? channel.guildId
-        : null;
-    if (channelGuildId && !channel.isDMBased()) {
-      const enabledFeatures = await findEnabledFeaturesByPluginGuild(
-        ctx.pluginId,
-        channelGuildId,
-      );
-      if (enabledFeatures.length === 0) {
-        if (
-          shouldRecord(
-            `plugin-rpc-feature-block:${ctx.pluginId}:${channelGuildId}`,
-          )
-        ) {
-          botEventLog.record(
-            "warn",
-            "feature",
-            `plugin ${ctx.pluginKey} tried to send to guild ${channelGuildId} without enabled feature`,
-            { pluginId: ctx.pluginId, guildId: channelGuildId },
-          );
-        }
-        reply.code(403).send({ error: "plugin not enabled in this guild" });
-        return;
-      }
-    }
+    if (!(await passesGuildFeatureGate(channel, ctx, reply, { warnVerb: "send" }))) return;
     // Sanitize allowed_mentions — plugins must not be able to force
     // mass-ping behaviour. We strip `parse` entirely (the field that
     // toggles broad @everyone / @here / "every role mention in
@@ -586,14 +598,8 @@ export async function registerPluginRpcRoutes(
       reply.code(400).send({ error: "channel_id + message_id required" });
       return;
     }
-    let channel;
-    try {
-      channel = await bot.channels.fetch(body.channel_id);
-    } catch (err) {
-      const m = err instanceof Error ? err.message : String(err);
-      reply.code(404).send({ error: `channel fetch failed: ${m}` });
-      return;
-    }
+    const channel = await fetchChannelOr404(bot, body.channel_id, reply);
+    if (channel === undefined) return;
     if (
       !channel ||
       !channel.isTextBased() ||
@@ -602,23 +608,9 @@ export async function registerPluginRpcRoutes(
       reply.code(400).send({ error: "channel not text-based" });
       return;
     }
-    // Per-guild feature gate — symmetric with messages.send/edit. A
-    // plugin enabled in guild A cannot delete messages in guild B
-    // even if it knows the channel/message id (e.g. logged elsewhere).
-    const channelGuildId =
-      "guildId" in channel && typeof channel.guildId === "string"
-        ? channel.guildId
-        : null;
-    if (channelGuildId && !channel.isDMBased()) {
-      const enabledFeatures = await findEnabledFeaturesByPluginGuild(
-        ctx.pluginId,
-        channelGuildId,
-      );
-      if (enabledFeatures.length === 0) {
-        reply.code(403).send({ error: "plugin not enabled in this guild" });
-        return;
-      }
-    }
+    // Gate symmetric with messages.send/edit: a plugin enabled in guild A
+    // cannot delete messages in guild B even if it knows the ids.
+    if (!(await passesGuildFeatureGate(channel, ctx, reply))) return;
     try {
       const msg = await channel.messages.fetch(body.message_id);
       await msg.delete();
@@ -664,14 +656,8 @@ export async function registerPluginRpcRoutes(
       reply.code(400).send({ error: "channel_id + message_id required" });
       return;
     }
-    let channel;
-    try {
-      channel = await bot.channels.fetch(body.channel_id);
-    } catch (err) {
-      const m = err instanceof Error ? err.message : String(err);
-      reply.code(404).send({ error: `channel fetch failed: ${m}` });
-      return;
-    }
+    const channel = await fetchChannelOr404(bot, body.channel_id, reply);
+    if (channel === undefined) return;
     if (
       !channel ||
       !channel.isTextBased() ||
@@ -680,20 +666,7 @@ export async function registerPluginRpcRoutes(
       reply.code(400).send({ error: "channel not text-based" });
       return;
     }
-    const channelGuildId =
-      "guildId" in channel && typeof channel.guildId === "string"
-        ? channel.guildId
-        : null;
-    if (channelGuildId && !channel.isDMBased()) {
-      const enabledFeatures = await findEnabledFeaturesByPluginGuild(
-        ctx.pluginId,
-        channelGuildId,
-      );
-      if (enabledFeatures.length === 0) {
-        reply.code(403).send({ error: "plugin not enabled in this guild" });
-        return;
-      }
-    }
+    if (!(await passesGuildFeatureGate(channel, ctx, reply))) return;
     if (Array.isArray(body.components)) {
       const failure = findUnownedCustomId(ctx.pluginKey, body.components);
       if (failure) {
@@ -740,33 +713,13 @@ export async function registerPluginRpcRoutes(
         .send({ error: "channel_id + message_id + emoji required" });
       return;
     }
-    let channel;
-    try {
-      channel = await bot.channels.fetch(body.channel_id);
-    } catch (err) {
-      const m = err instanceof Error ? err.message : String(err);
-      reply.code(404).send({ error: `channel fetch failed: ${m}` });
-      return;
-    }
+    const channel = await fetchChannelOr404(bot, body.channel_id, reply);
+    if (channel === undefined) return;
     if (!channel || !channel.isTextBased()) {
       reply.code(400).send({ error: "channel not text-based" });
       return;
     }
-    // Per-guild feature gate — symmetric with messages.send/edit/delete.
-    const channelGuildId =
-      "guildId" in channel && typeof channel.guildId === "string"
-        ? channel.guildId
-        : null;
-    if (channelGuildId && !channel.isDMBased()) {
-      const enabledFeatures = await findEnabledFeaturesByPluginGuild(
-        ctx.pluginId,
-        channelGuildId,
-      );
-      if (enabledFeatures.length === 0) {
-        reply.code(403).send({ error: "plugin not enabled in this guild" });
-        return;
-      }
-    }
+    if (!(await passesGuildFeatureGate(channel, ctx, reply))) return;
     try {
       const msg = await channel.messages.fetch(body.message_id);
       await msg.react(body.emoji);
@@ -803,33 +756,13 @@ export async function registerPluginRpcRoutes(
       reply.code(400).send({ error: "channel_id required" });
       return;
     }
-    let channel;
-    try {
-      channel = await bot.channels.fetch(body.channel_id);
-    } catch (err) {
-      const m = err instanceof Error ? err.message : String(err);
-      reply.code(404).send({ error: `channel fetch failed: ${m}` });
-      return;
-    }
+    const channel = await fetchChannelOr404(bot, body.channel_id, reply);
+    if (channel === undefined) return;
     if (!channel || !channel.isTextBased() || !("sendTyping" in channel)) {
       reply.code(400).send({ error: "channel does not support typing" });
       return;
     }
-    // Per-guild feature gate — symmetric with messages.send.
-    const channelGuildId =
-      "guildId" in channel && typeof channel.guildId === "string"
-        ? channel.guildId
-        : null;
-    if (channelGuildId && !channel.isDMBased()) {
-      const enabledFeatures = await findEnabledFeaturesByPluginGuild(
-        ctx.pluginId,
-        channelGuildId,
-      );
-      if (enabledFeatures.length === 0) {
-        reply.code(403).send({ error: "plugin not enabled in this guild" });
-        return;
-      }
-    }
+    if (!(await passesGuildFeatureGate(channel, ctx, reply))) return;
     try {
       await channel.sendTyping();
       return { ok: true };

@@ -180,7 +180,7 @@ export interface PluginDispatchAttempt {
   /** Epoch ms. */
   at: number;
   ok: boolean;
-  source: "command" | "autocomplete" | "component" | "modal" | "event";
+  source: "command" | "autocomplete" | "component" | "modal" | "event" | "probe";
   status?: number;
   failureClass?: PluginDispatchFailureClass;
   message?: string;
