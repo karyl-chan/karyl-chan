@@ -23,7 +23,13 @@ import {
 import {
   PluginDispatchPool,
   DEFAULT_DISPATCH_POOL_OPTIONS,
+  type DispatchOutcome,
 } from "./plugin-dispatch-pool.js";
+import {
+  recordDispatchAttempt,
+  classifyDispatchHttpFailure,
+  type DispatchAttempt,
+} from "./plugin-dispatch-health.service.js";
 import {
   EventIndex,
   collectSubscribedEvents,
@@ -50,6 +56,34 @@ import type { PluginEventBus } from "../../adapters/plugin-event-bus.js";
  */
 
 const DEFAULT_EVENTS_PATH = "/events";
+
+/**
+ * Map a pool outcome onto the dispatch-health vocabulary (PM-7.9.1).
+ * Failure outcomes don't carry a body, so the awaiting-register
+ * refinement of 503s isn't available on this path — a plain
+ * `http_error` is recorded instead. Pool-level timeouts surface as
+ * undici errors and land in `network`.
+ */
+function dispatchAttemptFromOutcome(
+  outcome: DispatchOutcome,
+  eventType: string,
+): Omit<DispatchAttempt, "at"> {
+  if (outcome.ok) {
+    return { ok: true, source: "event", status: outcome.status };
+  }
+  return {
+    ok: false,
+    source: "event",
+    ...(outcome.status !== undefined ? { status: outcome.status } : {}),
+    failureClass:
+      outcome.reason === "http_error"
+        ? classifyDispatchHttpFailure(outcome.status ?? 0, "")
+        : outcome.reason === "connect_refused"
+          ? "network"
+          : outcome.reason,
+    message: `${eventType}: ${outcome.message}`,
+  };
+}
 
 /**
  * Per-plugin outbound dispatch pool: HTTP keep-alive + concurrency
@@ -268,6 +302,7 @@ async function postEventToPlugin(
     plugin_id: plugin.pluginKey,
     shard_id: String(config.bot.shardId),
   });
+  recordDispatchAttempt(plugin.pluginKey, dispatchAttemptFromOutcome(outcome, eventType));
   if (outcome.ok) return;
   // Per (plugin, eventType, reason) dedup keeps a wedged plugin from
   // flooding the bot event log at message-traffic rate.

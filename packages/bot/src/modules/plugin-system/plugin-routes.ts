@@ -37,6 +37,10 @@ import {
   dropDispatchPoolForPlugin,
   removePluginFromIndex,
 } from "./plugin-event-bridge.service.js";
+import {
+  getDispatchHealth,
+  clearDispatchHealth,
+} from "./plugin-dispatch-health.service.js";
 import { invalidatePluginById } from "./plugin-lookup-cache.js";
 import { dispatchLifecycleToPlugin } from "./plugin-lifecycle-dispatch.service.js";
 import { recordAudit } from "../admin/admin-audit.service.js";
@@ -484,6 +488,11 @@ export async function registerPluginRoutes(
         // attempted since this bot process started (e.g. plugin
         // registered before the last bot restart).
         commandSync: pluginRegistry.getCommandSyncState(p.pluginKey),
+        // Dispatch-path health (PM-7.9.1). null = no dispatch attempted
+        // since this bot process started. Distinct from liveness: a
+        // plugin can heartbeat green while rejecting every dispatch
+        // (e.g. HMAC scheme mismatch).
+        dispatch: getDispatchHealth(p.pluginKey),
       })),
     };
   });
@@ -523,6 +532,7 @@ export async function registerPluginRoutes(
           manifest: safeParse(p.manifestJson),
         },
         commandSync: pluginRegistry.getCommandSyncState(p.pluginKey),
+        dispatch: getDispatchHealth(p.pluginKey),
         ...(health ? { health } : {}),
         ...(metrics ? { metrics } : {}),
       };
@@ -594,6 +604,7 @@ export async function registerPluginRoutes(
             adminEnabled: c.adminEnabled,
             manifestJson: c.manifestJson,
           })),
+          dispatch: getDispatchHealth(p.pluginKey),
           ...(health ? { health } : {}),
           ...(metrics ? { metrics } : {}),
         },
@@ -1493,6 +1504,7 @@ export async function registerPluginRoutes(
       removePluginFromIndex(pluginId);
       invalidatePluginById(pluginId);
       dropDispatchPoolForPlugin(plugin.pluginKey);
+      clearDispatchHealth(plugin.pluginKey);
 
       // 4b. Clear the health + metrics snapshots keyed by pluginKey. Same
       // rationale as the dispatch-pool drop above: a plugin re-registered
