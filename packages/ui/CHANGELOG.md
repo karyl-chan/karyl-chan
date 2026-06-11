@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.0](https://github.com/karyl-chan/karyl-chan/compare/ui-v0.2.0...ui-v0.3.0) (2026-06-11)
+
+
+### ⚠ BREAKING CHANGES
+
+* **ui:** AppModal now pads its body by default; slot content with its own outer padding will double-pad. Either remove the caller's wrapper padding or pass padding="0".
+
+### Features
+
+* **ui:** AppModal pads body by default via padding prop ([c6c0cdc](https://github.com/karyl-chan/karyl-chan/commit/c6c0cdc1d4a6eced05904f6858fbdf477697193f))
+
 ## [0.2.0](https://github.com/karyl-chan/karyl-chan/compare/ui-v0.1.0...ui-v0.2.0) (2026-05-27)
 
 
