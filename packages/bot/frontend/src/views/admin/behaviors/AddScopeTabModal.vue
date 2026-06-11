@@ -159,7 +159,6 @@ async function onSubmit() {
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
-    padding: 0.75rem;
 }
 .field {
     display: flex;

@@ -384,7 +384,6 @@ const matchSummary = computed(() =>
 .empty { padding: 1.2rem; text-align: center; }
 
 .add-body {
-    padding: 0.8rem 0.9rem;
     display: flex;
     flex-direction: column;
     gap: 0.6rem;

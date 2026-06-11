@@ -313,7 +313,6 @@ async function submit() {
 
 <style scoped>
 .body {
-    padding: 0.85rem 0.95rem;
     display: flex;
     flex-direction: column;
     gap: 0.55rem;

@@ -152,7 +152,7 @@ const errorMessage = computed(() => selected.value === DM_KEY ? dmError.value : 
 </script>
 
 <template>
-    <AppModal :visible="visible" :title="$t('messages.forwardTitle')" width="min(440px, 92vw)" @close="emit('close')">
+    <AppModal :visible="visible" :title="$t('messages.forwardTitle')" width="min(440px, 92vw)" padding="0" @close="emit('close')">
         <div class="dest">
             <label class="dest-label">{{ $t('messages.forwardDestination') }}</label>
             <AppSelect

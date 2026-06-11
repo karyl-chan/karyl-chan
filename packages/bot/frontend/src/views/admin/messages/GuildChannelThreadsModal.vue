@@ -86,6 +86,7 @@ function pick(thread: GuildActiveThread) {
         :visible="visible"
         :title="$t('threads.browseTitle', { channel: channelName ?? '' })"
         width="min(440px, 92vw)"
+        padding="0"
         @close="emit('close')"
     >
         <div class="tabs">

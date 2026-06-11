@@ -365,7 +365,6 @@ function onPickStickerFile(event: Event) {
 .link.danger { color: var(--danger); }
 
 .modal-body {
-    padding: 0.8rem 0.9rem;
     display: flex;
     flex-direction: column;
     gap: 0.6rem;

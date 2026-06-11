@@ -270,7 +270,6 @@ const showAuthMode = computed(() => form.value.webhookSecret.length > 0);
 
 <style scoped>
 .modal-body {
-    padding: 1rem;
     display: flex;
     flex-direction: column;
     gap: 0.9rem;

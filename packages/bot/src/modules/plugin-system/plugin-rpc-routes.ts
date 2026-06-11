@@ -293,8 +293,15 @@ export async function registerPluginRpcRoutes(
   /**
    * POST /api/plugin/messages.send
    * Body: { channel_id: string, content?: string, embeds?: APIEmbed[],
-   *         allowed_mentions?: { parse?: ('users'|'roles'|'everyone')[] } }
+   *         allowed_mentions?: { parse?: ('users'|'roles'|'everyone')[] },
+   *         reply_to?: string }
    * Returns: { id, channel_id }
+   *
+   * `reply_to` (optional message id) sends the message as a native
+   * Discord reply to that message. `failIfNotExists: false` so a
+   * since-deleted target degrades to a plain send instead of erroring
+   * — deliberate: delayed replies (the main reply_to consumer) may
+   * outlive their anchor.
    *
    * The plugin can target any text channel the bot has access to in
    * any guild it's in, plus DM channels of any user. A future revision
@@ -309,6 +316,7 @@ export async function registerPluginRpcRoutes(
       components?: unknown;
       allowed_mentions?: unknown;
       attachments?: unknown;
+      reply_to?: unknown;
     };
   }>("/api/plugin/messages.send", async (request, reply) => {
     const ctx = await requireScope(request, reply, "messages.send");
@@ -331,6 +339,16 @@ export async function registerPluginRpcRoutes(
       reply.code(400).send({ error: "content or embeds required" });
       return;
     }
+    if (body.reply_to !== undefined) {
+      if (
+        typeof body.reply_to !== "string" ||
+        !SNOWFLAKE_RE.test(body.reply_to)
+      ) {
+        reply.code(400).send({ error: "reply_to must be a message id" });
+        return;
+      }
+    }
+    const replyTo = typeof body.reply_to === "string" ? body.reply_to : undefined;
     if (components) {
       const failure = findUnownedCustomId(ctx.pluginKey, components);
       if (failure) {
@@ -421,6 +439,9 @@ export async function registerPluginRpcRoutes(
                 name: a.name,
               })),
             }
+          : {}),
+        ...(replyTo
+          ? { reply: { messageReference: replyTo, failIfNotExists: false } }
           : {}),
       });
       botEventLog.record(
@@ -743,6 +764,70 @@ export async function registerPluginRpcRoutes(
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
       reply.code(discordErrorStatus(err)).send({ error: `add_reaction failed: ${m}` });
+    }
+  });
+
+  // ─── messages.trigger_typing ──────────────────────────────────────
+  /**
+   * POST /api/plugin/messages.trigger_typing
+   * Body: { channel_id: string }
+   * Returns: { ok: true }
+   *
+   * Fires Discord's typing indicator in the channel. The indicator
+   * auto-expires after ~10 seconds; a plugin that wants to hold it
+   * through a longer "typing" period re-calls this on its own cadence
+   * (the bot deliberately does NOT loop — one RPC, one trigger, so the
+   * audit story stays 1:1 with Discord calls).
+   */
+  server.post<{
+    Body: { channel_id?: unknown };
+  }>("/api/plugin/messages.trigger_typing", async (request, reply) => {
+    const ctx = await requireScope(request, reply, "messages.trigger_typing");
+    if (!ctx) return;
+    if (!bot) {
+      reply.code(503).send({ error: "bot client unavailable" });
+      return;
+    }
+    const body = request.body ?? {};
+    if (typeof body.channel_id !== "string" || body.channel_id.length === 0) {
+      reply.code(400).send({ error: "channel_id required" });
+      return;
+    }
+    let channel;
+    try {
+      channel = await bot.channels.fetch(body.channel_id);
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      reply.code(404).send({ error: `channel fetch failed: ${m}` });
+      return;
+    }
+    if (!channel || !channel.isTextBased() || !("sendTyping" in channel)) {
+      reply.code(400).send({ error: "channel does not support typing" });
+      return;
+    }
+    // Per-guild feature gate — symmetric with messages.send.
+    const channelGuildId =
+      "guildId" in channel && typeof channel.guildId === "string"
+        ? channel.guildId
+        : null;
+    if (channelGuildId && !channel.isDMBased()) {
+      const enabledFeatures = await findEnabledFeaturesByPluginGuild(
+        ctx.pluginId,
+        channelGuildId,
+      );
+      if (enabledFeatures.length === 0) {
+        reply.code(403).send({ error: "plugin not enabled in this guild" });
+        return;
+      }
+    }
+    try {
+      await channel.sendTyping();
+      return { ok: true };
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      reply
+        .code(discordErrorStatus(err))
+        .send({ error: `trigger_typing failed: ${m}` });
     }
   });
 
