@@ -51,11 +51,11 @@ export type DispatchFailureClass =
    *  plugin container), or an unresolvable endpoint URL. The dispatch
    *  never left the bot — but from the operator's view the path is
    *  just as broken as a network failure. */
-  | "unreachable"
-  /** Event-path circuit breaker short-circuited the dispatch. */
-  | "breaker_open"
-  /** Event-path in-flight cap shed the dispatch. */
-  | "shed";
+  | "unreachable";
+// breaker_open / shed short-circuits are deliberately NOT part of this
+// vocabulary: they are derivative of already-recorded failures and
+// occur at message-traffic rate — see dispatchAttemptFromOutcome in
+// the event bridge.
 
 export interface DispatchAttempt {
   /** Epoch ms when the outcome was recorded. */
@@ -78,6 +78,16 @@ export interface DispatchHealthState {
   lastOkAt: number | null;
   /** Newest-first window of recent attempts. */
   recent: DispatchAttempt[];
+  /**
+   * Most recent probe verdict, kept OUTSIDE the traffic counters: a
+   * probe verifies strictly less than real traffic does (it 400s
+   * before any handler runs and never touches /events), so a passing
+   * probe must not reset a failure streak built by handler 500s, and
+   * probe failures against a mid-restart plugin must not light the
+   * "user-visible commands failing" alarm. A probe rejected_401 IS
+   * alarm-worthy on its own — the UI keys on this field for that.
+   */
+  lastProbe?: DispatchAttempt | null;
 }
 
 /** How many attempts the per-plugin window keeps (newest first). */
@@ -120,6 +130,35 @@ export function recordDispatchAttempt(
   if (state.recent.length > DISPATCH_RECENT_CAP) {
     state.recent.length = DISPATCH_RECENT_CAP;
   }
+}
+
+/**
+ * Probe-verdict recorder (PM-7.9.4): updates `lastProbe` only, never
+ * the traffic counters/window — see the field's doc for why.
+ */
+export function recordProbeResult(
+  pluginKey: string,
+  attempt: Omit<DispatchAttempt, "at" | "source">,
+): void {
+  let state = states.get(pluginKey);
+  if (!state) {
+    state = {
+      total: 0,
+      okCount: 0,
+      consecutiveFailures: 0,
+      lastOkAt: null,
+      recent: [],
+    };
+    states.set(pluginKey, state);
+  }
+  state.lastProbe = {
+    ...attempt,
+    ...(attempt.message !== undefined
+      ? { message: attempt.message.slice(0, MESSAGE_CAP) }
+      : {}),
+    source: "probe",
+    at: Date.now(),
+  };
 }
 
 /** The standard ok-outcome recorder for a dispatch fetch. */

@@ -173,9 +173,7 @@ export type PluginDispatchFailureClass =
   | "http_error"
   | "timeout"
   | "network"
-  | "unreachable"
-  | "breaker_open"
-  | "shed";
+  | "unreachable";
 
 export interface PluginDispatchAttempt {
   /** Epoch ms. */
@@ -201,6 +199,13 @@ export interface PluginDispatchHealth {
   lastOkAt: number | null;
   /** Newest-first window of recent attempts. */
   recent: PluginDispatchAttempt[];
+  /**
+   * Most recent probe verdict — kept outside the traffic counters
+   * (a probe verifies less than real traffic; its result must not
+   * reset or build the failure streak). A failed probe with
+   * failureClass rejected_401 is alarm-worthy on its own.
+   */
+  lastProbe?: PluginDispatchAttempt | null;
 }
 
 export interface PluginSdkCompat {

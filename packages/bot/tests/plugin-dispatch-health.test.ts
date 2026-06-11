@@ -158,3 +158,42 @@ describe("recordDispatchUnreachable", () => {
     expect(s.recent[0]!.message).toContain("ENOTFOUND");
   });
 });
+
+describe("recordProbeResult", () => {
+  it("sets lastProbe without touching counters, window, or streak", async () => {
+    const { recordProbeResult } = await import(
+      "../src/modules/plugin-system/plugin-dispatch-health.service.js"
+    );
+    recordDispatchAttempt("p", {
+      ok: false,
+      source: "command",
+      status: 500,
+      failureClass: "http_error",
+    });
+    recordProbeResult("p", { ok: true, status: 400, message: "probe ok" });
+    const s = getDispatchHealth("p")!;
+    expect(s.lastProbe).toMatchObject({ ok: true, source: "probe", status: 400 });
+    expect(s.consecutiveFailures).toBe(1);
+    expect(s.total).toBe(1);
+    expect(s.recent).toHaveLength(1);
+
+    // And a probe failure doesn't build the streak either.
+    recordProbeResult("p", {
+      ok: false,
+      failureClass: "rejected_401",
+      message: "probe rejected",
+    });
+    expect(getDispatchHealth("p")!.consecutiveFailures).toBe(1);
+    expect(getDispatchHealth("p")!.lastProbe!.failureClass).toBe("rejected_401");
+  });
+
+  it("creates state for a plugin with no traffic yet", async () => {
+    const { recordProbeResult } = await import(
+      "../src/modules/plugin-system/plugin-dispatch-health.service.js"
+    );
+    recordProbeResult("fresh", { ok: false, failureClass: "rejected_401" });
+    const s = getDispatchHealth("fresh")!;
+    expect(s.total).toBe(0);
+    expect(s.lastProbe!.failureClass).toBe("rejected_401");
+  });
+});

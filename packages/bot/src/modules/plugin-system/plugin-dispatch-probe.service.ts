@@ -31,7 +31,7 @@ import {
 } from "./models/plugin.model.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import {
-  recordDispatchAttempt,
+  recordProbeResult,
   classifyDispatchFetchError,
   classifyDispatchHttpFailure,
 } from "./plugin-dispatch-health.service.js";
@@ -79,6 +79,17 @@ export async function probePluginDispatch(
   const manifest = parsePluginManifest(plugin);
   const template =
     manifest?.endpoints?.plugin_command ?? DEFAULT_COMMAND_PATH;
+  if (!template.includes("{command_name}")) {
+    // A fixed dispatch path (register doesn't validate the template):
+    // substituting nothing would aim the synthetic payload at the
+    // plugin's REAL endpoint, where a non-SDK implementation might
+    // execute it — the probe's no-side-effects promise only holds for
+    // per-command paths.
+    return {
+      outcome: "skipped",
+      reason: "endpoint template lacks {command_name} placeholder",
+    };
+  }
   const url = resolvePluginEndpoint(plugin.url, template, {
     command_name: PROBE_COMMAND_NAME,
   });
@@ -89,9 +100,8 @@ export async function probePluginDispatch(
   if (!preflight.ok) {
     // Host-policy refusal or DNS failure — for a probe this is a
     // finding, not a skip: the dispatch path cannot reach the plugin.
-    recordDispatchAttempt(plugin.pluginKey, {
+    recordProbeResult(plugin.pluginKey, {
       ok: false,
-      source: "probe",
       failureClass: "unreachable",
       message: `probe: ${preflight.reason}`,
     });
@@ -125,9 +135,15 @@ export async function probePluginDispatch(
       verdict = { outcome: "rejected_401" };
     } else if (failureClass === "awaiting_register") {
       verdict = { outcome: "awaiting_register" };
-    } else if (res.ok || res.status === 400) {
-      // Every 400 branch in the SDK's command route sits AFTER the
-      // signature gate, so a 400 proves the path as well as a 2xx.
+    } else if (res.ok) {
+      verdict = { outcome: "signature_ok", status: res.status };
+    } else if (res.status === 400 && isSdkPostAuth400(text)) {
+      // The SDK's 400s all sit AFTER the signature gate, so a 400
+      // proves the path — but ONLY when the body carries the SDK's
+      // own post-auth markers. A bare 400 can come from a reverse
+      // proxy / WAF / non-SDK endpoint that never ran the gate, and
+      // calling that "signature verified" would be a false green in
+      // the middle of the exact incident this probe exists to catch.
       verdict = { outcome: "signature_ok", status: res.status };
     } else {
       verdict = {
@@ -141,9 +157,8 @@ export async function probePluginDispatch(
       outcome: "inconclusive",
       message: err instanceof Error ? err.message : String(err),
     };
-    recordDispatchAttempt(plugin.pluginKey, {
+    recordProbeResult(plugin.pluginKey, {
       ok: false,
-      source: "probe",
       failureClass: classifyDispatchFetchError(err),
       message: `probe: ${verdict.message}`,
     });
@@ -154,35 +169,31 @@ export async function probePluginDispatch(
 
   switch (verdict.outcome) {
     case "signature_ok":
-      recordDispatchAttempt(plugin.pluginKey, {
+      recordProbeResult(plugin.pluginKey, {
         ok: true,
-        source: "probe",
         status: verdict.status,
         message: "probe: signature verified",
       });
       break;
     case "rejected_401":
-      recordDispatchAttempt(plugin.pluginKey, {
+      recordProbeResult(plugin.pluginKey, {
         ok: false,
-        source: "probe",
         status: 401,
         failureClass: "rejected_401",
         message: "probe: signature rejected",
       });
       break;
     case "awaiting_register":
-      recordDispatchAttempt(plugin.pluginKey, {
+      recordProbeResult(plugin.pluginKey, {
         ok: false,
-        source: "probe",
         status: 503,
         failureClass: "awaiting_register",
         message: "probe: plugin awaiting register",
       });
       break;
     case "inconclusive":
-      recordDispatchAttempt(plugin.pluginKey, {
+      recordProbeResult(plugin.pluginKey, {
         ok: false,
-        source: "probe",
         ...(verdict.status !== undefined ? { status: verdict.status } : {}),
         failureClass: "http_error",
         message: `probe: ${verdict.message}`,
@@ -190,6 +201,18 @@ export async function probePluginDispatch(
       break;
   }
   return verdict;
+}
+
+/**
+ * The SDK's post-signature-gate 400 bodies for a user-less probe
+ * payload. Pinned on the SDK side by the route-order contract test
+ * (plugin-sdk tests) — keep the two in sync.
+ */
+function isSdkPostAuth400(bodyText: string): boolean {
+  return (
+    bodyText.includes("missing user.id") ||
+    bodyText.includes("command_name mismatch")
+  );
 }
 
 /**

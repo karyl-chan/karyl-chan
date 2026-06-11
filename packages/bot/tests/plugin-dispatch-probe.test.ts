@@ -64,7 +64,7 @@ afterEach(() => {
 });
 
 describe("probePluginDispatch", () => {
-  it("treats the SDK's missing-user 400 as signature_ok and records success", async () => {
+  it("treats the SDK's marked missing-user 400 as signature_ok, recorded on lastProbe only", async () => {
     const fetchMock = stubFetch(400, '{"error":"missing user.id"}');
     const v = await probePluginDispatch(row());
     expect(v).toEqual({ outcome: "signature_ok", status: 400 });
@@ -79,28 +79,62 @@ describe("probePluginDispatch", () => {
     const headers = (init as RequestInit).headers as Record<string, string>;
     expect(Object.keys(headers).join(",")).toMatch(/x-karyl/i);
 
+    // Probe verdicts live on lastProbe and never touch the traffic
+    // counters: a passing probe must not reset a real failure streak.
     const h = getDispatchHealth("probe-target")!;
-    expect(h.recent[0]).toMatchObject({ ok: true, source: "probe", status: 400 });
-    expect(h.consecutiveFailures).toBe(0);
+    expect(h.lastProbe).toMatchObject({ ok: true, source: "probe", status: 400 });
+    expect(h.total).toBe(0);
+    expect(h.recent).toHaveLength(0);
   });
 
-  it("maps 401 to rejected_401 and feeds the failure streak", async () => {
+  it("does NOT trust a bare 400 (proxy/non-SDK endpoint): inconclusive", async () => {
+    stubFetch(400, '{"error":"bad request"}');
+    const v = await probePluginDispatch(row());
+    expect(v.outcome).toBe("inconclusive");
+    expect(getDispatchHealth("probe-target")!.lastProbe).toMatchObject({
+      ok: false,
+      failureClass: "http_error",
+    });
+  });
+
+  it("a probe success never resets a real-traffic failure streak", async () => {
+    const { recordDispatchAttempt } = await import(
+      "../src/modules/plugin-system/plugin-dispatch-health.service.js"
+    );
+    for (let i = 0; i < 4; i++) {
+      recordDispatchAttempt("probe-target", {
+        ok: false,
+        source: "command",
+        status: 500,
+        failureClass: "http_error",
+      });
+    }
+    stubFetch(400, '{"error":"missing user.id"}');
+    await probePluginDispatch(row());
+    const h = getDispatchHealth("probe-target")!;
+    expect(h.consecutiveFailures).toBe(4);
+    expect(h.lastProbe!.ok).toBe(true);
+  });
+
+  it("maps 401 to rejected_401 on lastProbe without touching the streak", async () => {
     stubFetch(401, '{"error":"signature mismatch"}');
     const v = await probePluginDispatch(row());
     expect(v).toEqual({ outcome: "rejected_401" });
     const h = getDispatchHealth("probe-target")!;
-    expect(h.recent[0]).toMatchObject({
+    expect(h.lastProbe).toMatchObject({
       ok: false,
       source: "probe",
       failureClass: "rejected_401",
     });
+    expect(h.consecutiveFailures).toBe(0);
+    expect(h.recent).toHaveLength(0);
   });
 
   it("maps the unregistered 503 to awaiting_register", async () => {
     stubFetch(503, '{"error":"dispatch HMAC key not available"}');
     const v = await probePluginDispatch(row());
     expect(v).toEqual({ outcome: "awaiting_register" });
-    expect(getDispatchHealth("probe-target")!.recent[0]!.failureClass).toBe(
+    expect(getDispatchHealth("probe-target")!.lastProbe!.failureClass).toBe(
       "awaiting_register",
     );
   });
@@ -115,7 +149,7 @@ describe("probePluginDispatch", () => {
     );
     const v = await probePluginDispatch(row());
     expect(v.outcome).toBe("inconclusive");
-    expect(getDispatchHealth("probe-target")!.recent[0]!.failureClass).toBe(
+    expect(getDispatchHealth("probe-target")!.lastProbe!.failureClass).toBe(
       "network",
     );
   });
@@ -128,8 +162,22 @@ describe("probePluginDispatch", () => {
     expect(getDispatchHealth("probe-target")).toBeNull();
   });
 
+  it("skips a fixed endpoint template (no {command_name} placeholder) without traffic", async () => {
+    const fetchMock = stubFetch(400, '{"error":"missing user.id"}');
+    const v = await probePluginDispatch(
+      row({
+        manifestJson: JSON.stringify({
+          plugin: { id: "probe-target" },
+          endpoints: { plugin_command: "/dispatch" },
+        }),
+      }),
+    );
+    expect(v.outcome).toBe("skipped");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("honors a manifest endpoint template override", async () => {
-    const fetchMock = stubFetch(400);
+    const fetchMock = stubFetch(400, '{"error":"missing user.id"}');
     await probePluginDispatch(
       row({
         manifestJson: JSON.stringify({

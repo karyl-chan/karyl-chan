@@ -61,13 +61,24 @@ const DEFAULT_EVENTS_PATH = "/events";
  * refinement of 503s isn't available on this path — a plain
  * `http_error` is recorded instead. Pool-level timeouts surface as
  * undici errors and land in `network`.
+ *
+ * Returns null for `breaker_open` / `shed` short-circuits: they never
+ * touch the network and occur at message-traffic rate once the
+ * breaker trips, so recording them floods the 20-entry recent window
+ * within seconds — evicting the root-cause rejected_401 entries the
+ * badge keys on and inflating consecutiveFailures into the thousands.
+ * The real failures that tripped the breaker were already recorded;
+ * the metrics counters above still count every short-circuit.
  */
 function dispatchAttemptFromOutcome(
   outcome: DispatchOutcome,
   eventType: string,
-): Omit<DispatchAttempt, "at"> {
+): Omit<DispatchAttempt, "at"> | null {
   if (outcome.ok) {
     return { ok: true, source: "event", status: outcome.status };
+  }
+  if (outcome.reason === "breaker_open" || outcome.reason === "shed") {
+    return null;
   }
   return {
     ok: false,
@@ -76,9 +87,7 @@ function dispatchAttemptFromOutcome(
     failureClass:
       outcome.reason === "http_error"
         ? classifyDispatchHttpFailure(outcome.status ?? 0, "")
-        : outcome.reason === "connect_refused"
-          ? "network"
-          : outcome.reason,
+        : "network",
     message: `${eventType}: ${outcome.message}`,
   };
 }
@@ -306,7 +315,8 @@ async function postEventToPlugin(
     plugin_id: plugin.pluginKey,
     shard_id: String(config.bot.shardId),
   });
-  recordDispatchAttempt(plugin.pluginKey, dispatchAttemptFromOutcome(outcome, eventType));
+  const attempt = dispatchAttemptFromOutcome(outcome, eventType);
+  if (attempt) recordDispatchAttempt(plugin.pluginKey, attempt);
   if (outcome.ok) return;
   // Per (plugin, eventType, reason) dedup keeps a wedged plugin from
   // flooding the bot event log at message-traffic rate.
