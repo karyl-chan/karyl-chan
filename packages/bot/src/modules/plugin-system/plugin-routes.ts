@@ -41,6 +41,7 @@ import {
   getDispatchHealth,
   clearDispatchHealth,
 } from "./plugin-dispatch-health.service.js";
+import { evaluateSdkCompatFromManifestJson } from "./plugin-sdk-compat.js";
 import { invalidatePluginById } from "./plugin-lookup-cache.js";
 import { dispatchLifecycleToPlugin } from "./plugin-lifecycle-dispatch.service.js";
 import { recordAudit } from "../admin/admin-audit.service.js";
@@ -493,6 +494,10 @@ export async function registerPluginRoutes(
         // plugin can heartbeat green while rejecting every dispatch
         // (e.g. HMAC scheme mismatch).
         dispatch: getDispatchHealth(p.pluginKey),
+        // SDK wire-format compat verdict (PM-7.9.3). `unknown` on a
+        // placeholder row just means "never registered" — combine with
+        // version === "0.0.0" before alarming.
+        sdkCompat: evaluateSdkCompatFromManifestJson(p.manifestJson),
       })),
     };
   });
@@ -533,6 +538,7 @@ export async function registerPluginRoutes(
         },
         commandSync: pluginRegistry.getCommandSyncState(p.pluginKey),
         dispatch: getDispatchHealth(p.pluginKey),
+        sdkCompat: evaluateSdkCompatFromManifestJson(p.manifestJson),
         ...(health ? { health } : {}),
         ...(metrics ? { metrics } : {}),
       };
@@ -605,6 +611,7 @@ export async function registerPluginRoutes(
             manifestJson: c.manifestJson,
           })),
           dispatch: getDispatchHealth(p.pluginKey),
+          sdkCompat: evaluateSdkCompatFromManifestJson(p.manifestJson),
           ...(health ? { health } : {}),
           ...(metrics ? { metrics } : {}),
         },
