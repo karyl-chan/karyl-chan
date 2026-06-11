@@ -8,8 +8,7 @@
   "packages": {
     "packages/bot": {
       "component": "bot",
-      "package-name": "@karyl-chan/bot",
-      "release-as": "1.7.0"
+      "package-name": "@karyl-chan/bot"
     },
     "packages/plugin-sdk": {
       "component": "plugin-sdk",
