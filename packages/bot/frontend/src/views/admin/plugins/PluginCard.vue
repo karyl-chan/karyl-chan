@@ -186,6 +186,7 @@ const probeText = computed(() => {
         case 'signature_ok': return t('admin.plugins.probeOk', { status: p.status });
         case 'rejected_401': return t('admin.plugins.probeRejected');
         case 'awaiting_register': return t('admin.plugins.probeAwaiting');
+        case 'unreachable': return t('admin.plugins.probeUnreachable', { reason: p.reason });
         case 'skipped': return t('admin.plugins.probeSkipped', { reason: p.reason });
         default: return t('admin.plugins.probeInconclusive', { m: p.message ?? '' });
     }

@@ -29,18 +29,18 @@ import {
   findPluginByKey,
   type PluginRow,
 } from "./models/plugin.model.js";
-import type { PluginManifest } from "./plugin-registry.service.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
-import {
-  assertPluginTarget,
-  HostPolicyError,
-} from "../../utils/host-policy.js";
-import { buildOutboundSignatureHeaders } from "../../utils/hmac.js";
 import {
   recordDispatchAttempt,
   classifyDispatchFetchError,
   classifyDispatchHttpFailure,
 } from "./plugin-dispatch-health.service.js";
+import {
+  buildSignedDispatchHeaders,
+  parsePluginManifest,
+  preflightPluginTarget,
+  resolvePluginEndpoint,
+} from "./plugin-dispatch-util.js";
 
 /** Never collides with a real handler: the missing-user 400 fires
  *  before the SDK's handler lookup even for a same-named command. */
@@ -61,7 +61,10 @@ export type ProbeVerdict =
   | { outcome: "awaiting_register" }
   /** Transport error or a status that proves nothing either way. */
   | { outcome: "inconclusive"; status?: number; message: string }
-  /** Probe not attempted (no dispatch key / bad URL / host policy). */
+  /** Pre-flight refused: host-policy denial or DNS failure (plugin
+   *  container gone). The dispatch path is broken — recorded as such. */
+  | { outcome: "unreachable"; reason: string }
+  /** Probe not attempted (no dispatch key / bad URL). */
   | { outcome: "skipped"; reason: string };
 
 export async function probePluginDispatch(
@@ -70,33 +73,29 @@ export async function probePluginDispatch(
   const key = plugin.dispatchHmacKey;
   if (!key) return { outcome: "skipped", reason: "no dispatch HMAC key" };
 
-  let manifest: PluginManifest | null = null;
-  try {
-    manifest = JSON.parse(plugin.manifestJson) as PluginManifest;
-  } catch {
-    /* placeholder row — fall through to the default path template */
-  }
+  // Resolve and sign through the SAME helpers real dispatches use —
+  // the probe's verdict is only meaningful if it hits the exact URL
+  // with the exact signature a real command dispatch would.
+  const manifest = parsePluginManifest(plugin);
   const template =
     manifest?.endpoints?.plugin_command ?? DEFAULT_COMMAND_PATH;
-  const path = template
-    .split("{command_name}")
-    .join(encodeURIComponent(PROBE_COMMAND_NAME));
-  let url: URL;
-  try {
-    url = new URL(path, plugin.url);
-  } catch {
+  const url = resolvePluginEndpoint(plugin.url, template, {
+    command_name: PROBE_COMMAND_NAME,
+  });
+  if (!url) {
     return { outcome: "skipped", reason: "unresolvable plugin URL" };
   }
-  const port = url.port
-    ? Number(url.port)
-    : url.protocol === "https:"
-      ? 443
-      : 80;
-  try {
-    await assertPluginTarget(url.hostname, port);
-  } catch (err) {
-    if (!(err instanceof HostPolicyError)) throw err;
-    return { outcome: "skipped", reason: `host policy: ${err.message}` };
+  const preflight = await preflightPluginTarget(url);
+  if (!preflight.ok) {
+    // Host-policy refusal or DNS failure — for a probe this is a
+    // finding, not a skip: the dispatch path cannot reach the plugin.
+    recordDispatchAttempt(plugin.pluginKey, {
+      ok: false,
+      source: "probe",
+      failureClass: "unreachable",
+      message: `probe: ${preflight.reason}`,
+    });
+    return { outcome: "unreachable", reason: preflight.reason };
   }
 
   // `user` deliberately absent → the SDK answers 400 right after the
@@ -105,16 +104,13 @@ export async function probePluginDispatch(
     command_name: PROBE_COMMAND_NAME,
     probe: true,
   });
-  const headers = {
-    "Content-Type": "application/json",
-    ...buildOutboundSignatureHeaders(key, "POST", url.pathname, body),
-  };
+  const headers = buildSignedDispatchHeaders(key, url, body);
 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
   let verdict: ProbeVerdict;
   try {
-    const res = await fetch(url.toString(), {
+    const res = await fetch(url, {
       method: "POST",
       headers,
       body,

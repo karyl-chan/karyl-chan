@@ -173,6 +173,7 @@ export type PluginDispatchFailureClass =
   | "http_error"
   | "timeout"
   | "network"
+  | "unreachable"
   | "breaker_open"
   | "shed";
 
@@ -180,7 +181,14 @@ export interface PluginDispatchAttempt {
   /** Epoch ms. */
   at: number;
   ok: boolean;
-  source: "command" | "autocomplete" | "component" | "modal" | "event" | "probe";
+  source:
+    | "command"
+    | "autocomplete"
+    | "component"
+    | "modal"
+    | "event"
+    | "lifecycle"
+    | "probe";
   status?: number;
   failureClass?: PluginDispatchFailureClass;
   message?: string;
@@ -208,6 +216,7 @@ export type PluginDispatchProbeResult =
   | { outcome: "rejected_401" }
   | { outcome: "awaiting_register" }
   | { outcome: "inconclusive"; status?: number; message: string }
+  | { outcome: "unreachable"; reason: string }
   | { outcome: "skipped"; reason: string };
 
 /**

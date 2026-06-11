@@ -141,3 +141,20 @@ describe("classifyDispatchFetchError", () => {
     expect(classifyDispatchFetchError("weird")).toBe("network");
   });
 });
+
+describe("recordDispatchUnreachable", () => {
+  it("records a pre-flight failure as an unreachable attempt", async () => {
+    const { recordDispatchUnreachable } = await import(
+      "../src/modules/plugin-system/plugin-dispatch-health.service.js"
+    );
+    recordDispatchUnreachable("p", "command", "my-cmd", "getaddrinfo ENOTFOUND plugin");
+    const s = getDispatchHealth("p")!;
+    expect(s.consecutiveFailures).toBe(1);
+    expect(s.recent[0]).toMatchObject({
+      ok: false,
+      source: "command",
+      failureClass: "unreachable",
+    });
+    expect(s.recent[0]!.message).toContain("ENOTFOUND");
+  });
+});

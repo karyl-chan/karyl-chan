@@ -1026,6 +1026,7 @@
             "probeRejected": "遭拒 401 — SDK/bot 簽章版本不一致",
             "probeAwaiting": "plugin 尚未完成註冊",
             "probeInconclusive": "無法判定：{m}",
+            "probeUnreachable": "無法連線到 plugin：{reason}",
             "probeSkipped": "已略過：{reason}",
             "toggleEnabled": "已啟用 (點擊停用)",
             "toggleDisabled": "已停用 (點擊啟用)",

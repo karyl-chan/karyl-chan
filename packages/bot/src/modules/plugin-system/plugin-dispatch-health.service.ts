@@ -29,6 +29,7 @@ export type DispatchSource =
   | "component"
   | "modal"
   | "event"
+  | "lifecycle"
   | "probe";
 
 export type DispatchFailureClass =
@@ -45,6 +46,12 @@ export type DispatchFailureClass =
   | "timeout"
   /** Network-layer failure: connect refused, DNS, reset, … */
   | "network"
+  /** Pre-flight refused the dispatch before any request was sent:
+   *  host-policy denial OR DNS-resolution failure (a removed/renamed
+   *  plugin container), or an unresolvable endpoint URL. The dispatch
+   *  never left the bot — but from the operator's view the path is
+   *  just as broken as a network failure. */
+  | "unreachable"
   /** Event-path circuit breaker short-circuited the dispatch. */
   | "breaker_open"
   /** Event-path in-flight cap shed the dispatch. */
@@ -134,6 +141,26 @@ export function recordDispatchHttpFailure(
     status,
     failureClass: classifyDispatchHttpFailure(status, bodyText),
     message: `${label}: ${bodyText.slice(0, 120)}`,
+  });
+}
+
+/**
+ * Pre-flight failure recorder: the dispatch never left the bot
+ * (host-policy refusal, DNS failure, unresolvable endpoint URL).
+ * Without this, "plugin container is gone" — the most common failure
+ * mode — left dispatch health frozen on its last happy state.
+ */
+export function recordDispatchUnreachable(
+  pluginKey: string,
+  source: DispatchSource,
+  label: string,
+  reason: string,
+): void {
+  recordDispatchAttempt(pluginKey, {
+    ok: false,
+    source,
+    failureClass: "unreachable",
+    message: `${label}: ${reason}`,
   });
 }
 

@@ -4,18 +4,20 @@ import { findPluginByKey, type PluginRow } from "./models/plugin.model.js";
 import type { PluginManifest } from "./plugin-registry.service.js";
 import { resolveUserCapabilities } from "../admin/authorized-user.service.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
-import {
-  assertPluginTarget,
-  HostPolicyError,
-} from "../../utils/host-policy.js";
-import { buildOutboundSignatureHeaders } from "../../utils/hmac.js";
 import { isPluginEffectivelyEnabledInGuild } from "../feature-toggle/feature-resolve.js";
 import { recordPluginDeferReply } from "./plugin-defer-state.js";
 import {
   recordDispatchFetchFailure,
   recordDispatchHttpFailure,
   recordDispatchOk,
+  recordDispatchUnreachable,
 } from "./plugin-dispatch-health.service.js";
+import {
+  buildSignedDispatchHeaders,
+  parsePluginManifest,
+  preflightPluginTarget,
+  resolvePluginEndpoint,
+} from "./plugin-dispatch-util.js";
 
 /**
  * Inbound Discord *modal-submit* interaction → plugin dispatcher.
@@ -43,40 +45,19 @@ import {
 const DEFAULT_MODAL_PATH = "/modals/{modal_id}";
 const MODAL_DISPATCH_TIMEOUT_MS = config.plugin.commandDispatchTimeoutMs;
 
-function parseManifest(plugin: PluginRow): PluginManifest | null {
-  try {
-    return JSON.parse(plugin.manifestJson) as PluginManifest;
-  } catch {
-    return null;
-  }
-}
-
-function buildHeaders(
-  secret: string,
-  url: string,
-  body: string,
-): Record<string, string> {
-  const urlPath = new URL(url).pathname;
-  return {
-    "Content-Type": "application/json",
-    ...buildOutboundSignatureHeaders(secret, "POST", urlPath, body),
-  };
-}
+const parseManifest = parsePluginManifest;
+const buildHeaders = buildSignedDispatchHeaders;
 
 function resolveModalUrl(
   plugin: PluginRow,
   manifest: PluginManifest,
   modalId: string,
 ): string | null {
-  const path = manifest.endpoints?.plugin_modal ?? DEFAULT_MODAL_PATH;
-  // URL-encode the modal_id substitution — symmetric with the
-  // command-name substitution in plugin-interaction-dispatch.
-  const filled = path.split("{modal_id}").join(encodeURIComponent(modalId));
-  try {
-    return new URL(filled, plugin.url).toString();
-  } catch {
-    return null;
-  }
+  return resolvePluginEndpoint(
+    plugin.url,
+    manifest.endpoints?.plugin_modal ?? DEFAULT_MODAL_PATH,
+    { modal_id: modalId },
+  );
 }
 
 interface ParsedModalId {
@@ -194,6 +175,12 @@ export async function dispatchModalToPlugin(
 
   const url = resolveModalUrl(plugin, manifest, parsed.modalId);
   if (!url) {
+    recordDispatchUnreachable(
+      plugin.pluginKey,
+      "modal",
+      interaction.customId,
+      "unresolvable plugin endpoint URL",
+    );
     botEventLog.record(
       "warn",
       "bot",
@@ -205,24 +192,22 @@ export async function dispatchModalToPlugin(
       .catch(() => {});
     return true;
   }
-  const parsedUrl = new URL(url);
-  const port = parsedUrl.port
-    ? Number(parsedUrl.port)
-    : parsedUrl.protocol === "https:"
-      ? 443
-      : 80;
-  try {
-    await assertPluginTarget(parsedUrl.hostname, port);
-  } catch (err) {
-    if (!(err instanceof HostPolicyError)) throw err;
+  const preflight = await preflightPluginTarget(url);
+  if (!preflight.ok) {
+    recordDispatchUnreachable(
+      plugin.pluginKey,
+      "modal",
+      interaction.customId,
+      preflight.reason,
+    );
     botEventLog.record(
       "warn",
       "bot",
-      `plugin-modal: pre-flight host-policy rejected ${plugin.pluginKey}: ${err.message}`,
+      `plugin-modal: pre-flight host-policy rejected ${plugin.pluginKey}: ${preflight.reason}`,
       { pluginId: plugin.id },
     );
     await interaction
-      .editReply({ content: `⚠ Plugin 端點不被允許: ${err.message}` })
+      .editReply({ content: `⚠ Plugin 端點不被允許: ${preflight.reason}` })
       .catch(() => {});
     return true;
   }

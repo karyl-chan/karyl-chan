@@ -1026,6 +1026,7 @@
             "probeRejected": "rejected 401 — SDK/bot signature version mismatch",
             "probeAwaiting": "plugin has not completed register yet",
             "probeInconclusive": "inconclusive: {m}",
+            "probeUnreachable": "plugin unreachable: {reason}",
             "probeSkipped": "skipped: {reason}",
             "toggleEnabled": "Enabled (click to disable)",
             "toggleDisabled": "Disabled (click to enable)",

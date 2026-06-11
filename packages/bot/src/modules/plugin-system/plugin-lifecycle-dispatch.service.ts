@@ -4,10 +4,17 @@ import type { PluginManifest } from "./plugin-registry.service.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { shouldRecord } from "../bot-events/bot-event-dedup.js";
 import {
-  assertPluginTarget,
-  HostPolicyError,
-} from "../../utils/host-policy.js";
-import { buildOutboundSignatureHeaders } from "../../utils/hmac.js";
+  recordDispatchFetchFailure,
+  recordDispatchHttpFailure,
+  recordDispatchOk,
+  recordDispatchUnreachable,
+} from "./plugin-dispatch-health.service.js";
+import {
+  buildSignedDispatchHeaders,
+  parsePluginManifest,
+  preflightPluginTarget,
+  resolvePluginEndpoint,
+} from "./plugin-dispatch-util.js";
 
 /**
  * Bot → Plugin lifecycle dispatch.
@@ -26,13 +33,7 @@ import { buildOutboundSignatureHeaders } from "../../utils/hmac.js";
 
 const DISPATCH_TIMEOUT_MS = config.plugin.dispatchTimeoutMs;
 
-function parseManifest(plugin: PluginRow): PluginManifest | null {
-  try {
-    return JSON.parse(plugin.manifestJson) as PluginManifest;
-  } catch {
-    return null;
-  }
-}
+const parseManifest = parsePluginManifest;
 
 function resolveLifecycleUrl(
   plugin: PluginRow,
@@ -42,11 +43,7 @@ function resolveLifecycleUrl(
   // Absent endpoint = plugin opted out (no onEnable / onDisable hooks).
   // Returning null signals to skip the dispatch entirely.
   if (!path) return null;
-  try {
-    return new URL(path, plugin.url).toString();
-  } catch {
-    return null;
-  }
+  return resolvePluginEndpoint(plugin.url, path);
 }
 
 async function postLifecycleToPlugin(
@@ -57,26 +54,37 @@ async function postLifecycleToPlugin(
 ): Promise<void> {
   const manifest = parseManifest(plugin);
   if (!manifest) return;
+  // No-endpoint (opted out) is the only silent skip; everything past
+  // this point is a dispatch the plugin DECLARED it wants, so failures
+  // feed dispatch health like every other signed dispatch path.
   const url = resolveLifecycleUrl(plugin, manifest);
-  if (!url) return;
+  if (!url) {
+    if (manifest.endpoints?.plugin_lifecycle) {
+      recordDispatchUnreachable(
+        plugin.pluginKey,
+        "lifecycle",
+        eventType,
+        "unresolvable plugin endpoint URL",
+      );
+    }
+    return;
+  }
 
-  const parsedUrl = new URL(url);
-  const port = parsedUrl.port
-    ? Number(parsedUrl.port)
-    : parsedUrl.protocol === "https:"
-      ? 443
-      : 80;
-  try {
-    await assertPluginTarget(parsedUrl.hostname, port);
-  } catch (err) {
-    if (!(err instanceof HostPolicyError)) throw err;
+  const preflight = await preflightPluginTarget(url);
+  if (!preflight.ok) {
+    recordDispatchUnreachable(
+      plugin.pluginKey,
+      "lifecycle",
+      eventType,
+      preflight.reason,
+    );
     if (
       shouldRecord(`plugin-lifecycle-policy:${plugin.id}:${eventType}`)
     ) {
       botEventLog.record(
         "warn",
         "bot",
-        `plugin lifecycle ${eventType} → ${plugin.pluginKey} pre-flight 拒絕: ${err.message}`,
+        `plugin lifecycle ${eventType} → ${plugin.pluginKey} pre-flight 拒絕: ${preflight.reason}`,
         { pluginId: plugin.id, eventType },
       );
     }
@@ -84,21 +92,13 @@ async function postLifecycleToPlugin(
   }
 
   const body = JSON.stringify({ type: eventType, data });
-  const sigHeaders = buildOutboundSignatureHeaders(
-    signingKey,
-    "POST",
-    parsedUrl.pathname,
-    body,
-  );
+  const headers = buildSignedDispatchHeaders(signingKey, url, body);
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), DISPATCH_TIMEOUT_MS);
   try {
     const res = await fetch(url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...sigHeaders,
-      },
+      headers,
       body,
       // Don't follow redirects past the assertPluginTarget host check — a
       // 3xx Location would bypass the SSRF guard (cf. webhook-forwarder).
@@ -106,6 +106,14 @@ async function postLifecycleToPlugin(
       signal: ctrl.signal,
     });
     if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      recordDispatchHttpFailure(
+        plugin.pluginKey,
+        "lifecycle",
+        eventType,
+        res.status,
+        text,
+      );
       if (
         shouldRecord(`plugin-lifecycle-fail:${plugin.id}:${eventType}`)
       ) {
@@ -116,9 +124,12 @@ async function postLifecycleToPlugin(
           { pluginId: plugin.id, eventType, status: res.status },
         );
       }
+    } else {
+      recordDispatchOk(plugin.pluginKey, "lifecycle", res.status);
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    recordDispatchFetchFailure(plugin.pluginKey, "lifecycle", eventType, err);
     if (shouldRecord(`plugin-lifecycle-net:${plugin.id}:${eventType}`)) {
       botEventLog.record(
         "warn",

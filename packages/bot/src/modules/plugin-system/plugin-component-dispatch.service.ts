@@ -7,18 +7,20 @@ import { findPluginByKey, type PluginRow } from "./models/plugin.model.js";
 import type { PluginManifest } from "./plugin-registry.service.js";
 import { resolveUserCapabilities } from "../admin/authorized-user.service.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
-import {
-  assertPluginTarget,
-  HostPolicyError,
-} from "../../utils/host-policy.js";
-import { buildOutboundSignatureHeaders } from "../../utils/hmac.js";
 import { isPluginEffectivelyEnabledInGuild } from "../feature-toggle/feature-resolve.js";
 import { recordPluginDeferUpdate } from "./plugin-defer-state.js";
 import {
   recordDispatchFetchFailure,
   recordDispatchHttpFailure,
   recordDispatchOk,
+  recordDispatchUnreachable,
 } from "./plugin-dispatch-health.service.js";
+import {
+  buildSignedDispatchHeaders,
+  parsePluginManifest,
+  preflightPluginTarget,
+  resolvePluginEndpoint,
+} from "./plugin-dispatch-util.js";
 
 /**
  * Inbound Discord *component* (button) interaction → plugin dispatcher.
@@ -49,35 +51,16 @@ import {
 const DEFAULT_COMPONENT_PATH = "/components";
 const COMPONENT_DISPATCH_TIMEOUT_MS = config.plugin.commandDispatchTimeoutMs;
 
-function parseManifest(plugin: PluginRow): PluginManifest | null {
-  try {
-    return JSON.parse(plugin.manifestJson) as PluginManifest;
-  } catch {
-    return null;
-  }
-}
-
-function buildHeaders(
-  secret: string,
-  url: string,
-  body: string,
-): Record<string, string> {
-  const urlPath = new URL(url).pathname;
-  return {
-    "Content-Type": "application/json",
-    ...buildOutboundSignatureHeaders(secret, "POST", urlPath, body),
-  };
-}
+const parseManifest = parsePluginManifest;
+const buildHeaders = buildSignedDispatchHeaders;
 
 function resolveComponentUrl(plugin: PluginRow, manifest: PluginManifest):
   | string
   | null {
-  const path = manifest.endpoints?.plugin_component ?? DEFAULT_COMPONENT_PATH;
-  try {
-    return new URL(path, plugin.url).toString();
-  } catch {
-    return null;
-  }
+  return resolvePluginEndpoint(
+    plugin.url,
+    manifest.endpoints?.plugin_component ?? DEFAULT_COMPONENT_PATH,
+  );
 }
 
 /**
@@ -189,6 +172,12 @@ export async function dispatchComponentToPlugin(
 
   const url = resolveComponentUrl(plugin, manifest);
   if (!url) {
+    recordDispatchUnreachable(
+      plugin.pluginKey,
+      "component",
+      interaction.customId,
+      "unresolvable plugin endpoint URL",
+    );
     botEventLog.record(
       "warn",
       "bot",
@@ -200,25 +189,23 @@ export async function dispatchComponentToPlugin(
       .catch(() => {});
     return true;
   }
-  const parsedUrl = new URL(url);
-  const port = parsedUrl.port
-    ? Number(parsedUrl.port)
-    : parsedUrl.protocol === "https:"
-      ? 443
-      : 80;
-  try {
-    await assertPluginTarget(parsedUrl.hostname, port);
-  } catch (err) {
-    if (!(err instanceof HostPolicyError)) throw err;
+  const preflight = await preflightPluginTarget(url);
+  if (!preflight.ok) {
+    recordDispatchUnreachable(
+      plugin.pluginKey,
+      "component",
+      interaction.customId,
+      preflight.reason,
+    );
     botEventLog.record(
       "warn",
       "bot",
-      `plugin-component: pre-flight host-policy rejected ${plugin.pluginKey}: ${err.message}`,
+      `plugin-component: pre-flight host-policy rejected ${plugin.pluginKey}: ${preflight.reason}`,
       { pluginId: plugin.id },
     );
     await interaction
       .followUp({
-        content: `⚠ Plugin 端點不被允許: ${err.message}`,
+        content: `⚠ Plugin 端點不被允許: ${preflight.reason}`,
         ephemeral: true,
       })
       .catch(() => {});
