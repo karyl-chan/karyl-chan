@@ -12,6 +12,8 @@ import {
 } from "./models/plugin.model.js";
 import { config } from "../../config.js";
 import { pluginAuthStore, PluginAuthStore } from "./plugin-auth.service.js";
+import { evaluateSdkCompat } from "./plugin-sdk-compat.js";
+import { scheduleRegisterProbe } from "./plugin-dispatch-probe.service.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { moduleLogger } from "../../logger.js";
 import {
@@ -783,6 +785,21 @@ export class PluginRegistry {
         sdkVersion: manifest.sdk_version ?? "<0.6",
       },
     );
+    // Version-mismatch detection at register time (PM-7.9.3): an SDK
+    // below the wire-format floor registers and heartbeats fine but
+    // will reject every signed dispatch — flag it NOW instead of when
+    // the first user command 401s.
+    const sdkCompat = evaluateSdkCompat(manifest.sdk_version ?? null);
+    if (sdkCompat.status !== "ok") {
+      botEventLog.record(
+        "warn",
+        "bot",
+        sdkCompat.status === "below_minimum"
+          ? `Plugin '${manifest.plugin.id}' registered with SDK ${sdkCompat.sdkVersion}, below the compatible floor ${sdkCompat.minCompatible} — its dispatch HMAC verification predates this bot's signature scheme, so every command/event dispatch will be rejected (401) until the plugin is rebuilt against @karyl-chan/plugin-sdk >=${sdkCompat.minCompatible}`
+          : `Plugin '${manifest.plugin.id}' registered without manifest.sdk_version (SDK <0.9) — assume it predates the dispatch HMAC floor ${sdkCompat.minCompatible}; dispatches will likely be rejected (401) until it is rebuilt`,
+        { pluginId: persisted.id, pluginKey: manifest.plugin.id },
+      );
+    }
     // Reconcile plugin-declared RBAC capabilities. A re-register that
     // drops a capability auto-removes it from every role (mirrors how
     // dropped RPC scopes are auto-removed above). Failures here don't
@@ -866,6 +883,11 @@ export class PluginRegistry {
     // scheduleCommandSync; failures land in botEventLog + sync state,
     // never roll back the registration.
     this.scheduleCommandSync(persisted, manifest);
+
+    // Probe the dispatch HMAC path a few seconds after the plugin has
+    // its credentials (PM-7.9.4) — a scheme mismatch shows up in the
+    // admin UI immediately instead of on the first user command.
+    scheduleRegisterProbe(manifest.plugin.id);
 
     return {
       plugin: persisted,

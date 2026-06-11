@@ -14,6 +14,11 @@ import {
 import { buildOutboundSignatureHeaders } from "../../utils/hmac.js";
 import { isPluginEffectivelyEnabledInGuild } from "../feature-toggle/feature-resolve.js";
 import { recordPluginDeferUpdate } from "./plugin-defer-state.js";
+import {
+  recordDispatchAttempt,
+  classifyDispatchHttpFailure,
+  classifyDispatchFetchError,
+} from "./plugin-dispatch-health.service.js";
 
 /**
  * Inbound Discord *component* (button) interaction → plugin dispatcher.
@@ -287,6 +292,13 @@ export async function dispatchComponentToPlugin(
     });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
+      recordDispatchAttempt(plugin.pluginKey, {
+        ok: false,
+        source: "component",
+        status: res.status,
+        failureClass: classifyDispatchHttpFailure(res.status, text),
+        message: `${interaction.customId}: ${text.slice(0, 120)}`,
+      });
       botEventLog.record(
         "warn",
         "bot",
@@ -299,10 +311,22 @@ export async function dispatchComponentToPlugin(
           ephemeral: true,
         })
         .catch(() => {});
+    } else {
+      recordDispatchAttempt(plugin.pluginKey, {
+        ok: true,
+        source: "component",
+        status: res.status,
+      });
     }
     // Body not consumed — plugin completes via interactions.respond.
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    recordDispatchAttempt(plugin.pluginKey, {
+      ok: false,
+      source: "component",
+      failureClass: classifyDispatchFetchError(err),
+      message: `${interaction.customId}: ${msg}`,
+    });
     botEventLog.record(
       "warn",
       "bot",

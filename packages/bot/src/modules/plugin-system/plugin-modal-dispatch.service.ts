@@ -11,6 +11,11 @@ import {
 import { buildOutboundSignatureHeaders } from "../../utils/hmac.js";
 import { isPluginEffectivelyEnabledInGuild } from "../feature-toggle/feature-resolve.js";
 import { recordPluginDeferReply } from "./plugin-defer-state.js";
+import {
+  recordDispatchAttempt,
+  classifyDispatchHttpFailure,
+  classifyDispatchFetchError,
+} from "./plugin-dispatch-health.service.js";
 
 /**
  * Inbound Discord *modal-submit* interaction → plugin dispatcher.
@@ -290,6 +295,13 @@ export async function dispatchModalToPlugin(
     });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
+      recordDispatchAttempt(plugin.pluginKey, {
+        ok: false,
+        source: "modal",
+        status: res.status,
+        failureClass: classifyDispatchHttpFailure(res.status, text),
+        message: `${interaction.customId}: ${text.slice(0, 120)}`,
+      });
       botEventLog.record(
         "warn",
         "bot",
@@ -299,10 +311,22 @@ export async function dispatchModalToPlugin(
       await interaction
         .editReply({ content: `⚠ Plugin 拒絕了此 modal (HTTP ${res.status})` })
         .catch(() => {});
+    } else {
+      recordDispatchAttempt(plugin.pluginKey, {
+        ok: true,
+        source: "modal",
+        status: res.status,
+      });
     }
     // Body not consumed — plugin completes via interactions.respond.
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    recordDispatchAttempt(plugin.pluginKey, {
+      ok: false,
+      source: "modal",
+      failureClass: classifyDispatchFetchError(err),
+      message: `${interaction.customId}: ${msg}`,
+    });
     botEventLog.record(
       "warn",
       "bot",

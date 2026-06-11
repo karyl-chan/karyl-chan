@@ -37,6 +37,12 @@ import {
   dropDispatchPoolForPlugin,
   removePluginFromIndex,
 } from "./plugin-event-bridge.service.js";
+import {
+  getDispatchHealth,
+  clearDispatchHealth,
+} from "./plugin-dispatch-health.service.js";
+import { probePluginDispatch } from "./plugin-dispatch-probe.service.js";
+import { evaluateSdkCompatFromManifestJson } from "./plugin-sdk-compat.js";
 import { invalidatePluginById } from "./plugin-lookup-cache.js";
 import { dispatchLifecycleToPlugin } from "./plugin-lifecycle-dispatch.service.js";
 import { recordAudit } from "../admin/admin-audit.service.js";
@@ -484,6 +490,15 @@ export async function registerPluginRoutes(
         // attempted since this bot process started (e.g. plugin
         // registered before the last bot restart).
         commandSync: pluginRegistry.getCommandSyncState(p.pluginKey),
+        // Dispatch-path health (PM-7.9.1). null = no dispatch attempted
+        // since this bot process started. Distinct from liveness: a
+        // plugin can heartbeat green while rejecting every dispatch
+        // (e.g. HMAC scheme mismatch).
+        dispatch: getDispatchHealth(p.pluginKey),
+        // SDK wire-format compat verdict (PM-7.9.3). `unknown` on a
+        // placeholder row just means "never registered" — combine with
+        // version === "0.0.0" before alarming.
+        sdkCompat: evaluateSdkCompatFromManifestJson(p.manifestJson),
       })),
     };
   });
@@ -523,6 +538,8 @@ export async function registerPluginRoutes(
           manifest: safeParse(p.manifestJson),
         },
         commandSync: pluginRegistry.getCommandSyncState(p.pluginKey),
+        dispatch: getDispatchHealth(p.pluginKey),
+        sdkCompat: evaluateSdkCompatFromManifestJson(p.manifestJson),
         ...(health ? { health } : {}),
         ...(metrics ? { metrics } : {}),
       };
@@ -594,6 +611,8 @@ export async function registerPluginRoutes(
             adminEnabled: c.adminEnabled,
             manifestJson: c.manifestJson,
           })),
+          dispatch: getDispatchHealth(p.pluginKey),
+          sdkCompat: evaluateSdkCompatFromManifestJson(p.manifestJson),
           ...(health ? { health } : {}),
           ...(metrics ? { metrics } : {}),
         },
@@ -1153,6 +1172,36 @@ export async function registerPluginRoutes(
   // ─── Plugin-level config (admin-editable) ─────────────────────────
 
   /**
+   * POST /api/plugins/:id/dispatch-probe
+   *
+   * Manually fire the signed dispatch probe (PM-7.9.4) — the same
+   * check that runs automatically after register. Returns the verdict
+   * plus the refreshed dispatch-health window so the UI can render
+   * both without a second round-trip. Side-effect-free on the plugin
+   * (the probe payload 400s before any handler lookup).
+   */
+  server.post<{ Params: { id: string } }>(
+    "/api/plugins/:id/dispatch-probe",
+    async (request, reply) => {
+      if (!requireCapability(request, reply, "admin")) return;
+      const pluginId = Number(request.params.id);
+      if (!Number.isInteger(pluginId) || pluginId <= 0) {
+        reply.code(400).send({ error: "invalid plugin id" });
+        return;
+      }
+      const plugin = (await pluginRegistry.list()).find(
+        (p) => p.id === pluginId,
+      );
+      if (!plugin) {
+        reply.code(404).send({ error: "plugin not found" });
+        return;
+      }
+      const probe = await probePluginDispatch(plugin);
+      return { probe, dispatch: getDispatchHealth(plugin.pluginKey) };
+    },
+  );
+
+  /**
    * GET /api/plugins/:id/config
    *
    * Returns the plugin's manifest config_schema joined with currently-
@@ -1493,6 +1542,7 @@ export async function registerPluginRoutes(
       removePluginFromIndex(pluginId);
       invalidatePluginById(pluginId);
       dropDispatchPoolForPlugin(plugin.pluginKey);
+      clearDispatchHealth(plugin.pluginKey);
 
       // 4b. Clear the health + metrics snapshots keyed by pluginKey. Same
       // rationale as the dispatch-pool drop above: a plugin re-registered

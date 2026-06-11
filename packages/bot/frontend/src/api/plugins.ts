@@ -149,6 +149,14 @@ export interface PluginRecord {
    * sync ran since the bot process started.
    */
   commandSync?: PluginCommandSyncState | null;
+  /**
+   * Dispatch-path health (PM-7.9.1) — distinct from liveness: a plugin
+   * can heartbeat green while rejecting every dispatch (HMAC scheme
+   * mismatch). null when nothing was dispatched since the bot started.
+   */
+  dispatch?: PluginDispatchHealth | null;
+  /** SDK wire-format compat verdict computed by the bot (PM-7.9.3). */
+  sdkCompat?: PluginSdkCompat;
 }
 
 export interface PluginCommandSyncState {
@@ -157,6 +165,64 @@ export interface PluginCommandSyncState {
   startedAt: number;
   finishedAt?: number;
   error?: string;
+}
+
+export type PluginDispatchFailureClass =
+  | "rejected_401"
+  | "awaiting_register"
+  | "http_error"
+  | "timeout"
+  | "network"
+  | "breaker_open"
+  | "shed";
+
+export interface PluginDispatchAttempt {
+  /** Epoch ms. */
+  at: number;
+  ok: boolean;
+  source: "command" | "autocomplete" | "component" | "modal" | "event";
+  status?: number;
+  failureClass?: PluginDispatchFailureClass;
+  message?: string;
+}
+
+export interface PluginDispatchHealth {
+  total: number;
+  okCount: number;
+  consecutiveFailures: number;
+  lastOkAt: number | null;
+  /** Newest-first window of recent attempts. */
+  recent: PluginDispatchAttempt[];
+}
+
+export interface PluginSdkCompat {
+  sdkVersion: string | null;
+  minCompatible: string;
+  /** `unknown` = no sdk_version stamp (pre-0.9 SDK or never registered). */
+  status: "ok" | "below_minimum" | "unknown";
+}
+
+/** Verdict of the signed dispatch probe (PM-7.9.4). */
+export type PluginDispatchProbeResult =
+  | { outcome: "signature_ok"; status: number }
+  | { outcome: "rejected_401" }
+  | { outcome: "awaiting_register" }
+  | { outcome: "inconclusive"; status?: number; message: string }
+  | { outcome: "skipped"; reason: string };
+
+/**
+ * POST /api/plugins/:id/dispatch-probe — fire a signed no-op probe at
+ * the plugin's dispatch endpoint and return the verdict plus the
+ * refreshed dispatch-health window. Side-effect-free on the plugin.
+ */
+export async function probePluginDispatch(id: number): Promise<{
+  probe: PluginDispatchProbeResult;
+  dispatch: PluginDispatchHealth | null;
+}> {
+  const r = await authedFetch(`/api/plugins/${id}/dispatch-probe`, {
+    method: "POST",
+  });
+  return jsonOrThrow(r);
 }
 
 /** RPC scope approval state returned by the approve/deny endpoint. */
