@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.7.0](https://github.com/karyl-chan/karyl-chan/compare/bot-v1.6.0...bot-v1.7.0) (2026-06-11)
+
+
+### ⚠ BREAKING CHANGES
+
+* **ui:** AppModal now pads its body by default; slot content with its own outer padding will double-pad. Either remove the caller's wrapper padding or pass padding="0".
+
+### Features
+
+* **bot,frontend:** signed dispatch probe after register + manual test button (PM-7.9.4) ([23f6cf6](https://github.com/karyl-chan/karyl-chan/commit/23f6cf64d210749a3d82f3286aa71c0c5ecfee5a))
+* **bot:** per-plugin dispatch-path health tracking (PM-7.9.1) ([989e0b3](https://github.com/karyl-chan/karyl-chan/commit/989e0b35701bec9c37a146ec3333c101a4b4eecc))
+* **bot:** SDK wire-format compat verdict at register + admin API (PM-7.9.3) ([923758b](https://github.com/karyl-chan/karyl-chan/commit/923758ba1c58305fa6f590223f4cbedc0881a02b))
+* **frontend:** split liveness vs dispatch health on PluginCard (PM-7.9.2) ([a79da6b](https://github.com/karyl-chan/karyl-chan/commit/a79da6b20bcac598edcac5481e4bd4df71fdb60b))
+* **ui:** AppModal pads body by default via padding prop ([c6c0cdc](https://github.com/karyl-chan/karyl-chan/commit/c6c0cdc1d4a6eced05904f6858fbdf477697193f))
+
+
+### Bug Fixes
+
+* **bot,frontend:** review small fixes — floor coupling, probe single-flight, card truthfulness ([79788c3](https://github.com/karyl-chan/karyl-chan/commit/79788c3ba66e277a046172390c202bdf320ef2d6))
+* **bot,sdk:** dispatch-health streak semantics — probe isolation, breaker noise, 400 trust ([019a03f](https://github.com/karyl-chan/karyl-chan/commit/019a03f05d4d642c992edee3d84773769d0e1cff))
+* **bot,sdk:** reply_to ping opt-out holes — snake_case, explicit allowlists, SDK types ([3f43a7e](https://github.com/karyl-chan/karyl-chan/commit/3f43a7eb1b4c9c9b769e4eb0cf92bc52dfcc96d1))
+* **bot:** close the dispatch-health blind spots — pre-flight failures + lifecycle path ([c95640d](https://github.com/karyl-chan/karyl-chan/commit/c95640ddabdadb04452c6257c9c327e05319dd57))
+* **bot:** reply_to replies ping their author by default ([266ee9c](https://github.com/karyl-chan/karyl-chan/commit/266ee9c535ce9e502c9e8792b9f87a348a1114d1))
+
 ## [1.6.0](https://github.com/karyl-chan/karyl-chan/compare/bot-v1.5.0...bot-v1.6.0) (2026-06-10)
 
 
