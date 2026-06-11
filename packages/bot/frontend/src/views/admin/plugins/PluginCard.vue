@@ -12,6 +12,7 @@ import {
     type PluginConfigField,
     type PluginRecord
 } from '../../../api/plugins';
+import { dispatchProblem, sdkCompatProblem } from './plugin-card-health';
 
 const props = defineProps<{
     plugin: PluginRecord;
@@ -139,6 +140,21 @@ const commandSyncProblem = computed<null | { kind: 'failed' | 'stalled' | 'rateL
     return null;
 });
 
+// Dispatch-path health (PM-7.9.2): liveness (status dot / heartbeat)
+// and dispatch are separate signals — a plugin can heartbeat green
+// while rejecting every dispatch (HMAC scheme mismatch). Quiet unless
+// a failure streak crosses the threshold.
+const dispatchAlarm = computed(() => dispatchProblem(props.plugin.dispatch));
+const sdkAlarm = computed(() => sdkCompatProblem(props.plugin.sdkCompat, props.plugin.version));
+const dispatchStateText = computed(() => {
+    const d = props.plugin.dispatch;
+    if (!d) return t('admin.plugins.dispatchNone');
+    if (dispatchAlarm.value) {
+        return t('admin.plugins.dispatchFailingShort', { n: dispatchAlarm.value.streak });
+    }
+    return t('admin.plugins.dispatchOk', { ok: d.okCount, total: d.total });
+});
+
 const guildFeatureCount = computed(() => props.plugin.manifest?.guild_features?.length ?? 0);
 // Top-level (truly global) commands and per-feature commands count
 // separately — they have different runtime gating semantics, so the
@@ -263,6 +279,32 @@ async function confirmDelete() {
                                 : t('admin.plugins.commandSyncStalled')
                     }}
                 </AppBadge>
+                <AppBadge
+                    v-if="dispatchAlarm"
+                    variant="outline"
+                    icon="material-symbols:dangerous-outline"
+                    class="dispatch-problem-badge"
+                    :title="dispatchAlarm.detail"
+                >
+                    {{
+                        dispatchAlarm.kind === 'rejected401'
+                            ? t('admin.plugins.dispatchRejected401', { n: dispatchAlarm.streak })
+                            : t('admin.plugins.dispatchFailing', { n: dispatchAlarm.streak })
+                    }}
+                </AppBadge>
+                <AppBadge
+                    v-if="sdkAlarm"
+                    variant="outline"
+                    icon="material-symbols:warning-outline"
+                    class="dispatch-problem-badge"
+                    :title="t('admin.plugins.sdkTooOldHint')"
+                >
+                    {{
+                        sdkAlarm.kind === 'tooOld'
+                            ? t('admin.plugins.sdkTooOld', { v: sdkAlarm.sdkVersion ?? '?', min: sdkAlarm.minCompatible })
+                            : t('admin.plugins.sdkUnknownOld', { min: sdkAlarm.minCompatible })
+                    }}
+                </AppBadge>
             </div>
 
             <dl class="meta">
@@ -273,6 +315,16 @@ async function confirmDelete() {
                 <div class="meta-row">
                     <dt>{{ t('admin.plugins.lastHeartbeat') }}</dt>
                     <dd>{{ lastHeartbeat }}</dd>
+                </div>
+                <div class="meta-row">
+                    <dt>{{ t('admin.plugins.dispatchLabel') }}</dt>
+                    <dd :class="{ 'dispatch-bad': dispatchAlarm }">{{ dispatchStateText }}</dd>
+                </div>
+                <div class="meta-row" v-if="plugin.sdkCompat?.sdkVersion || sdkAlarm">
+                    <dt>{{ t('admin.plugins.sdkVersionLabel') }}</dt>
+                    <dd :class="{ 'dispatch-bad': sdkAlarm }">
+                        <code>{{ plugin.sdkCompat?.sdkVersion ?? t('admin.plugins.sdkNoStamp') }}</code>
+                    </dd>
                 </div>
                 <div class="meta-row" v-if="rpcScopes.length > 0">
                     <dt>{{ t('admin.plugins.rpcScopes') }}</dt>
@@ -505,6 +557,14 @@ async function confirmDelete() {
     color: var(--warning, #d97706);
     border-color: var(--warning, #d97706);
 }
+
+/* Dispatch-path / SDK-compat alarms (PM-7.9.2) — red, not amber:
+   these mean user-visible commands are failing right now. */
+.dispatch-problem-badge {
+    color: var(--danger, #dc2626);
+    border-color: var(--danger, #dc2626);
+}
+.dispatch-bad { color: var(--danger, #dc2626); }
 
 .pending-badge {
     display: inline-flex;

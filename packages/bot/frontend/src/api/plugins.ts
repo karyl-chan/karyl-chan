@@ -149,6 +149,14 @@ export interface PluginRecord {
    * sync ran since the bot process started.
    */
   commandSync?: PluginCommandSyncState | null;
+  /**
+   * Dispatch-path health (PM-7.9.1) — distinct from liveness: a plugin
+   * can heartbeat green while rejecting every dispatch (HMAC scheme
+   * mismatch). null when nothing was dispatched since the bot started.
+   */
+  dispatch?: PluginDispatchHealth | null;
+  /** SDK wire-format compat verdict computed by the bot (PM-7.9.3). */
+  sdkCompat?: PluginSdkCompat;
 }
 
 export interface PluginCommandSyncState {
@@ -157,6 +165,41 @@ export interface PluginCommandSyncState {
   startedAt: number;
   finishedAt?: number;
   error?: string;
+}
+
+export type PluginDispatchFailureClass =
+  | "rejected_401"
+  | "awaiting_register"
+  | "http_error"
+  | "timeout"
+  | "network"
+  | "breaker_open"
+  | "shed";
+
+export interface PluginDispatchAttempt {
+  /** Epoch ms. */
+  at: number;
+  ok: boolean;
+  source: "command" | "autocomplete" | "component" | "modal" | "event";
+  status?: number;
+  failureClass?: PluginDispatchFailureClass;
+  message?: string;
+}
+
+export interface PluginDispatchHealth {
+  total: number;
+  okCount: number;
+  consecutiveFailures: number;
+  lastOkAt: number | null;
+  /** Newest-first window of recent attempts. */
+  recent: PluginDispatchAttempt[];
+}
+
+export interface PluginSdkCompat {
+  sdkVersion: string | null;
+  minCompatible: string;
+  /** `unknown` = no sdk_version stamp (pre-0.9 SDK or never registered). */
+  status: "ok" | "below_minimum" | "unknown";
 }
 
 /** RPC scope approval state returned by the approve/deny endpoint. */
