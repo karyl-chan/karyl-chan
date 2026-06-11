@@ -263,7 +263,7 @@ describe("messages.send — reply_to", () => {
     if (server) await server.close();
   });
 
-  it("passes reply_to through as a native reply with failIfNotExists false", async () => {
+  it("passes reply_to through as a native reply with failIfNotExists false, pinging the author by default", async () => {
     const channel = fakeGuildChannel();
     server = await createWebServer({
       staticRoot: undefined,
@@ -283,8 +283,61 @@ describe("messages.send — reply_to", () => {
     expect(channel._send).toHaveBeenCalledWith(
       expect.objectContaining({
         reply: { messageReference: REPLY_TO_ID, failIfNotExists: false },
+        // With allowed_mentions always attached, Discord would default
+        // replied_user to false — the route must opt replies back in.
+        allowedMentions: expect.objectContaining({ repliedUser: true }),
       }),
     );
+  });
+
+  it("respects an explicit repliedUser:false opt-out on replies", async () => {
+    const channel = fakeGuildChannel();
+    server = await createWebServer({
+      staticRoot: undefined,
+      bot: fakeBot(channel) as never,
+    });
+    await server.ready();
+    featureGateOpen();
+
+    const res = await server.inject({
+      method: "POST",
+      url: "/api/plugin/messages.send",
+      headers: { authorization: "Bearer fake-token" },
+      payload: {
+        channel_id: CHANNEL_ID,
+        content: "hi",
+        reply_to: REPLY_TO_ID,
+        allowed_mentions: { repliedUser: false },
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(channel._send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allowedMentions: expect.objectContaining({ repliedUser: false }),
+      }),
+    );
+  });
+
+  it("does not set repliedUser on non-reply sends", async () => {
+    const channel = fakeGuildChannel();
+    server = await createWebServer({
+      staticRoot: undefined,
+      bot: fakeBot(channel) as never,
+    });
+    await server.ready();
+    featureGateOpen();
+
+    const res = await server.inject({
+      method: "POST",
+      url: "/api/plugin/messages.send",
+      headers: { authorization: "Bearer fake-token" },
+      payload: { channel_id: CHANNEL_ID, content: "hi" },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const arg = channel._send.mock.calls[0][0] as { allowedMentions: Record<string, unknown> };
+    expect("repliedUser" in arg.allowedMentions).toBe(false);
   });
 
   it("omits the reply option when reply_to is absent", async () => {

@@ -301,7 +301,11 @@ export async function registerPluginRpcRoutes(
    * Discord reply to that message. `failIfNotExists: false` so a
    * since-deleted target degrades to a plain send instead of erroring
    * — deliberate: delayed replies (the main reply_to consumer) may
-   * outlive their anchor.
+   * outlive their anchor. Replies ping their author by default (like a
+   * human reply): we always attach an allowed_mentions object, and with
+   * one present Discord defaults `replied_user` to FALSE — so unless the
+   * plugin explicitly set `allowed_mentions.repliedUser`, we set it true
+   * on replies.
    *
    * The plugin can target any text channel the bot has access to in
    * any guild it's in, plus DM channels of any user. A future revision
@@ -419,6 +423,12 @@ export async function registerPluginRpcRoutes(
     // role X must list `<@&X>` in the content AND `roles: ["X"]`
     // explicitly — no bulk opt-in.
     const allowedMentions = safeAllowedMentions(body.allowed_mentions);
+    // Native replies notify their author unless the plugin opted out:
+    // with an allowed_mentions object present, Discord defaults
+    // replied_user to false, which would make every reply_to silent.
+    if (replyTo && allowedMentions.repliedUser === undefined) {
+      allowedMentions.repliedUser = true;
+    }
     try {
       const sent = await channel.send({
         content,
