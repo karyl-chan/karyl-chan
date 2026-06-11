@@ -41,6 +41,7 @@ import {
   getDispatchHealth,
   clearDispatchHealth,
 } from "./plugin-dispatch-health.service.js";
+import { probePluginDispatch } from "./plugin-dispatch-probe.service.js";
 import { evaluateSdkCompatFromManifestJson } from "./plugin-sdk-compat.js";
 import { invalidatePluginById } from "./plugin-lookup-cache.js";
 import { dispatchLifecycleToPlugin } from "./plugin-lifecycle-dispatch.service.js";
@@ -1169,6 +1170,36 @@ export async function registerPluginRoutes(
   //  guild automatically — see the PUT route above.)
 
   // ─── Plugin-level config (admin-editable) ─────────────────────────
+
+  /**
+   * POST /api/plugins/:id/dispatch-probe
+   *
+   * Manually fire the signed dispatch probe (PM-7.9.4) — the same
+   * check that runs automatically after register. Returns the verdict
+   * plus the refreshed dispatch-health window so the UI can render
+   * both without a second round-trip. Side-effect-free on the plugin
+   * (the probe payload 400s before any handler lookup).
+   */
+  server.post<{ Params: { id: string } }>(
+    "/api/plugins/:id/dispatch-probe",
+    async (request, reply) => {
+      if (!requireCapability(request, reply, "admin")) return;
+      const pluginId = Number(request.params.id);
+      if (!Number.isInteger(pluginId) || pluginId <= 0) {
+        reply.code(400).send({ error: "invalid plugin id" });
+        return;
+      }
+      const plugin = (await pluginRegistry.list()).find(
+        (p) => p.id === pluginId,
+      );
+      if (!plugin) {
+        reply.code(404).send({ error: "plugin not found" });
+        return;
+      }
+      const probe = await probePluginDispatch(plugin);
+      return { probe, dispatch: getDispatchHealth(plugin.pluginKey) };
+    },
+  );
 
   /**
    * GET /api/plugins/:id/config

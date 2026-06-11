@@ -7,9 +7,11 @@ import { AppBadge, AppButton, AppConfirmDialog, AppItemCard, AppMenu, AppMenuIte
 import {
     deletePlugin,
     getPluginConfig,
+    probePluginDispatch,
     setPluginConfig,
     setPluginEnabled,
     type PluginConfigField,
+    type PluginDispatchProbeResult,
     type PluginRecord
 } from '../../../api/plugins';
 import { dispatchProblem, sdkCompatProblem } from './plugin-card-health';
@@ -154,6 +156,41 @@ const dispatchStateText = computed(() => {
     }
     return t('admin.plugins.dispatchOk', { ok: d.okCount, total: d.total });
 });
+
+// Manual dispatch probe (PM-7.9.4): same signed no-op check the bot
+// fires after register; lets the operator verify the HMAC path on
+// demand. The verdict renders inline; the badge state refreshes on
+// the next list reload.
+const probing = ref(false);
+const probeResult = ref<PluginDispatchProbeResult | null>(null);
+async function onProbe() {
+    if (probing.value) return;
+    probing.value = true;
+    probeResult.value = null;
+    try {
+        const r = await probePluginDispatch(props.plugin.id);
+        probeResult.value = r.probe;
+    } catch (err) {
+        probeResult.value = {
+            outcome: 'inconclusive',
+            message: err instanceof Error ? err.message : String(err),
+        };
+    } finally {
+        probing.value = false;
+    }
+}
+const probeText = computed(() => {
+    const p = probeResult.value;
+    if (!p) return '';
+    switch (p.outcome) {
+        case 'signature_ok': return t('admin.plugins.probeOk', { status: p.status });
+        case 'rejected_401': return t('admin.plugins.probeRejected');
+        case 'awaiting_register': return t('admin.plugins.probeAwaiting');
+        case 'skipped': return t('admin.plugins.probeSkipped', { reason: p.reason });
+        default: return t('admin.plugins.probeInconclusive', { m: p.message ?? '' });
+    }
+});
+const probeOkState = computed(() => probeResult.value?.outcome === 'signature_ok');
 
 const guildFeatureCount = computed(() => props.plugin.manifest?.guild_features?.length ?? 0);
 // Top-level (truly global) commands and per-feature commands count
@@ -318,7 +355,22 @@ async function confirmDelete() {
                 </div>
                 <div class="meta-row">
                     <dt>{{ t('admin.plugins.dispatchLabel') }}</dt>
-                    <dd :class="{ 'dispatch-bad': dispatchAlarm }">{{ dispatchStateText }}</dd>
+                    <dd :class="{ 'dispatch-bad': dispatchAlarm }">
+                        {{ dispatchStateText }}
+                        <button
+                            type="button"
+                            class="probe-btn"
+                            :disabled="probing"
+                            :title="t('admin.plugins.probeHint')"
+                            @click="onProbe"
+                        >
+                            {{ probing ? t('admin.plugins.probing') : t('admin.plugins.probeButton') }}
+                        </button>
+                        <span
+                            v-if="probeResult"
+                            :class="probeOkState ? 'probe-ok' : 'dispatch-bad'"
+                        >{{ probeText }}</span>
+                    </dd>
                 </div>
                 <div class="meta-row" v-if="plugin.sdkCompat?.sdkVersion || sdkAlarm">
                     <dt>{{ t('admin.plugins.sdkVersionLabel') }}</dt>
@@ -565,6 +617,21 @@ async function confirmDelete() {
     border-color: var(--danger, #dc2626);
 }
 .dispatch-bad { color: var(--danger, #dc2626); }
+.probe-ok { color: var(--success, #16a34a); }
+.probe-btn {
+    padding: 0.05rem 0.45rem;
+    font-size: 0.72rem;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+}
+.probe-btn:hover:not(:disabled) {
+    background: var(--bg-surface-hover, var(--bg-page));
+    color: var(--text);
+}
+.probe-btn:disabled { opacity: 0.6; cursor: default; }
 
 .pending-badge {
     display: inline-flex;

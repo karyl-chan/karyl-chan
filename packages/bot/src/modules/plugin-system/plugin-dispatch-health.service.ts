@@ -28,7 +28,8 @@ export type DispatchSource =
   | "autocomplete"
   | "component"
   | "modal"
-  | "event";
+  | "event"
+  | "probe";
 
 export type DispatchFailureClass =
   /** Plugin answered 401 — it rejected our HMAC signature. After the

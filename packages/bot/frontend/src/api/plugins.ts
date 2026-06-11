@@ -202,6 +202,29 @@ export interface PluginSdkCompat {
   status: "ok" | "below_minimum" | "unknown";
 }
 
+/** Verdict of the signed dispatch probe (PM-7.9.4). */
+export type PluginDispatchProbeResult =
+  | { outcome: "signature_ok"; status: number }
+  | { outcome: "rejected_401" }
+  | { outcome: "awaiting_register" }
+  | { outcome: "inconclusive"; status?: number; message: string }
+  | { outcome: "skipped"; reason: string };
+
+/**
+ * POST /api/plugins/:id/dispatch-probe — fire a signed no-op probe at
+ * the plugin's dispatch endpoint and return the verdict plus the
+ * refreshed dispatch-health window. Side-effect-free on the plugin.
+ */
+export async function probePluginDispatch(id: number): Promise<{
+  probe: PluginDispatchProbeResult;
+  dispatch: PluginDispatchHealth | null;
+}> {
+  const r = await authedFetch(`/api/plugins/${id}/dispatch-probe`, {
+    method: "POST",
+  });
+  return jsonOrThrow(r);
+}
+
 /** RPC scope approval state returned by the approve/deny endpoint. */
 export interface PluginScopeState {
   requested: string[];

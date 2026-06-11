@@ -13,6 +13,7 @@ import {
 import { config } from "../../config.js";
 import { pluginAuthStore, PluginAuthStore } from "./plugin-auth.service.js";
 import { evaluateSdkCompat } from "./plugin-sdk-compat.js";
+import { scheduleRegisterProbe } from "./plugin-dispatch-probe.service.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { moduleLogger } from "../../logger.js";
 import {
@@ -882,6 +883,11 @@ export class PluginRegistry {
     // scheduleCommandSync; failures land in botEventLog + sync state,
     // never roll back the registration.
     this.scheduleCommandSync(persisted, manifest);
+
+    // Probe the dispatch HMAC path a few seconds after the plugin has
+    // its credentials (PM-7.9.4) — a scheme mismatch shows up in the
+    // admin UI immediately instead of on the first user command.
+    scheduleRegisterProbe(manifest.plugin.id);
 
     return {
       plugin: persisted,
