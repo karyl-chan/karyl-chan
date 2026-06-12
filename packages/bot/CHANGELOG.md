@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.9.0](https://github.com/karyl-chan/karyl-chan/compare/bot-v1.8.0...bot-v1.9.0) (2026-06-12)
+
+
+### Features
+
+* **bot,sdk:** guild-feature event reach enforcement + 3-tier RPC gate (PM-8) ([aa5ef2a](https://github.com/karyl-chan/karyl-chan/commit/aa5ef2a0d737dd956317531ba0b4304bac88db9c))
+* **bot:** dev-only DM inject seam for the inbox SSE pipeline ([701b0f5](https://github.com/karyl-chan/karyl-chan/commit/701b0f53ef7c18d7bc5339e34dead09e91b66b85))
+* **bot:** per-guild feature config editing + fallback-tier visibility (PD-1.3) ([6e1f4b4](https://github.com/karyl-chan/karyl-chan/commit/6e1f4b40f674346e3d8fb7493f4e1d5a7d69dafb))
+* **events:** ephemeral self-messages become an opt-in event with visibility ([7486aa3](https://github.com/karyl-chan/karyl-chan/commit/7486aa3a9f1dc5c225a88cd929490062a6a43a67))
+* **frontend:** global event subscription grants in the Security tab (PM-8) ([76c4348](https://github.com/karyl-chan/karyl-chan/commit/76c4348b08e11ae7e261385c702a319499a8c6c7))
+* **frontend:** plugin install guidance + journey-state surfacing (PD-1.2) ([90f807e](https://github.com/karyl-chan/karyl-chan/commit/90f807ee1522ca0177a42fef67f6db6024ba9023))
+
+
+### Bug Fixes
+
+* **bot:** explicit types on resolver fallback locals (docker tsc strictness) ([7cd6ece](https://github.com/karyl-chan/karyl-chan/commit/7cd6ecef7b0e60add19273cb9e39553959ee8610))
+* **events:** don't fan out ephemeral self-messages to plugins ([f844f8a](https://github.com/karyl-chan/karyl-chan/commit/f844f8a4ced15cb04078be8f39c8380ea3dfa79e))
+
 ## [1.8.0](https://github.com/karyl-chan/karyl-chan/compare/bot-v1.7.0...bot-v1.8.0) (2026-06-12)
 
 
