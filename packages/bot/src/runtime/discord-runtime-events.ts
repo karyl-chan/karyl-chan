@@ -278,8 +278,20 @@ export function registerRuntimeEvents(ctx: RuntimeContext): void {
     // Plugin event fan-out. We classify the message into one of two
     // event types (dm.message_create / guild.message_create) and let
     // the bridge fan it out to every plugin that subscribed in its
-    // manifest. Bot's own messages are excluded so a plugin that
-    // sends via RPC doesn't get its own send echoed back.
+    // manifest. Bot's own messages go out on a SEPARATE event type
+    // (guild.message_create_self) so presence-style plugins can keep
+    // their own sends in their transcript/store (reply-to-bot detection
+    // needs them) while ordinary plugins never see an echo of their RPC
+    // sends. Other bots stay excluded entirely.
+    if (message.author.id === bot.user?.id) {
+      if (message.guildId) {
+        dispatchEventToPlugins(
+          "guild.message_create_self",
+          serializeMessageForPlugin(message),
+        );
+      }
+      return;
+    }
     if (message.author.bot) return;
     if (message.channel.type === ChannelType.DM) {
       dispatchEventToPlugins(
@@ -292,6 +304,39 @@ export function registerRuntimeEvents(ctx: RuntimeContext): void {
         serializeMessageForPlugin(message),
       );
     }
+  });
+
+  // Edits and deletions (F19): without these a presence plugin judges and
+  // recalls the ORIGINAL text of edited messages forever, and "remembers"
+  // (and can quote) messages their authors deliberately removed. Partials
+  // are common here — ship what we reliably have (ids always; content when
+  // discord.js gives us the full message), and let consumers no-op on
+  // messages they never stored.
+  bot.on("messageUpdate", async (_old, updated) => {
+    try {
+      const full = updated.partial ? await updated.fetch().catch(() => null) : updated;
+      if (!full?.guildId) return;
+      if (full.author.bot && full.author.id !== bot.user?.id) return;
+      dispatchEventToPlugins("guild.message_update", {
+        message_id: full.id,
+        channel_id: full.channelId,
+        guild_id: full.guildId,
+        content: full.content ?? "",
+        edited_at: full.editedTimestamp ?? Date.now(),
+      });
+    } catch {
+      /* best-effort: a failed enrich must not break the runtime */
+    }
+  });
+
+  bot.on("messageDelete", async (deleted) => {
+    // Ids survive partials; that is all a consumer needs to tombstone.
+    if (!deleted.guildId) return;
+    dispatchEventToPlugins("guild.message_delete", {
+      message_id: deleted.id,
+      channel_id: deleted.channelId,
+      guild_id: deleted.guildId,
+    });
   });
 
   bot.on(
