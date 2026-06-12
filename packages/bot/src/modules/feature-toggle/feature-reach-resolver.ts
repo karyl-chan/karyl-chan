@@ -137,8 +137,8 @@ export class FeatureReachResolver {
     guildId: string,
     manifest: PluginManifest,
   ): Promise<void> {
-    let rows;
-    let defaults;
+    let rows: Awaited<ReturnType<typeof findFeatureRowsByPluginGuild>>;
+    let defaults: Awaited<ReturnType<typeof findFeatureDefaultsByPlugin>>;
     try {
       [rows, defaults] = await Promise.all([
         findFeatureRowsByPluginGuild(pluginId, guildId),
