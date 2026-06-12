@@ -284,17 +284,26 @@ export function registerRuntimeEvents(ctx: RuntimeContext): void {
     // needs them) while ordinary plugins never see an echo of their RPC
     // sends. Other bots stay excluded entirely.
     if (message.author.id === bot.user?.id) {
+      if (!message.guildId) return;
       // An ephemeral interaction reply (僅你可見) is visible to exactly one
-      // user and is not channel history — fanning it out had presence
-      // plugins storing/threading "開啟決策檢視器…"-style command responses
-      // as if the agent said them in public.
-      if (message.flags.has(MessageFlags.Ephemeral)) return;
-      if (message.guildId) {
-        dispatchEventToPlugins(
-          "guild.message_create_self",
-          serializeMessageForPlugin(message),
-        );
+      // user and is not public channel history, so it rides a SEPARATE
+      // opt-in event (plugins decide by subscribing; default = never
+      // delivered). A presence agent subscribes — it should remember what
+      // it did — and the payload says who could actually see it, so it can
+      // keep that exchange out of everyone else's transcripts.
+      if (message.flags.has(MessageFlags.Ephemeral)) {
+        dispatchEventToPlugins("guild.message_create_self_ephemeral", {
+          ...serializeMessageForPlugin(message),
+          ephemeral: true,
+          // The interaction invoker — the one user the reply is visible to.
+          visible_to: message.interactionMetadata?.user?.id ?? null,
+        });
+        return;
       }
+      dispatchEventToPlugins(
+        "guild.message_create_self",
+        serializeMessageForPlugin(message),
+      );
       return;
     }
     if (message.author.bot) return;
