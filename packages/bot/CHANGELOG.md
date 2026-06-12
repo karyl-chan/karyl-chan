@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.8.0](https://github.com/karyl-chan/karyl-chan/compare/bot-v1.7.0...bot-v1.8.0) (2026-06-12)
+
+
+### Features
+
+* **bot:** include channel_name/guild_name in message events ([2e8425d](https://github.com/karyl-chan/karyl-chan/commit/2e8425d0cb21b3aa220bbb8dbb4323885f2e5933))
+* **events:** self-message, edit and delete fan-out for plugins ([fce4e39](https://github.com/karyl-chan/karyl-chan/commit/fce4e39b1b68106ddc93010c6fb318898cafd901))
+
 ## [1.7.0](https://github.com/karyl-chan/karyl-chan/compare/bot-v1.6.0...bot-v1.7.0) (2026-06-11)
 
 
