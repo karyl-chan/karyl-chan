@@ -34,6 +34,10 @@ function serializeMessageForPlugin(message: Message): Record<string, unknown> {
     id: message.id,
     channel_id: message.channelId,
     guild_id: message.guildId ?? null,
+    // Live display names, so plugins can keep a persisted id→name map
+    // without RPC round-trips (DM channels have no name).
+    channel_name: "name" in message.channel ? message.channel.name : null,
+    guild_name: message.guild?.name ?? null,
     content: message.content ?? "",
     author: {
       id: message.author.id,
