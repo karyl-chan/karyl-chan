@@ -6,6 +6,7 @@ import { deletePlugin, listPlugins, type PluginRecord } from '../../../api/plugi
 import PluginCard from './PluginCard.vue';
 import { AppButton, AppConfirmDialog } from '@karyl-chan/ui';
 import AddPluginModal from './AddPluginModal.vue';
+import { pluginInstallState } from './plugin-install-state';
 
 const { t } = useI18n();
 
@@ -14,8 +15,20 @@ const loading = ref(false);
 const error = ref<string | null>(null);
 const offlineOpen = ref(false);
 
-const activePlugins = computed(() => plugins.value.filter(p => p.status === 'active'));
-const inactivePlugins = computed(() => plugins.value.filter(p => p.status === 'inactive'));
+// Awaiting-registration placeholders get their own always-visible group:
+// they are born status=active (and reaper-flip to inactive later), so the
+// plain online/offline split would show a never-registered plugin as
+// "Online" for a minute and then bury it in the collapsed offline list —
+// exactly the silence PD-1.2 removes.
+const pendingPlugins = computed(() =>
+    plugins.value.filter(p => pluginInstallState(p) === 'awaiting-registration')
+);
+const activePlugins = computed(() =>
+    plugins.value.filter(p => p.status === 'active' && pluginInstallState(p) !== 'awaiting-registration')
+);
+const inactivePlugins = computed(() =>
+    plugins.value.filter(p => p.status === 'inactive' && pluginInstallState(p) !== 'awaiting-registration')
+);
 
 async function load() {
     loading.value = true;
@@ -89,8 +102,8 @@ function closeDeleteAllModal() {
 const addPluginModalOpen = ref(false);
 
 function onPluginCreated() {
+    // The fresh placeholder lands in the always-visible pending group.
     void load();
-    offlineOpen.value = true;
 }
 
 onMounted(load);
@@ -125,6 +138,25 @@ onMounted(load);
             <small>{{ t('admin.plugins.emptyHint') }}</small>
         </p>
         <p v-if="error" class="error" role="alert">{{ error }}</p>
+
+        <!-- Awaiting first registration (PD-1.2: never silent) -->
+        <div v-if="pendingPlugins.length > 0" class="group">
+            <div class="group-head">
+                <span class="group-dot pending" />
+                <span class="group-label">{{ t('admin.plugins.installState.pendingGroup') }}</span>
+                <span class="group-count">{{ pendingPlugins.length }}</span>
+            </div>
+            <p class="group-hint">{{ t('admin.plugins.installState.pendingGroupHint') }}</p>
+            <div class="card-list">
+                <PluginCard
+                    v-for="p in pendingPlugins"
+                    :key="p.id"
+                    :plugin="p"
+                    @updated="onUpdated"
+                    @deleted="onDeleted"
+                />
+            </div>
+        </div>
 
         <!-- Online group -->
         <div v-if="activePlugins.length > 0" class="group">
@@ -279,6 +311,13 @@ onMounted(load);
 }
 .group-dot.online  { background: var(--success, #16a34a); }
 .group-dot.offline { background: var(--text-muted); }
+.group-dot.pending { background: var(--warning, #d97706); }
+.group-hint {
+    margin: 0 0 0.1rem;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    line-height: 1.45;
+}
 .group-label {
     font-size: 0.82rem;
     font-weight: 600;

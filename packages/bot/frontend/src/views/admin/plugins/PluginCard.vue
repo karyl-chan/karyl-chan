@@ -15,6 +15,7 @@ import {
     type PluginRecord
 } from '../../../api/plugins';
 import { dispatchProblem, sdkCompatProblem } from './plugin-card-health';
+import { pluginInstallState } from './plugin-install-state';
 
 const props = defineProps<{
     plugin: PluginRecord;
@@ -156,6 +157,13 @@ watch(() => props.plugin.dispatch, () => { dispatchOverride.value = undefined; }
 const dispatchState = computed(() => dispatchOverride.value !== undefined ? dispatchOverride.value : props.plugin.dispatch);
 const dispatchAlarm = computed(() => dispatchProblem(dispatchState.value));
 const sdkAlarm = computed(() => sdkCompatProblem(props.plugin.sdkCompat, props.plugin.version));
+
+// Install-journey position (PD-1.2): the card badges the states the
+// status dot + enabled toggle don't make explicit on their own —
+// never-registered placeholders, pending scope approval, and
+// registered-but-not-enabled.
+const installState = computed(() => pluginInstallState(props.plugin));
+const pendingScopeCount = computed(() => props.plugin.pendingRpcScopes?.length ?? 0);
 const dispatchStateText = computed(() => {
     const d = dispatchState.value;
     if (!d) return t('admin.plugins.dispatchNone');
@@ -310,6 +318,33 @@ async function confirmDelete() {
             <p v-if="description" class="desc">{{ description }}</p>
 
             <div class="stats-row">
+                <AppBadge
+                    v-if="installState === 'awaiting-registration'"
+                    variant="outline"
+                    icon="material-symbols:pending-actions"
+                    class="install-state-badge"
+                    :title="t('admin.plugins.installState.awaitingHint')"
+                >
+                    {{ t('admin.plugins.installState.awaiting') }}
+                </AppBadge>
+                <AppBadge
+                    v-if="pendingScopeCount > 0"
+                    variant="outline"
+                    icon="material-symbols:shield-question-outline"
+                    class="install-state-badge"
+                    :title="t('admin.plugins.scopes.pendingHint', { n: pendingScopeCount })"
+                >
+                    {{ t('admin.plugins.scopes.pendingCount', { n: pendingScopeCount }) }}
+                </AppBadge>
+                <AppBadge
+                    v-if="installState === 'not-enabled'"
+                    variant="outline"
+                    icon="material-symbols:toggle-off-outline"
+                    class="install-state-badge"
+                    :title="t('admin.plugins.installState.notEnabledHint')"
+                >
+                    {{ t('admin.plugins.installState.notEnabled') }}
+                </AppBadge>
                 <AppBadge v-if="guildFeatureCount > 0" variant="outline" icon="material-symbols:hub-outline">
                     {{ t('admin.plugins.guildFeaturesCount', { n: guildFeatureCount }) }}
                 </AppBadge>
@@ -621,6 +656,12 @@ async function confirmDelete() {
 
 /* ── Pending badge in card header ───────────────────────────────── */
 .sync-problem-badge {
+    color: var(--warning, #d97706);
+    border-color: var(--warning, #d97706);
+}
+
+/* Install-journey badges (PD-1.2) — amber: action needed, not broken. */
+.install-state-badge {
     color: var(--warning, #d97706);
     border-color: var(--warning, #d97706);
 }

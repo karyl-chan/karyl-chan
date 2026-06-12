@@ -12,6 +12,7 @@ import { jwtService } from "../web-core/jwt.service.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { shouldRecord } from "../bot-events/bot-event-dedup.js";
 import {
+  deleteFeatureRow,
   findFeatureRow,
   findFeatureRowsByGuild,
   findFeatureRowsByPlugin,
@@ -731,6 +732,10 @@ export async function registerPluginRoutes(
         overridden: boolean;
         /** The resolved default this guild falls back to when not overridden (operator default → manifest default → false). */
         defaultEnabled: boolean;
+        /** The operator-level default ("All Servers"), or null when none is set — lets the UI name which tier `defaultEnabled` comes from. */
+        operatorDefault: boolean | null;
+        /** The manifest's enabled_by_default. */
+        manifestDefault: boolean;
         config: Record<string, unknown>;
         metrics: Record<string, unknown>;
         pluginEnabled: boolean;
@@ -741,8 +746,9 @@ export async function registerPluginRoutes(
         if (!manifest) continue;
         for (const f of manifest.guild_features ?? []) {
           const row = rowByKey.get(`${p.id}:${f.key}`);
-          const defaultEnabled =
-            defaultByKey.get(`${p.id}:${f.key}`) ?? !!f.enabled_by_default;
+          const operatorDefault = defaultByKey.get(`${p.id}:${f.key}`) ?? null;
+          const manifestDefault = !!f.enabled_by_default;
+          const defaultEnabled = operatorDefault ?? manifestDefault;
           items.push({
             pluginId: p.id,
             pluginKey: p.pluginKey,
@@ -756,6 +762,8 @@ export async function registerPluginRoutes(
             enabled: row ? row.enabled : defaultEnabled,
             overridden: !!row,
             defaultEnabled,
+            operatorDefault,
+            manifestDefault,
             config: row
               ? ((safeParse(row.configJson) as Record<string, unknown>) ?? {})
               : {},
@@ -999,6 +1007,108 @@ export async function registerPluginRoutes(
           // Don't echo back configJson in plaintext — the secrets in
           // it are encrypted, but exposing the encrypted blob serves
           // no purpose. UI re-fetches via the GET aggregate route.
+        },
+      };
+    },
+  );
+
+  /**
+   * DELETE /api/plugins/:id/guilds/:guildId/features/:featureKey
+   *
+   * Clear the explicit per-guild override (PD-1.3): the row is removed
+   * — including its per-guild config — and the guild reverts to the
+   * operator-default → manifest-default chain. Mirrors the PUT route's
+   * side effects for whatever effective state results: guild-scoped
+   * commands are re-synced, and the plugin's onEnable/onDisable
+   * lifecycle fires only when the effective value actually flips.
+   */
+  server.delete<{
+    Params: { id: string; guildId: string; featureKey: string };
+  }>(
+    "/api/plugins/:id/guilds/:guildId/features/:featureKey",
+    async (request, reply) => {
+      if (!requireCapability(request, reply, "admin")) return;
+      const pluginId = Number(request.params.id);
+      const { guildId, featureKey } = request.params;
+      if (!Number.isInteger(pluginId) || pluginId <= 0) {
+        reply.code(400).send({ error: "invalid plugin id" });
+        return;
+      }
+      if (!guildId || !featureKey) {
+        reply.code(400).send({ error: "guildId + featureKey required" });
+        return;
+      }
+      const plugin = (await pluginRegistry.list()).find(
+        (p) => p.id === pluginId,
+      );
+      if (!plugin) {
+        reply.code(404).send({ error: "plugin not found" });
+        return;
+      }
+      const manifest = safeParse(plugin.manifestJson) as PluginManifest | null;
+      const feature = manifest?.guild_features?.find(
+        (f) => f.key === featureKey,
+      );
+      if (!feature) {
+        reply
+          .code(404)
+          .send({ error: `feature '${featureKey}' not declared by plugin` });
+        return;
+      }
+      const existingRow = await findFeatureRow(pluginId, guildId, featureKey);
+      if (!existingRow) {
+        reply
+          .code(404)
+          .send({ error: "no per-guild override to clear" });
+        return;
+      }
+      const operatorDefault =
+        (await findFeatureDefaultsByPlugin(pluginId)).find(
+          (d) => d.featureKey === featureKey,
+        )?.enabled ?? null;
+      const effective = operatorDefault ?? !!feature.enabled_by_default;
+      const enabledChanged = existingRow.enabled !== effective;
+      await deleteFeatureRow(pluginId, guildId, featureKey);
+      {
+        const pluginRow = await pluginRegistry.findById(pluginId);
+        const manifestObj = pluginRow
+          ? (safeParse(pluginRow.manifestJson) as PluginManifest | null)
+          : null;
+        if (pluginRow && manifestObj) {
+          await pluginCommandRegistry
+            .syncFeatureCommandsForGuild(
+              pluginRow,
+              featureKey,
+              guildId,
+              effective,
+              manifestObj,
+            )
+            .catch(() => {
+              /* logged inside the registry */
+            });
+        }
+      }
+      botEventLog.record(
+        "info",
+        "bot",
+        `plugin guild feature override cleared: ${plugin.pluginKey}/${featureKey}@${guildId} (now follows ${operatorDefault !== null ? "operator" : "manifest"} default = ${effective})`,
+        { pluginId, guildId, featureKey, effective, actor: request.authUserId },
+      );
+      if (enabledChanged) {
+        dispatchLifecycleToPlugin(
+          pluginId,
+          effective ? "plugin.guild.enabled" : "plugin.guild.disabled",
+          guildId,
+          featureKey,
+        );
+      }
+      return {
+        feature: {
+          pluginId,
+          guildId,
+          featureKey,
+          enabled: effective,
+          overridden: false,
         },
       };
     },

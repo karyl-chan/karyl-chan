@@ -5,6 +5,7 @@ import { Icon } from '@iconify/vue';
 import { AppModal } from '@karyl-chan/ui';
 import { AppButton } from '@karyl-chan/ui';
 import { generatePluginSetupSecret } from '../../../api/plugins';
+import { composeServiceStub, rootEnvLine } from './plugin-install-snippets';
 
 const { t } = useI18n();
 
@@ -42,9 +43,24 @@ const canSubmit = computed(() => {
 // ── Step 2 state ────────────────────────────────────────────────────
 const step = ref<1 | 2>(1);
 const secretValue = ref('');
+const createdKey = ref('');
 const secretCopied = ref(false);
 const secretAcknowledged = ref(false);
 const wasCreated = ref(true); // created === true means brand-new placeholder
+
+// Wiring snippets (PD-1.2): the operator's next two steps, copyable.
+const envLine = computed(() => rootEnvLine(createdKey.value, secretValue.value));
+const composeStub = computed(() => composeServiceStub(createdKey.value));
+const snippetCopied = ref<'env' | 'compose' | null>(null);
+async function copySnippet(which: 'env' | 'compose') {
+    try {
+        await navigator.clipboard.writeText(which === 'env' ? envLine.value : composeStub.value);
+        snippetCopied.value = which;
+        setTimeout(() => { if (snippetCopied.value === which) snippetCopied.value = null; }, 2000);
+    } catch {
+        /* clipboard unavailable — the blocks remain selectable */
+    }
+}
 
 // ── Reset on open/close ─────────────────────────────────────────────
 watch(() => props.visible, (open) => {
@@ -69,6 +85,7 @@ async function onSubmit() {
     try {
         const result = await generatePluginSetupSecret(pluginKey.value.trim());
         secretValue.value = result.setupSecret;
+        createdKey.value = result.pluginKey;
         wasCreated.value = result.created;
         secretCopied.value = false;
         secretAcknowledged.value = false;
@@ -100,8 +117,10 @@ async function copySecret() {
 function onClose() {
     // Don't leave the one-time secret sitting in memory (mirrors PluginCard).
     secretValue.value = '';
+    createdKey.value = '';
     secretCopied.value = false;
     secretAcknowledged.value = false;
+    snippetCopied.value = null;
     emit('close');
 }
 </script>
@@ -112,7 +131,7 @@ function onClose() {
         :title="step === 1 ? t('admin.plugins.addPlugin.title') : t('admin.plugins.setupSecret.resultTitle')"
         :close-on-backdrop="step === 1"
         :close-on-escape="step === 1"
-        width="min(500px, 94vw)"
+        :width="step === 1 ? 'min(500px, 94vw)' : 'min(640px, 94vw)'"
         @close="onClose"
     >
         <!-- ── Step 1: Enter plugin key ───────────────────────────── -->
@@ -186,9 +205,40 @@ function onClose() {
                     {{ secretCopied ? t('admin.plugins.setupSecret.copiedButton') : t('admin.plugins.setupSecret.copyButton') }}
                 </AppButton>
             </div>
-            <p class="secret-instruction">{{ t('admin.plugins.setupSecret.instruction') }}</p>
-            <div class="secret-env-hint">
-                <code>{{ t('admin.plugins.setupSecret.envHint', { secret: secretValue }) }}</code>
+            <p class="secret-instruction">{{ t('admin.plugins.setupSecret.wiringIntro') }}</p>
+
+            <!-- Wiring step 1: compose root .env line -->
+            <div class="snippet-block">
+                <div class="snippet-head">
+                    <span class="snippet-label">{{ t('admin.plugins.setupSecret.rootEnvLabel') }}</span>
+                    <AppButton
+                        variant="ghost"
+                        size="sm"
+                        :icon="snippetCopied === 'env' ? 'material-symbols:check-rounded' : 'material-symbols:content-copy-outline-rounded'"
+                        @click="copySnippet('env')"
+                    >
+                        {{ snippetCopied === 'env' ? t('admin.plugins.setupSecret.copiedButton') : t('admin.plugins.setupSecret.copyButton') }}
+                    </AppButton>
+                </div>
+                <pre class="snippet-code"><code>{{ envLine }}</code></pre>
+                <p class="snippet-caption">{{ t('admin.plugins.setupSecret.rootEnvCaption') }}</p>
+            </div>
+
+            <!-- Wiring step 2: docker-compose service stub -->
+            <div class="snippet-block">
+                <div class="snippet-head">
+                    <span class="snippet-label">{{ t('admin.plugins.setupSecret.composeLabel') }}</span>
+                    <AppButton
+                        variant="ghost"
+                        size="sm"
+                        :icon="snippetCopied === 'compose' ? 'material-symbols:check-rounded' : 'material-symbols:content-copy-outline-rounded'"
+                        @click="copySnippet('compose')"
+                    >
+                        {{ snippetCopied === 'compose' ? t('admin.plugins.setupSecret.copiedButton') : t('admin.plugins.setupSecret.copyButton') }}
+                    </AppButton>
+                </div>
+                <pre class="snippet-code"><code>{{ composeStub }}</code></pre>
+                <p class="snippet-caption">{{ t('admin.plugins.setupSecret.composeCaption') }}</p>
             </div>
             <div class="secret-warning" role="alert">
                 <Icon icon="material-symbols:warning-outline-rounded" width="15" height="15" class="secret-warning-icon" />
@@ -349,18 +399,41 @@ function onClose() {
     color: var(--text-muted);
 }
 
-.secret-env-hint {
+.snippet-block {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+.snippet-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+}
+.snippet-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-strong);
+}
+.snippet-code {
+    margin: 0;
     background: var(--bg-page);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     padding: 0.5rem 0.7rem;
     overflow-x: auto;
 }
-.secret-env-hint code {
+.snippet-code code {
     font-family: var(--font-mono, monospace);
-    font-size: 0.82rem;
+    font-size: 0.78rem;
     color: var(--text-strong);
-    white-space: nowrap;
+    white-space: pre;
+}
+.snippet-caption {
+    margin: 0;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    line-height: 1.45;
 }
 
 .secret-warning {
