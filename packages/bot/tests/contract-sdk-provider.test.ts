@@ -58,7 +58,7 @@ interface ContractFixtures {
     streamPrefix: string;
     dlqSuffix: string;
     fields: string[];
-    samples: Array<{ eventType: string; streamKey: string; dlqKey: string }>;
+    samples: Array<{ pluginKey: string; streamKey: string; dlqKey: string }>;
   };
   events: { canonical: string[] };
   dispatchEnvelope: { httpBodyKeys: string[] };
@@ -194,9 +194,14 @@ function makeXaddStub(): { client: RedisLike; calls: XaddCall[] } {
 
 describe("contract: streams producer key convention (bot side)", () => {
   for (const s of fixtures.streams.samples) {
-    it(`producer XADDs '${s.eventType}' to the contract stream key`, async () => {
+    it(`producer XADDs to '${s.pluginKey}'s mailbox per the contract`, async () => {
       const { client, calls } = makeXaddStub();
-      new RedisStreamsPluginEventBus(client).dispatch(s.eventType, { a: 1 });
+      new RedisStreamsPluginEventBus(client).dispatchToPlugin(
+        1,
+        s.pluginKey,
+        "guild.message_create",
+        { a: 1 },
+      );
       await new Promise((r) => setTimeout(r, 5));
       expect(calls.length).toBe(1);
       expect(calls[0].key).toBe(s.streamKey);
@@ -209,7 +214,9 @@ describe("contract: streams producer key convention (bot side)", () => {
 
   it("producer fields include every contract field name", async () => {
     const { client, calls } = makeXaddStub();
-    new RedisStreamsPluginEventBus(client).dispatch(
+    new RedisStreamsPluginEventBus(client).dispatchToPlugin(
+      1,
+      "my-plugin",
       "guild.message_create",
       { x: 1 },
     );

@@ -4,7 +4,8 @@
  * Exercises a REAL event round-trip across the two services' production
  * code over a REAL Redis, with no stubs on the transport:
  *
- *   bot   RedisStreamsPluginEventBus.dispatch()   (XADD karyl:events:<type>)
+ *   bot   RedisStreamsPluginEventBus.dispatchToPlugin()
+ *         (XADD karyl:plugin:<pluginKey>:events — the PM-8 mailbox)
  *   redis (real server)
  *   sdk   StreamsConsumer  (XREADGROUP → handler → XACK)
  *
@@ -30,13 +31,21 @@
 
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const REDIS_URL = process.env.TEST_E2E_REDIS_URL;
 
 // ─── Minimal structural types for the dynamically-imported modules ──────────
 
 interface EventBus {
-  dispatch(eventType: string, data: unknown): void;
+  dispatchToPlugin(
+    pluginId: number,
+    pluginKey: string,
+    eventType: string,
+    data: unknown,
+  ): void;
 }
 interface EventBusCtor {
   new (redis: unknown, opts?: { maxLen?: number }): EventBus;
@@ -51,7 +60,6 @@ interface ConsumerCtor {
   new (opts: {
     redis: unknown;
     pluginKey: string;
-    eventTypes: string[];
     dispatchEvent: (type: string, data: unknown) => Promise<void>;
     log: { info(): void; warn(): void; error(): void };
     blockMs?: number;
@@ -72,12 +80,28 @@ interface RedisCtor {
 // (the bot build ships no .d.ts; ioredis lives in the hoisted root
 // node_modules e2e has no symlink to). At runtime Node resolves them
 // normally. Each result is cast to its local structural type.
-const dynImport = (specifier: string): Promise<unknown> =>
-  import(specifier);
+//
+// Resolution is anchored at the WORKSPACE ROOT (walked up from this
+// compiled file), not relative to the dist layout — the original
+// `../../packages/...` specifier silently assumed dist/ nesting depth
+// and broke the first time the suite actually ran against a Redis.
+function findRepoRoot(from: string): string {
+  let dir = from;
+  for (let i = 0; i < 10; i++) {
+    if (existsSync(path.join(dir, "pnpm-workspace.yaml"))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  throw new Error(`pnpm-workspace.yaml not found above ${from}`);
+}
+const REPO = findRepoRoot(path.dirname(fileURLToPath(import.meta.url)));
+const dynImport = (relPath: string): Promise<unknown> =>
+  import(pathToFileURL(path.join(REPO, relPath)).href);
 
 async function loadBotProducer(): Promise<EventBusCtor> {
   const mod = (await dynImport(
-    "../../packages/bot/build/adapters/redis/plugin-event-bus.js",
+    "packages/bot/build/adapters/redis/plugin-event-bus.js",
   )) as { RedisStreamsPluginEventBus: EventBusCtor };
   return mod.RedisStreamsPluginEventBus;
 }
@@ -87,7 +111,7 @@ async function loadSdkConsumer(): Promise<{
   groupNameFor: (pluginKey: string) => string;
 }> {
   const mod = (await dynImport(
-    "../../packages/plugin-sdk/dist/streams-consumer.js",
+    "packages/plugin-sdk/dist/streams-consumer.js",
   )) as {
     StreamsConsumer: ConsumerCtor;
     groupNameFor: (pluginKey: string) => string;
@@ -96,7 +120,9 @@ async function loadSdkConsumer(): Promise<{
 }
 
 async function makeRedis(): Promise<RedisClient> {
-  const mod = (await dynImport("ioredis")) as { Redis: RedisCtor };
+  // Bare specifier — resolve from the hoisted root node_modules, not a
+  // repo-root file path.
+  const mod = (await import("ioredis")) as unknown as { Redis: RedisCtor };
   return new mod.Redis(REDIS_URL!);
 }
 
@@ -107,7 +133,9 @@ const noopLog = { info() {}, warn() {}, error() {} };
   () => {
     const pluginKey = `e2e-${process.pid}`;
     const EVENT_TYPE = `e2e.message_create.${process.pid}`;
-    const STREAM_KEY = `karyl:events:${EVENT_TYPE}`;
+    // PM-8: per-plugin mailbox stream — must match both the bot producer
+    // and the SDK's pluginStreamKeyFor convention.
+    const STREAM_KEY = `karyl:plugin:${pluginKey}:events`;
     let producerRedis: RedisClient;
     let consumerRedis: RedisClient;
     let consumer: Consumer;
@@ -127,7 +155,6 @@ const noopLog = { info() {}, warn() {}, error() {} };
       consumer = new sdk.StreamsConsumer({
         redis: consumerRedis,
         pluginKey,
-        eventTypes: [EVENT_TYPE],
         dispatchEvent: async (type, data) => {
           received.push({ type, data });
         },
@@ -149,7 +176,7 @@ const noopLog = { info() {}, warn() {}, error() {} };
     it("delivers a produced event to the SDK consumer and acks it", async () => {
       const bus = new EventBusClass(producerRedis);
       const payload = { id: "42", content: "hello e2e" };
-      bus.dispatch(EVENT_TYPE, payload);
+      bus.dispatchToPlugin(1, pluginKey, EVENT_TYPE, payload);
 
       const deadline = Date.now() + 10_000;
       while (received.length === 0 && Date.now() < deadline) {

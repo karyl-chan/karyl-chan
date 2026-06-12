@@ -1,21 +1,22 @@
 /**
  * Redis Streams PluginEventBus — producer side.
  *
- * Replaces the synchronous HTTP fan-out (per-plugin POST to /events)
- * with `XADD karyl:events:<eventType> * type <eventType> data <json>`.
- * There is ONE shared stream per event type; every plugin that
- * subscribes to that type joins its own consumer group on the same
- * stream (SDK `StreamsConsumer`). The bot is decoupled from plugin
- * readiness — if a plugin restarts, the events queue in Redis until it
- * picks them up again, instead of being dropped on a failed POST.
+ * PM-8: one stream PER PLUGIN — `karyl:plugin:<pluginKey>:events` — the
+ * plugin's private mailbox. The bridge (`plugin-event-bridge.service.ts`)
+ * resolves reach (feature-scoped vs approved-global routes) per plugin
+ * and only then calls `dispatchToPlugin`, so an event lands exclusively
+ * in the mailboxes of plugins entitled to see it. The previous model
+ * (one shared stream per event TYPE, every plugin's consumer group on
+ * the same key) made bot-side per-plugin filtering impossible — any
+ * consumer could read the full firehose regardless of what the bot
+ * decided.
  *
- * As of PR-1.1, the SDK-side consumer ships, so `EVENT_BUS=redis-streams`
- * is a complete loop: producer here + SDK XREADGROUP + XACK + DLQ. The
- * bot bridge (`plugin-event-bridge.service.ts`) routes to this bus when
- * the env is set, falling back to HTTP fan-out by default (PR-1.2).
+ * The bot stays decoupled from plugin readiness — if a plugin restarts,
+ * its events queue in its mailbox until the SDK `StreamsConsumer`
+ * drains them, instead of being dropped on a failed POST.
  *
  * Stream shape:
- *   key: karyl:events:<eventType>
+ *   key: karyl:plugin:<pluginKey>:events
  *   fields:
  *     type        → event type string (e.g. "guild.message_create")
  *     data        → JSON-encoded payload (verbatim from the dispatcher)
@@ -23,7 +24,8 @@
  *     traceparent → same value under the canonical W3C header name
  *
  * Retention is configured via Redis MAXLEN at write time so a
- * never-consumed stream doesn't grow unbounded.
+ * never-consumed mailbox doesn't grow unbounded. The cap is per
+ * plugin; total Redis footprint is bounded by plugin count × MAXLEN.
  */
 
 import type { PluginEventBus } from "../plugin-event-bus.js";
@@ -35,18 +37,21 @@ import { getRedisClient, type RedisLike } from "./client.js";
 
 interface RedisStreamsEventBusOptions {
   /**
-   * Approximate cap on stream length. XADD MAXLEN ~ N keeps the
-   * trim cost near-constant while bounding stream size. Default
-   * 100_000 — enough headroom for a plugin restart of several
+   * Approximate cap on each plugin mailbox's length. XADD MAXLEN ~ N
+   * keeps the trim cost near-constant while bounding stream size.
+   * Default 100_000 — enough headroom for a plugin restart of several
    * minutes at our target traffic.
    */
   maxLen?: number;
 }
 
 const DEFAULT_MAXLEN = 100_000;
-const STREAM_PREFIX = "karyl:events:";
 
-const streamKey = (pluginKey: string) => `${STREAM_PREFIX}${pluginKey}`;
+/** Keep in sync with the SDK's `pluginStreamKeyFor` (streams-protocol.ts). */
+export const PLUGIN_STREAM_PREFIX = "karyl:plugin:";
+
+const mailboxKey = (pluginKey: string) =>
+  `${PLUGIN_STREAM_PREFIX}${pluginKey}:events`;
 
 export class RedisStreamsPluginEventBus implements PluginEventBus {
   private readonly maxLen: number;
@@ -58,22 +63,17 @@ export class RedisStreamsPluginEventBus implements PluginEventBus {
     this.maxLen = Math.max(1, opts.maxLen ?? DEFAULT_MAXLEN);
   }
 
-  dispatch(eventType: string, data: unknown): void {
-    // The interface is fire-and-forget; we don't await the XADD
-    // because the caller (Discord gateway event handler) needs to
-    // return quickly. Errors are swallowed — same contract as the
+  dispatchToPlugin(
+    _pluginId: number,
+    pluginKey: string,
+    eventType: string,
+    data: unknown,
+  ): void {
+    // Fire-and-forget; the caller (Discord gateway event handler) needs
+    // to return quickly. Errors are swallowed — same contract as the
     // HTTP InProcess default, which logs internally.
-    //
-    // For plugin-specific stream addressing we'd need the
-    // subscription index — that lives in plugin-event-bridge.
-    // This producer dispatches to a SINGLE shared stream per
-    // eventType (karyl:events:<eventType>); the SDK consumer
-    // filters by pluginKey on consume. Trade-off: one stream per
-    // event type is simpler than per-plugin streams and lets
-    // plugins join late without backfill, at the cost of a small
-    // filter step on consume.
     const trace = newTraceContext();
-    const key = streamKey(eventType);
+    const key = mailboxKey(pluginKey);
     const fields: Array<string | number> = [
       "MAXLEN",
       "~",
@@ -88,11 +88,9 @@ export class RedisStreamsPluginEventBus implements PluginEventBus {
       TRACEPARENT_HEADER,
       trace.traceparent,
     ];
-    // XADD signature in ioredis: (key, ...args). We rely on the
-    // RedisLike interface's `eval` / `set` / `del` having the same
-    // (...rest: Array<string|number>) shape; XADD isn't in our
-    // narrow interface yet because it's only used here. Type the
-    // ioredis client as `unknown` and call via a cast.
+    // XADD signature in ioredis: (key, ...args). XADD isn't in our
+    // narrow RedisLike interface because it's only used here; call via
+    // a cast.
     void (this.redis as unknown as {
       xadd?: (
         key: string,

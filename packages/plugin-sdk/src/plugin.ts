@@ -436,17 +436,28 @@ export interface PluginConfig {
    * dispatches to the matching handler. Authors do NOT mount their own
    * `/events` route — the SDK owns this surface.
    *
-   * Manifest-side wiring is also automatic: declared event-type keys
-   * are merged into `events_subscribed_global` and `endpoints.events`
-   * is set to `/events`, so the bot's event-index rebuild picks them
-   * up at register time. Feature-scoped subscriptions
-   * (`guildFeatures[].eventsSubscribed`) still work for admin-UI
-   * visibility, but the handler must live here.
+   * Manifest-side wiring is also automatic, with PM-8 reach semantics:
+   * a handler key covered by some feature's
+   * `guildFeatures[].eventsSubscribed` stays FEATURE-SCOPED — the bot
+   * delivers it only for guilds where that feature is effectively
+   * enabled. Handler keys not covered by any feature are merged into
+   * `events_subscribed_global`, which is an operator-approved firehose
+   * grant (auto-approved under PLUGIN_AUTO_APPROVE). `endpoints.events`
+   * is set to `/events` either way. The handler itself always lives
+   * here — features only declare reach, not handlers.
    *
    * A future transport swap (e.g. Redis Streams) only changes the
    * SDK's internal wiring — handlers stay stable.
    */
   eventHandlers?: Record<string, EventHandler>;
+  /**
+   * Event types to subscribe GLOBALLY even though a feature also covers
+   * them (PM-8). Global subscriptions reach every guild regardless of
+   * feature enablement and need operator approval when
+   * PLUGIN_AUTO_APPROVE=false — declare them deliberately. DM events
+   * (no guild context) can only be received via a global subscription.
+   */
+  eventsSubscribedGlobal?: string[];
 }
 
 /** The object returned by definePlugin. */
@@ -899,7 +910,6 @@ export function definePlugin(config: PluginConfig): PluginInstance {
                   const consumer = new StreamsConsumer({
                     redis,
                     pluginKey: config.key,
-                    eventTypes,
                     dispatchEvent: dispatchEventToHandler,
                     log: {
                       info: (msg, meta) => server.log.info(meta ?? {}, msg),
@@ -910,9 +920,11 @@ export function definePlugin(config: PluginConfig): PluginInstance {
                     // existing metrics pipeline (PR-1.3) — the collector
                     // already pushes snapshots to the bot's metrics
                     // surface, so no new transport is needed.
-                    onLag: (eventType, lag) => {
+                    // PM-8: one private mailbox stream per plugin —
+                    // lag is a single scalar, not per event type.
+                    onLag: (lag) => {
                       metricsCollector
-                        .gauge("kc_event_consumer_lag", { event_type: eventType })
+                        .gauge("kc_event_consumer_lag", {})
                         .set(lag);
                     },
                     onDeadLetter: (eventType, reason) => {

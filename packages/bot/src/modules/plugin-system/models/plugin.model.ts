@@ -48,6 +48,14 @@ export const Plugin = sequelize.define(
     // predate scope-approval; read as the empty set. Stored as raw
     // JSON text (like manifestJson) for deterministic cross-engine diffs.
     approvedRpcScopes: { type: DataTypes.TEXT, allowNull: true },
+    // JSON array of the GLOBAL event subscriptions an admin has approved
+    // (PM-8 event-reach). Feature-scoped subscriptions need no approval —
+    // they're gated per guild by the feature toggle; this column covers
+    // only `events_subscribed_global` (DM / guild-less / firehose events).
+    // With PLUGIN_AUTO_APPROVE=true (default) the index build treats every
+    // declared global subscription as approved, so NULL here never cuts
+    // off a pre-PM-8 row. Same NULL/JSON semantics as approvedRpcScopes.
+    approvedGlobalEventSubs: { type: DataTypes.TEXT, allowNull: true },
   },
   {
     tableName: "plugins",
@@ -75,6 +83,10 @@ export interface PluginRow {
   /** RPC scopes an admin has approved. The issued token carries exactly
    *  these. Always a (possibly empty) array — a NULL column reads as []. */
   approvedRpcScopes: string[];
+  /** Global event subscriptions an admin has approved (PM-8). Only
+   *  meaningful when PLUGIN_AUTO_APPROVE=false — with auto-approve the
+   *  declared set is honored regardless. NULL reads as []. */
+  approvedGlobalEventSubs: string[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -111,6 +123,9 @@ function rowOf(model: InstanceType<typeof Plugin>): PluginRow {
     dispatchHmacKey:
       (model.getDataValue("dispatchHmacKey") as string | null) ?? null,
     approvedRpcScopes: parseScopeArray(model.getDataValue("approvedRpcScopes")),
+    approvedGlobalEventSubs: parseScopeArray(
+      model.getDataValue("approvedGlobalEventSubs"),
+    ),
     createdAt: model.getDataValue("createdAt") as Date,
     updatedAt: model.getDataValue("updatedAt") as Date,
   };
@@ -166,6 +181,9 @@ export interface UpsertPluginInput {
    *  persisted set always matches the scopes the just-issued token carries.
    *  Omitted → left untouched on update, defaults to [] on insert. */
   approvedRpcScopes?: string[];
+  /** Global event subscriptions approved for this plugin (PM-8). Same
+   *  write semantics as approvedRpcScopes. */
+  approvedGlobalEventSubs?: string[];
 }
 
 /**
@@ -198,6 +216,13 @@ export const upsertPluginRegistration = async (
       ...(input.approvedRpcScopes !== undefined
         ? { approvedRpcScopes: JSON.stringify(input.approvedRpcScopes) }
         : {}),
+      ...(input.approvedGlobalEventSubs !== undefined
+        ? {
+            approvedGlobalEventSubs: JSON.stringify(
+              input.approvedGlobalEventSubs,
+            ),
+          }
+        : {}),
     });
     return rowOf(existing);
   }
@@ -212,6 +237,9 @@ export const upsertPluginRegistration = async (
     enabled: input.defaultEnabled ?? true,
     lastHeartbeatAt: now,
     approvedRpcScopes: JSON.stringify(input.approvedRpcScopes ?? []),
+    approvedGlobalEventSubs: JSON.stringify(
+      input.approvedGlobalEventSubs ?? [],
+    ),
   });
   return rowOf(created);
 };
@@ -279,6 +307,21 @@ export const setPluginApprovedRpcScopes = async (
   const row = await Plugin.findByPk(id);
   if (!row) return null;
   await row.update({ approvedRpcScopes: JSON.stringify(scopes) });
+  return rowOf(row);
+};
+
+/**
+ * Persist the admin-approved GLOBAL event subscription set (PM-8). Pass
+ * the full approved set. The caller re-indexes event routes afterwards
+ * (`applyPluginChange`) so the change takes effect without a re-register.
+ */
+export const setPluginApprovedGlobalEventSubs = async (
+  id: number,
+  subs: string[],
+): Promise<PluginRow | null> => {
+  const row = await Plugin.findByPk(id);
+  if (!row) return null;
+  await row.update({ approvedGlobalEventSubs: JSON.stringify(subs) });
   return rowOf(row);
 };
 

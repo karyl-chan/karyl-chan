@@ -24,6 +24,7 @@ import {
   upsertFeatureDefault,
   type PluginFeatureDefaultRow,
 } from "../feature-toggle/models/plugin-feature-default.model.js";
+import { featureReachResolver } from "../feature-toggle/feature-reach-resolver.js";
 import {
   findConfigByPluginAndSource,
   upsertConfigKey,
@@ -487,6 +488,17 @@ export async function registerPluginRoutes(
         pendingRpcScopes: manifestRpcMethods(p.manifestJson).filter(
           (m) => !p.approvedRpcScopes.includes(m),
         ),
+        // Global event subscription grant state (PM-8). Mirrors the RPC
+        // scope model; with PLUGIN_AUTO_APPROVE=true nothing is ever
+        // pending (the index treats declared as granted).
+        approvedGlobalEventSubs: config.plugin.autoApproveScopes
+          ? manifestGlobalEventSubs(p.manifestJson)
+          : p.approvedGlobalEventSubs,
+        pendingGlobalEventSubs: config.plugin.autoApproveScopes
+          ? []
+          : manifestGlobalEventSubs(p.manifestJson).filter(
+              (e) => !p.approvedGlobalEventSubs.includes(e),
+            ),
         // Background command-sync state (PM-7.1/7.6). null = no sync
         // attempted since this bot process started (e.g. plugin
         // registered before the last bot restart).
@@ -605,6 +617,15 @@ export async function registerPluginRoutes(
           pendingRpcScopes: manifestRpcMethods(p.manifestJson).filter(
             (m) => !p.approvedRpcScopes.includes(m),
           ),
+          // Global event subscription grant state (PM-8), same shape as list.
+          approvedGlobalEventSubs: config.plugin.autoApproveScopes
+            ? manifestGlobalEventSubs(p.manifestJson)
+            : p.approvedGlobalEventSubs,
+          pendingGlobalEventSubs: config.plugin.autoApproveScopes
+            ? []
+            : manifestGlobalEventSubs(p.manifestJson).filter(
+                (e) => !p.approvedGlobalEventSubs.includes(e),
+              ),
           pluginCommands: thirdTrackCommands.map((c) => ({
             id: c.id,
             name: c.name,
@@ -954,6 +975,8 @@ export async function registerPluginRoutes(
         enabled,
         configJson,
       });
+      // PM-8: event dispatch + RPC gates cache this resolution.
+      featureReachResolver.invalidateGuild(pluginId, guildId);
       // Sync the feature's guild-scoped commands to match: enabled →
       // register them in this guild; disabled → delete them. Idempotent
       // (a config-only PATCH just re-confirms the current state).
@@ -1069,6 +1092,8 @@ export async function registerPluginRoutes(
       const effective = operatorDefault ?? !!feature.enabled_by_default;
       const enabledChanged = existingRow.enabled !== effective;
       await deleteFeatureRow(pluginId, guildId, featureKey);
+      // PM-8: event dispatch + RPC gates cache this resolution.
+      featureReachResolver.invalidateGuild(pluginId, guildId);
       {
         const pluginRow = await pluginRegistry.findById(pluginId);
         const manifestObj = pluginRow
@@ -1234,6 +1259,9 @@ export async function registerPluginRoutes(
         featureKey,
         request.body.enabled,
       );
+      // PM-8: a default change affects every guild without an explicit
+      // row — drop all cached resolutions for this plugin.
+      featureReachResolver.invalidatePlugin(pluginId);
       // Re-evaluate this feature's slash commands across every guild —
       // un-overridden guilds now follow this default. Detached: this can
       // be one Discord API call per guild, so don't make the admin wait
@@ -1570,6 +1598,52 @@ export async function registerPluginRoutes(
   );
 
   /**
+   * PUT /api/plugins/:id/global-event-subs
+   * Body: { approved: string[] }
+   *
+   * Admin approval surface for GLOBAL event subscriptions (PM-8) —
+   * mirrors PUT /:id/scopes: clamps to the manifest's declared
+   * `events_subscribed_global`, persists, and re-indexes event routes so
+   * the change takes effect immediately. Only meaningful when
+   * PLUGIN_AUTO_APPROVE=false; with auto-approve the declared set is
+   * granted regardless and this endpoint just records intent.
+   */
+  server.put<{ Params: { id: string }; Body: { approved?: unknown } }>(
+    "/api/plugins/:id/global-event-subs",
+    async (request, reply) => {
+      if (!requireCapability(request, reply, "admin")) return;
+      const id = Number(request.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        reply.code(400).send({ error: "invalid id" });
+        return;
+      }
+      const approvedRaw = request.body?.approved;
+      if (
+        !Array.isArray(approvedRaw) ||
+        !approvedRaw.every((s) => typeof s === "string")
+      ) {
+        reply.code(400).send({ error: "approved must be a string array" });
+        return;
+      }
+      const state = await pluginRegistry.setApprovedGlobalEventSubs(
+        id,
+        approvedRaw,
+      );
+      if (!state) {
+        reply.code(404).send({ error: "plugin not found" });
+        return;
+      }
+      botEventLog.record(
+        "info",
+        "bot",
+        `Plugin global event subscriptions set by admin (${state.approved.length} approved, ${state.pending.length} pending)`,
+        { pluginId: id, ...state, actor: request.authUserId },
+      );
+      return { globalEventSubs: state };
+    },
+  );
+
+  /**
    * DELETE /api/plugins/:id
    *
    * Hard-delete a plugin that is currently inactive. Active plugins
@@ -1821,4 +1895,15 @@ function manifestRpcMethods(manifestJson: string): string[] {
   const m = safeParse(manifestJson) as { rpc_methods_used?: unknown } | null;
   if (!m || !Array.isArray(m.rpc_methods_used)) return [];
   return m.rpc_methods_used.filter((s): s is string => typeof s === "string");
+}
+
+/** Declared GLOBAL event subscriptions (PM-8) — the requested grant set. */
+function manifestGlobalEventSubs(manifestJson: string): string[] {
+  const m = safeParse(manifestJson) as
+    | { events_subscribed_global?: unknown }
+    | null;
+  if (!m || !Array.isArray(m.events_subscribed_global)) return [];
+  return m.events_subscribed_global.filter(
+    (s): s is string => typeof s === "string",
+  );
 }

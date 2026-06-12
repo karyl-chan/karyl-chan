@@ -23,6 +23,9 @@ vi.mock(
   "../src/modules/feature-toggle/models/plugin-guild-feature.model.js",
   () => ({
     findEnabledFeaturesByPluginGuild: vi.fn(),
+    findFeatureRowsByPluginGuild: vi.fn(),
+    findEnabledFeaturesByPluginGuildLegacy: vi.fn(),
+    deleteFeatureRow: vi.fn(),
     // The other exports are not used by plugin-rpc-routes; stubs prevent
     // import errors if the module is transitively imported.
     findFeatureRow: vi.fn(),
@@ -31,6 +34,16 @@ vi.mock(
     upsertFeatureRow: vi.fn(),
     updateMetricsJson: vi.fn(),
     PluginGuildFeature: { destroy: vi.fn(), findAll: vi.fn() },
+  }),
+);
+
+vi.mock(
+  "../src/modules/feature-toggle/models/plugin-feature-default.model.js",
+  () => ({
+    findFeatureDefaultsByPlugin: vi.fn(),
+    findAllFeatureDefaults: vi.fn(),
+    upsertFeatureDefault: vi.fn(),
+    PluginFeatureDefault: { destroy: vi.fn(), findAll: vi.fn() },
   }),
 );
 
@@ -49,7 +62,9 @@ import type { FastifyInstance } from "fastify";
 import { createWebServer } from "../src/modules/web-core/server.js";
 import { pluginAuthStore } from "../src/modules/plugin-system/plugin-auth.service.js";
 import { findPluginById } from "../src/modules/plugin-system/models/plugin.model.js";
-import { findEnabledFeaturesByPluginGuild } from "../src/modules/feature-toggle/models/plugin-guild-feature.model.js";
+import { findFeatureRowsByPluginGuild } from "../src/modules/feature-toggle/models/plugin-guild-feature.model.js";
+import { findFeatureDefaultsByPlugin } from "../src/modules/feature-toggle/models/plugin-feature-default.model.js";
+import { featureReachResolver } from "../src/modules/feature-toggle/feature-reach-resolver.js";
 import { botEventLog } from "../src/modules/bot-events/bot-event-log.js";
 import { shouldRecord } from "../src/modules/bot-events/bot-event-dedup.js";
 import type { PluginGuildFeatureRow } from "../src/modules/feature-toggle/models/plugin-guild-feature.model.js";
@@ -79,7 +94,11 @@ function stubActivePlugin() {
     pluginKey: PLUGIN_KEY,
     enabled: true,
     status: "active",
-    manifestJson: "{}",
+    manifestJson: JSON.stringify({
+      guild_features: [
+        { key: "my-feature", name: "my-feature", enabled_by_default: false },
+      ],
+    }),
   });
 }
 
@@ -149,6 +168,10 @@ describe("messages.send — guild feature gate", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    featureReachResolver.clear();
+    (
+      findFeatureDefaultsByPlugin as ReturnType<typeof vi.fn>
+    ).mockResolvedValue([]);
     stubPluginAuth();
     stubActivePlugin();
   });
@@ -166,7 +189,7 @@ describe("messages.send — guild feature gate", () => {
     await server.ready();
 
     (
-      findEnabledFeaturesByPluginGuild as ReturnType<typeof vi.fn>
+      findFeatureRowsByPluginGuild as ReturnType<typeof vi.fn>
     ).mockResolvedValue([fakeFeatureRow()]);
 
     const res = await server.inject({
@@ -179,7 +202,7 @@ describe("messages.send — guild feature gate", () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ id: "msg-1", channel_id: CHANNEL_ID });
     expect(channel._send).toHaveBeenCalledOnce();
-    expect(findEnabledFeaturesByPluginGuild).toHaveBeenCalledWith(
+    expect(findFeatureRowsByPluginGuild).toHaveBeenCalledWith(
       PLUGIN_ID,
       GUILD_ID,
     );
@@ -194,7 +217,7 @@ describe("messages.send — guild feature gate", () => {
     await server.ready();
 
     (
-      findEnabledFeaturesByPluginGuild as ReturnType<typeof vi.fn>
+      findFeatureRowsByPluginGuild as ReturnType<typeof vi.fn>
     ).mockResolvedValue([]);
 
     const res = await server.inject({
@@ -219,7 +242,7 @@ describe("messages.send — guild feature gate", () => {
 
     // findEnabledFeaturesByPluginGuild should never be called for DM channels
     (
-      findEnabledFeaturesByPluginGuild as ReturnType<typeof vi.fn>
+      findFeatureRowsByPluginGuild as ReturnType<typeof vi.fn>
     ).mockResolvedValue([]);
 
     const res = await server.inject({
@@ -231,7 +254,7 @@ describe("messages.send — guild feature gate", () => {
 
     expect(res.statusCode).toBe(200);
     expect(channel._send).toHaveBeenCalledOnce();
-    expect(findEnabledFeaturesByPluginGuild).not.toHaveBeenCalled();
+    expect(findFeatureRowsByPluginGuild).not.toHaveBeenCalled();
   });
 
   it("writes a warn log on first blocked attempt but deduplicates on subsequent ones", async () => {
@@ -243,7 +266,7 @@ describe("messages.send — guild feature gate", () => {
     await server.ready();
 
     (
-      findEnabledFeaturesByPluginGuild as ReturnType<typeof vi.fn>
+      findFeatureRowsByPluginGuild as ReturnType<typeof vi.fn>
     ).mockResolvedValue([]);
 
     const dedupKey = `plugin-rpc-feature-block:${PLUGIN_ID}:${GUILD_ID}`;
@@ -269,7 +292,7 @@ describe("messages.send — guild feature gate", () => {
     stubPluginAuth();
     stubActivePlugin();
     (
-      findEnabledFeaturesByPluginGuild as ReturnType<typeof vi.fn>
+      findFeatureRowsByPluginGuild as ReturnType<typeof vi.fn>
     ).mockResolvedValue([]);
 
     // Second call: shouldRecord returns false → log is NOT written

@@ -39,6 +39,7 @@ export interface PluginManifest {
     description?: string;
     required?: boolean;
   }>;
+  events_subscribed_global?: string[];
   guild_features?: Array<{
     key: string;
     name: string;
@@ -142,8 +143,10 @@ export interface PluginRecord {
   rpcMethods?: string[];
   /** Admin-approved subset the issued token actually carries (PM-3.1). */
   approvedRpcScopes?: string[];
+  approvedGlobalEventSubs?: string[];
   /** requested − approved: scopes still awaiting admin approval. */
   pendingRpcScopes?: string[];
+  pendingGlobalEventSubs?: string[];
   /**
    * Background slash-command sync state (PM-7.1/7.6). null when no
    * sync ran since the bot process started.
@@ -454,3 +457,23 @@ export async function setPluginCommandEnabled(
   return jsonOrThrow<SetPluginCommandEnabledResult>(r);
 }
 
+
+/** PM-8 — approve/deny the plugin's GLOBAL event subscriptions. */
+export interface GlobalEventSubState {
+  requested: string[];
+  approved: string[];
+  pending: string[];
+}
+
+export async function setPluginApprovedGlobalEventSubs(
+  id: number,
+  approved: string[],
+): Promise<GlobalEventSubState> {
+  const r = await authedFetch(`/api/plugins/${id}/global-event-subs`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ approved }),
+  });
+  const body = await jsonOrThrow<{ globalEventSubs: GlobalEventSubState }>(r);
+  return body.globalEventSubs;
+}

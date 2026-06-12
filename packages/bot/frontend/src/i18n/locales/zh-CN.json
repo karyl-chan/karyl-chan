@@ -1453,6 +1453,10 @@
         "rpcScopesPendingBadge": "待核准",
         "rpcScopesApproveAll": "全部核准",
         "rpcScopesSave": "保存",
-        "rpcScopesSaved": "已保存"
+        "rpcScopesSaved": "已保存",
+        "globalEventsTitle": "全局事件订阅",
+        "globalEventsDesc": "plugin 会从「所有服务器与 DM」收到这些事件，不受逐服务器 feature 开关限制。feature 级订阅不会出现在这里——那些只在开启该 feature 的服务器触发。PLUGIN_AUTO_APPROVE=true（默认）时声明即自动批准；下方复选框在关闭 auto-approve 时才实际生效。",
+        "globalEventsNone": "此 plugin 未声明任何全局事件订阅。",
+        "globalEventsPendingHint": "{n} 个订阅待批准——批准前 plugin 完全收不到这些事件。"
     }
 }
