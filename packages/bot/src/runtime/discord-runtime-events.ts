@@ -7,7 +7,7 @@ import type {
   PartialUser,
   User,
 } from "discord.js";
-import { ChannelType, Events } from "discord.js";
+import { ChannelType, Events, MessageFlags } from "discord.js";
 import { config } from "../config.js";
 import { moduleLogger } from "../logger.js";
 import { getDistributedLock } from "../adapters/registry.js";
@@ -284,6 +284,11 @@ export function registerRuntimeEvents(ctx: RuntimeContext): void {
     // needs them) while ordinary plugins never see an echo of their RPC
     // sends. Other bots stay excluded entirely.
     if (message.author.id === bot.user?.id) {
+      // An ephemeral interaction reply (僅你可見) is visible to exactly one
+      // user and is not channel history — fanning it out had presence
+      // plugins storing/threading "開啟決策檢視器…"-style command responses
+      // as if the agent said them in public.
+      if (message.flags.has(MessageFlags.Ephemeral)) return;
       if (message.guildId) {
         dispatchEventToPlugins(
           "guild.message_create_self",
