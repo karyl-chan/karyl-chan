@@ -7,6 +7,7 @@ vi.hoisted(() => {
 import { sequelize } from "../src/db.js";
 import {
   PluginGuildFeature,
+  deleteFeatureRow,
   findFeatureRow,
   findFeatureRowsByGuild,
   findFeatureRowsByPlugin,
@@ -56,6 +57,20 @@ describe("plugin-guild-feature model", () => {
   it("findFeatureRow returns null for missing rows", async () => {
     const row = await findFeatureRow(99, "missing", "x");
     expect(row).toBeNull();
+  });
+
+  it("deleteFeatureRow removes the override (config included) and reports existence", async () => {
+    await upsertFeatureRow({
+      pluginId: 1,
+      guildId: "g1",
+      featureKey: "feat",
+      enabled: true,
+      configJson: '{"a":1}',
+    });
+    expect(await deleteFeatureRow(1, "g1", "feat")).toBe(true);
+    expect(await findFeatureRow(1, "g1", "feat")).toBeNull();
+    // Idempotent second call: nothing to remove.
+    expect(await deleteFeatureRow(1, "g1", "feat")).toBe(false);
   });
 
   it("findFeatureRowsByGuild scopes correctly", async () => {

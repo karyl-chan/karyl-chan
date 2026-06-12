@@ -155,6 +155,22 @@ export const upsertFeatureRow = async (
   return rowOf(created);
 };
 
+/**
+ * Remove the explicit per-guild row (override AND its per-guild config)
+ * — the guild reverts to the operator-default → manifest-default chain.
+ * Returns true when a row actually existed.
+ */
+export const deleteFeatureRow = async (
+  pluginId: number,
+  guildId: string,
+  featureKey: string,
+): Promise<boolean> => {
+  const n = await PluginGuildFeature.destroy({
+    where: { pluginId, guildId, featureKey },
+  });
+  return n > 0;
+};
+
 export const updateMetricsJson = async (
   pluginId: number,
   guildId: string,
