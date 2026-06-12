@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.10.1...plugin-sdk-v0.11.0) (2026-06-12)
+
+
+### Features
+
+* **bot,sdk:** guild-feature event reach enforcement + 3-tier RPC gate (PM-8) ([aa5ef2a](https://github.com/karyl-chan/karyl-chan/commit/aa5ef2a0d737dd956317531ba0b4304bac88db9c))
+
 ## [0.10.1](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.10.0...plugin-sdk-v0.10.1) (2026-06-11)
 
 
