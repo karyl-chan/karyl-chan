@@ -14,7 +14,7 @@ import {
 } from "./dm-inbox.service.js";
 import { dmEventBus, type DmEventBus } from "./dm-event-bus.js";
 import { avatarUrlFor, toApiMessage } from "../web-core/message-mapper.js";
-import type { MessageEmoji } from "../web-core/message-types.js";
+import type { Message, MessageEmoji } from "../web-core/message-types.js";
 import { requireCapability } from "../web-core/route-guards.js";
 import { DISCORD_MESSAGE_MAX, isSnowflake } from "../web-core/validators.js";
 import { discordErrorStatus } from "../web-core/discord-error.js";
@@ -676,4 +676,82 @@ export async function registerDmRoutes(
       request.raw.on("close", teardown);
     },
   );
+
+  // ── Dev-only synthetic DM ingestion ─────────────────────────────────────
+  // The inbox's only natural ingress is the Discord gateway (messageCreate
+  // in dm-inbox.events.ts), so with BOT_SKIP_DISCORD there is no way to
+  // exercise the recordActivity → event-bus → SSE pipeline end to end.
+  // This route pushes a synthetic DM through that REAL pipeline for the
+  // cross-service E2E (PM-2.3, core path 5).
+  //
+  // Gate: only the dev unauth bypass produces authUserId === "dev"
+  // (server.ts onRequest hook; a real Discord user id is a snowflake and
+  // can never be the literal string "dev"). Any deployment with auth
+  // configured therefore 404s here — same trust boundary as the bypass
+  // itself, no extra configuration surface.
+  server.post<{
+    Body: {
+      channelId?: unknown;
+      recipient?: {
+        id?: unknown;
+        username?: unknown;
+        globalName?: unknown;
+        avatarUrl?: unknown;
+      };
+      message?: { id?: unknown; content?: unknown; createdAt?: unknown };
+    };
+  }>("/api/dm/dev/inject-message", async (request, reply) => {
+    if (request.authUserId !== "dev" || config.env === "production") {
+      return reply.code(404).send({ error: "Not found" });
+    }
+    const body = request.body ?? {};
+    const channelId =
+      typeof body.channelId === "string" ? body.channelId : null;
+    const rcpt = body.recipient ?? {};
+    const msg = body.message ?? {};
+    if (!channelId || !isSnowflake(channelId)) {
+      return reply.code(400).send({ error: "channelId must be a snowflake" });
+    }
+    if (typeof rcpt.id !== "string" || !isSnowflake(rcpt.id)) {
+      return reply.code(400).send({ error: "recipient.id must be a snowflake" });
+    }
+    if (typeof rcpt.username !== "string" || !rcpt.username) {
+      return reply.code(400).send({ error: "recipient.username required" });
+    }
+    if (typeof msg.id !== "string" || !msg.id) {
+      return reply.code(400).send({ error: "message.id required" });
+    }
+    if (typeof msg.content !== "string") {
+      return reply.code(400).send({ error: "message.content required" });
+    }
+    const recipient = {
+      id: rcpt.id,
+      username: rcpt.username,
+      globalName: typeof rcpt.globalName === "string" ? rcpt.globalName : null,
+      avatarUrl: typeof rcpt.avatarUrl === "string" ? rcpt.avatarUrl : null,
+    };
+    const apiMessage: Message = {
+      id: msg.id,
+      channelId,
+      guildId: null,
+      author: {
+        id: recipient.id,
+        username: recipient.username,
+        globalName: recipient.globalName,
+        avatarUrl: recipient.avatarUrl,
+        bot: false,
+      },
+      content: msg.content,
+      createdAt:
+        typeof msg.createdAt === "string"
+          ? msg.createdAt
+          : new Date().toISOString(),
+    };
+    // Same sequence as the gateway handler: persist, then announce the
+    // channel touch and the message on the bus the SSE stream serves.
+    const summary = await inbox.recordActivity(channelId, recipient, apiMessage);
+    events.publish({ type: "channel-touched", channel: summary });
+    events.publish({ type: "message-created", channelId, message: apiMessage });
+    return { channel: summary, message: apiMessage };
+  });
 }
