@@ -12,10 +12,15 @@
  * `findEnabledFeaturesByPluginGuild(pluginId, guildId).length === 0`
  * would give a false negative (no row written but manifest defaults
  * true → plugin IS enabled, the gate should pass).
+ *
+ * PM-8: now a thin delegate over the cached FeatureReachResolver so the
+ * component/modal dispatch paths share the same cache + invalidation as
+ * the event dispatcher and the RPC gate. Same semantics as before,
+ * including featureless plugins → true (their only per-guild surface is
+ * the plugin-level enabled flag, checked by the caller).
  */
 
-import { findFeatureRowsByPluginGuild } from "./models/plugin-guild-feature.model.js";
-import { findFeatureDefaultsByPlugin } from "./models/plugin-feature-default.model.js";
+import { featureReachResolver } from "./feature-reach-resolver.js";
 import type { PluginManifest } from "../plugin-system/plugin-sdk-types.js";
 
 export async function isPluginEffectivelyEnabledInGuild(
@@ -23,24 +28,9 @@ export async function isPluginEffectivelyEnabledInGuild(
   guildId: string,
   manifest: PluginManifest,
 ): Promise<boolean> {
-  const manifestFeatures = manifest.guild_features ?? [];
-  if (manifestFeatures.length === 0) {
-    // Plugin doesn't declare per-guild features; the only gate is the
-    // plugin-level enabled flag (checked by caller).
-    return true;
-  }
-  const [rows, defaults] = await Promise.all([
-    findFeatureRowsByPluginGuild(pluginId, guildId),
-    findFeatureDefaultsByPlugin(pluginId),
-  ]);
-  const rowByKey = new Map(rows.map((r) => [r.featureKey, r.enabled]));
-  const opDefaultByKey = new Map(defaults.map((d) => [d.featureKey, d.enabled]));
-
-  return manifestFeatures.some((feature) => {
-    const rowVal = rowByKey.get(feature.key);
-    if (rowVal !== undefined) return rowVal;
-    const opDefault = opDefaultByKey.get(feature.key);
-    if (opDefault !== undefined) return opDefault;
-    return !!feature.enabled_by_default;
-  });
+  return featureReachResolver.hasAnyFeatureEnabledInGuild(
+    pluginId,
+    guildId,
+    manifest,
+  );
 }

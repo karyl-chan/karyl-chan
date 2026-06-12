@@ -3,6 +3,7 @@ import {
   findAllPlugins,
   findPluginById,
   findPluginByKey,
+  setPluginApprovedGlobalEventSubs,
   setPluginApprovedRpcScopes,
   setPluginEnabled as setEnabledModel,
   setPluginDispatchHmacKey,
@@ -723,6 +724,22 @@ export class PluginRegistry {
     const pendingScopes = requestedScopes.filter(
       (s) => !approvedScopes.includes(s),
     );
+    // ── Requested vs approved GLOBAL event subscriptions (PM-8) ────
+    // Same approval discipline as RPC scopes: global subscriptions are
+    // a firehose grant (DM / guild-less / cross-guild events), so they
+    // need the operator's nod when auto-approve is off. Feature-scoped
+    // subscriptions need none — they're gated per guild by the feature
+    // toggle at dispatch time.
+    const requestedGlobalSubs = (
+      manifest.events_subscribed_global ?? []
+    ).filter((e): e is string => typeof e === "string" && e.length > 0);
+    const prevApprovedGlobal = existing?.approvedGlobalEventSubs ?? [];
+    const approvedGlobalSubs = config.plugin.autoApproveScopes
+      ? requestedGlobalSubs
+      : requestedGlobalSubs.filter((e) => prevApprovedGlobal.includes(e));
+    const pendingGlobalSubs = requestedGlobalSubs.filter(
+      (e) => !approvedGlobalSubs.includes(e),
+    );
 
     // ── Token issue ────────────────────────────────────────────────
     // Mint token first, persist hash. Cleartext goes back to the
@@ -745,6 +762,7 @@ export class PluginRegistry {
       manifestJson: JSON.stringify(manifest),
       tokenHash: placeholderToken.tokenHash,
       approvedRpcScopes: approvedScopes,
+      approvedGlobalEventSubs: approvedGlobalSubs,
     });
     // Re-issue with the real plugins.id so the auth record carries the
     // db-backed id (used by RPC handlers to filter scopes per plugin).
@@ -764,6 +782,7 @@ export class PluginRegistry {
       manifestJson: JSON.stringify(manifest),
       tokenHash: real.tokenHash,
       approvedRpcScopes: approvedScopes,
+      approvedGlobalEventSubs: approvedGlobalSubs,
     });
     if (pendingScopes.length > 0) {
       botEventLog.record(
@@ -771,6 +790,14 @@ export class PluginRegistry {
         "bot",
         `Plugin '${manifest.plugin.id}' requests ${pendingScopes.length} unapproved RPC scope(s): ${pendingScopes.join(", ")} — pending admin approval`,
         { pluginId: persisted.id, pendingScopes },
+      );
+    }
+    if (pendingGlobalSubs.length > 0) {
+      botEventLog.record(
+        "warn",
+        "bot",
+        `Plugin '${manifest.plugin.id}' requests ${pendingGlobalSubs.length} unapproved global event subscription(s): ${pendingGlobalSubs.join(", ")} — no events delivered for these until an admin approves (Security tab)`,
+        { pluginId: persisted.id, pendingGlobalSubs },
       );
     }
 
@@ -1127,6 +1154,49 @@ export class PluginRegistry {
     const state = await this.getScopeState(pluginId);
     if (!state) return null;
     return this.setApprovedScopes(pluginId, state.requested);
+  }
+
+  /**
+   * Set the admin-approved GLOBAL event subscription grant (PM-8) —
+   * mirrors setApprovedScopes: clamps to what the manifest declares,
+   * persists, and re-indexes event routes so the change takes effect
+   * without a re-register. Only meaningful with PLUGIN_AUTO_APPROVE=false
+   * (auto-approve grants the declared set at index build regardless).
+   */
+  async setApprovedGlobalEventSubs(
+    pluginId: number,
+    subs: string[],
+  ): Promise<{
+    requested: string[];
+    approved: string[];
+    pending: string[];
+  } | null> {
+    const plugin = await findPluginById(pluginId);
+    if (!plugin) return null;
+    const requested = (() => {
+      try {
+        return (
+          (JSON.parse(plugin.manifestJson) as PluginManifest)
+            .events_subscribed_global ?? []
+        ).filter((e): e is string => typeof e === "string" && e.length > 0);
+      } catch {
+        return [];
+      }
+    })();
+    const approved = [...new Set(subs)].filter((e) => requested.includes(e));
+    const row = await setPluginApprovedGlobalEventSubs(pluginId, approved);
+    if (!row) return null;
+    // Routes are derived from the grant at index build — re-apply now.
+    applyPluginChange(row);
+    invalidatePluginById(pluginId);
+    botEventLog.record(
+      "info",
+      "bot",
+      `Plugin '${row.pluginKey}' approved global event subscriptions updated: [${approved.join(", ")}]`,
+      { pluginId, approved },
+    );
+    const pending = requested.filter((e) => !approved.includes(e));
+    return { requested, approved, pending };
   }
 
   async list(): Promise<PluginRow[]> {

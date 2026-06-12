@@ -92,7 +92,7 @@ export function registerVoiceStateEvents(client: Client): void {
         old_channel_id: oldState.channelId ?? null,
         new_channel_id: newState.channelId ?? null,
         in_voice: newState.channelId !== null,
-      });
+      }, guildId);
     } catch (err) {
       log.error({ err }, "voice-state plugin fan-out failed");
     }

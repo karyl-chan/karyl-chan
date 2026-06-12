@@ -387,16 +387,28 @@ export function buildManifest(
     },
   };
 
-  // Merge `eventHandlers` keys into `events_subscribed_global` so the
-  // bot's event-index rebuild picks up the subscription set without
-  // the author having to keep two lists in sync. Feature-scoped
-  // subscriptions on guildFeatures[].eventsSubscribed still flow
-  // through the feature path (admin-UI visibility), so this merge
-  // is set-union, not replace.
-  const handlerKeys = collectEventHandlerKeys(cfg);
-  if (handlerKeys.length > 0) {
+  // PM-8 reach semantics: a handler key already covered by some
+  // feature's eventsSubscribed is FEATURE-SCOPED — promoting it to
+  // global would silently widen reach from "guilds with the feature
+  // enabled" to "everything", which is exactly the hole PM-8 closes.
+  // Only handler keys no feature covers are auto-merged into
+  // `events_subscribed_global` (so a handler is never silently dead),
+  // plus whatever the author deliberately lists in
+  // `eventsSubscribedGlobal` (the explicit firehose grant — required
+  // for DM events, which have no guild context to gate on).
+  const featureCoveredKeys = new Set(
+    (cfg.guildFeatures ?? []).flatMap((f) => f.eventsSubscribed ?? []),
+  );
+  const uncoveredHandlerKeys = collectEventHandlerKeys(cfg).filter(
+    (k) => !featureCoveredKeys.has(k),
+  );
+  const explicitGlobal = (cfg.eventsSubscribedGlobal ?? []).filter(
+    (k): k is string => typeof k === "string" && k.length > 0,
+  );
+  if (uncoveredHandlerKeys.length > 0 || explicitGlobal.length > 0) {
     const existing = new Set<string>(manifest.events_subscribed_global ?? []);
-    for (const k of handlerKeys) existing.add(k);
+    for (const k of uncoveredHandlerKeys) existing.add(k);
+    for (const k of explicitGlobal) existing.add(k);
     manifest.events_subscribed_global = [...existing];
   }
 

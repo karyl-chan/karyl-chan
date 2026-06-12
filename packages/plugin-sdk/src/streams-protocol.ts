@@ -8,34 +8,37 @@
  * Wire contract (set by the bot producer in
  * `adapters/redis/plugin-event-bus.ts`):
  *
- *   stream key:  karyl:events:<eventType>
+ *   stream key:  karyl:plugin:<pluginKey>:events   (the plugin's mailbox)
  *   fields:
- *     type        → event type string (mirrors the stream's eventType)
+ *     type        → event type string
  *     data        → JSON-encoded payload (verbatim from the dispatcher)
  *     trace       → traceparent header value
  *     traceparent → same value under the canonical header name
  *
- * The producer XADDs to ONE shared stream per event type; every plugin
- * that subscribes to that type joins its own consumer group on the same
- * stream and filters nothing (the stream IS the type). Per-plugin
- * groups give each plugin an independent cursor + pending-entries list,
- * so a slow plugin never blocks a fast one and `XACK` is per-plugin.
+ * PM-8: the producer XADDs into ONE PRIVATE stream per plugin, after
+ * the bot's reach gates (feature-enablement per guild, approved global
+ * grants) have passed for that plugin. The previous shared
+ * stream-per-event-type model let any consumer read the full firehose
+ * regardless of what the bot decided — per-plugin mailboxes make the
+ * enforcement hold on this transport too. The consumer group still
+ * gives the plugin an independent cursor + pending-entries list.
  */
 
-/** All event-type streams live under this prefix. */
-export const STREAM_PREFIX = "karyl:events:";
+/** All plugin mailbox streams live under this prefix (PM-8). Keep in
+ *  sync with the bot's `PLUGIN_STREAM_PREFIX` (adapters/redis). */
+export const PLUGIN_STREAM_PREFIX = "karyl:plugin:";
 
 /** Suffix appended to a stream key to form its dead-letter stream. */
 export const DLQ_SUFFIX = ":dlq";
 
-/** Build the stream key for an event type. */
-export function streamKeyFor(eventType: string): string {
-  return `${STREAM_PREFIX}${eventType}`;
+/** Build a plugin's private mailbox stream key. */
+export function pluginStreamKeyFor(pluginKey: string): string {
+  return `${PLUGIN_STREAM_PREFIX}${pluginKey}:events`;
 }
 
-/** Build the dead-letter stream key for an event type's stream. */
-export function dlqKeyFor(eventType: string): string {
-  return `${streamKeyFor(eventType)}${DLQ_SUFFIX}`;
+/** Build a plugin mailbox's dead-letter stream key. */
+export function pluginDlqKeyFor(pluginKey: string): string {
+  return `${pluginStreamKeyFor(pluginKey)}${DLQ_SUFFIX}`;
 }
 
 /**

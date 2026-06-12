@@ -292,30 +292,39 @@ export function registerRuntimeEvents(ctx: RuntimeContext): void {
       // it did — and the payload says who could actually see it, so it can
       // keep that exchange out of everyone else's transcripts.
       if (message.flags.has(MessageFlags.Ephemeral)) {
-        dispatchEventToPlugins("guild.message_create_self_ephemeral", {
-          ...serializeMessageForPlugin(message),
-          ephemeral: true,
-          // The interaction invoker — the one user the reply is visible to.
-          visible_to: message.interactionMetadata?.user?.id ?? null,
-        });
+        dispatchEventToPlugins(
+          "guild.message_create_self_ephemeral",
+          {
+            ...serializeMessageForPlugin(message),
+            ephemeral: true,
+            // The interaction invoker — the one user the reply is visible to.
+            visible_to: message.interactionMetadata?.user?.id ?? null,
+          },
+          message.guildId,
+        );
         return;
       }
       dispatchEventToPlugins(
         "guild.message_create_self",
         serializeMessageForPlugin(message),
+        message.guildId,
       );
       return;
     }
     if (message.author.bot) return;
     if (message.channel.type === ChannelType.DM) {
+      // DM events carry no guild — only approved GLOBAL subscriptions
+      // can receive them (feature routes never match a guild-less event).
       dispatchEventToPlugins(
         "dm.message_create",
         serializeMessageForPlugin(message),
+        null,
       );
     } else if (message.guildId) {
       dispatchEventToPlugins(
         "guild.message_create",
         serializeMessageForPlugin(message),
+        message.guildId,
       );
     }
   });
@@ -337,7 +346,7 @@ export function registerRuntimeEvents(ctx: RuntimeContext): void {
         guild_id: full.guildId,
         content: full.content ?? "",
         edited_at: full.editedTimestamp ?? Date.now(),
-      });
+      }, full.guildId);
     } catch {
       /* best-effort: a failed enrich must not break the runtime */
     }
@@ -350,7 +359,7 @@ export function registerRuntimeEvents(ctx: RuntimeContext): void {
       message_id: deleted.id,
       channel_id: deleted.channelId,
       guild_id: deleted.guildId,
-    });
+    }, deleted.guildId);
   });
 
   bot.on(
@@ -363,17 +372,21 @@ export function registerRuntimeEvents(ctx: RuntimeContext): void {
       // Only guild reactions for now — DM reactions don't carry a
       // guildId and most plugins that care (role-emoji etc.) want guild.
       if (!reaction.message.guildId) return;
-      dispatchEventToPlugins("guild.message_reaction_add", {
-        message_id: reaction.message.id,
-        channel_id: reaction.message.channelId,
-        guild_id: reaction.message.guildId,
-        user_id: user.id,
-        emoji: {
-          id: reaction.emoji.id ?? null,
-          name: reaction.emoji.name ?? null,
-          animated: reaction.emoji.animated ?? false,
+      dispatchEventToPlugins(
+        "guild.message_reaction_add",
+        {
+          message_id: reaction.message.id,
+          channel_id: reaction.message.channelId,
+          guild_id: reaction.message.guildId,
+          user_id: user.id,
+          emoji: {
+            id: reaction.emoji.id ?? null,
+            name: reaction.emoji.name ?? null,
+            animated: reaction.emoji.animated ?? false,
+          },
         },
-      });
+        reaction.message.guildId,
+      );
     },
   );
 
@@ -385,17 +398,21 @@ export function registerRuntimeEvents(ctx: RuntimeContext): void {
     ) => {
       if (user.bot) return;
       if (!reaction.message.guildId) return;
-      dispatchEventToPlugins("guild.message_reaction_remove", {
-        message_id: reaction.message.id,
-        channel_id: reaction.message.channelId,
-        guild_id: reaction.message.guildId,
-        user_id: user.id,
-        emoji: {
-          id: reaction.emoji.id ?? null,
-          name: reaction.emoji.name ?? null,
-          animated: reaction.emoji.animated ?? false,
+      dispatchEventToPlugins(
+        "guild.message_reaction_remove",
+        {
+          message_id: reaction.message.id,
+          channel_id: reaction.message.channelId,
+          guild_id: reaction.message.guildId,
+          user_id: user.id,
+          emoji: {
+            id: reaction.emoji.id ?? null,
+            name: reaction.emoji.name ?? null,
+            animated: reaction.emoji.animated ?? false,
+          },
         },
-      });
+        reaction.message.guildId,
+      );
     },
   );
 

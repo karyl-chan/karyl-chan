@@ -17,7 +17,7 @@ import {
   groupNameFor,
   type RedisStreamsLike,
 } from "../src/streams-consumer.js";
-import { dlqKeyFor, streamKeyFor } from "../src/streams-protocol.js";
+import { pluginDlqKeyFor, pluginStreamKeyFor } from "../src/streams-protocol.js";
 
 const silentLog = {
   info() {},
@@ -172,12 +172,11 @@ function poll<T>(fn: () => T | null, timeoutMs = 1000): Promise<T> {
 describe("StreamsConsumer happy path", () => {
   it("dispatches a fresh entry then ACKs it", async () => {
     const redis = new FakeRedis();
-    const key = streamKeyFor("guild.message_create");
+    const key = pluginStreamKeyFor("test");
     const seen: Array<{ type: string; data: unknown }> = [];
     const consumer = new StreamsConsumer({
       redis,
       pluginKey: "test",
-      eventTypes: ["guild.message_create"],
       dispatchEvent: async (type, data) => {
         seen.push({ type, data });
       },
@@ -202,11 +201,10 @@ describe("StreamsConsumer happy path", () => {
 describe("StreamsConsumer reliability", () => {
   it("routes a poison entry to the DLQ and ACKs the source", async () => {
     const redis = new FakeRedis();
-    const key = streamKeyFor("guild.message_create");
+    const key = pluginStreamKeyFor("test");
     const consumer = new StreamsConsumer({
       redis,
       pluginKey: "test",
-      eventTypes: ["guild.message_create"],
       dispatchEvent: async () => {
         throw new Error("should not be called for poison");
       },
@@ -217,7 +215,7 @@ describe("StreamsConsumer reliability", () => {
     // Malformed data → poison on first delivery.
     redis.seed(key, ["type", "guild.message_create", "data", "{broken"]);
     consumer.start();
-    const dlq = dlqKeyFor("guild.message_create");
+    const dlq = pluginDlqKeyFor("test");
     await poll(() =>
       (redis.streams.get(dlq)?.length ?? 0) > 0 ? true : null,
     );
@@ -230,12 +228,11 @@ describe("StreamsConsumer reliability", () => {
 
   it("eventually dead-letters an entry whose handler keeps throwing", async () => {
     const redis = new FakeRedis();
-    const key = streamKeyFor("guild.message_create");
+    const key = pluginStreamKeyFor("test");
     let calls = 0;
     const consumer = new StreamsConsumer({
       redis,
       pluginKey: "test",
-      eventTypes: ["guild.message_create"],
       dispatchEvent: async () => {
         calls++;
         throw new Error("always fails");
@@ -249,7 +246,7 @@ describe("StreamsConsumer reliability", () => {
     await consumer.ensureGroups();
     redis.seed(key, ["type", "guild.message_create", "data", "{}"]);
     consumer.start();
-    const dlq = dlqKeyFor("guild.message_create");
+    const dlq = pluginDlqKeyFor("test");
     await poll(
       () => ((redis.streams.get(dlq)?.length ?? 0) > 0 ? true : null),
       3000,
@@ -265,13 +262,12 @@ describe("StreamsConsumer reliability", () => {
 describe("StreamsConsumer telemetry callbacks (PR-1.3)", () => {
   it("reports consumer lag via onLag during the sweep", async () => {
     const redis = new FakeRedis();
-    const key = streamKeyFor("guild.message_create");
-    const lags: Array<{ eventType: string; lag: number }> = [];
+    const key = pluginStreamKeyFor("test");
+    const lags: number[] = [];
     // Handler never acks (always throws) so unacked entries accrue lag.
     const consumer = new StreamsConsumer({
       redis,
       pluginKey: "test",
-      eventTypes: ["guild.message_create"],
       dispatchEvent: async () => {
         throw new Error("hold the entry unacked");
       },
@@ -279,24 +275,23 @@ describe("StreamsConsumer telemetry callbacks (PR-1.3)", () => {
       blockMs: 10,
       claimMinIdleMs: 999_999, // don't reclaim/DLQ during this test
       sweepIntervalMs: 10,
-      onLag: (eventType, lag) => lags.push({ eventType, lag }),
+      onLag: (lag) => lags.push(lag),
     });
     await consumer.ensureGroups();
     redis.seed(key, ["type", "guild.message_create", "data", "{}"]);
     consumer.start();
-    await poll(() => (lags.some((l) => l.lag >= 1) ? true : null), 2000);
-    assert.equal(lags[lags.length - 1].eventType, "guild.message_create");
+    await poll(() => (lags.some((l) => l >= 1) ? true : null), 2000);
+    assert.ok(lags[lags.length - 1] >= 1);
     await consumer.stop();
   });
 
   it("fires onDeadLetter when an entry is poison", async () => {
     const redis = new FakeRedis();
-    const key = streamKeyFor("guild.message_create");
+    const key = pluginStreamKeyFor("test");
     const dlqs: Array<{ eventType: string; reason: string }> = [];
     const consumer = new StreamsConsumer({
       redis,
       pluginKey: "test",
-      eventTypes: ["guild.message_create"],
       dispatchEvent: async () => {},
       log: silentLog,
       blockMs: 10,
@@ -306,7 +301,8 @@ describe("StreamsConsumer telemetry callbacks (PR-1.3)", () => {
     redis.seed(key, ["type", "guild.message_create", "data", "{broken"]);
     consumer.start();
     await poll(() => (dlqs.length > 0 ? true : null), 2000);
-    assert.equal(dlqs[0].eventType, "guild.message_create");
+    // Poison entries can't be parsed, so the event type is unknown.
+    assert.equal(dlqs[0].eventType, "unknown");
     assert.equal(dlqs[0].reason, "parse-failure");
     await consumer.stop();
   });

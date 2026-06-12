@@ -34,9 +34,9 @@ import {
 } from "../../src/hmac.js";
 import {
   DLQ_SUFFIX,
-  STREAM_PREFIX,
-  dlqKeyFor,
-  streamKeyFor,
+  PLUGIN_STREAM_PREFIX,
+  pluginDlqKeyFor,
+  pluginStreamKeyFor,
 } from "../../src/streams-protocol.js";
 import { Events, isCanonicalEvent } from "../../src/events.js";
 
@@ -78,7 +78,7 @@ interface ContractFixtures {
   streams: {
     streamPrefix: string;
     dlqSuffix: string;
-    samples: Array<{ eventType: string; streamKey: string; dlqKey: string }>;
+    samples: Array<{ pluginKey: string; streamKey: string; dlqKey: string }>;
   };
   events: { canonical: string[] };
   dispatchEnvelope: { httpBodyKeys: string[] };
@@ -142,17 +142,17 @@ describe("contract: hmac sign reproduces golden hex", () => {
 
 describe("contract: streams key conventions", () => {
   it("STREAM_PREFIX matches the contract", () => {
-    assert.equal(STREAM_PREFIX, fixtures.streams.streamPrefix);
+    assert.equal(PLUGIN_STREAM_PREFIX, fixtures.streams.streamPrefix);
   });
   it("DLQ_SUFFIX matches the contract", () => {
     assert.equal(DLQ_SUFFIX, fixtures.streams.dlqSuffix);
   });
   for (const s of fixtures.streams.samples) {
-    it(`streamKeyFor('${s.eventType}') matches the contract`, () => {
-      assert.equal(streamKeyFor(s.eventType), s.streamKey);
+    it(`pluginStreamKeyFor('${s.pluginKey}') matches the contract`, () => {
+      assert.equal(pluginStreamKeyFor(s.pluginKey), s.streamKey);
     });
-    it(`dlqKeyFor('${s.eventType}') matches the contract`, () => {
-      assert.equal(dlqKeyFor(s.eventType), s.dlqKey);
+    it(`pluginDlqKeyFor('${s.pluginKey}') matches the contract`, () => {
+      assert.equal(pluginDlqKeyFor(s.pluginKey), s.dlqKey);
     });
   }
 });

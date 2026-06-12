@@ -21,6 +21,7 @@ import { sequelize } from "../src/db.js";
 import { PluginGuildFeature } from "../src/modules/feature-toggle/models/plugin-guild-feature.model.js";
 import { PluginFeatureDefault } from "../src/modules/feature-toggle/models/plugin-feature-default.model.js";
 import { isPluginEffectivelyEnabledInGuild } from "../src/modules/feature-toggle/feature-resolve.js";
+import { featureReachResolver } from "../src/modules/feature-toggle/feature-reach-resolver.js";
 import type { PluginManifest } from "../src/modules/plugin-system/plugin-sdk-types.js";
 
 const PLUGIN_ID = 100;
@@ -50,6 +51,9 @@ beforeAll(async () => {
 beforeEach(async () => {
   await PluginGuildFeature.destroy({ where: {} });
   await PluginFeatureDefault.destroy({ where: {} });
+  // PM-8: resolution now flows through the cached FeatureReachResolver —
+  // drop the cache so each case reads its own freshly-seeded rows.
+  featureReachResolver.clear();
 });
 
 describe("isPluginEffectivelyEnabledInGuild", () => {

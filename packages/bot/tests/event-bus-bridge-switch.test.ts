@@ -149,7 +149,7 @@ describe("dispatchEventToPlugins transport switch", () => {
       dispatchEventToPlugins("guild.message_create", { hi: 1 });
       await new Promise((r) => setTimeout(r, 10));
       expect(calls.length).toBe(1);
-      expect(calls[0].key).toBe("karyl:events:guild.message_create");
+      expect(calls[0].key).toBe("karyl:plugin:alpha:events");
       // Streams path must NOT touch the HTTP fan-out.
       expect(fetchSpy).not.toHaveBeenCalled();
     } finally {

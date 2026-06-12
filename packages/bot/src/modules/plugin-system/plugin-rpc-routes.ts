@@ -22,11 +22,9 @@ import {
 import { decryptSecret } from "../../utils/crypto.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { shouldRecord } from "../bot-events/bot-event-dedup.js";
-import {
-  findEnabledFeaturesByPluginGuild,
-  findFeatureRowsByPlugin,
-} from "../feature-toggle/models/plugin-guild-feature.model.js";
+import { findFeatureRowsByPlugin } from "../feature-toggle/models/plugin-guild-feature.model.js";
 import { findFeatureDefaultsByPlugin } from "../feature-toggle/models/plugin-feature-default.model.js";
+import { featureReachResolver } from "../feature-toggle/feature-reach-resolver.js";
 import type { PluginManifest } from "./plugin-registry.service.js";
 import { jwtService } from "../web-core/jwt.service.js";
 import { resolveUserCapabilities } from "../admin/authorized-user.service.js";
@@ -227,12 +225,42 @@ async function fetchChannelOr404(
 }
 
 /**
+ * PM-8: the ONE reach check every guild-targeted RPC gate goes through.
+ * "Effectively enabled" means the full 3-tier chain (per-guild row →
+ * operator default → manifest default), cached in FeatureReachResolver;
+ * a plugin that declares NO guild features passes unconditionally (its
+ * only per-guild surface is the plugin-level enabled flag, enforced at
+ * dispatch/auth).
+ *
+ * Replaces the previous explicit-rows-only reads
+ * (`findEnabledFeaturesByPluginGuild`), which 403'd two legitimate
+ * cases: guilds following an operator/manifest default ON (commands
+ * registered, RPC blocked) and featureless background plugins (e.g.
+ * reminder) everywhere.
+ */
+async function pluginHasGuildReach(
+  pluginId: number,
+  guildId: string,
+): Promise<boolean> {
+  const plugin = await findPluginById(pluginId);
+  if (!plugin) return false;
+  const manifest = getManifest(plugin.manifestJson);
+  if (!manifest) return false;
+  return featureReachResolver.hasAnyFeatureEnabledInGuild(
+    pluginId,
+    guildId,
+    manifest,
+  );
+}
+
+/**
  * Per-guild feature gate shared by every channel-targeted message RPC: the
- * plugin must have at least one enabled feature in the channel's guild. DM
- * and group-DM channels are exempt (no guildId); threads inherit guildId from
- * their parent and go through the gate, which is the intended behaviour.
- * Writes the 403 and returns false when blocked. `warnVerb` additionally
- * records a deduped warn event (messages.send's historical behavior).
+ * plugin must have at least one effectively-enabled feature in the
+ * channel's guild. DM and group-DM channels are exempt (no guildId);
+ * threads inherit guildId from their parent and go through the gate,
+ * which is the intended behaviour. Writes the 403 and returns false when
+ * blocked. `warnVerb` additionally records a deduped warn event
+ * (messages.send's historical behavior).
  */
 async function passesGuildFeatureGate(
   channel: NonNullable<Awaited<ReturnType<Client["channels"]["fetch"]>>>,
@@ -243,8 +271,7 @@ async function passesGuildFeatureGate(
   const channelGuildId =
     "guildId" in channel && typeof channel.guildId === "string" ? channel.guildId : null;
   if (!channelGuildId || channel.isDMBased()) return true;
-  const enabledFeatures = await findEnabledFeaturesByPluginGuild(ctx.pluginId, channelGuildId);
-  if (enabledFeatures.length > 0) return true;
+  if (await pluginHasGuildReach(ctx.pluginId, channelGuildId)) return true;
   if (opts.warnVerb && shouldRecord(`plugin-rpc-feature-block:${ctx.pluginId}:${channelGuildId}`)) {
     botEventLog.record(
       "warn",
@@ -1863,11 +1890,7 @@ export async function registerPluginRpcRoutes(
     // Per-guild feature gate — identical to messages.send. The plugin
     // must not be able to enumerate members of a guild it isn't
     // enabled in.
-    const enabledFeatures = await findEnabledFeaturesByPluginGuild(
-      ctx.pluginId,
-      guildId,
-    );
-    if (enabledFeatures.length === 0) {
+    if (!(await pluginHasGuildReach(ctx.pluginId, guildId))) {
       reply.code(403).send({ error: "plugin not enabled in this guild" });
       return;
     }
@@ -2060,11 +2083,7 @@ export async function registerPluginRpcRoutes(
         reply.code(400).send({ error: "channel_id required" });
         return;
       }
-      const enabledFeatures = await findEnabledFeaturesByPluginGuild(
-        ctx.pluginId,
-        body.guild_id,
-      );
-      if (enabledFeatures.length === 0) {
+      if (!(await pluginHasGuildReach(ctx.pluginId, body.guild_id))) {
         reply.code(403).send({ error: "plugin not enabled in this guild" });
         return;
       }
@@ -2114,11 +2133,7 @@ export async function registerPluginRpcRoutes(
         reply.code(400).send({ error: "guild_id required" });
         return;
       }
-      const enabledFeatures = await findEnabledFeaturesByPluginGuild(
-        ctx.pluginId,
-        body.guild_id,
-      );
-      if (enabledFeatures.length === 0) {
+      if (!(await pluginHasGuildReach(ctx.pluginId, body.guild_id))) {
         reply.code(403).send({ error: "plugin not enabled in this guild" });
         return;
       }
@@ -2164,11 +2179,7 @@ export async function registerPluginRpcRoutes(
         reply.code(400).send({ error: "guild_id required" });
         return;
       }
-      const enabledFeatures = await findEnabledFeaturesByPluginGuild(
-        ctx.pluginId,
-        body.guild_id,
-      );
-      if (enabledFeatures.length === 0) {
+      if (!(await pluginHasGuildReach(ctx.pluginId, body.guild_id))) {
         reply.code(403).send({ error: "plugin not enabled in this guild" });
         return;
       }
@@ -2211,11 +2222,7 @@ export async function registerPluginRpcRoutes(
         reply.code(400).send({ error: "role_id required" });
         return;
       }
-      const enabledFeatures = await findEnabledFeaturesByPluginGuild(
-        ctx.pluginId,
-        body.guild_id,
-      );
-      if (enabledFeatures.length === 0) {
+      if (!(await pluginHasGuildReach(ctx.pluginId, body.guild_id))) {
         reply.code(403).send({ error: "plugin not enabled in this guild" });
         return;
       }
@@ -2272,11 +2279,7 @@ export async function registerPluginRpcRoutes(
       reply.code(400).send({ error: "role_id required" });
       return;
     }
-    const enabledFeatures = await findEnabledFeaturesByPluginGuild(
-      ctx.pluginId,
-      body.guild_id,
-    );
-    if (enabledFeatures.length === 0) {
+    if (!(await pluginHasGuildReach(ctx.pluginId, body.guild_id))) {
       reply.code(403).send({ error: "plugin not enabled in this guild" });
       return;
     }
@@ -2316,11 +2319,7 @@ export async function registerPluginRpcRoutes(
       reply.code(400).send({ error: "role_id required" });
       return;
     }
-    const enabledFeatures = await findEnabledFeaturesByPluginGuild(
-      ctx.pluginId,
-      body.guild_id,
-    );
-    if (enabledFeatures.length === 0) {
+    if (!(await pluginHasGuildReach(ctx.pluginId, body.guild_id))) {
       reply.code(403).send({ error: "plugin not enabled in this guild" });
       return;
     }
@@ -2379,11 +2378,7 @@ export async function registerPluginRpcRoutes(
       reply.code(400).send({ error: "message_id required" });
       return;
     }
-    const enabledFeatures = await findEnabledFeaturesByPluginGuild(
-      ctx.pluginId,
-      body.guild_id,
-    );
-    if (enabledFeatures.length === 0) {
+    if (!(await pluginHasGuildReach(ctx.pluginId, body.guild_id))) {
       reply.code(403).send({ error: "plugin not enabled in this guild" });
       return;
     }
@@ -2445,11 +2440,7 @@ export async function registerPluginRpcRoutes(
       reply.code(400).send({ error: "channel_id required" });
       return;
     }
-    const enabledFeatures = await findEnabledFeaturesByPluginGuild(
-      ctx.pluginId,
-      body.guild_id,
-    );
-    if (enabledFeatures.length === 0) {
+    if (!(await pluginHasGuildReach(ctx.pluginId, body.guild_id))) {
       reply.code(403).send({ error: "plugin not enabled in this guild" });
       return;
     }
@@ -2544,11 +2535,7 @@ export async function registerPluginRpcRoutes(
       typeof body.user_id === "string" && SNOWFLAKE_RE.test(body.user_id)
         ? body.user_id
         : null;
-    const enabledFeatures = await findEnabledFeaturesByPluginGuild(
-      ctx.pluginId,
-      body.guild_id,
-    );
-    if (enabledFeatures.length === 0) {
+    if (!(await pluginHasGuildReach(ctx.pluginId, body.guild_id))) {
       reply.code(403).send({ error: "plugin not enabled in this guild" });
       return;
     }
@@ -2606,11 +2593,7 @@ export async function registerPluginRpcRoutes(
         reply.code(400).send({ error: "guild_id required" });
         return;
       }
-      const enabledFeatures = await findEnabledFeaturesByPluginGuild(
-        ctx.pluginId,
-        body.guild_id,
-      );
-      if (enabledFeatures.length === 0) {
+      if (!(await pluginHasGuildReach(ctx.pluginId, body.guild_id))) {
         reply.code(403).send({ error: "plugin not enabled in this guild" });
         return;
       }

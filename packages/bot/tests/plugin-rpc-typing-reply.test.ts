@@ -23,12 +23,25 @@ vi.mock(
   "../src/modules/feature-toggle/models/plugin-guild-feature.model.js",
   () => ({
     findEnabledFeaturesByPluginGuild: vi.fn(),
+    findFeatureRowsByPluginGuild: vi.fn(),
+    findEnabledFeaturesByPluginGuildLegacy: vi.fn(),
+    deleteFeatureRow: vi.fn(),
     findFeatureRow: vi.fn(),
     findFeatureRowsByGuild: vi.fn(),
     findFeatureRowsByPlugin: vi.fn(),
     upsertFeatureRow: vi.fn(),
     updateMetricsJson: vi.fn(),
     PluginGuildFeature: { destroy: vi.fn(), findAll: vi.fn() },
+  }),
+);
+
+vi.mock(
+  "../src/modules/feature-toggle/models/plugin-feature-default.model.js",
+  () => ({
+    findFeatureDefaultsByPlugin: vi.fn(),
+    findAllFeatureDefaults: vi.fn(),
+    upsertFeatureDefault: vi.fn(),
+    PluginFeatureDefault: { destroy: vi.fn(), findAll: vi.fn() },
   }),
 );
 
@@ -47,7 +60,9 @@ import type { FastifyInstance } from "fastify";
 import { createWebServer } from "../src/modules/web-core/server.js";
 import { pluginAuthStore } from "../src/modules/plugin-system/plugin-auth.service.js";
 import { findPluginById } from "../src/modules/plugin-system/models/plugin.model.js";
-import { findEnabledFeaturesByPluginGuild } from "../src/modules/feature-toggle/models/plugin-guild-feature.model.js";
+import { findFeatureRowsByPluginGuild } from "../src/modules/feature-toggle/models/plugin-guild-feature.model.js";
+import { findFeatureDefaultsByPlugin } from "../src/modules/feature-toggle/models/plugin-feature-default.model.js";
+import { featureReachResolver } from "../src/modules/feature-toggle/feature-reach-resolver.js";
 import type { PluginGuildFeatureRow } from "../src/modules/feature-toggle/models/plugin-guild-feature.model.js";
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -73,7 +88,11 @@ function stubActivePlugin() {
     pluginKey: PLUGIN_KEY,
     enabled: true,
     status: "active",
-    manifestJson: "{}",
+    manifestJson: JSON.stringify({
+      guild_features: [
+        { key: "my-feature", name: "my-feature", enabled_by_default: false },
+      ],
+    }),
   });
 }
 
@@ -121,9 +140,23 @@ function fakeFeatureRow(): PluginGuildFeatureRow {
 }
 
 function featureGateOpen() {
+  featureReachResolver.clear();
   (
-    findEnabledFeaturesByPluginGuild as ReturnType<typeof vi.fn>
+    findFeatureRowsByPluginGuild as ReturnType<typeof vi.fn>
   ).mockResolvedValue([fakeFeatureRow()]);
+  (
+    findFeatureDefaultsByPlugin as ReturnType<typeof vi.fn>
+  ).mockResolvedValue([]);
+}
+
+function featureGateClosed() {
+  featureReachResolver.clear();
+  (
+    findFeatureRowsByPluginGuild as ReturnType<typeof vi.fn>
+  ).mockResolvedValue([]);
+  (
+    findFeatureDefaultsByPlugin as ReturnType<typeof vi.fn>
+  ).mockResolvedValue([]);
 }
 
 // ── tests ───────────────────────────────────────────────────────────────────
@@ -133,6 +166,7 @@ describe("messages.trigger_typing", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    featureGateOpen();
     stubActivePlugin();
   });
 
@@ -160,7 +194,7 @@ describe("messages.trigger_typing", () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ ok: true });
     expect(channel._sendTyping).toHaveBeenCalledOnce();
-    expect(findEnabledFeaturesByPluginGuild).toHaveBeenCalledWith(
+    expect(findFeatureRowsByPluginGuild).toHaveBeenCalledWith(
       PLUGIN_ID,
       GUILD_ID,
     );
@@ -174,9 +208,7 @@ describe("messages.trigger_typing", () => {
       bot: fakeBot(channel) as never,
     });
     await server.ready();
-    (
-      findEnabledFeaturesByPluginGuild as ReturnType<typeof vi.fn>
-    ).mockResolvedValue([]);
+    featureGateClosed();
 
     const res = await server.inject({
       method: "POST",
@@ -255,6 +287,7 @@ describe("messages.send — reply_to", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    featureGateOpen();
     stubPluginAuth(["messages.send"]);
     stubActivePlugin();
   });
@@ -387,6 +420,7 @@ describe("messages.send — reply ping opt-out semantics (review #5)", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    featureGateOpen();
     stubPluginAuth(["messages.send"]);
     stubActivePlugin();
   });

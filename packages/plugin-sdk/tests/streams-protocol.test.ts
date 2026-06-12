@@ -8,22 +8,22 @@ import { describe, it } from "node:test";
 import {
   computeLag,
   decideRedelivery,
-  dlqKeyFor,
   parseStreamEntry,
-  streamKeyFor,
+  pluginDlqKeyFor,
+  pluginStreamKeyFor,
 } from "../src/streams-protocol.js";
 
-describe("streamKeyFor / dlqKeyFor", () => {
-  it("builds the per-event-type stream key", () => {
+describe("pluginStreamKeyFor / pluginDlqKeyFor", () => {
+  it("builds the per-plugin mailbox stream key", () => {
     assert.equal(
-      streamKeyFor("guild.message_create"),
-      "karyl:events:guild.message_create",
+      pluginStreamKeyFor("karyl-radio"),
+      "karyl:plugin:karyl-radio:events",
     );
   });
-  it("derives the DLQ key from the stream key", () => {
+  it("derives the DLQ key from the mailbox key", () => {
     assert.equal(
-      dlqKeyFor("guild.message_create"),
-      "karyl:events:guild.message_create:dlq",
+      pluginDlqKeyFor("karyl-radio"),
+      "karyl:plugin:karyl-radio:events:dlq",
     );
   });
 });

@@ -182,8 +182,8 @@ export type { EventName } from "./events.js";
 // stream-key naming conventions are exported, for tooling that inspects the
 // streams (the consumer mechanics + client lifecycle are internal).
 export {
-  STREAM_PREFIX,
+  PLUGIN_STREAM_PREFIX,
   DLQ_SUFFIX,
-  streamKeyFor,
-  dlqKeyFor,
+  pluginStreamKeyFor,
+  pluginDlqKeyFor,
 } from "./streams-protocol.js";

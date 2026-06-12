@@ -74,13 +74,13 @@ function makeStub(): { client: RedisLike; calls: XaddCall[] } {
 }
 
 describe("RedisStreamsPluginEventBus", () => {
-  it("XADDs to the per-event-type stream key with bounded MAXLEN", async () => {
+  it("XADDs to the plugin's mailbox stream key with bounded MAXLEN", async () => {
     const { client, calls } = makeStub();
     const bus = new RedisStreamsPluginEventBus(client, { maxLen: 1234 });
-    bus.dispatch("guild.message_create", { foo: "bar" });
+    bus.dispatchToPlugin(1, "my-plugin", "guild.message_create", { foo: "bar" });
     await new Promise((r) => setTimeout(r, 5));
     expect(calls.length).toBe(1);
-    expect(calls[0].key).toBe("karyl:events:guild.message_create");
+    expect(calls[0].key).toBe("karyl:plugin:my-plugin:events");
     // MAXLEN ~ 1234 should be at the front of the args.
     expect(calls[0].args[0]).toBe("MAXLEN");
     expect(calls[0].args[1]).toBe("~");
@@ -92,7 +92,7 @@ describe("RedisStreamsPluginEventBus", () => {
   it("payload includes type / data / traceparent fields", async () => {
     const { client, calls } = makeStub();
     const bus = new RedisStreamsPluginEventBus(client);
-    bus.dispatch("guild.message_reaction_add", { msg: "x" });
+    bus.dispatchToPlugin(1, "my-plugin", "guild.message_reaction_add", { msg: "x" });
     await new Promise((r) => setTimeout(r, 5));
     const args = calls[0].args;
     // After MAXLEN~N* there are name/value pairs. Build a map.
@@ -107,7 +107,7 @@ describe("RedisStreamsPluginEventBus", () => {
 
   it("uses the default MAXLEN when no override is passed", async () => {
     const { client, calls } = makeStub();
-    new RedisStreamsPluginEventBus(client).dispatch("x", {});
+    new RedisStreamsPluginEventBus(client).dispatchToPlugin(1, "p", "x", {});
     await new Promise((r) => setTimeout(r, 5));
     expect(calls[0].args[2]).toBe(100_000);
   });
@@ -162,6 +162,6 @@ describe("RedisStreamsPluginEventBus", () => {
     } as unknown as RedisLike;
     const bus = new RedisStreamsPluginEventBus(client);
     // Should not throw — dispatch is fire-and-forget.
-    expect(() => bus.dispatch("x", {})).not.toThrow();
+    expect(() => bus.dispatchToPlugin(1, "p", "x", {})).not.toThrow();
   });
 });

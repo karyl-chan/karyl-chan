@@ -63,7 +63,7 @@
     "nonceHeader": "x-karyl-nonce"
   },
   "streams": {
-    "streamPrefix": "karyl:events:",
+    "streamPrefix": "karyl:plugin:",
     "dlqSuffix": ":dlq",
     "fields": [
       "type",
@@ -73,19 +73,19 @@
     ],
     "samples": [
       {
-        "eventType": "guild.message_create",
-        "streamKey": "karyl:events:guild.message_create",
-        "dlqKey": "karyl:events:guild.message_create:dlq"
+        "pluginKey": "karyl-radio",
+        "streamKey": "karyl:plugin:karyl-radio:events",
+        "dlqKey": "karyl:plugin:karyl-radio:events:dlq"
       },
       {
-        "eventType": "dm.message_create",
-        "streamKey": "karyl:events:dm.message_create",
-        "dlqKey": "karyl:events:dm.message_create:dlq"
+        "pluginKey": "my-plugin",
+        "streamKey": "karyl:plugin:my-plugin:events",
+        "dlqKey": "karyl:plugin:my-plugin:events:dlq"
       },
       {
-        "eventType": "guild.message_reaction_add",
-        "streamKey": "karyl:events:guild.message_reaction_add",
-        "dlqKey": "karyl:events:guild.message_reaction_add:dlq"
+        "pluginKey": "a",
+        "streamKey": "karyl:plugin:a:events",
+        "dlqKey": "karyl:plugin:a:events:dlq"
       }
     ]
   },
@@ -150,7 +150,7 @@
     "heartbeatEndpoint": "/api/plugins/heartbeat"
   },
   "behaviorWebhook": {
-    "_comment": "BH-2.3 \u2014 the behavior custom-webhook contract. The bot-side test (behavior-webhook-contract.test.ts) locks payload/response shape against these; external webhook authors can read this file as the canonical schema.",
+    "_comment": "BH-2.3 — the behavior custom-webhook contract. The bot-side test (behavior-webhook-contract.test.ts) locks payload/response shape against these; external webhook authors can read this file as the canonical schema.",
     "endSentinel": "[BEHAVIOR:END]",
     "endSentinelCaseInsensitive": true,
     "request": {

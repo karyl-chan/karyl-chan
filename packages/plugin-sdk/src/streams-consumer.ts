@@ -1,22 +1,24 @@
 /**
- * SDK-side Redis Streams consumer (PR-1.1 + PR-1.3).
+ * SDK-side Redis Streams consumer (PR-1.1 + PR-1.3; PM-8 mailbox model).
  *
- * The bot's `RedisStreamsPluginEventBus` producer XADDs every Discord
- * event to a shared per-type stream (`karyl:events:<eventType>`). This
- * consumer is the other half: when a plugin runs with
- * `EVENT_BUS=redis-streams`, the SDK joins a per-plugin consumer group
- * on each subscribed stream, reads new entries with `XREADGROUP`,
- * dispatches each through the SAME `dispatchEvent` path the HTTP
- * `/events` route uses, and `XACK`s on success. Plugin authors don't
- * change a line — `eventHandlers` is the only surface either way.
+ * The bot's `RedisStreamsPluginEventBus` producer XADDs each event this
+ * plugin is entitled to see into the plugin's PRIVATE mailbox stream
+ * (`karyl:plugin:<pluginKey>:events`) — reach enforcement happens
+ * bot-side before the write, so the mailbox only ever contains events
+ * that passed the plugin's feature/global grants. This consumer is the
+ * other half: when a plugin runs with `EVENT_BUS=redis-streams`, the
+ * SDK joins a consumer group on its own mailbox, reads new entries with
+ * `XREADGROUP`, dispatches each through the SAME `dispatchEvent` path
+ * the HTTP `/events` route uses, and `XACK`s on success. Plugin authors
+ * don't change a line — `eventHandlers` is the only surface either way.
  *
  * Reliability (PR-1.3): a periodic `XAUTOCLAIM` sweep reclaims entries
  * that were delivered but never acked (handler crash, plugin restart
  * mid-handle). Each reclaimed entry is retried until its delivery count
  * hits `maxDeliveries`, after which it's moved to the dead-letter stream
- * (`karyl:events:<eventType>:dlq`) and acked off the source so a poison
- * message can't block the group's pending list forever. Parse failures
- * go straight to the DLQ.
+ * (`karyl:plugin:<pluginKey>:events:dlq`) and acked off the source so a
+ * poison message can't block the group's pending list forever. Parse
+ * failures go straight to the DLQ.
  *
  * Default-off: nothing here runs unless the plugin process is started
  * with `EVENT_BUS=redis-streams` AND `REDIS_URL` set. With neither, the
@@ -26,9 +28,9 @@
 import {
   computeLag,
   decideRedelivery,
-  dlqKeyFor,
   parseStreamEntry,
-  streamKeyFor,
+  pluginDlqKeyFor,
+  pluginStreamKeyFor,
   type ParsedStreamEntry,
 } from "./streams-protocol.js";
 
@@ -59,10 +61,8 @@ export interface StreamsConsumerLogger {
 
 export interface StreamsConsumerOptions {
   redis: RedisStreamsLike;
-  /** This plugin's key — names the consumer group + consumer. */
+  /** This plugin's key — names the mailbox stream, group and consumer. */
   pluginKey: string;
-  /** Event types the plugin subscribes to (keys of `eventHandlers`). */
-  eventTypes: string[];
   /**
    * Same callback `createPluginServer` receives for the `/events` route.
    * Resolving the handler by type + running it inside try/catch lives in
@@ -87,15 +87,16 @@ export interface StreamsConsumerOptions {
   /** Interval (ms) between reclaim + lag sweeps. Default 30_000. */
   sweepIntervalMs?: number;
   /**
-   * Optional sink called once per stream per sweep with the freshly
-   * computed consumer-group lag. The SDK wires this to the plugin's
-   * metrics collector (a gauge) so lag reaches the bot's metrics
-   * surface (PR-1.3) — but it's just a callback, so it stays Redis- and
-   * metrics-library-free here and is trivially testable.
+   * Optional sink called once per sweep with the freshly computed
+   * consumer-group lag of the mailbox. The SDK wires this to the
+   * plugin's metrics collector (a gauge) so lag reaches the bot's
+   * metrics surface (PR-1.3) — but it's just a callback, so it stays
+   * Redis- and metrics-library-free here and is trivially testable.
    */
-  onLag?: (eventType: string, lag: number) => void;
+  onLag?: (lag: number) => void;
   /**
-   * Optional sink called whenever an entry is dead-lettered. Wired to a
+   * Optional sink called whenever an entry is dead-lettered, with the
+   * entry's event type ("unknown" for parse failures). Wired to a
    * metrics counter by the SDK so a rising DLQ rate is alertable.
    */
   onDeadLetter?: (eventType: string, reason: string) => void;
@@ -114,9 +115,8 @@ export function groupNameFor(pluginKey: string): string {
   return `kc-consumer:${pluginKey}`;
 }
 
-/** Lag snapshot for one stream, exposed to the metrics surface / logs. */
+/** Lag snapshot of the mailbox, exposed to the metrics surface / logs. */
 export interface LagSnapshot {
-  eventType: string;
   lag: number;
 }
 
@@ -125,8 +125,8 @@ export class StreamsConsumer {
   private readonly pluginKey: string;
   private readonly group: string;
   private readonly consumer: string;
-  private readonly eventTypes: string[];
-  private readonly streamKeys: string[];
+  private readonly streamKey: string;
+  private readonly dlqKey: string;
   private readonly dispatchEvent: StreamsConsumerOptions["dispatchEvent"];
   private readonly log: StreamsConsumerLogger;
   private readonly batchCount: number;
@@ -134,13 +134,13 @@ export class StreamsConsumer {
   private readonly maxDeliveries: number;
   private readonly claimMinIdleMs: number;
   private readonly sweepIntervalMs: number;
-  private readonly onLag?: (eventType: string, lag: number) => void;
+  private readonly onLag?: (lag: number) => void;
   private readonly onDeadLetter?: (eventType: string, reason: string) => void;
 
   private running = false;
   private readLoop: Promise<void> | null = null;
   private sweepTimer: NodeJS.Timeout | null = null;
-  private lastLag = new Map<string, number>();
+  private lastLag = 0;
 
   constructor(opts: StreamsConsumerOptions) {
     this.redis = opts.redis;
@@ -150,8 +150,8 @@ export class StreamsConsumer {
     // by consumer, so a restarted process reading under a fresh name
     // leaves the old PEL entries for XAUTOCLAIM to reclaim.
     this.consumer = `${opts.pluginKey}-${process.pid}`;
-    this.eventTypes = [...new Set(opts.eventTypes)];
-    this.streamKeys = this.eventTypes.map(streamKeyFor);
+    this.streamKey = pluginStreamKeyFor(opts.pluginKey);
+    this.dlqKey = pluginDlqKeyFor(opts.pluginKey);
     this.dispatchEvent = opts.dispatchEvent;
     this.log = opts.log;
     this.batchCount = opts.batchCount ?? DEFAULTS.batchCount;
@@ -163,36 +163,34 @@ export class StreamsConsumer {
     this.onDeadLetter = opts.onDeadLetter;
   }
 
-  /** Create the consumer group on every subscribed stream (idempotent). */
+  /** Create the consumer group on the mailbox stream (idempotent). */
   async ensureGroups(): Promise<void> {
-    for (const key of this.streamKeys) {
-      try {
-        // MKSTREAM creates the stream if the producer hasn't written yet;
-        // `$` starts the cursor at "only new entries from now".
-        await this.redis.xgroup(
-          "CREATE",
-          key,
-          this.group,
-          "$",
-          "MKSTREAM",
-        );
-      } catch (err) {
-        // BUSYGROUP = group already exists (a previous run / another
-        // replica). That's the steady-state path, not an error.
-        const msg = err instanceof Error ? err.message : String(err);
-        if (!msg.includes("BUSYGROUP")) {
-          this.log.warn("failed to create consumer group", {
-            key,
-            group: this.group,
-            error: msg,
-          });
-        }
+    try {
+      // MKSTREAM creates the stream if the producer hasn't written yet;
+      // `$` starts the cursor at "only new entries from now".
+      await this.redis.xgroup(
+        "CREATE",
+        this.streamKey,
+        this.group,
+        "$",
+        "MKSTREAM",
+      );
+    } catch (err) {
+      // BUSYGROUP = group already exists (a previous run / another
+      // replica). That's the steady-state path, not an error.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes("BUSYGROUP")) {
+        this.log.warn("failed to create consumer group", {
+          key: this.streamKey,
+          group: this.group,
+          error: msg,
+        });
       }
     }
   }
 
   start(): void {
-    if (this.running || this.streamKeys.length === 0) return;
+    if (this.running) return;
     this.running = true;
     this.readLoop = this.runReadLoop();
     this.sweepTimer = setInterval(() => {
@@ -202,7 +200,7 @@ export class StreamsConsumer {
     this.log.info("redis-streams consumer started", {
       group: this.group,
       consumer: this.consumer,
-      eventTypes: this.eventTypes,
+      stream: this.streamKey,
     });
   }
 
@@ -219,12 +217,9 @@ export class StreamsConsumer {
     this.readLoop = null;
   }
 
-  /** Most recent lag per event type (consumer-group entries unconsumed). */
-  lagSnapshot(): LagSnapshot[] {
-    return this.eventTypes.map((eventType) => ({
-      eventType,
-      lag: this.lastLag.get(eventType) ?? 0,
-    }));
+  /** Most recent mailbox lag (consumer-group entries unconsumed). */
+  lagSnapshot(): LagSnapshot {
+    return { lag: this.lastLag };
   }
 
   // ── read loop ────────────────────────────────────────────────────────
@@ -243,8 +238,8 @@ export class StreamsConsumer {
           "BLOCK",
           this.blockMs,
           "STREAMS",
-          ...this.streamKeys,
-          ...this.streamKeys.map(() => ">"),
+          this.streamKey,
+          ">",
         );
       } catch (err) {
         if (!this.running) return;
@@ -321,18 +316,14 @@ export class StreamsConsumer {
 
   private async sweepOnce(): Promise<void> {
     if (!this.running) return;
-    for (let i = 0; i < this.streamKeys.length; i++) {
-      const key = this.streamKeys[i];
-      const eventType = this.eventTypes[i];
-      try {
-        await this.reclaimStream(key);
-        await this.refreshLag(key, eventType);
-      } catch (err) {
-        this.log.warn("stream sweep failed", {
-          key,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
+    try {
+      await this.reclaimStream(this.streamKey);
+      await this.refreshLag();
+    } catch (err) {
+      this.log.warn("stream sweep failed", {
+        key: this.streamKey,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -392,7 +383,7 @@ export class StreamsConsumer {
     }
 
     if (decideRedelivery(deliveries, this.maxDeliveries) === "dlq") {
-      await this.deadLetter(key, id, parsed.raw, "max-deliveries");
+      await this.deadLetter(key, id, parsed.raw, "max-deliveries", parsed.type);
       return;
     }
 
@@ -421,15 +412,16 @@ export class StreamsConsumer {
     return 1;
   }
 
-  /** Move an entry to the DLQ stream and ACK it off the source. */
+  /** Move an entry to the mailbox's DLQ stream and ACK it off the source. */
   private async deadLetter(
     key: string,
     id: string,
     rawFields: string[],
     reason: string,
+    eventType = "unknown",
   ): Promise<void> {
     if (!id) return;
-    const dlqKey = dlqKeyFor(this.streamEventType(key));
+    const dlqKey = this.dlqKey;
     try {
       // Preserve every original field verbatim + stamp the DLQ reason +
       // the source id so the entry is self-describing for an operator.
@@ -443,7 +435,7 @@ export class StreamsConsumer {
         id,
       );
       await this.ackSafely(key, id);
-      this.onDeadLetter?.(this.streamEventType(key), reason);
+      this.onDeadLetter?.(eventType, reason);
       this.log.warn("event moved to DLQ", { dlqKey, sourceId: id, reason });
     } catch (err) {
       this.log.error("failed to dead-letter event", {
@@ -468,11 +460,11 @@ export class StreamsConsumer {
   }
 
   /** Read consumer-group lag via XINFO GROUPS and stash it for the snapshot. */
-  private async refreshLag(key: string, eventType: string): Promise<void> {
+  private async refreshLag(): Promise<void> {
     try {
       const [groups, length] = await Promise.all([
-        this.redis.xinfo("GROUPS", key),
-        this.redis.xlen(key),
+        this.redis.xinfo("GROUPS", this.streamKey),
+        this.redis.xlen(this.streamKey),
       ]);
       const mine = findGroupInfo(groups, this.group);
       const lag = computeLag({
@@ -480,21 +472,16 @@ export class StreamsConsumer {
         streamLength: typeof length === "number" ? length : 0,
         entriesRead: mine.entriesRead,
       });
-      this.lastLag.set(eventType, lag);
+      this.lastLag = lag;
       // Always surface lag to the metrics sink (even 0) so a gauge that
       // recovered to zero is reflected, not stuck at its last non-zero.
-      this.onLag?.(eventType, lag);
+      this.onLag?.(lag);
       if (lag > 0) {
-        this.log.info("consumer lag", { eventType, group: this.group, lag });
+        this.log.info("consumer lag", { group: this.group, lag });
       }
     } catch {
       /* lag is best-effort telemetry — never break the sweep over it */
     }
-  }
-
-  private streamEventType(key: string): string {
-    const i = this.streamKeys.indexOf(key);
-    return i >= 0 ? this.eventTypes[i] : key;
   }
 }
 
