@@ -9,6 +9,7 @@ import {
     setPluginApprovedScopes,
     type PluginDetailRecord,
 } from '../../../api/plugins';
+import { rootEnvLine } from './plugin-install-snippets';
 
 const props = defineProps<{
     plugin: PluginDetailRecord;
@@ -234,8 +235,9 @@ function closeSecretResult() {
             </div>
             <p class="secret-instruction">{{ t('admin.plugins.setupSecret.instruction') }}</p>
             <div class="secret-env-hint">
-                <code>{{ t('admin.plugins.setupSecret.envHint', { secret: setupSecretValue }) }}</code>
+                <code>{{ rootEnvLine(plugin.pluginKey, setupSecretValue) }}</code>
             </div>
+            <p class="secret-env-caption">{{ t('admin.plugins.setupSecret.rootEnvCaption') }}</p>
             <div class="secret-warning" role="alert">
                 <Icon icon="material-symbols:warning-outline-rounded" width="15" height="15" class="secret-warning-icon" />
                 <span>{{ t('admin.plugins.setupSecret.warning') }}</span>
@@ -467,6 +469,12 @@ function closeSecretResult() {
     font-size: 0.82rem;
     color: var(--text-strong);
     white-space: nowrap;
+}
+.secret-env-caption {
+    margin: 0;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    line-height: 1.45;
 }
 .secret-warning {
     display: flex;

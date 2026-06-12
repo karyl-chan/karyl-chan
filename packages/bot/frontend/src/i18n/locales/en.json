@@ -1060,7 +1060,11 @@
                 "copyButton": "Copy",
                 "copiedButton": "Copied",
                 "instruction": "Copy the value below into your plugin .env and restart the plugin:",
-                "envHint": "KARYL_PLUGIN_SETUP_SECRET={secret}",
+                "wiringIntro": "Wire it up — two copy-paste steps, then start the container:",
+                "rootEnvLabel": "1 · Compose root .env",
+                "rootEnvCaption": "Compose interpolation passes this suffixed variable into the container as the unsuffixed KARYL_PLUGIN_SETUP_SECRET the SDK reads. Running without compose? Set the unsuffixed name directly.",
+                "composeLabel": "2 · docker-compose.plugins.yml service",
+                "composeCaption": "PLUGIN_URL must be reachable from the bot's container — i.e. match the container name. The SDK default (http://<key>:3000) usually doesn't.",
                 "warning": "This value will not be shown again. If lost, you must regenerate (which invalidates the current one).",
                 "checkboxLabel": "I have saved this secret to the plugin .env",
                 "closeButton": "Close",
@@ -1069,6 +1073,14 @@
             "online": "Online",
             "offline": "Offline",
             "offlineCount": "Offline ({n})",
+            "installState": {
+                "pendingGroup": "Awaiting first registration",
+                "pendingGroupHint": "Setup secret minted, but the plugin has never registered. Start its container with the secret + PLUGIN_URL wiring (snippets are shown when generating the secret) — see the operator guide for troubleshooting.",
+                "awaiting": "Never registered",
+                "awaitingHint": "The plugin process has not called register yet — check the container is running and KARYL_PLUGIN_SETUP_SECRET is set.",
+                "notEnabled": "Not enabled yet",
+                "notEnabledHint": "Registered and online, but disabled — flip the toggle to let it dispatch."
+            },
             "menu": {
                 "delete": "Delete"
             },

@@ -1060,7 +1060,11 @@
                 "copyButton": "复制",
                 "copiedButton": "已复制",
                 "instruction": "请将以下值写入 plugin 的 .env 并重启 plugin：",
-                "envHint": "KARYL_PLUGIN_SETUP_SECRET={secret}",
+                "wiringIntro": "接线只需两步复制粘贴，然后启动容器：",
+                "rootEnvLabel": "1 · Compose 根目录 .env",
+                "rootEnvCaption": "compose 会把这个带后缀的变量注入容器成不带后缀的 KARYL_PLUGIN_SETUP_SECRET（SDK 读的是后者）。不用 compose 跑的话，直接设置不带后缀的名字。",
+                "composeLabel": "2 · docker-compose.plugins.yml service",
+                "composeCaption": "PLUGIN_URL 必须让 bot 容器能连到——即与 container name 一致；SDK 默认值（http://<key>:3000）通常不一致。",
                 "warning": "关闭此窗口后将无法再次查看。如已丢失需重新生成（会作废当前的）。",
                 "checkboxLabel": "我已将 secret 写入 plugin 的 .env",
                 "closeButton": "关闭",
@@ -1069,6 +1073,14 @@
             "online": "在线",
             "offline": "离线",
             "offlineCount": "离线 ({n})",
+            "installState": {
+                "pendingGroup": "等待首次注册",
+                "pendingGroupHint": "Setup secret 已生成，但 plugin 从未注册。请用生成 secret 时提供的接线片段（.env 行＋compose service）启动容器；疑难排解见 operator guide。",
+                "awaiting": "从未注册",
+                "awaitingHint": "plugin 进程尚未调用 register——确认容器已运行、KARYL_PLUGIN_SETUP_SECRET 已设置。",
+                "notEnabled": "尚未启用",
+                "notEnabledHint": "已注册且在线，但仍处于停用状态——打开开关才会开始派发。"
+            },
             "menu": {
                 "delete": "删除"
             },
