@@ -79,6 +79,12 @@ added later). When deploying, note:
   for the SQLite data directory (`./data/database.sqlite`), and — if
   `CERTS_DIR` is set — the certificate directory.
 
+## Installing plugins
+
+Plugins are separate services that self-register with the bot. The whole
+operator journey (secret → compose wiring → verify → enable → per-guild
+features) is in the [plugin operator guide](operator-guide.md).
+
 ## First-run checklist
 
 1. The container log emits `bot started`.
