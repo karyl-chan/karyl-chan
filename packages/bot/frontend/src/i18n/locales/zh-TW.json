@@ -1454,6 +1454,10 @@
         "rpcScopesPendingBadge": "待核可",
         "rpcScopesApproveAll": "全部核可",
         "rpcScopesSave": "儲存",
-        "rpcScopesSaved": "已儲存"
+        "rpcScopesSaved": "已儲存",
+        "globalEventsTitle": "全域事件訂閱",
+        "globalEventsDesc": "plugin 會從「所有伺服器與 DM」收到這些事件，不受逐伺服器 feature 開關限制。feature 級訂閱不會出現在這裡——那些只在開了該 feature 的伺服器觸發。PLUGIN_AUTO_APPROVE=true（預設）時宣告即自動核准；下方核取方塊在關閉 auto-approve 時才實際生效。",
+        "globalEventsNone": "此 plugin 未宣告任何全域事件訂閱。",
+        "globalEventsPendingHint": "{n} 個訂閱待核准——核准前 plugin 完全收不到這些事件。"
     }
 }

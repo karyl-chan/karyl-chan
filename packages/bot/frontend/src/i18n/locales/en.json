@@ -1454,6 +1454,10 @@
         "rpcScopesPendingBadge": "pending",
         "rpcScopesApproveAll": "Approve all",
         "rpcScopesSave": "Save",
-        "rpcScopesSaved": "Saved"
+        "rpcScopesSaved": "Saved",
+        "globalEventsTitle": "Global Event Subscriptions",
+        "globalEventsDesc": "Events the plugin receives from EVERY guild and from DMs, regardless of per-guild feature toggles. Feature-scoped subscriptions don't appear here — those only fire in guilds where the feature is enabled. With PLUGIN_AUTO_APPROVE=true (default) declared subscriptions are granted automatically; the checkboxes below take effect when auto-approve is off.",
+        "globalEventsNone": "This plugin declares no global event subscriptions.",
+        "globalEventsPendingHint": "{n} subscription(s) pending — the plugin receives NO events for these until approved."
     }
 }

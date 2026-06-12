@@ -6,6 +6,7 @@ import { AppModal } from '@karyl-chan/ui';
 import { AppConfirmDialog } from '@karyl-chan/ui';
 import {
     generatePluginSetupSecret,
+    setPluginApprovedGlobalEventSubs,
     setPluginApprovedScopes,
     type PluginDetailRecord,
 } from '../../../api/plugins';
@@ -62,6 +63,56 @@ async function saveScopes() {
         scopeError.value = err instanceof Error ? err.message : String(err);
     } finally {
         scopesSaving.value = false;
+    }
+}
+
+// ─── Global event subscriptions (PM-8) ────────────────────────────────
+// Mirrors the RPC scope approval UX. requested = manifest's
+// events_subscribed_global; approved = the persisted grant. Feature-
+// scoped subscriptions don't appear here — they're gated per guild by
+// the feature toggle, not by an approval.
+const requestedGlobalSubs = computed<string[]>(
+    () => props.plugin.manifest?.events_subscribed_global ?? [],
+);
+const approvedGlobal = ref<string[]>([...(props.plugin.approvedGlobalEventSubs ?? [])]);
+const checkedGlobalSubs = ref<string[]>([...(props.plugin.approvedGlobalEventSubs ?? [])]);
+const globalSubsSaving = ref(false);
+const globalSubsSaved = ref(false);
+const globalSubsError = ref<string | null>(null);
+
+const globalSubsDirty = computed(() => {
+    const a = new Set(checkedGlobalSubs.value);
+    const b = new Set(approvedGlobal.value);
+    if (a.size !== b.size) return true;
+    for (const sub of a) if (!b.has(sub)) return true;
+    return false;
+});
+const pendingGlobalCount = computed(
+    () => requestedGlobalSubs.value.filter((e) => !approvedGlobal.value.includes(e)).length,
+);
+
+function isGlobalSubApproved(sub: string): boolean {
+    return approvedGlobal.value.includes(sub);
+}
+
+function approveAllGlobalSubs() {
+    checkedGlobalSubs.value = [...requestedGlobalSubs.value];
+}
+
+async function saveGlobalSubs() {
+    if (globalSubsSaving.value || !globalSubsDirty.value) return;
+    globalSubsSaving.value = true;
+    globalSubsError.value = null;
+    try {
+        const state = await setPluginApprovedGlobalEventSubs(props.plugin.id, checkedGlobalSubs.value);
+        approvedGlobal.value = [...state.approved];
+        checkedGlobalSubs.value = [...state.approved];
+        globalSubsSaved.value = true;
+        setTimeout(() => { globalSubsSaved.value = false; }, 2000);
+    } catch (err) {
+        globalSubsError.value = err instanceof Error ? err.message : String(err);
+    } finally {
+        globalSubsSaving.value = false;
     }
 }
 
@@ -168,6 +219,58 @@ function closeSecretResult() {
                     </button>
                 </div>
                 <p v-if="scopeError" class="scope-error" role="alert">{{ scopeError }}</p>
+            </template>
+        </section>
+
+        <section class="section">
+            <h3 class="section-title">{{ t('pluginSecurity.globalEventsTitle') }}</h3>
+            <p class="section-desc">{{ t('pluginSecurity.globalEventsDesc') }}</p>
+
+            <p v-if="requestedGlobalSubs.length === 0" class="section-desc scope-empty">
+                {{ t('pluginSecurity.globalEventsNone') }}
+            </p>
+
+            <template v-else>
+                <ul class="scope-list">
+                    <li v-for="sub in requestedGlobalSubs" :key="sub" class="scope-item">
+                        <label class="scope-label">
+                            <input
+                                type="checkbox"
+                                class="scope-checkbox"
+                                :value="sub"
+                                v-model="checkedGlobalSubs"
+                            />
+                            <code class="scope-code">{{ sub }}</code>
+                        </label>
+                        <span v-if="!isGlobalSubApproved(sub)" class="pending-badge">
+                            {{ t('pluginSecurity.rpcScopesPendingBadge') }}
+                        </span>
+                    </li>
+                </ul>
+                <p v-if="pendingGlobalCount > 0" class="section-desc">
+                    {{ t('pluginSecurity.globalEventsPendingHint', { n: pendingGlobalCount }) }}
+                </p>
+                <div class="scope-actions">
+                    <button type="button" class="ghost-btn" @click="approveAllGlobalSubs">
+                        {{ t('pluginSecurity.rpcScopesApproveAll') }}
+                    </button>
+                    <button
+                        type="button"
+                        class="primary-btn"
+                        :class="{ saved: globalSubsSaved }"
+                        :disabled="globalSubsSaving || !globalSubsDirty"
+                        @click="saveGlobalSubs"
+                    >
+                        <Icon
+                            v-if="globalSubsSaved"
+                            icon="material-symbols:check-rounded"
+                            width="14"
+                            height="14"
+                        />
+                        {{ globalSubsSaved ? t('pluginSecurity.rpcScopesSaved') : t('pluginSecurity.rpcScopesSave') }}
+                    </button>
+                </div>
+                <p v-if="globalSubsError" class="scope-error" role="alert">{{ globalSubsError }}</p>
             </template>
         </section>
 
