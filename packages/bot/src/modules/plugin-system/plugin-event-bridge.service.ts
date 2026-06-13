@@ -410,21 +410,27 @@ export function dispatchEventToPlugins(
           //     feature effectively enabled (cached 3-tier resolution);
           //     a guild-less event (DM) never matches a feature route.
           let pass = false;
+          // Deferred + memoized manifest: the resolver parses only on a
+          // cache MISS, so a warm-cache feature dispatch (the common case
+          // under the 30s TTL) pays zero JSON.parse. `??=` memoizes so a
+          // cold multi-feature dispatch still parses at most once; an
+          // unparseable manifest stays null and every feature scope
+          // resolves false (fail-closed) without aborting the loop, so a
+          // co-declared "global" scope can still grant delivery.
           let manifest: PluginManifest | null = null;
+          const getManifest = () => (manifest ??= parseManifest(plugin));
           for (const scope of scopes) {
             if (scope === "global") {
               pass = true;
               break;
             }
             if (!guildId) continue;
-            manifest ??= parseManifest(plugin);
-            if (!manifest) break;
             if (
               await featureReachResolver.isFeatureEnabledInGuild(
                 pluginId,
                 guildId,
                 scope.featureKey,
-                manifest,
+                getManifest,
               )
             ) {
               pass = true;
