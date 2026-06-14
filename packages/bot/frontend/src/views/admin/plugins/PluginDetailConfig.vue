@@ -278,7 +278,10 @@ onMounted(loadAll);
                     </thead>
                     <tbody>
                         <tr v-for="row in overrideRows" :key="row.guildId">
-                            <td><code class="gid">{{ row.guildId }}</code></td>
+                            <td>
+                                <span v-if="summary?.guildNames[row.guildId]" class="gname" :title="row.guildId">{{ summary.guildNames[row.guildId] }}</span>
+                                <code v-else class="gid">{{ row.guildId }}</code>
+                            </td>
                             <td v-for="f in features" :key="f.key" class="cell">
                                 <span
                                     v-if="row.feats.has(f.key)"
@@ -305,7 +308,8 @@ onMounted(loadAll);
             </p>
             <ul v-else class="kv-list">
                 <li v-for="g in kvGuilds" :key="g.guildId" class="kv-row">
-                    <code class="gid">{{ g.guildId }}</code>
+                    <span v-if="summary?.guildNames[g.guildId]" class="gname" :title="g.guildId">{{ summary.guildNames[g.guildId] }}</span>
+                    <code v-else class="gid">{{ g.guildId }}</code>
                     <div class="kv-bar"><div class="kv-fill" :style="{ width: kvPct(g.usedBytes) + '%' }" /></div>
                     <span class="kv-num">
                         {{ t('admin.plugins.detail.config.kvKeys', { n: g.keyCount }) }} ·
@@ -347,6 +351,7 @@ onMounted(loadAll);
 .muted { color: var(--text-muted); font-size: 0.85rem; }
 .error { color: var(--danger); margin: 0; font-size: 0.85rem; }
 .gid { font-family: var(--font-mono, monospace); font-size: 0.76rem; color: var(--text); }
+.gname { font-size: 0.83rem; color: var(--text); font-weight: 500; }
 
 /* config editor (moved from Overview) */
 .config-section { margin-top: 0; }

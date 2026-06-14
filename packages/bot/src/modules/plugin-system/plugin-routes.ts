@@ -1436,6 +1436,16 @@ export async function registerPluginRoutes(
         quotaForGuildKv(pluginId),
         findFeatureRowsByPlugin(pluginId),
       ]);
+      // Resolve guild names from the live discord.js cache (the bot's
+      // authoritative source — not stored in our DB). null = the bot
+      // isn't in that guild / cache miss; the UI falls back to the id.
+      const guildNames: Record<string, string | null> = {};
+      for (const gid of new Set([
+        ...kvGuilds.map((g) => g.guildId),
+        ...featureRows.map((r) => r.guildId),
+      ])) {
+        guildNames[gid] = options.bot?.guilds.cache.get(gid)?.name ?? null;
+      }
       return {
         kv: { quotaBytes: kvQuotaBytes, guilds: kvGuilds },
         featureOverrides: featureRows.map((r) => ({
@@ -1443,6 +1453,7 @@ export async function registerPluginRoutes(
           featureKey: r.featureKey,
           enabled: r.enabled,
         })),
+        guildNames,
       };
     },
   );

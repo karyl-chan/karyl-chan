@@ -420,6 +420,9 @@ export interface PluginSettingsSummary {
   };
   /** Per-(guild,feature) override rows for this plugin. */
   featureOverrides: { guildId: string; featureKey: string; enabled: boolean }[];
+  /** guildId → guild name (null = bot not in guild / cache miss). Covers
+   *  every guild appearing in kv.guilds or featureOverrides. */
+  guildNames: Record<string, string | null>;
 }
 
 export async function getPluginSettingsSummary(
