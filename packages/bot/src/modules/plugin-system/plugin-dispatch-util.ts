@@ -17,12 +17,27 @@ import {
 } from "../../utils/host-policy.js";
 import { buildOutboundSignatureHeaders } from "../../utils/hmac.js";
 
+/**
+ * Memoize the parsed manifest per PluginRow instance. Rows are fresh
+ * POJOs minted by rowOf() on every DB read, so a WeakMap entry lives
+ * exactly as long as the row it belongs to (one dispatch / request) and
+ * is GC'd with it — no invalidation needed, no leak. This collapses the
+ * repeated `JSON.parse(plugin.manifestJson)` that every dispatch / RPC /
+ * reach path used to pay independently into one parse per row.
+ */
+const manifestByRow = new WeakMap<PluginRow, PluginManifest | null>();
+
 export function parsePluginManifest(plugin: PluginRow): PluginManifest | null {
+  const cached = manifestByRow.get(plugin);
+  if (cached !== undefined) return cached;
+  let parsed: PluginManifest | null;
   try {
-    return JSON.parse(plugin.manifestJson) as PluginManifest;
+    parsed = JSON.parse(plugin.manifestJson) as PluginManifest;
   } catch {
-    return null;
+    parsed = null;
   }
+  manifestByRow.set(plugin, parsed);
+  return parsed;
 }
 
 /**

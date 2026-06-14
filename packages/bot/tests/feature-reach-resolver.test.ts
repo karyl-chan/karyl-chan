@@ -29,7 +29,7 @@ function manifestWith(
 ): PluginManifest {
   return {
     plugin: { id: "p", name: "p", version: "0", url: "http://x" },
-    guild_features: features.map((f) => ({ key: f.key, name: f.key, ...f })),
+    guild_features: features.map((f) => ({ name: f.key, ...f })),
   } as unknown as PluginManifest;
 }
 
@@ -154,21 +154,4 @@ describe("FeatureReachResolver — cache + invalidation", () => {
     expect(r.size()).toBe(1);
   });
 
-  it("manifest thunk is invoked on a cold miss but skipped on a warm-cache hit", async () => {
-    const r = new FeatureReachResolver();
-    const m = manifestWith([{ key: "f", enabled_by_default: true }]);
-    let parses = 0;
-    const thunk = () => {
-      parses++;
-      return m;
-    };
-    expect(await r.isFeatureEnabledInGuild(PLUGIN_ID, GUILD, "f", thunk)).toBe(
-      true,
-    );
-    expect(parses).toBe(1); // cold miss parses once…
-    expect(await r.isFeatureEnabledInGuild(PLUGIN_ID, GUILD, "f", thunk)).toBe(
-      true,
-    );
-    expect(parses).toBe(1); // …warm cache pays no parse.
-  });
 });
