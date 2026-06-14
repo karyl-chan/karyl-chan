@@ -47,6 +47,7 @@ function resetConfigState(): void {
     configError.value = null;
     configSavedAt.value = null;
     configLoaded.value = false;
+    configStale.value = false;
 }
 
 async function loadConfig() {
@@ -67,7 +68,17 @@ async function loadConfig() {
         }
         for (const f of r.schema) {
             if (!(f.key in configValues)) {
-                configValues[f.key] = (f.default as string | undefined) ?? '';
+                const raw = f.default;
+                // Defaults arrive as raw manifest JSON (boolean/number/string);
+                // the editor stores everything as a string keyed by field type.
+                configValues[f.key] =
+                    f.type === 'boolean'
+                        ? raw === true || raw === 'true'
+                            ? 'true'
+                            : 'false'
+                        : raw == null
+                          ? ''
+                          : String(raw);
             }
         }
         configLoaded.value = true;
@@ -303,6 +314,7 @@ onMounted(loadAll);
             </div>
             <p class="section-desc">{{ t('admin.plugins.detail.config.kvDesc') }}</p>
             <p v-if="summaryLoading" class="muted">{{ t('common.loading') }}</p>
+            <p v-else-if="summaryError" class="error" role="alert">{{ summaryError }}</p>
             <p v-else-if="kvGuilds.length === 0" class="muted">
                 {{ t('admin.plugins.detail.config.kvEmpty') }}
             </p>
