@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.1](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.11.0...plugin-sdk-v0.11.1) (2026-06-14)
+
+
+### Bug Fixes
+
+* **plugin-sdk:** declare the 5 events the bot dispatches as canonical Events ([c553ed3](https://github.com/karyl-chan/karyl-chan/commit/c553ed324849a35b0d21fb3f2b2f5202540c0870))
+
 ## [0.11.0](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.10.1...plugin-sdk-v0.11.0) (2026-06-14)
 
 
