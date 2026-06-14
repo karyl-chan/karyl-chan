@@ -57,6 +57,7 @@
     }
   },
   "devDependencies": {
+    "@karyl-chan/plugin-sdk-prev": "npm:@karyl-chan/plugin-sdk@0.10.0",
     "@types/node": "^22.0.0",
     "discord-api-types": "^0.38.47",
     "ioredis": "^5.4.1",

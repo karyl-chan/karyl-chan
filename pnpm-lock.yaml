@@ -303,6 +303,9 @@ importers:
         specifier: ^5.0.0
         version: 5.8.5
     devDependencies:
+      '@karyl-chan/plugin-sdk-prev':
+        specifier: npm:@karyl-chan/plugin-sdk@0.10.0
+        version: '@karyl-chan/plugin-sdk@0.10.0(discord-api-types@0.38.47)(ioredis@5.10.1)(vue@3.5.34(typescript@5.9.3))'
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.19
@@ -943,6 +946,19 @@ packages:
 
   '@js-sdsl/ordered-map@4.4.2':
     resolution: {integrity: sha512-iUKgm52T8HOE/makSxjqoWhe95ZJA1/G1sYsGev2JDKUSS14KAgg1LHb+Ba+IPow0xflbnSkOsZcO08C7w1gYw==}
+
+  '@karyl-chan/plugin-sdk@0.10.0':
+    resolution: {integrity: sha512-EEcm5W1GjJem7UIwetfrTDrT7XOchsnjGAKVCEjopFW7Rhjo+PC4+rBcPZf3FZAkJedTyoru+NxEE2EDiRxwDw==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      discord-api-types: '>=0.38.0 <0.39.0'
+      ioredis: ^5.4.1
+      vue: ^3.5.0
+    peerDependenciesMeta:
+      ioredis:
+        optional: true
+      vue:
+        optional: true
 
   '@lukeed/ms@2.0.2':
     resolution: {integrity: sha512-9I2Zn6+NJLfaGoz9jN3lpwDgAYvfGeNYdbAIjJOqzs4Tpc+VU3Jqq4IofSUBKajiDS8k9fZIg18/z13mpk1bsA==}
@@ -4165,6 +4181,14 @@ snapshots:
       '@jridgewell/sourcemap-codec': 1.5.5
 
   '@js-sdsl/ordered-map@4.4.2': {}
+
+  '@karyl-chan/plugin-sdk@0.10.0(discord-api-types@0.38.47)(ioredis@5.10.1)(vue@3.5.34(typescript@5.9.3))':
+    dependencies:
+      discord-api-types: 0.38.47
+      fastify: 5.8.5
+    optionalDependencies:
+      ioredis: 5.10.1
+      vue: 3.5.34(typescript@5.9.3)
 
   '@lukeed/ms@2.0.2': {}
 
