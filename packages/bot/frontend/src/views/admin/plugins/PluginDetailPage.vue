@@ -7,6 +7,7 @@ import { AppTabs, type TabDef } from '@karyl-chan/ui';
 import PluginDetailOverview from './PluginDetailOverview.vue';
 import PluginDetailCommands from './PluginDetailCommands.vue';
 import PluginDetailFeatures from './PluginDetailFeatures.vue';
+import PluginDetailConfig from './PluginDetailConfig.vue';
 import PluginDetailSecurity from './PluginDetailSecurity.vue';
 import { getPluginByKey, type PluginDetailRecord } from '../../../api/plugins';
 
@@ -25,6 +26,7 @@ const tabs = computed<TabDef[]>(() => [
     { key: 'overview',  label: t('admin.plugins.detail.tabOverview') },
     { key: 'commands',  label: t('admin.plugins.detail.tabCommands') },
     { key: 'features',  label: t('admin.plugins.detail.tabFeatures') },
+    { key: 'config',    label: t('admin.plugins.detail.tabConfig') },
     { key: 'security',  label: t('admin.plugins.detail.tabSecurity') },
 ]);
 
@@ -125,6 +127,7 @@ onMounted(load);
                     @command-toggled="onCommandToggled"
                 />
                 <PluginDetailFeatures v-else-if="activeTab === 'features'" :plugin="plugin" />
+                <PluginDetailConfig v-else-if="activeTab === 'config'" :plugin="plugin" />
                 <PluginDetailSecurity v-else-if="activeTab === 'security'" :plugin="plugin" />
             </AppTabs>
         </template>

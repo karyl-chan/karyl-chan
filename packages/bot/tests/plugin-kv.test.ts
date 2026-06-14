@@ -10,6 +10,7 @@ import {
   incrementKv,
   getKv,
   setKv,
+  kvUsageByPlugin,
 } from "../src/modules/plugin-system/models/plugin-kv.model.js";
 
 beforeAll(async () => {
@@ -77,5 +78,26 @@ describe("incrementKv", () => {
     const values = results.map((r) => r.value).sort((a, b) => a - b);
     expect(values).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     expect((await getKv(PID, GID, KEY))?.value).toBe(String(N));
+  });
+});
+
+describe("kvUsageByPlugin (PD-2.2 per-guild usage)", () => {
+  it("aggregates key count + bytes per guild, sorted, with no value leakage", async () => {
+    await setKv(9, "g-a", "k1", "hello"); // 5 bytes
+    await setKv(9, "g-a", "k2", "world!"); // 6 bytes
+    await setKv(9, "g-b", "k1", "x"); // 1 byte
+    await setKv(8, "g-a", "other", "ignored"); // different plugin
+
+    const usage = await kvUsageByPlugin(9);
+    expect(usage).toEqual([
+      { guildId: "g-a", keyCount: 2, usedBytes: 11 },
+      { guildId: "g-b", keyCount: 1, usedBytes: 1 },
+    ]);
+    // Privacy boundary: usage rows carry no stored value.
+    expect(Object.keys(usage[0])).toEqual(["guildId", "keyCount", "usedBytes"]);
+  });
+
+  it("is empty for a plugin with no KV", async () => {
+    expect(await kvUsageByPlugin(123)).toEqual([]);
   });
 });

@@ -1,16 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Icon } from '@iconify/vue';
 import { AppBadge, type BadgeTone } from '@karyl-chan/ui';
-import {
-    ConfigValidationError,
-    getPluginConfig,
-    setPluginConfig,
-    type FieldValidationError,
-    type PluginConfigField,
-    type PluginDetailRecord,
-} from '../../../api/plugins';
+import { type PluginDetailRecord } from '../../../api/plugins';
 import { safeHref } from '../../../libs/messages/safe-href';
 
 const props = defineProps<{
@@ -20,7 +12,6 @@ const props = defineProps<{
 const { t } = useI18n();
 
 const manifest = computed(() => props.plugin.manifest);
-const hasConfigSchema = computed(() => (manifest.value?.config_schema?.length ?? 0) > 0);
 
 // Workpack C: health + metrics inline on the overview tab.
 const health = computed(() => props.plugin.health ?? null);
@@ -49,115 +40,6 @@ function formatAge(unixMs: number): string {
     if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
     return `${Math.floor(seconds / 3600)}h ago`;
 }
-
-// Config editor (same lazy-load pattern as PluginCard)
-const configSchema = ref<PluginConfigField[]>([]);
-const configValues = reactive<Record<string, string>>({});
-const configLoaded = ref(false);
-const configLoading = ref(false);
-const configSaving = ref(false);
-const configError = ref<string | null>(null);
-const configSavedAt = ref<number | null>(null);
-// PD-4.3: stored admin config was saved under an older config_schema_version
-// than the manifest now declares → values may need re-review.
-const configStale = ref(false);
-// Workpack D: per-field validation errors from the most recent save
-// attempt. Keyed by field key; populated from a 422 ConfigValidationError.
-const configFieldErrors = reactive<Record<string, string>>({});
-function fieldErrorFor(key: string): string | null {
-    return configFieldErrors[key] ?? null;
-}
-function clearFieldErrors(): void {
-    for (const k of Object.keys(configFieldErrors)) delete configFieldErrors[k];
-}
-
-function resetConfigState(): void {
-    for (const k of Object.keys(configValues)) delete configValues[k];
-    configSchema.value = [];
-    clearFieldErrors();
-    configError.value = null;
-    configSavedAt.value = null;
-    configLoaded.value = false;
-}
-
-async function loadConfig() {
-    if (configLoaded.value || configLoading.value) return;
-    configLoading.value = true;
-    configError.value = null;
-    // Capture the plugin id at load time. The user might switch to
-    // another plugin while the fetch is in flight; the late response
-    // must not splat A's values onto B's editor.
-    const requestedId = props.plugin.id;
-    try {
-        const r = await getPluginConfig(requestedId);
-        if (props.plugin.id !== requestedId) return;
-        configSchema.value = r.schema;
-        configStale.value =
-            r.storedConfigSchemaVersion != null &&
-            r.configSchemaVersion != null &&
-            r.storedConfigSchemaVersion < r.configSchemaVersion;
-        for (const v of r.values) {
-            configValues[v.key] = v.value ?? '';
-        }
-        for (const f of r.schema) {
-            if (!(f.key in configValues)) {
-                configValues[f.key] = (f.default as string | undefined) ?? '';
-            }
-        }
-        configLoaded.value = true;
-    } catch (err) {
-        if (props.plugin.id !== requestedId) return;
-        configError.value = err instanceof Error ? err.message : String(err);
-    } finally {
-        if (props.plugin.id === requestedId) {
-            configLoading.value = false;
-        }
-    }
-}
-
-async function saveConfig() {
-    if (configSaving.value) return;
-    configSaving.value = true;
-    configError.value = null;
-    clearFieldErrors();
-    try {
-        await setPluginConfig(props.plugin.id, { ...configValues });
-        configSavedAt.value = Date.now();
-        // Saving re-stamps the current config_schema_version (PD-4.3).
-        configStale.value = false;
-    } catch (err) {
-        if (err instanceof ConfigValidationError) {
-            for (const fe of err.fieldErrors) {
-                configFieldErrors[fe.key] = fe.message;
-            }
-            configError.value =
-                err.fieldErrors.length === 1
-                    ? `1 field has errors — correct it and save again.`
-                    : `${err.fieldErrors.length} fields have errors — correct them and save again.`;
-        } else {
-            configError.value = err instanceof Error ? err.message : String(err);
-        }
-    } finally {
-        configSaving.value = false;
-    }
-}
-
-watch(
-    () => props.plugin.id,
-    (id, oldId) => {
-        if (id === oldId) return;
-        // Plugin switched while this component stayed mounted (e.g.
-        // navigating between two plugin detail routes). Drop the
-        // previous plugin's reactive config map outright — otherwise a
-        // subsequent save would PUT plugin A's values into plugin B.
-        resetConfigState();
-        if (hasConfigSchema.value) void loadConfig();
-    },
-);
-
-onMounted(() => {
-    if (hasConfigSchema.value) void loadConfig();
-});
 </script>
 
 <template>
@@ -263,81 +145,6 @@ onMounted(() => {
             </div>
         </section>
 
-        <!-- Config editor -->
-        <section v-if="hasConfigSchema" class="section config-section">
-            <div class="section-header">
-                <h3 class="section-title">外掛設定</h3>
-                <AppBadge v-if="configSavedAt && (Date.now() - configSavedAt < 4000)" tone="success" size="sm">已儲存</AppBadge>
-            </div>
-            <div v-if="configStale && configLoaded" class="config-stale-warning" role="alert">
-                <Icon icon="material-symbols:warning-outline-rounded" width="16" height="16" class="stale-icon" />
-                <span>{{ t('admin.plugins.detail.configStale') }}</span>
-            </div>
-            <p v-if="configLoading" class="muted">{{ t('common.loading') }}</p>
-            <p v-if="configError" class="error" role="alert">{{ configError }}</p>
-            <div v-else-if="configLoaded" class="config-grid">
-                <label
-                    v-for="field in configSchema"
-                    :key="field.key"
-                    :class="[
-                        'config-field',
-                        { full: field.type === 'textarea', 'has-error': fieldErrorFor(field.key) !== null },
-                    ]"
-                >
-                    <span class="config-label">
-                        {{ field.label }}
-                        <span v-if="field.required" class="req" aria-hidden="true">*</span>
-                        <span v-if="field.description" class="hint">{{ field.description }}</span>
-                    </span>
-                    <textarea
-                        v-if="field.type === 'textarea'"
-                        v-model="configValues[field.key]"
-                        rows="3"
-                        spellcheck="false"
-                        :maxlength="field.max"
-                    />
-                    <select
-                        v-else-if="field.type === 'select' && field.options"
-                        v-model="configValues[field.key]"
-                    >
-                        <option value="">—</option>
-                        <option v-for="opt in field.options" :key="opt.value" :value="opt.value">
-                            {{ opt.label }}
-                        </option>
-                    </select>
-                    <input
-                        v-else-if="field.type === 'boolean'"
-                        type="checkbox"
-                        :checked="configValues[field.key] === 'true'"
-                        @change="(e) => { configValues[field.key] = (e.target as HTMLInputElement).checked ? 'true' : 'false'; }"
-                    />
-                    <input
-                        v-else
-                        v-model="configValues[field.key]"
-                        :type="field.type === 'secret' ? 'password' : (field.type === 'number' ? 'number' : 'text')"
-                        :placeholder="field.type === 'secret' ? '留空 = 不變更' : ''"
-                        autocomplete="off"
-                        spellcheck="false"
-                        :min="field.type === 'number' ? field.min : undefined"
-                        :max="field.type === 'number' ? field.max : undefined"
-                        :step="field.type === 'number' ? field.step : undefined"
-                        :maxlength="field.type !== 'number' ? field.max : undefined"
-                        :pattern="field.pattern"
-                    />
-                    <span
-                        v-if="fieldErrorFor(field.key)"
-                        class="field-error"
-                        role="alert"
-                    >{{ fieldErrorFor(field.key) }}</span>
-                </label>
-                <div class="config-actions">
-                    <button type="button" class="primary" :disabled="configSaving" @click="saveConfig">
-                        {{ configSaving ? '儲存中…' : '儲存設定' }}
-                    </button>
-                </div>
-            </div>
-        </section>
-
         <!-- Raw manifest -->
         <details v-if="manifest" class="manifest-fold">
             <summary>{{ t('admin.plugins.manifestRaw') }}</summary>
@@ -393,77 +200,6 @@ onMounted(() => {
 .link:hover { text-decoration: underline; }
 
 .chip-row { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.5rem; }
-
-.config-section { margin-top: 0; }
-.config-stale-warning {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.4rem;
-    padding: 0.55rem 0.8rem;
-    margin-bottom: 0.6rem;
-    background: color-mix(in srgb, var(--warning, #d97706) 11%, var(--bg-surface));
-    border: 1px solid color-mix(in srgb, var(--warning, #d97706) 35%, transparent);
-    border-radius: var(--radius-sm);
-    font-size: 0.83rem;
-    line-height: 1.5;
-    color: var(--warning, #d97706);
-}
-.config-stale-warning .stale-icon { flex-shrink: 0; margin-top: 0.1rem; }
-.config-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-    gap: 0.6rem 0.85rem;
-}
-.config-field { display: flex; flex-direction: column; gap: 0.25rem; }
-.config-field.full { grid-column: 1 / -1; }
-.config-label {
-    display: flex; flex-direction: column;
-    font-size: 0.82rem;
-    color: var(--text-strong);
-    font-weight: 500;
-}
-.config-label .req { color: var(--danger); margin-left: 0.2rem; font-weight: 400; }
-.config-label .hint { color: var(--text-muted); font-weight: 400; font-size: 0.75rem; margin-top: 0.1rem; }
-.config-field input[type="text"],
-.config-field input[type="number"],
-.config-field input[type="password"],
-.config-field textarea,
-.config-field select {
-    padding: 0.35rem 0.5rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: var(--bg-surface);
-    color: var(--text);
-    font-size: 0.85rem;
-    font-family: inherit;
-}
-.config-field.has-error input[type="text"],
-.config-field.has-error input[type="number"],
-.config-field.has-error input[type="password"],
-.config-field.has-error textarea,
-.config-field.has-error select {
-    border-color: var(--danger);
-}
-.field-error {
-    color: var(--danger);
-    font-size: 0.78rem;
-    margin-top: 0.2rem;
-}
-.config-field input[type="checkbox"] { align-self: flex-start; margin-top: 0.2rem; }
-.config-actions {
-    grid-column: 1 / -1;
-    display: flex; justify-content: flex-end;
-}
-.config-actions .primary {
-    padding: 0.4rem 0.85rem;
-    background: var(--accent);
-    color: var(--text-on-accent);
-    border: none;
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    font-size: 0.85rem;
-}
-.config-actions .primary:disabled { opacity: 0.55; cursor: not-allowed; }
 
 .manifest-fold summary { cursor: pointer; color: var(--text-muted); font-size: 0.85rem; }
 .manifest-fold pre {

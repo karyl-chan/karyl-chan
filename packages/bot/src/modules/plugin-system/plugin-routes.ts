@@ -31,6 +31,8 @@ import {
   setAdminConfigSchemaVersion,
   getAdminConfigSchemaVersion,
 } from "./models/plugin-config.model.js";
+import { kvUsageByPlugin } from "./models/plugin-kv.model.js";
+import { quotaForGuildKv } from "./plugin-rpc-routes.js";
 import { encryptSecret } from "../../utils/crypto.js";
 import type { PluginManifest } from "./plugin-registry.service.js";
 import {
@@ -1402,6 +1404,45 @@ export async function registerPluginRoutes(
           }
           return { key: field.key, set: true, value: row.value };
         }),
+      };
+    },
+  );
+
+  /**
+   * GET /api/plugins/:id/settings-summary (PD-2.2)
+   *
+   * Cross-surface settings overview for the plugin's "設定" tab: which
+   * guilds override which features, and per-guild KV usage vs quota.
+   * KV usage is COUNT/bytes only — never values (PD-2.1 boundary).
+   */
+  server.get<{ Params: { id: string } }>(
+    "/api/plugins/:id/settings-summary",
+    async (request, reply) => {
+      if (!requireCapability(request, reply, "admin")) return;
+      const pluginId = Number(request.params.id);
+      if (!Number.isInteger(pluginId) || pluginId <= 0) {
+        reply.code(400).send({ error: "invalid plugin id" });
+        return;
+      }
+      const plugin = (await pluginRegistry.list()).find(
+        (p) => p.id === pluginId,
+      );
+      if (!plugin) {
+        reply.code(404).send({ error: "plugin not found" });
+        return;
+      }
+      const [kvGuilds, kvQuotaBytes, featureRows] = await Promise.all([
+        kvUsageByPlugin(pluginId),
+        quotaForGuildKv(pluginId),
+        findFeatureRowsByPlugin(pluginId),
+      ]);
+      return {
+        kv: { quotaBytes: kvQuotaBytes, guilds: kvGuilds },
+        featureOverrides: featureRows.map((r) => ({
+          guildId: r.guildId,
+          featureKey: r.featureKey,
+          enabled: r.enabled,
+        })),
       };
     },
   );

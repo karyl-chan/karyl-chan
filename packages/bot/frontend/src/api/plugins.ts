@@ -410,6 +410,25 @@ export async function setPluginConfig(
   return jsonOrThrow<{ accepted: string[]; skipped: string[] }>(r);
 }
 
+// ─── Settings summary (PD-2.2) ─────────────────────────────────────
+
+export interface PluginSettingsSummary {
+  kv: {
+    quotaBytes: number;
+    /** Per-guild usage. Count + bytes only — never values (PD-2.1). */
+    guilds: { guildId: string; keyCount: number; usedBytes: number }[];
+  };
+  /** Per-(guild,feature) override rows for this plugin. */
+  featureOverrides: { guildId: string; featureKey: string; enabled: boolean }[];
+}
+
+export async function getPluginSettingsSummary(
+  id: number,
+): Promise<PluginSettingsSummary> {
+  const r = await authedFetch(`/api/plugins/${id}/settings-summary`);
+  return jsonOrThrow<PluginSettingsSummary>(r);
+}
+
 // ─── Plugin delete ─────────────────────────────────────────────────
 
 export async function deletePlugin(id: number): Promise<void> {

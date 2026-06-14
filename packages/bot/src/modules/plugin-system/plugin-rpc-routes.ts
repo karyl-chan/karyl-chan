@@ -311,7 +311,7 @@ async function requireScope(
   return { pluginId: auth.pluginId, pluginKey: auth.pluginKey };
 }
 
-async function quotaForGuildKv(pluginId: number): Promise<number> {
+export async function quotaForGuildKv(pluginId: number): Promise<number> {
   // Read quota from the plugin's stored manifest. Falls back to a
   // bot-wide default if the plugin didn't declare one.
   const plugin = await findPluginById(pluginId);
