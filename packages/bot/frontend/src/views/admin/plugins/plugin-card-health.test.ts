@@ -8,6 +8,7 @@
 import { describe, it, expect } from "vitest";
 import {
   dispatchProblem,
+  lifecycleProblem,
   sdkCompatProblem,
   DISPATCH_FAILING_THRESHOLD,
 } from "./plugin-card-health";
@@ -148,5 +149,44 @@ describe("dispatchProblem — probe verdicts", () => {
       },
     };
     expect(dispatchProblem(d)).toBeNull();
+  });
+});
+
+describe("lifecycleProblem (PD-4.2)", () => {
+  it("is quiet with no data, no lifecycle attempt, or a successful one", () => {
+    expect(lifecycleProblem(null)).toBeNull();
+    expect(lifecycleProblem(health(0))).toBeNull(); // no lastLifecycle
+    const ok = health(0);
+    ok.lastLifecycle = { at: Date.now(), ok: true, source: "lifecycle", status: 204 };
+    expect(lifecycleProblem(ok)).toBeNull();
+  });
+
+  it("flags a failed onEnable/onDisable with its failure class and detail", () => {
+    const d = health(0);
+    d.lastLifecycle = {
+      at: Date.now(),
+      ok: false,
+      source: "lifecycle",
+      failureClass: "timeout",
+      message: "guild.feature_enabled: deadline",
+    };
+    const p = lifecycleProblem(d);
+    expect(p).not.toBeNull();
+    expect(p!.failureClass).toBe("timeout");
+    expect(p!.detail).toContain("feature_enabled");
+  });
+
+  it("fires independent of the dispatch streak — healthy traffic must not mask it", () => {
+    // consecutiveFailures 0 (event/command dispatches flowing fine), yet
+    // the last lifecycle dispatch failed → the plugin is out of sync.
+    const d = health(0);
+    d.lastLifecycle = {
+      at: Date.now(),
+      ok: false,
+      source: "lifecycle",
+      failureClass: "network",
+    };
+    expect(dispatchProblem(d)).toBeNull(); // streak badge stays quiet…
+    expect(lifecycleProblem(d)).not.toBeNull(); // …but the sync badge fires
   });
 });

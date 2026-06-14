@@ -1011,6 +1011,8 @@
             "dispatchRejected401": "dispatch rejected 401 ×{n} — SDK/bot signature version mismatch?",
             "dispatchFailing": "dispatch failing ×{n}",
             "dispatchFailingShort": "{n} consecutive failures",
+            "lifecycleOutOfSync": "may be out of sync",
+            "lifecycleOutOfSyncHint": "The last onEnable/onDisable dispatch to this plugin failed, so a feature toggle never reached it — its effective state may differ from what's configured until the next successful lifecycle dispatch.",
             "dispatchLabel": "Dispatch",
             "dispatchOk": "OK ({ok}/{total} since bot start)",
             "dispatchNoSuccess": "all {total} attempts failed since bot start",

@@ -88,6 +88,18 @@ export interface DispatchHealthState {
    * alarm-worthy on its own — the UI keys on this field for that.
    */
   lastProbe?: DispatchAttempt | null;
+  /**
+   * Most recent onEnable/onDisable lifecycle dispatch outcome, kept
+   * OUTSIDE the traffic counters like `lastProbe` but for a different
+   * reason: a FAILED lifecycle dispatch means the plugin never ran the
+   * hook for a toggle the bot already committed, so its effective state
+   * has SILENTLY DIVERGED from the bot's DB. That divergence persists
+   * until a later lifecycle dispatch succeeds, and must not be masked by
+   * healthy event/command traffic resetting the failure streak. The UI
+   * keys on this for an "out of sync" badge; a later successful lifecycle
+   * dispatch overwrites it (ok=true) and clears the badge.
+   */
+  lastLifecycle?: DispatchAttempt | null;
 }
 
 /** How many attempts the per-plugin window keeps (newest first). */
@@ -130,6 +142,10 @@ export function recordDispatchAttempt(
   if (state.recent.length > DISPATCH_RECENT_CAP) {
     state.recent.length = DISPATCH_RECENT_CAP;
   }
+  // Keep the latest lifecycle outcome where healthy traffic can't reset
+  // it — a failed onEnable/onDisable leaves the plugin out of sync with
+  // the bot's DB until a later lifecycle dispatch succeeds (see field doc).
+  if (full.source === "lifecycle") state.lastLifecycle = full;
 }
 
 /**

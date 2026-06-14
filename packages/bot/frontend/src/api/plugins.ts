@@ -209,6 +209,14 @@ export interface PluginDispatchHealth {
    * failureClass rejected_401 is alarm-worthy on its own.
    */
   lastProbe?: PluginDispatchAttempt | null;
+  /**
+   * Most recent onEnable/onDisable lifecycle dispatch outcome, kept
+   * outside the traffic counters: a failed one means the plugin never
+   * ran the hook for a toggle the bot already committed, so its state is
+   * out of sync until a later lifecycle dispatch succeeds. The card keys
+   * on this for an "out of sync" badge independent of the dispatch streak.
+   */
+  lastLifecycle?: PluginDispatchAttempt | null;
 }
 
 export interface PluginSdkCompat {

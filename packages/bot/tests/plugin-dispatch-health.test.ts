@@ -197,3 +197,53 @@ describe("recordProbeResult", () => {
     expect(s.lastProbe!.failureClass).toBe("rejected_401");
   });
 });
+
+describe("lastLifecycle (PD-4.2 out-of-sync signal)", () => {
+  it("records the latest lifecycle outcome distinctly", () => {
+    recordDispatchAttempt("p", {
+      ok: false,
+      source: "lifecycle",
+      failureClass: "timeout",
+      message: "guild.feature_enabled: deadline",
+    });
+    expect(getDispatchHealth("p")!.lastLifecycle).toMatchObject({
+      ok: false,
+      source: "lifecycle",
+    });
+  });
+
+  it("a failed onEnable stays visible after healthy event traffic resets the streak", () => {
+    // The toggle's onEnable dispatch fails → the plugin never ran the hook.
+    recordDispatchAttempt("p", {
+      ok: false,
+      source: "lifecycle",
+      failureClass: "network",
+    });
+    // Unrelated event traffic to the same plugin then succeeds…
+    recordDispatchAttempt("p", { ok: true, source: "event", status: 204 });
+    const s = getDispatchHealth("p")!;
+    // …clearing the aggregate streak (the dispatch-health badge)…
+    expect(s.consecutiveFailures).toBe(0);
+    // …but the lifecycle divergence must NOT be masked by it.
+    expect(s.lastLifecycle).toMatchObject({ ok: false, source: "lifecycle" });
+  });
+
+  it("a later successful lifecycle dispatch clears the divergence", () => {
+    recordDispatchAttempt("p", {
+      ok: false,
+      source: "lifecycle",
+      failureClass: "network",
+    });
+    recordDispatchAttempt("p", { ok: true, source: "lifecycle", status: 204 });
+    expect(getDispatchHealth("p")!.lastLifecycle).toMatchObject({ ok: true });
+  });
+
+  it("non-lifecycle attempts never set lastLifecycle", () => {
+    recordDispatchAttempt("p", {
+      ok: false,
+      source: "event",
+      failureClass: "network",
+    });
+    expect(getDispatchHealth("p")!.lastLifecycle).toBeUndefined();
+  });
+});

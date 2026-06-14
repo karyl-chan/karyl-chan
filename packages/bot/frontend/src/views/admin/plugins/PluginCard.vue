@@ -14,7 +14,7 @@ import {
     type PluginDispatchProbeResult,
     type PluginRecord
 } from '../../../api/plugins';
-import { dispatchProblem, sdkCompatProblem } from './plugin-card-health';
+import { dispatchProblem, lifecycleProblem, sdkCompatProblem } from './plugin-card-health';
 import { pluginInstallState } from './plugin-install-state';
 
 const props = defineProps<{
@@ -157,6 +157,7 @@ watch(() => props.plugin.dispatch, () => { dispatchOverride.value = undefined; }
 const dispatchState = computed(() => dispatchOverride.value !== undefined ? dispatchOverride.value : props.plugin.dispatch);
 const dispatchAlarm = computed(() => dispatchProblem(dispatchState.value));
 const sdkAlarm = computed(() => sdkCompatProblem(props.plugin.sdkCompat, props.plugin.version));
+const lifecycleAlarm = computed(() => lifecycleProblem(dispatchState.value));
 
 // Install-journey position (PD-1.2): the card badges the states the
 // status dot + enabled toggle don't make explicit on their own —
@@ -391,6 +392,15 @@ async function confirmDelete() {
                             ? t('admin.plugins.sdkTooOld', { v: sdkAlarm.sdkVersion ?? '?', min: sdkAlarm.minCompatible })
                             : t('admin.plugins.sdkUnknownOld', { min: sdkAlarm.minCompatible })
                     }}
+                </AppBadge>
+                <AppBadge
+                    v-if="lifecycleAlarm"
+                    variant="outline"
+                    icon="material-symbols:sync-problem"
+                    class="dispatch-problem-badge"
+                    :title="lifecycleAlarm.detail || t('admin.plugins.lifecycleOutOfSyncHint')"
+                >
+                    {{ t('admin.plugins.lifecycleOutOfSync') }}
                 </AppBadge>
             </div>
 

@@ -1011,6 +1011,8 @@
             "dispatchRejected401": "派发遭拒 401 ×{n} — SDK/bot 签章版本不一致？",
             "dispatchFailing": "派发失败中 ×{n}",
             "dispatchFailingShort": "连续 {n} 次失败",
+            "lifecycleOutOfSync": "状态可能不同步",
+            "lifecycleOutOfSyncHint": "最近一次 onEnable/onDisable 派发失败，feature 切换未送达此 plugin——在下次成功的 lifecycle 派发前，其实际状态可能与设定不一致。",
             "dispatchLabel": "派发状态",
             "dispatchOk": "正常（自 bot 启动 {ok}/{total}）",
             "dispatchNoSuccess": "自 bot 启动全部失败（0/{total}）",

@@ -61,6 +61,32 @@ export function dispatchProblem(
   };
 }
 
+export interface LifecycleProblem {
+  /** Failure class of the last onEnable/onDisable dispatch (e.g.
+   *  rejected_401, timeout, unreachable) — drives the detail hint. */
+  failureClass: string | null;
+  detail: string;
+}
+
+/**
+ * The last onEnable/onDisable dispatch to this plugin FAILED, so a
+ * feature toggle the admin already committed never reached the plugin's
+ * hook — its effective state may be out of sync with the bot until a
+ * later lifecycle dispatch succeeds. Kept independent of the dispatch
+ * streak: healthy event/command traffic does not clear it (a stale
+ * onEnable stays a problem even while ordinary dispatches flow fine).
+ */
+export function lifecycleProblem(
+  dispatch: PluginDispatchHealth | null | undefined,
+): LifecycleProblem | null {
+  const last = dispatch?.lastLifecycle;
+  if (!last || last.ok) return null;
+  return {
+    failureClass: last.failureClass ?? null,
+    detail: last.message ?? "",
+  };
+}
+
 export interface SdkCompatProblem {
   /** `tooOld` — stamped version below the floor. `unknown` — no stamp
    *  on a plugin that HAS registered (pre-0.9 SDK). */
