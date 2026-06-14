@@ -1132,6 +1132,7 @@
                 },
                 "features": {
                     "intro": "The features below can be toggled per-server on the Bot Functions tab of each guild page. This tab is read-only.",
+                    "allServersLink": "Set a default for all servers at once",
                     "empty": "This plugin provides no guild features"
                 },
                 "scopes": {

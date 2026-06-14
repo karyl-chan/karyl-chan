@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { RouterLink } from 'vue-router';
 import { Icon } from '@iconify/vue';
 import { AppBadge } from '@karyl-chan/ui';
 import type { PluginDetailRecord } from '../../../api/plugins';
@@ -20,6 +21,16 @@ const features = computed(() => props.plugin.manifest?.guild_features ?? []);
             <Icon icon="material-symbols:info-outline-rounded" width="15" height="15" class="intro-icon" />
             <p class="intro-text">{{ t('admin.plugins.detail.features.intro') }}</p>
         </div>
+
+        <RouterLink
+            v-if="features.length > 0"
+            :to="{ name: 'guilds', query: { guild: '_all' } }"
+            class="all-servers-link"
+        >
+            <Icon icon="material-symbols:public" width="16" height="16" class="all-servers-icon" />
+            <span>{{ t('admin.plugins.detail.features.allServersLink') }}</span>
+            <Icon icon="material-symbols:arrow-forward-rounded" width="15" height="15" class="all-servers-arrow" />
+        </RouterLink>
 
         <div v-if="features.length === 0" class="empty">
             <Icon icon="material-symbols:hub-outline" width="28" height="28" class="empty-icon" />
@@ -69,6 +80,29 @@ const features = computed(() => props.plugin.manifest?.guild_features ?? []);
 }
 .intro-icon { color: var(--accent); flex-shrink: 0; margin-top: 0.1rem; }
 .intro-text { margin: 0; color: var(--text); line-height: 1.5; }
+
+/* Direct entry to the cross-guild operator-default dashboard (PD-4.1) */
+.all-servers-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    align-self: flex-start;
+    padding: 0.4rem 0.7rem;
+    font-size: 0.83rem;
+    font-weight: 500;
+    color: var(--accent);
+    background: none;
+    border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+    border-radius: var(--radius-sm);
+    text-decoration: none;
+    transition: background 0.12s, border-color 0.12s;
+}
+.all-servers-link:hover {
+    background: color-mix(in srgb, var(--accent) 9%, var(--bg-surface));
+    border-color: var(--accent);
+}
+.all-servers-icon { flex-shrink: 0; }
+.all-servers-arrow { flex-shrink: 0; opacity: 0.7; }
 
 .empty {
     display: flex;

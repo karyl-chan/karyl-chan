@@ -1132,6 +1132,7 @@
                 },
                 "features": {
                     "intro": "以下功能可在各伺服器的「Bot 功能」tab 中個別開關，此頁為唯讀展示。",
+                    "allServersLink": "一次為所有伺服器設定預設",
                     "empty": "此 Plugin 未提供 Guild Feature"
                 },
                 "scopes": {
