@@ -58,6 +58,9 @@ const configLoading = ref(false);
 const configSaving = ref(false);
 const configError = ref<string | null>(null);
 const configSavedAt = ref<number | null>(null);
+// PD-4.3: stored admin config was saved under an older config_schema_version
+// than the manifest now declares → values may need re-review.
+const configStale = ref(false);
 // Workpack D: per-field validation errors from the most recent save
 // attempt. Keyed by field key; populated from a 422 ConfigValidationError.
 const configFieldErrors = reactive<Record<string, string>>({});
@@ -89,6 +92,10 @@ async function loadConfig() {
         const r = await getPluginConfig(requestedId);
         if (props.plugin.id !== requestedId) return;
         configSchema.value = r.schema;
+        configStale.value =
+            r.storedConfigSchemaVersion != null &&
+            r.configSchemaVersion != null &&
+            r.storedConfigSchemaVersion < r.configSchemaVersion;
         for (const v of r.values) {
             configValues[v.key] = v.value ?? '';
         }
@@ -116,6 +123,8 @@ async function saveConfig() {
     try {
         await setPluginConfig(props.plugin.id, { ...configValues });
         configSavedAt.value = Date.now();
+        // Saving re-stamps the current config_schema_version (PD-4.3).
+        configStale.value = false;
     } catch (err) {
         if (err instanceof ConfigValidationError) {
             for (const fe of err.fieldErrors) {
@@ -260,6 +269,10 @@ onMounted(() => {
                 <h3 class="section-title">外掛設定</h3>
                 <AppBadge v-if="configSavedAt && (Date.now() - configSavedAt < 4000)" tone="success" size="sm">已儲存</AppBadge>
             </div>
+            <div v-if="configStale && configLoaded" class="config-stale-warning" role="alert">
+                <Icon icon="material-symbols:warning-outline-rounded" width="16" height="16" class="stale-icon" />
+                <span>{{ t('admin.plugins.detail.configStale') }}</span>
+            </div>
             <p v-if="configLoading" class="muted">{{ t('common.loading') }}</p>
             <p v-if="configError" class="error" role="alert">{{ configError }}</p>
             <div v-else-if="configLoaded" class="config-grid">
@@ -382,6 +395,20 @@ onMounted(() => {
 .chip-row { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.5rem; }
 
 .config-section { margin-top: 0; }
+.config-stale-warning {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.4rem;
+    padding: 0.55rem 0.8rem;
+    margin-bottom: 0.6rem;
+    background: color-mix(in srgb, var(--warning, #d97706) 11%, var(--bg-surface));
+    border: 1px solid color-mix(in srgb, var(--warning, #d97706) 35%, transparent);
+    border-radius: var(--radius-sm);
+    font-size: 0.83rem;
+    line-height: 1.5;
+    color: var(--warning, #d97706);
+}
+.config-stale-warning .stale-icon { flex-shrink: 0; margin-top: 0.1rem; }
 .config-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));

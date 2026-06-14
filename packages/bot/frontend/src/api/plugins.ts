@@ -370,6 +370,12 @@ export interface PluginConfigValue {
 export interface PluginConfigPayload {
   schema: PluginConfigField[];
   values: PluginConfigValue[];
+  /** PD-4.3: the manifest's current config_schema_version (null if the
+   *  plugin declares none). */
+  configSchemaVersion?: number | null;
+  /** PD-4.3: the version the stored admin config was last saved under
+   *  (null if nothing saved / pre-versioning). stored < current ⇒ stale. */
+  storedConfigSchemaVersion?: number | null;
 }
 
 export async function getPluginConfig(

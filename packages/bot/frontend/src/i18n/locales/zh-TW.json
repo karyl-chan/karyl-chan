@@ -1099,6 +1099,7 @@
             "detail": {
                 "backLink": "返回外掛列表",
                 "tabOverview": "總覽",
+                "configStale": "此 plugin 自上次儲存後已更新 config schema 版本——請重新檢視並再次儲存，確認這些值仍符合你的設定意圖。",
                 "tabBehaviors": "Behaviors",
                 "tabCommands": "指令",
                 "tabFeatures": "Guild Features",

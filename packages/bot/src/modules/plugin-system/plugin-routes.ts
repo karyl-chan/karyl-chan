@@ -28,6 +28,8 @@ import { featureReachResolver } from "../feature-toggle/feature-reach-resolver.j
 import {
   findConfigByPluginAndSource,
   upsertConfigKey,
+  setAdminConfigSchemaVersion,
+  getAdminConfigSchemaVersion,
 } from "./models/plugin-config.model.js";
 import { encryptSecret } from "../../utils/crypto.js";
 import type { PluginManifest } from "./plugin-registry.service.js";
@@ -1388,6 +1390,10 @@ export async function registerPluginRoutes(
       const byKey = new Map(rows.map((r) => [r.key, r]));
       return {
         schema,
+        // PD-4.3: current schema version vs the one the stored config was
+        // last saved under. The UI warns when stored < current (stale).
+        configSchemaVersion: manifest?.config_schema_version ?? null,
+        storedConfigSchemaVersion: await getAdminConfigSchemaVersion(pluginId),
         values: schema.map((field) => {
           const row = byKey.get(field.key);
           if (!row) return { key: field.key, set: false, value: null };
@@ -1493,6 +1499,12 @@ export async function registerPluginRoutes(
       await upsertConfigKey(pluginId, key, stored, "admin");
       accepted.push(key);
     }
+    // PD-4.3: stamp the schema version this save was written against, so a
+    // later manifest config_schema_version bump surfaces as "stale config".
+    await setAdminConfigSchemaVersion(
+      pluginId,
+      manifest?.config_schema_version ?? null,
+    );
     botEventLog.record(
       "info",
       "bot",

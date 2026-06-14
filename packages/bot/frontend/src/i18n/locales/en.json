@@ -1099,6 +1099,7 @@
             "detail": {
                 "backLink": "Back to plugins",
                 "tabOverview": "Overview",
+                "configStale": "This plugin bumped its config schema since these values were last saved — review and save again to confirm they still mean what you intend.",
                 "tabBehaviors": "Behaviors",
                 "tabCommands": "Commands",
                 "tabFeatures": "Guild Features",

@@ -1099,6 +1099,7 @@
             "detail": {
                 "backLink": "返回插件列表",
                 "tabOverview": "总览",
+                "configStale": "此 plugin 自上次保存后已更新 config schema 版本——请重新检视并再次保存，确认这些值仍符合你的设定意图。",
                 "tabBehaviors": "Behaviors",
                 "tabCommands": "指令",
                 "tabFeatures": "Guild Features",

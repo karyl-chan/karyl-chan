@@ -20,6 +20,10 @@ export const PluginConfig = sequelize.define(
     key: { type: DataTypes.STRING, allowNull: false },
     value: { type: DataTypes.TEXT, allowNull: false },
     source: { type: DataTypes.STRING, allowNull: false, defaultValue: "admin" },
+    // The manifest config_schema_version this row's value was last saved
+    // under (PD-4.3). NULL = pre-column / never-saved. Only stamped on
+    // source='admin' rows; plugin-self KV leaves it null.
+    configSchemaVersion: { type: DataTypes.INTEGER, allowNull: true },
   },
   {
     tableName: "plugin_configs",
@@ -40,6 +44,7 @@ export interface PluginConfigRow {
   key: string;
   value: string;
   source: PluginConfigSource;
+  configSchemaVersion: number | null;
   updatedAt: Date;
 }
 
@@ -50,6 +55,8 @@ function rowOf(m: InstanceType<typeof PluginConfig>): PluginConfigRow {
     key: m.getDataValue("key") as string,
     value: m.getDataValue("value") as string,
     source: m.getDataValue("source") as PluginConfigSource,
+    configSchemaVersion:
+      (m.getDataValue("configSchemaVersion") as number | null) ?? null,
     updatedAt: m.getDataValue("updatedAt") as Date,
   };
 }
@@ -120,4 +127,36 @@ export const deleteConfigKey = async (
   }
   await existing.destroy();
   return true;
+};
+
+/**
+ * Stamp the config_schema_version the admin config was just saved under
+ * (PD-4.3) across all of a plugin's admin rows — they're written as one
+ * set per PUT, so they share a version. NULL when the manifest declares
+ * no config_schema_version.
+ */
+export const setAdminConfigSchemaVersion = async (
+  pluginId: number,
+  version: number | null,
+): Promise<void> => {
+  await PluginConfig.update(
+    { configSchemaVersion: version },
+    { where: { pluginId, source: "admin" } },
+  );
+};
+
+/**
+ * The config_schema_version the plugin's stored admin config was last
+ * saved under (max across its admin rows; they share one). NULL when no
+ * admin config is stored or it predates the column — i.e. no staleness
+ * signal to show.
+ */
+export const getAdminConfigSchemaVersion = async (
+  pluginId: number,
+): Promise<number | null> => {
+  const rows = await findConfigByPluginAndSource(pluginId, "admin");
+  const versions = rows
+    .map((r) => r.configSchemaVersion)
+    .filter((v): v is number => v != null);
+  return versions.length > 0 ? Math.max(...versions) : null;
 };
