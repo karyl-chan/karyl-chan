@@ -166,6 +166,11 @@ function closeSecretResult() {
 
 <template>
     <div class="tab-panel">
+        <div v-if="plugin.autoApproveScopes" class="auto-approve-notice" role="note">
+            <Icon icon="material-symbols:info-outline-rounded" width="16" height="16" class="auto-approve-icon" />
+            <span>{{ t('pluginSecurity.autoApproveBanner') }}</span>
+        </div>
+
         <section class="section">
             <h3 class="section-title">{{ t('pluginSecurity.rpcScopesTitle') }}</h3>
             <p class="section-desc">{{ t('pluginSecurity.rpcScopesDesc') }}</p>
@@ -387,6 +392,21 @@ function closeSecretResult() {
     line-height: 1.5;
 }
 .section-action { display: flex; }
+
+/* Auto-approve mode notice (PD-4.4) */
+.auto-approve-notice {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.4rem;
+    padding: 0.55rem 0.8rem;
+    background: color-mix(in srgb, var(--accent) 9%, var(--bg-surface));
+    border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent);
+    border-radius: var(--radius-base);
+    font-size: 0.83rem;
+    line-height: 1.5;
+    color: var(--text);
+}
+.auto-approve-icon { flex-shrink: 0; margin-top: 0.1rem; color: var(--accent); }
 
 /* RPC scope approval */
 .scope-empty { font-style: italic; }

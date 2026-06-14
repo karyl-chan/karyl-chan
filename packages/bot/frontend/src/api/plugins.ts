@@ -147,6 +147,10 @@ export interface PluginRecord {
   /** requested − approved: scopes still awaiting admin approval. */
   pendingRpcScopes?: string[];
   pendingGlobalEventSubs?: string[];
+  /** Server-wide PLUGIN_AUTO_APPROVE (default on): scopes/global-subs are
+   *  granted at register time with no operator review — the Security tab
+   *  shows a notice so an empty "pending" list reads as auto-approved. */
+  autoApproveScopes?: boolean;
   /**
    * Background slash-command sync state (PM-7.1/7.6). null when no
    * sync ran since the bot process started.

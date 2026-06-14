@@ -626,6 +626,11 @@ export async function registerPluginRoutes(
             : manifestGlobalEventSubs(p.manifestJson).filter(
                 (e) => !p.approvedGlobalEventSubs.includes(e),
               ),
+          // Server-wide flag (PLUGIN_AUTO_APPROVE, default on): when set,
+          // every declared scope/global-sub is granted at register time
+          // with no operator review — the Security tab surfaces this so an
+          // empty "pending" list reads as "auto-approved", not "vetted".
+          autoApproveScopes: config.plugin.autoApproveScopes,
           pluginCommands: thirdTrackCommands.map((c) => ({
             id: c.id,
             name: c.name,

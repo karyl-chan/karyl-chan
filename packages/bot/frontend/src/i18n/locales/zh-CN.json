@@ -1447,6 +1447,7 @@
         "cmdStatus": "查看 bot 语音状态"
     },
     "pluginSecurity": {
+        "autoApproveBanner": "当前为自动核可模式（PLUGIN_AUTO_APPROVE）：plugin 声明的每个 scope 与 global 订阅在注册时自动核准，未经人工审核。下方「待核可」为空代表自动核可、非已审核——设 PLUGIN_AUTO_APPROVE=false 可改为需手动核可。",
         "setupSecretDesc": "重新生成 Setup Secret 后，旧的 secret 立即失效。Plugin 必须使用新 secret 重新向 bot 注册。",
         "rpcScopesTitle": "RPC 权限范围",
         "rpcScopesDesc": "Plugin 在 manifest 声明它想调用的 RPC 方法；只有你核准的范围才会写入它的 token。未核准的范围即使已声明也会被拒绝。",
