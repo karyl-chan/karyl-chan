@@ -26,13 +26,17 @@
  *     share ONE in-flight DB read instead of each firing its own — no
  *     cold-start stampede, and a transient DB error doesn't turn the
  *     dispatch hot path into a per-event retry storm.
- *   - Generation guard: a per-plugin counter is bumped on every
- *     invalidate; a resolve captures it at the synchronous entry and
- *     only writes the cache if it's unchanged when the DB read returns.
- *     This closes the invalidate-during-fill race — a resolve whose read
- *     started before a feature toggle can no longer re-pin the stale
- *     value AFTER the mutation's invalidate ran (the invalidate would
- *     otherwise be a no-op against an empty cache).
+ *   - Per-(plugin, guild) versioning closes the invalidate-during-fill
+ *     race at its true grain. Each invalidate bumps a version token for
+ *     exactly what it cleared: invalidateGuild bumps one guild's counter;
+ *     invalidatePlugin bumps a per-plugin epoch that covers every guild,
+ *     including reads in flight for guilds not yet in the cache. A
+ *     resolve captures the token at its synchronous entry and caches its
+ *     result only if the token is unchanged when the read returns; a
+ *     joiner shares an in-flight read only if its token still matches. So
+ *     a caller arriving after a toggle re-reads instead of inheriting the
+ *     pre-toggle snapshot, and invalidating one guild never discards a
+ *     sibling guild's concurrent fill.
  *
  * 30s TTL bounds staleness if an invalidation point is ever missed.
  * Fail-closed: a DB error (or unparseable manifest) resolves to false
@@ -49,7 +53,7 @@ const DEFAULT_TTL_MS = 30_000;
  * Manifest the resolver needs only on a cache MISS (to know which
  * features exist + their defaults). A thunk lets the hot dispatch path
  * defer the `JSON.parse(manifestJson)` until it's actually needed — a
- * warm-cache event pays zero parse.
+ * warm-cache event never reaches the resolve path, so it pays zero parse.
  */
 type ManifestSource = PluginManifest | (() => PluginManifest | null);
 
@@ -60,14 +64,23 @@ interface GuildEntry {
   insertedAt: number;
 }
 
+interface InFlight {
+  /** Version token captured when this read started; a joiner with a
+   *  different token must not inherit this (now-superseded) read. */
+  token: string;
+  promise: Promise<Map<string, boolean> | null>;
+}
+
 export class FeatureReachResolver {
   /** pluginId → (guildId → resolved feature map). */
   private byPlugin = new Map<number, Map<string, GuildEntry>>();
-  /** pluginId → invalidation generation (bumped on every invalidate). */
-  private generation = new Map<number, number>();
-  /** `${pluginId}:${guildId}` → in-flight resolve (single-flight dedup).
-   *  pluginId is a number so the first ':' unambiguously splits the key. */
-  private inflight = new Map<string, Promise<Map<string, boolean> | null>>();
+  /** pluginId → epoch, bumped by invalidatePlugin (covers every guild,
+   *  incl. reads in flight for guilds not yet cached). */
+  private pluginEpoch = new Map<number, number>();
+  /** `${pluginId}:${guildId}` → generation, bumped by invalidateGuild. */
+  private guildGen = new Map<string, number>();
+  /** `${pluginId}:${guildId}` → in-flight resolve (single-flight dedup). */
+  private inflight = new Map<string, InFlight>();
   private readonly ttlMs: number;
   private readonly now: () => number;
 
@@ -111,14 +124,19 @@ export class FeatureReachResolver {
 
   /** Drop the cached entry for one (plugin, guild) pair. */
   invalidateGuild(pluginId: number, guildId: string): void {
-    this.bumpGeneration(pluginId);
-    this.byPlugin.get(pluginId)?.delete(guildId);
+    const key = flightKey(pluginId, guildId);
+    this.guildGen.set(key, (this.guildGen.get(key) ?? 0) + 1);
+    const inner = this.byPlugin.get(pluginId);
+    if (inner) {
+      inner.delete(guildId);
+      if (inner.size === 0) this.byPlugin.delete(pluginId);
+    }
   }
 
   /** Drop every cached entry for a plugin (operator-default change,
    *  re-register, disable, delete). */
   invalidatePlugin(pluginId: number): void {
-    this.bumpGeneration(pluginId);
+    this.pluginEpoch.set(pluginId, (this.pluginEpoch.get(pluginId) ?? 0) + 1);
     this.byPlugin.delete(pluginId);
   }
 
@@ -132,12 +150,17 @@ export class FeatureReachResolver {
   /** Test-only — drop all state (isolation between test cases). */
   clear(): void {
     this.byPlugin.clear();
-    this.generation.clear();
+    this.pluginEpoch.clear();
+    this.guildGen.clear();
     this.inflight.clear();
   }
 
-  private bumpGeneration(pluginId: number): void {
-    this.generation.set(pluginId, (this.generation.get(pluginId) ?? 0) + 1);
+  /** The version of a (plugin, guild) — its plugin epoch and guild
+   *  generation. Any invalidate that touches this pair changes it. */
+  private versionToken(pluginId: number, guildId: string): string {
+    const epoch = this.pluginEpoch.get(pluginId) ?? 0;
+    const gen = this.guildGen.get(flightKey(pluginId, guildId)) ?? 0;
+    return `${epoch}:${gen}`;
   }
 
   private readGuild(
@@ -149,31 +172,35 @@ export class FeatureReachResolver {
     if (!entry) return null;
     if (this.now() - entry.insertedAt >= this.ttlMs) {
       inner!.delete(guildId);
+      if (inner!.size === 0) this.byPlugin.delete(pluginId);
       return null;
     }
     return entry.features;
   }
 
-  /** Single-flight wrapper: concurrent misses share one DB read. */
+  /** Single-flight wrapper: concurrent misses for the same version share
+   *  one DB read; a miss whose version moved on (an invalidate landed)
+   *  starts its own read rather than inheriting a superseded one. */
   private resolveGuild(
     pluginId: number,
     guildId: string,
     manifest: ManifestSource,
   ): Promise<Map<string, boolean> | null> {
-    const flightKey = `${pluginId}:${guildId}`;
-    const existing = this.inflight.get(flightKey);
-    if (existing) return existing;
-    // Capture the generation at the SYNCHRONOUS entry, before any await.
-    const genAtStart = this.generation.get(pluginId) ?? 0;
-    const promise = this.doResolve(
-      pluginId,
-      guildId,
-      manifest,
-      genAtStart,
-    ).finally(() => {
-      this.inflight.delete(flightKey);
-    });
-    this.inflight.set(flightKey, promise);
+    const key = flightKey(pluginId, guildId);
+    // Capture the version at the SYNCHRONOUS entry, before any await.
+    const token = this.versionToken(pluginId, guildId);
+    const existing = this.inflight.get(key);
+    if (existing && existing.token === token) return existing.promise;
+    const promise = this.doResolve(pluginId, guildId, manifest, token).finally(
+      () => {
+        // Clear only if we are still the current flight — a fresher read
+        // (started after an invalidate) may have replaced us.
+        if (this.inflight.get(key)?.promise === promise) {
+          this.inflight.delete(key);
+        }
+      },
+    );
+    this.inflight.set(key, { token, promise });
     return promise;
   }
 
@@ -181,7 +208,7 @@ export class FeatureReachResolver {
     pluginId: number,
     guildId: string,
     manifestSource: ManifestSource,
-    genAtStart: number,
+    token: string,
   ): Promise<Map<string, boolean> | null> {
     const manifest =
       typeof manifestSource === "function" ? manifestSource() : manifestSource;
@@ -211,10 +238,12 @@ export class FeatureReachResolver {
           !!feature.enabled_by_default,
       );
     }
-    // Only cache if no invalidation for this plugin happened while the
-    // read was in flight — otherwise a stale snapshot would re-pin a
-    // value the mutation just cleared (the race the generation closes).
-    if ((this.generation.get(pluginId) ?? 0) === genAtStart) {
+    // Cache only if no invalidation for this (plugin, guild) happened
+    // while the read was in flight — otherwise a stale snapshot would
+    // re-pin a value the mutation just cleared (the race the token
+    // closes). A sibling guild's invalidation does not change THIS
+    // guild's token, so it never discards this fill.
+    if (this.versionToken(pluginId, guildId) === token) {
       let inner = this.byPlugin.get(pluginId);
       if (!inner) {
         inner = new Map();
@@ -224,6 +253,12 @@ export class FeatureReachResolver {
     }
     return features;
   }
+}
+
+/** Cache/flight key for a (plugin, guild) pair. guildId is a Discord
+ *  snowflake (digits only), so `${pluginId}:${guildId}` is collision-free. */
+function flightKey(pluginId: number, guildId: string): string {
+  return `${pluginId}:${guildId}`;
 }
 
 /** Process-wide singleton — invalidation points live in plugin-routes

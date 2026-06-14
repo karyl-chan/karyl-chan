@@ -412,13 +412,17 @@ export function dispatchEventToPlugins(
           let pass = false;
           // Deferred + memoized manifest: the resolver parses only on a
           // cache MISS, so a warm-cache feature dispatch (the common case
-          // under the 30s TTL) pays zero JSON.parse. `??=` memoizes so a
-          // cold multi-feature dispatch still parses at most once; an
-          // unparseable manifest stays null and every feature scope
-          // resolves false (fail-closed) without aborting the loop, so a
-          // co-declared "global" scope can still grant delivery.
-          let manifest: PluginManifest | null = null;
-          const getManifest = () => (manifest ??= parseManifest(plugin));
+          // under the 30s TTL) pays zero JSON.parse. The `undefined`
+          // sentinel memoizes the parse at most once per dispatch even
+          // when it returns null (an unparseable manifest), and a null
+          // result makes every feature scope resolve false (fail-closed)
+          // without aborting the loop, so a co-declared "global" scope
+          // can still grant delivery.
+          let manifest: PluginManifest | null | undefined;
+          const getManifest = () => {
+            if (manifest === undefined) manifest = parseManifest(plugin);
+            return manifest;
+          };
           for (const scope of scopes) {
             if (scope === "global") {
               pass = true;

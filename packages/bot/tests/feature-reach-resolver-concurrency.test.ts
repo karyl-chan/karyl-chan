@@ -73,6 +73,47 @@ describe("FeatureReachResolver — single-flight", () => {
 });
 
 describe("FeatureReachResolver — generation guard", () => {
+  it("a caller that joins AFTER an invalidate re-reads instead of inheriting the stale in-flight value", async () => {
+    const r = new FeatureReachResolver();
+    const gateA = deferred<{ featureKey: string; enabled: boolean }[]>();
+    findRows.mockReturnValueOnce(gateA.promise); // caller A's (pre-toggle) read
+
+    // Caller A starts the read (token captured at the current version)…
+    const a = r.isFeatureEnabledInGuild(PLUGIN_ID, GUILD, "f", manifest);
+    expect(findRows).toHaveBeenCalledTimes(1);
+
+    // …a feature toggle for THIS guild invalidates mid-flight…
+    r.invalidateGuild(PLUGIN_ID, GUILD);
+
+    // …caller B arrives strictly after the invalidate. It must NOT join
+    // A's now-superseded read — it starts its own.
+    const gateB = deferred<{ featureKey: string; enabled: boolean }[]>();
+    findRows.mockReturnValueOnce(gateB.promise);
+    const b = r.isFeatureEnabledInGuild(PLUGIN_ID, GUILD, "f", manifest);
+    expect(findRows).toHaveBeenCalledTimes(2);
+
+    gateA.resolve([{ featureKey: "f", enabled: true }]); // stale snapshot
+    gateB.resolve([{ featureKey: "f", enabled: false }]); // post-toggle truth
+    expect(await a).toBe(true); // the originator still gets an answer
+    expect(await b).toBe(false); // the joiner sees the post-invalidate value
+  });
+
+  it("invalidating one guild does not discard a concurrent sibling guild's fill", async () => {
+    const r = new FeatureReachResolver();
+    const gateB = deferred<{ featureKey: string; enabled: boolean }[]>();
+    findRows.mockReturnValue(gateB.promise);
+
+    // A cold resolve for guild gB is in flight…
+    const b = r.isFeatureEnabledInGuild(PLUGIN_ID, "gB", "f", manifest);
+    // …an unrelated toggle invalidates guild gA of the SAME plugin.
+    r.invalidateGuild(PLUGIN_ID, "gA");
+    // gB's read returns; per-(plugin,guild) versioning must still cache it
+    // (per-plugin generation would have discarded it — size 0).
+    gateB.resolve([{ featureKey: "f", enabled: true }]);
+    expect(await b).toBe(true);
+    expect(r.size()).toBe(1);
+  });
+
   it("an invalidate mid-flight keeps the stale snapshot out of the cache", async () => {
     const r = new FeatureReachResolver();
     const gate = deferred<{ featureKey: string; enabled: boolean }[]>();
