@@ -32,6 +32,7 @@ import {
   findPluginById,
   type PluginRow,
 } from "../plugin-system/models/plugin.model.js";
+import { parsePluginManifest } from "../plugin-system/plugin-dispatch-util.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import type {
   CommandScope,
@@ -849,16 +850,11 @@ export class CommandReconciler {
     const plugin = await findPluginById(row.pluginId);
     if (!plugin) return null;
 
-    let manifest: PluginManifest | null = null;
-    try {
-      const parsed = JSON.parse(plugin.manifestJson) as PluginManifest;
-      if (parsed.schema_version !== "1") {
-        return null;
-      }
-      manifest = parsed;
-    } catch {
+    const parsed = parsePluginManifest(plugin);
+    if (!parsed || parsed.schema_version !== "1") {
       return null;
     }
+    const manifest: PluginManifest = parsed;
 
     // 從 manifestJson 找到對應的 plugin_command 定義
     let cmdManifest: ManifestPluginCommand | null = null;

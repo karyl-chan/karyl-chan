@@ -12,7 +12,10 @@ import {
   TRACEPARENT_HEADER,
   newTraceContext,
 } from "../../utils/trace-context.js";
-import { preflightPluginTarget } from "./plugin-dispatch-util.js";
+import {
+  parsePluginManifest,
+  preflightPluginTarget,
+} from "./plugin-dispatch-util.js";
 import {
   pluginEventDispatchDuration,
   pluginEventDispatchTotal,
@@ -31,7 +34,6 @@ import {
 import {
   EventIndex,
   collectEventRoutes,
-  parseManifestJson,
   type EventScope,
 } from "./plugin-event-index.js";
 import { featureReachResolver } from "../feature-toggle/feature-reach-resolver.js";
@@ -168,9 +170,8 @@ export function __resetEventBusForTests(): void {
   eventBus = undefined;
 }
 
-function parseManifest(plugin: PluginRow): PluginManifest | null {
-  return parseManifestJson(plugin.manifestJson);
-}
+/** Per-row memoized manifest parse (shared canonical helper). */
+const parseManifest = parsePluginManifest;
 
 /**
  * Resolve the GRANTED global subscription set for a plugin: with
@@ -410,31 +411,24 @@ export function dispatchEventToPlugins(
           //     feature effectively enabled (cached 3-tier resolution);
           //     a guild-less event (DM) never matches a feature route.
           let pass = false;
-          // Deferred + memoized manifest: the resolver parses only on a
-          // cache MISS, so a warm-cache feature dispatch (the common case
-          // under the 30s TTL) pays zero JSON.parse. The `undefined`
-          // sentinel memoizes the parse at most once per dispatch even
-          // when it returns null (an unparseable manifest), and a null
-          // result makes every feature scope resolve false (fail-closed)
-          // without aborting the loop, so a co-declared "global" scope
-          // can still grant delivery.
-          let manifest: PluginManifest | null | undefined;
-          const getManifest = () => {
-            if (manifest === undefined) manifest = parseManifest(plugin);
-            return manifest;
-          };
           for (const scope of scopes) {
             if (scope === "global") {
               pass = true;
               break;
             }
             if (!guildId) continue;
+            // parseManifest is memoized per row, so this parses at most
+            // once per dispatch. An unparseable manifest fails this scope
+            // closed but does NOT abort the loop, so a co-declared
+            // "global" scope can still grant delivery.
+            const manifest = parseManifest(plugin);
+            if (!manifest) continue;
             if (
               await featureReachResolver.isFeatureEnabledInGuild(
                 pluginId,
                 guildId,
                 scope.featureKey,
-                getManifest,
+                manifest,
               )
             ) {
               pass = true;

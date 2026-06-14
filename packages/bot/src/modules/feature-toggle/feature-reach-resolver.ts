@@ -39,8 +39,10 @@
  *     sibling guild's concurrent fill.
  *
  * 30s TTL bounds staleness if an invalidation point is ever missed.
- * Fail-closed: a DB error (or unparseable manifest) resolves to false
- * for this call and caches nothing — reach is never granted unconfirmed.
+ * Fail-closed: a DB error resolves to false for this call and caches
+ * nothing — reach is never granted unconfirmed. Callers pass an already
+ * parsed manifest (memoized per row by parsePluginManifest), so the
+ * resolver never parses; an unparseable manifest is the caller's gate.
  */
 
 import { findFeatureRowsByPluginGuild } from "./models/plugin-guild-feature.model.js";
@@ -48,14 +50,6 @@ import { findFeatureDefaultsByPlugin } from "./models/plugin-feature-default.mod
 import type { PluginManifest } from "../plugin-system/plugin-sdk-types.js";
 
 const DEFAULT_TTL_MS = 30_000;
-
-/**
- * Manifest the resolver needs only on a cache MISS (to know which
- * features exist + their defaults). A thunk lets the hot dispatch path
- * defer the `JSON.parse(manifestJson)` until it's actually needed — a
- * warm-cache event never reaches the resolve path, so it pays zero parse.
- */
-type ManifestSource = PluginManifest | (() => PluginManifest | null);
 
 interface GuildEntry {
   /** Every declared feature key → its resolved enablement. A key absent
@@ -94,7 +88,7 @@ export class FeatureReachResolver {
     pluginId: number,
     guildId: string,
     featureKey: string,
-    manifest: ManifestSource,
+    manifest: PluginManifest,
   ): Promise<boolean> {
     const map =
       this.readGuild(pluginId, guildId) ??
@@ -184,7 +178,7 @@ export class FeatureReachResolver {
   private resolveGuild(
     pluginId: number,
     guildId: string,
-    manifest: ManifestSource,
+    manifest: PluginManifest,
   ): Promise<Map<string, boolean> | null> {
     const key = flightKey(pluginId, guildId);
     // Capture the version at the SYNCHRONOUS entry, before any await.
@@ -207,12 +201,9 @@ export class FeatureReachResolver {
   private async doResolve(
     pluginId: number,
     guildId: string,
-    manifestSource: ManifestSource,
+    manifest: PluginManifest,
     token: string,
   ): Promise<Map<string, boolean> | null> {
-    const manifest =
-      typeof manifestSource === "function" ? manifestSource() : manifestSource;
-    if (!manifest) return null;
     let rows: Awaited<ReturnType<typeof findFeatureRowsByPluginGuild>>;
     let defaults: Awaited<ReturnType<typeof findFeatureDefaultsByPlugin>>;
     try {

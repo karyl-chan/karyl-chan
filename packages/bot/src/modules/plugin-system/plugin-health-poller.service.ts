@@ -3,6 +3,7 @@ import {
   type PluginRow,
 } from "./models/plugin.model.js";
 import type { PluginManifest } from "./plugin-registry.service.js";
+import { parsePluginManifest } from "./plugin-dispatch-util.js";
 import {
   setHealth,
   type HealthStatus,
@@ -33,13 +34,8 @@ import {
 const POLL_INTERVAL_MS = 60_000;
 const PROBE_TIMEOUT_MS = 3_000;
 
-function parseManifest(plugin: PluginRow): PluginManifest | null {
-  try {
-    return JSON.parse(plugin.manifestJson) as PluginManifest;
-  } catch {
-    return null;
-  }
-}
+/** Per-row memoized manifest parse (shared canonical helper). */
+const parseManifest = parsePluginManifest;
 
 function resolveHealthUrl(
   plugin: PluginRow,
