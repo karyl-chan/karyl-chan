@@ -29,7 +29,7 @@ function manifestWith(
 ): PluginManifest {
   return {
     plugin: { id: "p", name: "p", version: "0", url: "http://x" },
-    guild_features: features.map((f) => ({ key: f.key, name: f.key, ...f })),
+    guild_features: features.map((f) => ({ name: f.key, ...f })),
   } as unknown as PluginManifest;
 }
 

@@ -80,7 +80,7 @@ async function seedPlugin(opts: {
 let postSpy: ReturnType<typeof vi.spyOn>;
 
 function dispatchedUrls(): string[] {
-  return postSpy.mock.calls.map((c) => String(c[1]));
+  return postSpy.mock.calls.map((c: unknown[]) => String(c[1]));
 }
 
 beforeAll(async () => {
