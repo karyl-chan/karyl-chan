@@ -31,6 +31,26 @@ interface Entry {
 const cache = new Map<string, Entry>();
 
 /**
+ * In-flight loads, keyed by pluginKey. Two roles:
+ *   - Single-flight: concurrent misses for the same key share ONE loader
+ *     call instead of each hitting the DB — no cold-start / post-
+ *     invalidate stampede at 2500-guild scale.
+ *   - Invalidate-during-fill guard: an invalidation deletes the key's
+ *     in-flight slot, and a load only writes the cache if its own slot is
+ *     still present when it returns. So a mutation that lands mid-load
+ *     can't be masked by the load re-pinning the just-cleared row for the
+ *     full TTL. (The slot identity IS the generation signal — no separate
+ *     counter needed.)
+ */
+interface InFlight {
+  /** Per-load identity. The load caches only while THIS token is still
+   *  the installed one, so an invalidation that dropped the slot wins. */
+  token: object;
+  promise: Promise<PluginRow | null>;
+}
+const inflight = new Map<string, InFlight>();
+
+/**
  * Read-through cache: returns the row (or `null` for "no such plugin")
  * either from memory or by invoking the loader on a miss. Negative
  * results are cached for the same TTL — a 404 to an unknown key
@@ -41,18 +61,32 @@ export async function getCachedPluginByKey(
   loader: (key: string) => Promise<PluginRow | null>,
 ): Promise<PluginRow | null> {
   const hit = cache.get(pluginKey);
-  const now = Date.now();
-  if (hit && now - hit.insertedAt < CACHE_TTL_MS) {
+  if (hit && Date.now() - hit.insertedAt < CACHE_TTL_MS) {
     return hit.row;
   }
-  const row = await loader(pluginKey);
-  cache.set(pluginKey, { row, insertedAt: now });
-  return row;
+  const existing = inflight.get(pluginKey);
+  if (existing) return existing.promise;
+  const token = {};
+  const promise = (async () => {
+    try {
+      const row = await loader(pluginKey);
+      // Cache only if no invalidation replaced/cleared our slot meanwhile.
+      if (inflight.get(pluginKey)?.token === token) {
+        cache.set(pluginKey, { row, insertedAt: Date.now() });
+      }
+      return row;
+    } finally {
+      if (inflight.get(pluginKey)?.token === token) inflight.delete(pluginKey);
+    }
+  })();
+  inflight.set(pluginKey, { token, promise });
+  return promise;
 }
 
 /** Invalidate one plugin's cache entry. Cheap; safe to over-invoke. */
 export function invalidatePluginByKey(pluginKey: string): void {
   cache.delete(pluginKey);
+  inflight.delete(pluginKey);
 }
 
 /**
@@ -62,13 +96,17 @@ export function invalidatePluginByKey(pluginKey: string): void {
  */
 export function invalidatePluginById(pluginId: number): void {
   for (const [key, entry] of cache) {
-    if (entry.row?.id === pluginId) cache.delete(key);
+    if (entry.row?.id === pluginId) {
+      cache.delete(key);
+      inflight.delete(key);
+    }
   }
 }
 
 /** Drop everything — e.g. on tests / hot reload. */
 export function invalidateAllPluginCache(): void {
   cache.clear();
+  inflight.clear();
 }
 
 /** Test-only — internal stats. */

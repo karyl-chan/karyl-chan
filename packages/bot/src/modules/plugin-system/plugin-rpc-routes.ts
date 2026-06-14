@@ -4,6 +4,7 @@ import { config } from "../../config.js";
 import { ChannelType, Routes, MessageFlags } from "discord.js";
 import { RateLimiter } from "../../utils/rate-limiter.js";
 import { findPluginById } from "./models/plugin.model.js";
+import { parsePluginManifest } from "./plugin-dispatch-util.js";
 import {
   deleteKv,
   getKv,
@@ -244,7 +245,7 @@ async function pluginHasGuildReach(
 ): Promise<boolean> {
   const plugin = await findPluginById(pluginId);
   if (!plugin) return false;
-  const manifest = getManifest(plugin.manifestJson);
+  const manifest = parsePluginManifest(plugin);
   if (!manifest) return false;
   return featureReachResolver.hasAnyFeatureEnabledInGuild(
     pluginId,
@@ -310,20 +311,12 @@ async function requireScope(
   return { pluginId: auth.pluginId, pluginKey: auth.pluginKey };
 }
 
-function getManifest(manifestJson: string): PluginManifest | null {
-  try {
-    return JSON.parse(manifestJson) as PluginManifest;
-  } catch {
-    return null;
-  }
-}
-
 async function quotaForGuildKv(pluginId: number): Promise<number> {
   // Read quota from the plugin's stored manifest. Falls back to a
   // bot-wide default if the plugin didn't declare one.
   const plugin = await findPluginById(pluginId);
   if (!plugin) return DEFAULT_KV_QUOTA_BYTES;
-  const manifest = getManifest(plugin.manifestJson);
+  const manifest = parsePluginManifest(plugin);
   const declaredKb = manifest?.storage?.guildKvQuotaKb;
   if (typeof declaredKb === "number" && declaredKb > 0) {
     return Math.min(declaredKb * 1024, KV_VALUE_MAX_BYTES * 16);
@@ -851,13 +844,7 @@ export async function registerPluginRpcRoutes(
       reply.code(404).send({ error: "plugin row vanished" });
       return;
     }
-    const manifest = (() => {
-      try {
-        return JSON.parse(plugin.manifestJson) as PluginManifest;
-      } catch {
-        return null;
-      }
-    })();
+    const manifest = parsePluginManifest(plugin);
     const schemaByKey = new Map(
       (manifest?.config_schema ?? []).map((f) => [f.key, f]),
     );
@@ -2645,7 +2632,7 @@ export async function registerPluginRpcRoutes(
         return;
       }
       const plugin = await findPluginById(ctx.pluginId);
-      const manifest = plugin ? getManifest(plugin.manifestJson) : null;
+      const manifest = plugin ? parsePluginManifest(plugin) : null;
       const manifestFeatures = manifest?.guild_features ?? [];
       if (manifestFeatures.length === 0) {
         return { guild_ids: Array.from(bot.guilds.cache.keys()) };

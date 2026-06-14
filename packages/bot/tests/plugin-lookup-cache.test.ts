@@ -110,4 +110,42 @@ describe("plugin lookup cache", () => {
       vi.useRealTimers();
     }
   });
+
+  it("single-flight: concurrent misses for one key share ONE loader call", async () => {
+    let resolveLoad!: (r: PluginRow | null) => void;
+    const gate = new Promise<PluginRow | null>((res) => {
+      resolveLoad = res;
+    });
+    const loader = vi.fn(() => gate);
+
+    const a = getCachedPluginByKey("p", loader);
+    const b = getCachedPluginByKey("p", loader);
+    expect(loader).toHaveBeenCalledTimes(1); // both joined one in-flight read
+
+    resolveLoad(row({ id: 1, pluginKey: "p" }));
+    expect((await a)?.id).toBe(1);
+    expect((await b)?.id).toBe(1);
+
+    // The shared result was cached: a later read does not reload.
+    await getCachedPluginByKey("p", loader);
+    expect(loader).toHaveBeenCalledTimes(1);
+  });
+
+  it("an invalidate during an in-flight load keeps the stale row out of the cache", async () => {
+    let resolveLoad!: (r: PluginRow | null) => void;
+    const gate = new Promise<PluginRow | null>((res) => {
+      resolveLoad = res;
+    });
+
+    const p = getCachedPluginByKey("p", () => gate);
+    invalidatePluginByKey("p"); // mutation lands mid-load
+    resolveLoad(row({ id: 1, pluginKey: "p" })); // the now-stale snapshot returns
+    expect((await p)?.id).toBe(1); // the caller still gets an answer
+
+    // …but nothing was cached: the next read reloads fresh state.
+    const loader2 = vi.fn(async (key: string) => row({ id: 2, pluginKey: key }));
+    const fresh = await getCachedPluginByKey("p", loader2);
+    expect(fresh?.id).toBe(2);
+    expect(loader2).toHaveBeenCalledTimes(1);
+  });
 });
