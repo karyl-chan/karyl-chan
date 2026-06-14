@@ -53,9 +53,10 @@ async function columnNames(table: string): Promise<string[]> {
  * "missing column in prod" bug lives on.
  */
 const T = DataTypes;
+type ColumnDefs = Parameters<QueryInterface["createTable"]>[1];
 const TABLES: {
   name: string;
-  oldColumns: Record<string, unknown>;
+  oldColumns: ColumnDefs;
   migrations: unknown[];
 }[] = [
   {
@@ -101,7 +102,7 @@ describe("PM-0.2 schema-drift: model columns are reachable on an old DB via migr
       // Track (b): rebuild the table at its frozen pre-migration shape,
       // then let the migrations carry it forward.
       await qi().dropTable(name);
-      await qi().createTable(name, oldColumns as Parameters<QueryInterface["createTable"]>[1]);
+      await qi().createTable(name, oldColumns);
       for (const up of migrations) await runMigration(up);
 
       const migrated = await columnNames(name);
