@@ -29,7 +29,7 @@ import {
   findConfigByPluginAndSource,
   upsertConfigKey,
   setAdminConfigSchemaVersion,
-  getAdminConfigSchemaVersion,
+  maxConfigSchemaVersion,
 } from "./models/plugin-config.model.js";
 import { kvUsageByPlugin } from "./models/plugin-kv.model.js";
 import { quotaForGuildKv } from "./plugin-rpc-routes.js";
@@ -1379,9 +1379,7 @@ export async function registerPluginRoutes(
         reply.code(400).send({ error: "invalid plugin id" });
         return;
       }
-      const plugin = (await pluginRegistry.list()).find(
-        (p) => p.id === pluginId,
-      );
+      const plugin = await pluginRegistry.findById(pluginId);
       if (!plugin) {
         reply.code(404).send({ error: "plugin not found" });
         return;
@@ -1395,7 +1393,7 @@ export async function registerPluginRoutes(
         // PD-4.3: current schema version vs the one the stored config was
         // last saved under. The UI warns when stored < current (stale).
         configSchemaVersion: manifest?.config_schema_version ?? null,
-        storedConfigSchemaVersion: await getAdminConfigSchemaVersion(pluginId),
+        storedConfigSchemaVersion: maxConfigSchemaVersion(rows),
         values: schema.map((field) => {
           const row = byKey.get(field.key);
           if (!row) return { key: field.key, set: false, value: null };
@@ -1424,9 +1422,7 @@ export async function registerPluginRoutes(
         reply.code(400).send({ error: "invalid plugin id" });
         return;
       }
-      const plugin = (await pluginRegistry.list()).find(
-        (p) => p.id === pluginId,
-      );
+      const plugin = await pluginRegistry.findById(pluginId);
       if (!plugin) {
         reply.code(404).send({ error: "plugin not found" });
         return;

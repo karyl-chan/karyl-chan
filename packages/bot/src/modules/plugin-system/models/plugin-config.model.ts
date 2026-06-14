@@ -151,12 +151,18 @@ export const setAdminConfigSchemaVersion = async (
  * admin config is stored or it predates the column — i.e. no staleness
  * signal to show.
  */
-export const getAdminConfigSchemaVersion = async (
-  pluginId: number,
-): Promise<number | null> => {
-  const rows = await findConfigByPluginAndSource(pluginId, "admin");
+/** Max config_schema_version across a set of config rows (null if none).
+ *  Pure, so callers already holding the rows skip a redundant query. */
+export const maxConfigSchemaVersion = (
+  rows: { configSchemaVersion: number | null }[],
+): number | null => {
   const versions = rows
     .map((r) => r.configSchemaVersion)
     .filter((v): v is number => v != null);
   return versions.length > 0 ? Math.max(...versions) : null;
 };
+
+export const getAdminConfigSchemaVersion = async (
+  pluginId: number,
+): Promise<number | null> =>
+  maxConfigSchemaVersion(await findConfigByPluginAndSource(pluginId, "admin"));

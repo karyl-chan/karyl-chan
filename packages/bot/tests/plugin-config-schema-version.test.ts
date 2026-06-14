@@ -7,7 +7,7 @@
  * reversible) and the stamp/read helpers (admin rows only; max-of-set;
  * plugin-self KV untouched).
  */
-import { vi, describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { vi, describe, it, expect, beforeEach } from "vitest";
 
 vi.hoisted(() => {
   process.env.SQLITE_DB_PATH = ":memory:";
@@ -35,10 +35,6 @@ async function hasColumn(): Promise<boolean> {
 }
 
 const PLUGIN = 7;
-
-beforeAll(async () => {
-  await sequelize.sync({ force: true });
-});
 
 beforeEach(async () => {
   // Rebuild the table fresh each case: the migration test below recreates
