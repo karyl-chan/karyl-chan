@@ -90,12 +90,17 @@
     ]
   },
   "events": {
-    "$comment": "Canonical Discord-side event type names the bot dispatches as the `type` field. SDK exports these via `Events`; the bot emits these exact strings (see bot main.ts dispatchEventToPlugins calls).",
+    "$comment": "Canonical Discord-side event type names the bot dispatches as the `type` field. SDK exports these via `Events`; the bot emits these exact strings via dispatchEventToPlugins (discord-runtime-events.ts + voice-state.events.ts).",
     "canonical": [
       "guild.message_create",
+      "guild.message_update",
+      "guild.message_delete",
+      "guild.message_create_self",
+      "guild.message_create_self_ephemeral",
       "dm.message_create",
       "guild.message_reaction_add",
-      "guild.message_reaction_remove"
+      "guild.message_reaction_remove",
+      "guild.voice_state_update"
     ]
   },
   "dispatchEnvelope": {
