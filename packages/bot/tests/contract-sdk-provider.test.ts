@@ -93,13 +93,20 @@ const VOICE_RPC_SRC = readFileSync(
 );
 const PROVIDER_SRC = RPC_ROUTES_SRC + "\n" + VOICE_RPC_SRC;
 
-// Bot's outbound-event dispatch source — emits the canonical event
-// strings via dispatchEventToPlugins("…", …). These live in the runtime
-// gateway-event module (split out of main.ts).
-const BOT_MAIN_SRC = readFileSync(
-  resolve(here, "../src/runtime/discord-runtime-events.ts"),
-  "utf8",
-);
+// Bot's outbound-event dispatch sources — emit the canonical event
+// strings via dispatchEventToPlugins("…", …). Message/reaction events
+// live in the runtime gateway-event module (split out of main.ts);
+// voice_state_update is dispatched from the bot-events voice module.
+const BOT_MAIN_SRC =
+  readFileSync(
+    resolve(here, "../src/runtime/discord-runtime-events.ts"),
+    "utf8",
+  ) +
+  "\n" +
+  readFileSync(
+    resolve(here, "../src/modules/bot-events/events/voice-state.events.ts"),
+    "utf8",
+  );
 
 // Bot's register route — response field names the SDK client consumes.
 const REGISTER_SRC = readFileSync(
