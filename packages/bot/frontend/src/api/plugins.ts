@@ -410,9 +410,11 @@ export async function setPluginConfig(
   return jsonOrThrow<{ accepted: string[]; skipped: string[] }>(r);
 }
 
-// ─── Settings summary (PD-2.2) ─────────────────────────────────────
+// ─── Settings (PD-2.2): config editor + cross-surface overview ─────
 
-export interface PluginSettingsSummary {
+export interface PluginSettings {
+  /** Admin config editor payload — same shape as GET /config. */
+  config: PluginConfigPayload;
   kv: {
     quotaBytes: number;
     /** Per-guild usage. Count + bytes only — never values (PD-2.1). */
@@ -425,11 +427,11 @@ export interface PluginSettingsSummary {
   guildNames: Record<string, string | null>;
 }
 
-export async function getPluginSettingsSummary(
-  id: number,
-): Promise<PluginSettingsSummary> {
-  const r = await authedFetch(`/api/plugins/${id}/settings-summary`);
-  return jsonOrThrow<PluginSettingsSummary>(r);
+/** One-shot fetch for the "設定" tab — config editor + KV/feature overview
+ *  in a single round-trip (replaces separate /config + /settings-summary). */
+export async function getPluginSettings(id: number): Promise<PluginSettings> {
+  const r = await authedFetch(`/api/plugins/${id}/settings`);
+  return jsonOrThrow<PluginSettings>(r);
 }
 
 // ─── Plugin delete ─────────────────────────────────────────────────

@@ -5,14 +5,14 @@ import { Icon } from '@iconify/vue';
 import { AppBadge } from '@karyl-chan/ui';
 import {
     ConfigValidationError,
-    getPluginConfig,
     setPluginConfig,
-    getPluginSettingsSummary,
+    getPluginSettings,
     type PluginConfigField,
     type PluginDetailRecord,
-    type PluginSettingsSummary,
+    type PluginSettings,
 } from '../../../api/plugins';
 import PluginConfigFields from '../../../components/PluginConfigFields.vue';
+import { formatBytes } from '../../../utils/format';
 
 const props = defineProps<{
     plugin: PluginDetailRecord;
@@ -23,13 +23,17 @@ const { t } = useI18n();
 const manifest = computed(() => props.plugin.manifest);
 const hasConfigSchema = computed(() => (manifest.value?.config_schema?.length ?? 0) > 0);
 
-// ─── Plugin config editor (moved from Overview, PD-2.2) ───────────────
+// ─── One settings fetch drives both the config editor and the overview ─
+const loading = ref(false);
+const loadError = ref<string | null>(null);
+const loaded = ref(false);
+const summary = ref<PluginSettings | null>(null);
+
+// Config editor state (operator-owned, global). PD-2.2.
 const configSchema = ref<PluginConfigField[]>([]);
 const configValues = reactive<Record<string, string>>({});
-const configLoaded = ref(false);
-const configLoading = ref(false);
 const configSaving = ref(false);
-const configError = ref<string | null>(null);
+const configError = ref<string | null>(null); // save-time error only
 const configSavedAt = ref<number | null>(null);
 // PD-4.3: stored admin config saved under an older config_schema_version.
 const configStale = ref(false);
@@ -38,56 +42,85 @@ function clearFieldErrors(): void {
     for (const k of Object.keys(configFieldErrors)) delete configFieldErrors[k];
 }
 
-function resetConfigState(): void {
+const features = computed(() => manifest.value?.guild_features ?? []);
+
+/** Guilds that have at least one feature override, each with a per-feature
+ *  map for the matrix. Sorted by guildId for a stable table. */
+const overrideRows = computed(() => {
+    const byGuild = new Map<string, Map<string, boolean>>();
+    for (const o of summary.value?.featureOverrides ?? []) {
+        let m = byGuild.get(o.guildId);
+        if (!m) {
+            m = new Map();
+            byGuild.set(o.guildId, m);
+        }
+        m.set(o.featureKey, o.enabled);
+    }
+    return [...byGuild.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([guildId, feats]) => ({ guildId, feats }));
+});
+
+const kvGuilds = computed(() => summary.value?.kv.guilds ?? []);
+const kvQuota = computed(() => summary.value?.kv.quotaBytes ?? 0);
+function kvPct(used: number): number {
+    if (kvQuota.value <= 0) return 0;
+    return Math.min(100, Math.round((used / kvQuota.value) * 100));
+}
+
+/** Seed the editor from the fetched config payload. Values are stored as
+ *  strings keyed by field; defaults arrive as raw manifest JSON. */
+function applyConfig(config: PluginSettings['config']): void {
+    configSchema.value = config.schema;
+    configStale.value =
+        config.storedConfigSchemaVersion != null &&
+        config.configSchemaVersion != null &&
+        config.storedConfigSchemaVersion < config.configSchemaVersion;
+    for (const k of Object.keys(configValues)) delete configValues[k];
+    for (const v of config.values) configValues[v.key] = v.value ?? '';
+    for (const f of config.schema) {
+        if (!(f.key in configValues)) {
+            const raw = f.default;
+            configValues[f.key] =
+                f.type === 'boolean'
+                    ? raw === true || raw === 'true'
+                        ? 'true'
+                        : 'false'
+                    : raw == null
+                      ? ''
+                      : String(raw);
+        }
+    }
+}
+
+async function load() {
+    if (loading.value) return;
+    loading.value = true;
+    loadError.value = null;
+    const requestedId = props.plugin.id;
+    try {
+        const r = await getPluginSettings(requestedId);
+        if (props.plugin.id !== requestedId) return;
+        applyConfig(r.config);
+        summary.value = r;
+        loaded.value = true;
+    } catch (err) {
+        if (props.plugin.id !== requestedId) return;
+        loadError.value = err instanceof Error ? err.message : String(err);
+    } finally {
+        if (props.plugin.id === requestedId) loading.value = false;
+    }
+}
+
+function resetState(): void {
     for (const k of Object.keys(configValues)) delete configValues[k];
     configSchema.value = [];
     clearFieldErrors();
     configError.value = null;
     configSavedAt.value = null;
-    configLoaded.value = false;
     configStale.value = false;
-}
-
-async function loadConfig() {
-    if (configLoaded.value || configLoading.value) return;
-    configLoading.value = true;
-    configError.value = null;
-    const requestedId = props.plugin.id;
-    try {
-        const r = await getPluginConfig(requestedId);
-        if (props.plugin.id !== requestedId) return;
-        configSchema.value = r.schema;
-        configStale.value =
-            r.storedConfigSchemaVersion != null &&
-            r.configSchemaVersion != null &&
-            r.storedConfigSchemaVersion < r.configSchemaVersion;
-        for (const v of r.values) {
-            configValues[v.key] = v.value ?? '';
-        }
-        for (const f of r.schema) {
-            if (!(f.key in configValues)) {
-                const raw = f.default;
-                // Defaults arrive as raw manifest JSON (boolean/number/string);
-                // the editor stores everything as a string keyed by field type.
-                configValues[f.key] =
-                    f.type === 'boolean'
-                        ? raw === true || raw === 'true'
-                            ? 'true'
-                            : 'false'
-                        : raw == null
-                          ? ''
-                          : String(raw);
-            }
-        }
-        configLoaded.value = true;
-    } catch (err) {
-        if (props.plugin.id !== requestedId) return;
-        configError.value = err instanceof Error ? err.message : String(err);
-    } finally {
-        if (props.plugin.id === requestedId) {
-            configLoading.value = false;
-        }
-    }
+    summary.value = null;
+    loaded.value = false;
 }
 
 async function saveConfig() {
@@ -116,94 +149,36 @@ async function saveConfig() {
     }
 }
 
-// ─── Cross-surface summary: per-guild feature overrides + KV usage ────
-const summary = ref<PluginSettingsSummary | null>(null);
-const summaryLoading = ref(false);
-const summaryError = ref<string | null>(null);
-
-const features = computed(() => manifest.value?.guild_features ?? []);
-
-/** Guilds that have at least one feature override, each with a per-feature
- *  map for the matrix. Sorted by guildId for a stable table. */
-const overrideRows = computed(() => {
-    const byGuild = new Map<string, Map<string, boolean>>();
-    for (const o of summary.value?.featureOverrides ?? []) {
-        let m = byGuild.get(o.guildId);
-        if (!m) {
-            m = new Map();
-            byGuild.set(o.guildId, m);
-        }
-        m.set(o.featureKey, o.enabled);
-    }
-    return [...byGuild.entries()]
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([guildId, feats]) => ({ guildId, feats }));
-});
-
-const kvGuilds = computed(() => summary.value?.kv.guilds ?? []);
-const kvQuota = computed(() => summary.value?.kv.quotaBytes ?? 0);
-
-function fmtBytes(n: number): string {
-    if (n < 1024) return `${n} B`;
-    return `${(n / 1024).toFixed(1)} KB`;
-}
-function kvPct(used: number): number {
-    if (kvQuota.value <= 0) return 0;
-    return Math.min(100, Math.round((used / kvQuota.value) * 100));
-}
-
-async function loadSummary() {
-    if (summaryLoading.value) return;
-    summaryLoading.value = true;
-    summaryError.value = null;
-    const requestedId = props.plugin.id;
-    try {
-        const r = await getPluginSettingsSummary(requestedId);
-        if (props.plugin.id !== requestedId) return;
-        summary.value = r;
-    } catch (err) {
-        if (props.plugin.id !== requestedId) return;
-        summaryError.value = err instanceof Error ? err.message : String(err);
-    } finally {
-        if (props.plugin.id === requestedId) summaryLoading.value = false;
-    }
-}
-
-function loadAll() {
-    if (hasConfigSchema.value) void loadConfig();
-    void loadSummary();
-}
-
 watch(
     () => props.plugin.id,
     (id, oldId) => {
         if (id === oldId) return;
-        resetConfigState();
-        summary.value = null;
-        loadAll();
+        resetState();
+        load();
     },
 );
 
-onMounted(loadAll);
+onMounted(load);
 </script>
 
 <template>
     <div class="tab-panel">
-        <!-- 1. Plugin config (operator-owned, global) -->
-        <section v-if="hasConfigSchema" class="section config-section">
-            <div class="section-header">
-                <h3 class="section-title">{{ t('admin.plugins.detail.config.pluginConfigTitle') }}</h3>
-                <AppBadge v-if="configSavedAt && (Date.now() - configSavedAt < 4000)" tone="success" size="sm">
-                    {{ t('admin.plugins.detail.config.saved') }}
-                </AppBadge>
-            </div>
-            <div v-if="configStale && configLoaded" class="config-stale-warning" role="alert">
-                <Icon icon="material-symbols:warning-outline-rounded" width="16" height="16" class="stale-icon" />
-                <span>{{ t('admin.plugins.detail.configStale') }}</span>
-            </div>
-            <p v-if="configLoading" class="muted">{{ t('common.loading') }}</p>
-            <p v-if="configError" class="error" role="alert">{{ configError }}</p>
-            <div v-else-if="configLoaded">
+        <p v-if="loading" class="muted">{{ t('common.loading') }}</p>
+        <p v-else-if="loadError" class="error" role="alert">{{ loadError }}</p>
+        <template v-else>
+            <!-- 1. Plugin config (operator-owned, global) -->
+            <section v-if="hasConfigSchema" class="section config-section">
+                <div class="section-header">
+                    <h3 class="section-title">{{ t('admin.plugins.detail.config.pluginConfigTitle') }}</h3>
+                    <AppBadge v-if="configSavedAt && (Date.now() - configSavedAt < 4000)" tone="success" size="sm">
+                        {{ t('admin.plugins.detail.config.saved') }}
+                    </AppBadge>
+                </div>
+                <div v-if="configStale" class="config-stale-warning" role="alert">
+                    <Icon icon="material-symbols:warning-outline-rounded" width="16" height="16" class="stale-icon" />
+                    <span>{{ t('admin.plugins.detail.configStale') }}</span>
+                </div>
+                <p v-if="configError" class="error" role="alert">{{ configError }}</p>
                 <PluginConfigFields
                     :schema="configSchema"
                     :values="configValues"
@@ -215,71 +190,67 @@ onMounted(loadAll);
                         {{ configSaving ? t('admin.plugins.detail.config.saving') : t('admin.plugins.detail.config.save') }}
                     </button>
                 </div>
-            </div>
-        </section>
+            </section>
 
-        <!-- 2. Per-guild feature overrides matrix -->
-        <section v-if="features.length > 0" class="section">
-            <div class="section-header">
-                <h3 class="section-title">{{ t('admin.plugins.detail.config.guildOverridesTitle') }}</h3>
-            </div>
-            <p class="section-desc">{{ t('admin.plugins.detail.config.guildOverridesDesc') }}</p>
-            <p v-if="summaryLoading" class="muted">{{ t('common.loading') }}</p>
-            <p v-else-if="summaryError" class="error" role="alert">{{ summaryError }}</p>
-            <p v-else-if="overrideRows.length === 0" class="muted">
-                {{ t('admin.plugins.detail.config.noOverrides') }}
-            </p>
-            <div v-else class="matrix-scroll">
-                <table class="matrix">
-                    <thead>
-                        <tr>
-                            <th>{{ t('admin.plugins.detail.config.guildCol') }}</th>
-                            <th v-for="f in features" :key="f.key" :title="f.key">{{ f.name }}</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr v-for="row in overrideRows" :key="row.guildId">
-                            <td>
-                                <span v-if="summary?.guildNames[row.guildId]" class="gname" :title="row.guildId">{{ summary.guildNames[row.guildId] }}</span>
-                                <code v-else class="gid">{{ row.guildId }}</code>
-                            </td>
-                            <td v-for="f in features" :key="f.key" class="cell">
-                                <span
-                                    v-if="row.feats.has(f.key)"
-                                    :class="['ov', row.feats.get(f.key) ? 'on' : 'off']"
-                                    :title="row.feats.get(f.key) ? t('admin.plugins.detail.config.overrideOn') : t('admin.plugins.detail.config.overrideOff')"
-                                >{{ row.feats.get(f.key) ? '✓' : '✕' }}</span>
-                                <span v-else class="ov default" :title="t('admin.plugins.detail.config.usingDefault')">—</span>
-                            </td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </section>
+            <!-- 2. Per-guild feature overrides matrix -->
+            <section v-if="features.length > 0" class="section">
+                <div class="section-header">
+                    <h3 class="section-title">{{ t('admin.plugins.detail.config.guildOverridesTitle') }}</h3>
+                </div>
+                <p class="section-desc">{{ t('admin.plugins.detail.config.guildOverridesDesc') }}</p>
+                <p v-if="overrideRows.length === 0" class="muted">
+                    {{ t('admin.plugins.detail.config.noOverrides') }}
+                </p>
+                <div v-else class="matrix-scroll">
+                    <table class="matrix">
+                        <thead>
+                            <tr>
+                                <th>{{ t('admin.plugins.detail.config.guildCol') }}</th>
+                                <th v-for="f in features" :key="f.key" :title="f.key">{{ f.name }}</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="row in overrideRows" :key="row.guildId">
+                                <td>
+                                    <span v-if="summary?.guildNames[row.guildId]" class="gname" :title="row.guildId">{{ summary.guildNames[row.guildId] }}</span>
+                                    <code v-else class="gid">{{ row.guildId }}</code>
+                                </td>
+                                <td v-for="f in features" :key="f.key" class="cell">
+                                    <span
+                                        v-if="row.feats.has(f.key)"
+                                        :class="['ov', row.feats.get(f.key) ? 'on' : 'off']"
+                                        :title="row.feats.get(f.key) ? t('admin.plugins.detail.config.overrideOn') : t('admin.plugins.detail.config.overrideOff')"
+                                    >{{ row.feats.get(f.key) ? '✓' : '✕' }}</span>
+                                    <span v-else class="ov default" :title="t('admin.plugins.detail.config.usingDefault')">—</span>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
 
-        <!-- 3. KV usage (plugin-owned: usage/quota only, content NOT shown) -->
-        <section class="section">
-            <div class="section-header">
-                <h3 class="section-title">{{ t('admin.plugins.detail.config.kvTitle') }}</h3>
-            </div>
-            <p class="section-desc">{{ t('admin.plugins.detail.config.kvDesc') }}</p>
-            <p v-if="summaryLoading" class="muted">{{ t('common.loading') }}</p>
-            <p v-else-if="summaryError" class="error" role="alert">{{ summaryError }}</p>
-            <p v-else-if="kvGuilds.length === 0" class="muted">
-                {{ t('admin.plugins.detail.config.kvEmpty') }}
-            </p>
-            <ul v-else class="kv-list">
-                <li v-for="g in kvGuilds" :key="g.guildId" class="kv-row">
-                    <span v-if="summary?.guildNames[g.guildId]" class="gname" :title="g.guildId">{{ summary.guildNames[g.guildId] }}</span>
-                    <code v-else class="gid">{{ g.guildId }}</code>
-                    <div class="kv-bar"><div class="kv-fill" :style="{ width: kvPct(g.usedBytes) + '%' }" /></div>
-                    <span class="kv-num">
-                        {{ t('admin.plugins.detail.config.kvKeys', { n: g.keyCount }) }} ·
-                        {{ fmtBytes(g.usedBytes) }} / {{ fmtBytes(kvQuota) }}
-                    </span>
-                </li>
-            </ul>
-        </section>
+            <!-- 3. KV usage (plugin-owned: usage/quota only, content NOT shown) -->
+            <section class="section">
+                <div class="section-header">
+                    <h3 class="section-title">{{ t('admin.plugins.detail.config.kvTitle') }}</h3>
+                </div>
+                <p class="section-desc">{{ t('admin.plugins.detail.config.kvDesc') }}</p>
+                <p v-if="kvGuilds.length === 0" class="muted">
+                    {{ t('admin.plugins.detail.config.kvEmpty') }}
+                </p>
+                <ul v-else class="kv-list">
+                    <li v-for="g in kvGuilds" :key="g.guildId" class="kv-row">
+                        <span v-if="summary?.guildNames[g.guildId]" class="gname" :title="g.guildId">{{ summary.guildNames[g.guildId] }}</span>
+                        <code v-else class="gid">{{ g.guildId }}</code>
+                        <div class="kv-bar"><div class="kv-fill" :style="{ width: kvPct(g.usedBytes) + '%' }" /></div>
+                        <span class="kv-num">
+                            {{ t('admin.plugins.detail.config.kvKeys', { n: g.keyCount }) }} ·
+                            {{ formatBytes(g.usedBytes) }} / {{ formatBytes(kvQuota) }}
+                        </span>
+                    </li>
+                </ul>
+            </section>
+        </template>
     </div>
 </template>
 

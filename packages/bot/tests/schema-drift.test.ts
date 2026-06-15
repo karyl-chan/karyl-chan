@@ -19,7 +19,7 @@
  * model — add a migration and wire it into the table's migration list.
  * That omission is exactly what turns track (b) red.
  *
- * Scope: the `plugins` table (migrations 001 + 007 add columns). Other
+ * Scope: the `plugins` table (migrations 001 + 007 + 009 add columns). Other
  * column-migration tables (e.g. `behaviors`: 004/005/006) extend the same
  * TABLES array; `behavior_sessions` (003) is a table-shape migration with
  * its own dedicated test (behavior-session-channel-pk-migration.test.ts).
@@ -34,8 +34,12 @@ vi.hoisted(() => {
 import { DataTypes, type QueryInterface } from "sequelize";
 import { sequelize } from "../src/db.js";
 import { Plugin } from "../src/modules/plugin-system/models/plugin.model.js";
+// Register the plugin_configs model so sync() creates that table — migration
+// 009 touches it (moves configSchemaVersion off plugin_configs onto plugins).
+import "../src/modules/plugin-system/models/plugin-config.model.js";
 import { up as up001 } from "../src/migrations/001-plugin-approved-rpc-scopes.js";
 import { up as up007 } from "../src/migrations/007-plugin-approved-global-event-subs.js";
+import { up as up009 } from "../src/migrations/009-plugin-config-schema-version-to-plugins.js";
 
 const qi = (): QueryInterface => sequelize.getQueryInterface();
 
@@ -61,8 +65,8 @@ const TABLES: {
 }[] = [
   {
     name: "plugins",
-    // plugins as it stood before 001 (approvedRpcScopes) and 007
-    // (approvedGlobalEventSubs).
+    // plugins as it stood before 001 (approvedRpcScopes), 007
+    // (approvedGlobalEventSubs) and 009 (configSchemaVersion).
     oldColumns: {
       id: { type: T.INTEGER, autoIncrement: true, primaryKey: true },
       pluginKey: { type: T.TEXT, allowNull: false },
@@ -79,7 +83,7 @@ const TABLES: {
       createdAt: { type: T.DATE, allowNull: false },
       updatedAt: { type: T.DATE, allowNull: false },
     },
-    migrations: [up001, up007],
+    migrations: [up001, up007, up009],
   },
 ];
 

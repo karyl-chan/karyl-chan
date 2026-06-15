@@ -56,6 +56,11 @@ export const Plugin = sequelize.define(
     // declared global subscription as approved, so NULL here never cuts
     // off a pre-PM-8 row. Same NULL/JSON semantics as approvedRpcScopes.
     approvedGlobalEventSubs: { type: DataTypes.TEXT, allowNull: true },
+    // PD-4.3 (relocated from plugin_configs in migration 009): the manifest
+    // config_schema_version the plugin's admin config was last SAVED under.
+    // One value per plugin, not denormalized across config rows. NULL =
+    // never saved / pre-versioning → no staleness signal.
+    configSchemaVersion: { type: DataTypes.INTEGER, allowNull: true },
   },
   {
     tableName: "plugins",
@@ -87,6 +92,9 @@ export interface PluginRow {
    *  meaningful when PLUGIN_AUTO_APPROVE=false — with auto-approve the
    *  declared set is honored regardless. NULL reads as []. */
   approvedGlobalEventSubs: string[];
+  /** Manifest config_schema_version the admin config was last saved under
+   *  (PD-4.3). NULL = never saved / pre-versioning. */
+  configSchemaVersion: number | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -126,6 +134,8 @@ function rowOf(model: InstanceType<typeof Plugin>): PluginRow {
     approvedGlobalEventSubs: parseScopeArray(
       model.getDataValue("approvedGlobalEventSubs"),
     ),
+    configSchemaVersion:
+      (model.getDataValue("configSchemaVersion") as number | null) ?? null,
     createdAt: model.getDataValue("createdAt") as Date,
     updatedAt: model.getDataValue("updatedAt") as Date,
   };
@@ -322,6 +332,21 @@ export const setPluginApprovedGlobalEventSubs = async (
   const row = await Plugin.findByPk(id);
   if (!row) return null;
   await row.update({ approvedGlobalEventSubs: JSON.stringify(subs) });
+  return rowOf(row);
+};
+
+/**
+ * Stamp the manifest config_schema_version the plugin's admin config was
+ * just saved under (PD-4.3). One value per plugin. Returns the updated
+ * row, or null if the plugin does not exist.
+ */
+export const setPluginConfigSchemaVersion = async (
+  id: number,
+  version: number | null,
+): Promise<PluginRow | null> => {
+  const row = await Plugin.findByPk(id);
+  if (!row) return null;
+  await row.update({ configSchemaVersion: version });
   return rowOf(row);
 };
 

@@ -28,8 +28,6 @@ import { featureReachResolver } from "../feature-toggle/feature-reach-resolver.j
 import {
   findConfigByPluginAndSource,
   upsertConfigKey,
-  setAdminConfigSchemaVersion,
-  maxConfigSchemaVersion,
 } from "./models/plugin-config.model.js";
 import { kvUsageByPlugin } from "./models/plugin-kv.model.js";
 import { quotaForGuildKv } from "./plugin-rpc-routes.js";
@@ -57,8 +55,10 @@ import {
   deletePlugin,
   findPluginByKey,
   findPluginById,
+  setPluginConfigSchemaVersion,
   setPluginSetupSecretHash,
   upsertPluginRegistration,
+  type PluginRow,
 } from "./models/plugin.model.js";
 import {
   findPluginCommandsByPlugin,
@@ -170,6 +170,34 @@ function presentedBearerToken(req: FastifyRequest): string | null {
 export interface PluginRoutesOptions {
   bot?: Client;
   reconciler?: import("../command-system/reconcile.service.js").CommandReconciler;
+}
+
+/**
+ * Build the admin config-editor payload for a plugin: the manifest's
+ * config_schema, current values (secrets masked), and the current vs
+ * last-saved config_schema_version (for the stale-config warning). Shared
+ * by GET /config and GET /settings.
+ */
+async function buildConfigPayload(plugin: PluginRow) {
+  const manifest = safeParse(plugin.manifestJson) as PluginManifest | null;
+  const schema = manifest?.config_schema ?? [];
+  const rows = await findConfigByPluginAndSource(plugin.id, "admin");
+  const byKey = new Map(rows.map((r) => [r.key, r]));
+  return {
+    schema,
+    // PD-4.3: current schema version vs the one the stored config was last
+    // saved under. The UI warns when stored < current (stale).
+    configSchemaVersion: manifest?.config_schema_version ?? null,
+    storedConfigSchemaVersion: plugin.configSchemaVersion,
+    values: schema.map((field) => {
+      const row = byKey.get(field.key);
+      if (!row) return { key: field.key, set: false, value: null };
+      if (field.type === "secret") {
+        return { key: field.key, set: true, value: "********" };
+      }
+      return { key: field.key, set: true, value: row.value };
+    }),
+  };
 }
 
 export async function registerPluginRoutes(
@@ -1384,37 +1412,22 @@ export async function registerPluginRoutes(
         reply.code(404).send({ error: "plugin not found" });
         return;
       }
-      const manifest = safeParse(plugin.manifestJson) as PluginManifest | null;
-      const schema = manifest?.config_schema ?? [];
-      const rows = await findConfigByPluginAndSource(pluginId, "admin");
-      const byKey = new Map(rows.map((r) => [r.key, r]));
-      return {
-        schema,
-        // PD-4.3: current schema version vs the one the stored config was
-        // last saved under. The UI warns when stored < current (stale).
-        configSchemaVersion: manifest?.config_schema_version ?? null,
-        storedConfigSchemaVersion: maxConfigSchemaVersion(rows),
-        values: schema.map((field) => {
-          const row = byKey.get(field.key);
-          if (!row) return { key: field.key, set: false, value: null };
-          if (field.type === "secret") {
-            return { key: field.key, set: true, value: "********" };
-          }
-          return { key: field.key, set: true, value: row.value };
-        }),
-      };
+      return buildConfigPayload(plugin);
     },
   );
 
   /**
-   * GET /api/plugins/:id/settings-summary (PD-2.2)
+   * GET /api/plugins/:id/settings (PD-2.2)
    *
-   * Cross-surface settings overview for the plugin's "設定" tab: which
-   * guilds override which features, and per-guild KV usage vs quota.
-   * KV usage is COUNT/bytes only — never values (PD-2.1 boundary).
+   * One-shot payload for the plugin's "設定" tab: the admin config editor
+   * (schema + values + stale-version signal) PLUS the cross-surface
+   * overview — which guilds override which features, and per-guild KV
+   * usage vs quota. KV usage is COUNT/bytes only — never values (PD-2.1
+   * boundary). Folds what used to be a separate /config + /settings-
+   * summary round-trip into a single request + plugin lookup.
    */
   server.get<{ Params: { id: string } }>(
-    "/api/plugins/:id/settings-summary",
+    "/api/plugins/:id/settings",
     async (request, reply) => {
       if (!requireCapability(request, reply, "admin")) return;
       const pluginId = Number(request.params.id);
@@ -1427,7 +1440,8 @@ export async function registerPluginRoutes(
         reply.code(404).send({ error: "plugin not found" });
         return;
       }
-      const [kvGuilds, kvQuotaBytes, featureRows] = await Promise.all([
+      const [config, kvGuilds, kvQuotaBytes, featureRows] = await Promise.all([
+        buildConfigPayload(plugin),
         kvUsageByPlugin(pluginId),
         quotaForGuildKv(pluginId),
         findFeatureRowsByPlugin(pluginId),
@@ -1443,6 +1457,7 @@ export async function registerPluginRoutes(
         guildNames[gid] = options.bot?.guilds.cache.get(gid)?.name ?? null;
       }
       return {
+        config,
         kv: { quotaBytes: kvQuotaBytes, guilds: kvGuilds },
         featureOverrides: featureRows.map((r) => ({
           guildId: r.guildId,
@@ -1549,7 +1564,7 @@ export async function registerPluginRoutes(
     }
     // PD-4.3: stamp the schema version this save was written against, so a
     // later manifest config_schema_version bump surfaces as "stale config".
-    await setAdminConfigSchemaVersion(
+    await setPluginConfigSchemaVersion(
       pluginId,
       manifest?.config_schema_version ?? null,
     );
