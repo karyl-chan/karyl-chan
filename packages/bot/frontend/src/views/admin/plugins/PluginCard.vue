@@ -5,6 +5,7 @@ import { Icon } from '@iconify/vue';
 import { RouterLink } from 'vue-router';
 import { AppBadge, AppButton, AppConfirmDialog, AppItemCard, AppMenu, AppMenuItem, AppToggle } from '@karyl-chan/ui';
 import {
+    ConfigValidationError,
     deletePlugin,
     getPluginConfig,
     probePluginDispatch,
@@ -54,6 +55,12 @@ const configLoading = ref(false);
 const configSaving = ref(false);
 const configError = ref<string | null>(null);
 const configSavedAt = ref<number | null>(null);
+// PD-4.3: stored admin config saved under an older config_schema_version.
+const configStale = ref(false);
+const configFieldErrors = reactive<Record<string, string>>({});
+function clearFieldErrors(): void {
+    for (const k of Object.keys(configFieldErrors)) delete configFieldErrors[k];
+}
 
 const hasConfigSchema = computed(() =>
     (props.plugin.manifest?.config_schema?.length ?? 0) > 0
@@ -66,6 +73,10 @@ async function loadConfig() {
     try {
         const r = await getPluginConfig(props.plugin.id);
         configSchema.value = r.schema;
+        configStale.value =
+            r.storedConfigSchemaVersion != null &&
+            r.configSchemaVersion != null &&
+            r.storedConfigSchemaVersion < r.configSchemaVersion;
         for (const v of r.values) {
             // Use empty string for "unset" so two-way binding has a real
             // string. The save path treats "" + non-secret type as
@@ -73,10 +84,19 @@ async function loadConfig() {
             configValues[v.key] = v.value ?? '';
         }
         // Seed defaults for keys the server didn't return (e.g. brand-
-        // new schema field) so the form renders something to type into.
+        // new schema field). Defaults arrive as raw manifest JSON
+        // (boolean/number/string); store everything as a string by type.
         for (const f of r.schema) {
             if (!(f.key in configValues)) {
-                configValues[f.key] = (f.default as string | undefined) ?? '';
+                const raw = f.default;
+                configValues[f.key] =
+                    f.type === 'boolean'
+                        ? raw === true || raw === 'true'
+                            ? 'true'
+                            : 'false'
+                        : raw == null
+                          ? ''
+                          : String(raw);
             }
         }
         configLoaded.value = true;
@@ -91,14 +111,26 @@ async function saveConfig() {
     if (configSaving.value) return;
     configSaving.value = true;
     configError.value = null;
+    clearFieldErrors();
     try {
         // Send everything in the form back. The backend skips secret
         // fields whose value is still the "********" sentinel, so
         // unchanged secrets stay encrypted at rest.
         await setPluginConfig(props.plugin.id, { ...configValues });
         configSavedAt.value = Date.now();
+        configStale.value = false;
     } catch (err) {
-        configError.value = err instanceof Error ? err.message : String(err);
+        if (err instanceof ConfigValidationError) {
+            for (const fe of err.fieldErrors) {
+                configFieldErrors[fe.key] = fe.message;
+            }
+            configError.value =
+                err.fieldErrors.length === 1
+                    ? `1 field has errors — correct it and save again.`
+                    : `${err.fieldErrors.length} fields have errors — correct them and save again.`;
+        } else {
+            configError.value = err instanceof Error ? err.message : String(err);
+        }
     } finally {
         configSaving.value = false;
     }
@@ -455,12 +487,17 @@ async function confirmDelete() {
                     <h4>外掛設定</h4>
                     <span v-if="configSavedAt && (Date.now() - configSavedAt < 4000)" class="muted saved">已儲存</span>
                 </header>
+                <div v-if="configStale && configLoaded" class="config-stale-warning" role="alert">
+                    <Icon icon="material-symbols:warning-outline-rounded" width="15" height="15" class="stale-icon" />
+                    <span>{{ t('admin.plugins.detail.configStale') }}</span>
+                </div>
                 <p v-if="configLoading" class="muted">載入中…</p>
                 <p v-if="configError" class="error" role="alert">{{ configError }}</p>
                 <div v-else-if="configLoaded">
                     <PluginConfigFields
                         :schema="configSchema"
                         :values="configValues"
+                        :field-errors="configFieldErrors"
                         layout="grid"
                     />
                     <div class="config-actions">
@@ -583,6 +620,20 @@ async function confirmDelete() {
 }
 .config-header h4 { margin: 0; font-size: 0.92rem; color: var(--text-strong); flex: 1; }
 .muted.saved { color: var(--accent); font-size: 0.78rem; }
+.config-stale-warning {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.4rem;
+    padding: 0.45rem 0.6rem;
+    margin-bottom: 0.5rem;
+    background: color-mix(in srgb, var(--warning, #d97706) 11%, var(--bg-page));
+    border: 1px solid color-mix(in srgb, var(--warning, #d97706) 35%, transparent);
+    border-radius: var(--radius-sm);
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: var(--warning, #d97706);
+}
+.config-stale-warning .stale-icon { flex-shrink: 0; margin-top: 0.1rem; }
 .config-actions {
     display: flex; justify-content: flex-end; margin-top: 0.6rem;
 }
