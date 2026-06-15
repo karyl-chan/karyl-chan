@@ -1118,6 +1118,7 @@
                     "overrideOn": "覆寫為開",
                     "overrideOff": "覆寫為關",
                     "usingDefault": "沿用預設",
+                    "featureRemoved": "已從 manifest 移除 —— 此覆寫仍然生效",
                     "kvTitle": "外掛儲存（KV）",
                     "kvDesc": "此 plugin 在各伺服器存了多少資料、佔 quota 多少。內容為 plugin 私有、不顯示。",
                     "kvEmpty": "此 plugin 尚未儲存任何資料。",

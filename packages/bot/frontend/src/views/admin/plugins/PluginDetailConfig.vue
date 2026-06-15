@@ -61,6 +61,21 @@ const overrideRows = computed(() => {
         .map(([guildId, feats]) => ({ guildId, feats }));
 });
 
+/** Matrix columns: manifest features first, then any override keys no
+ *  longer in the manifest ("orphans") so a lingering override for a removed
+ *  feature stays visible instead of collapsing to an all-"—" row — it still
+ *  affects feature-reach resolution. */
+const columns = computed(() => {
+    const manifestKeys = new Set(features.value.map((f) => f.key));
+    const cols = features.value.map((f) => ({ key: f.key, name: f.name, orphan: false }));
+    const orphans = new Set<string>();
+    for (const o of summary.value?.featureOverrides ?? []) {
+        if (!manifestKeys.has(o.featureKey)) orphans.add(o.featureKey);
+    }
+    for (const k of [...orphans].sort()) cols.push({ key: k, name: k, orphan: true });
+    return cols;
+});
+
 const kvGuilds = computed(() => summary.value?.kv.guilds ?? []);
 const kvQuota = computed(() => summary.value?.kv.quotaBytes ?? 0);
 function kvPct(used: number): number {
@@ -193,7 +208,7 @@ onMounted(load);
             </section>
 
             <!-- 2. Per-guild feature overrides matrix -->
-            <section v-if="features.length > 0" class="section">
+            <section v-if="columns.length > 0" class="section">
                 <div class="section-header">
                     <h3 class="section-title">{{ t('admin.plugins.detail.config.guildOverridesTitle') }}</h3>
                 </div>
@@ -206,7 +221,12 @@ onMounted(load);
                         <thead>
                             <tr>
                                 <th>{{ t('admin.plugins.detail.config.guildCol') }}</th>
-                                <th v-for="f in features" :key="f.key" :title="f.key">{{ f.name }}</th>
+                                <th
+                                    v-for="c in columns"
+                                    :key="c.key"
+                                    :class="{ orphan: c.orphan }"
+                                    :title="c.orphan ? t('admin.plugins.detail.config.featureRemoved') : c.key"
+                                >{{ c.name }}<span v-if="c.orphan" class="orphan-mark" aria-hidden="true"> ⚠</span></th>
                             </tr>
                         </thead>
                         <tbody>
@@ -215,12 +235,12 @@ onMounted(load);
                                     <span v-if="summary?.guildNames[row.guildId]" class="gname" :title="row.guildId">{{ summary.guildNames[row.guildId] }}</span>
                                     <code v-else class="gid">{{ row.guildId }}</code>
                                 </td>
-                                <td v-for="f in features" :key="f.key" class="cell">
+                                <td v-for="c in columns" :key="c.key" class="cell">
                                     <span
-                                        v-if="row.feats.has(f.key)"
-                                        :class="['ov', row.feats.get(f.key) ? 'on' : 'off']"
-                                        :title="row.feats.get(f.key) ? t('admin.plugins.detail.config.overrideOn') : t('admin.plugins.detail.config.overrideOff')"
-                                    >{{ row.feats.get(f.key) ? '✓' : '✕' }}</span>
+                                        v-if="row.feats.has(c.key)"
+                                        :class="['ov', row.feats.get(c.key) ? 'on' : 'off']"
+                                        :title="row.feats.get(c.key) ? t('admin.plugins.detail.config.overrideOn') : t('admin.plugins.detail.config.overrideOff')"
+                                    >{{ row.feats.get(c.key) ? '✓' : '✕' }}</span>
                                     <span v-else class="ov default" :title="t('admin.plugins.detail.config.usingDefault')">—</span>
                                 </td>
                             </tr>
@@ -324,6 +344,8 @@ onMounted(load);
     white-space: nowrap;
 }
 .matrix th { color: var(--text-muted); font-weight: 500; }
+.matrix th.orphan { color: var(--warning, #d97706); }
+.orphan-mark { color: var(--warning, #d97706); }
 .matrix .cell { text-align: center; }
 .ov { font-weight: 600; }
 .ov.on { color: var(--success, #16a34a); }

@@ -1118,6 +1118,7 @@
                     "overrideOn": "Overridden on",
                     "overrideOff": "Overridden off",
                     "usingDefault": "Using default",
+                    "featureRemoved": "Removed from the manifest — this override still applies",
                     "kvTitle": "Plugin storage (KV)",
                     "kvDesc": "How much the plugin has stored per server, against its quota. Contents are private to the plugin and not shown.",
                     "kvEmpty": "This plugin has not stored any data.",
