@@ -11,6 +11,7 @@ import {
     type GuildFeatureItem
 } from '../../../api/plugin-features';
 import { ConfigValidationError } from '../../../api/plugins';
+import PluginConfigFields from '../../../components/PluginConfigFields.vue';
 import {
     listBuiltinFeatureState,
     setBuiltinFeatureState,
@@ -185,9 +186,11 @@ function toggleConfig(item: GuildFeatureItem) {
     }
 }
 
-function fieldErrorFor(key: string): string | null {
-    return configFieldErrors.value.find((e) => e.key === key)?.message ?? null;
-}
+const fieldErrorMap = computed<Record<string, string>>(() => {
+    const m: Record<string, string> = {};
+    for (const e of configFieldErrors.value) m[e.key] = e.message;
+    return m;
+});
 
 async function saveFeatureConfig(item: GuildFeatureItem) {
     if (configSaving.value) return;
@@ -331,57 +334,12 @@ watch(() => props.guildId, refresh);
                             <!-- 行內 per-guild config 編輯器（PD-1.3） -->
                             <div v-if="configOpenKey === pluginKey(item)" class="config-editor">
                                 <p v-if="configError" class="error" role="alert">{{ configError }}</p>
-                                <label
-                                    v-for="field in item.configSchema"
-                                    :key="field.key"
-                                    :class="['config-field', { 'has-error': fieldErrorFor(field.key) !== null }]"
-                                >
-                                    <span class="config-label">
-                                        {{ field.label }}
-                                        <span v-if="field.required" class="req" aria-hidden="true">*</span>
-                                        <span v-if="field.description" class="hint">{{ field.description }}</span>
-                                    </span>
-                                    <textarea
-                                        v-if="field.type === 'textarea'"
-                                        v-model="configValues[field.key]"
-                                        rows="3"
-                                        spellcheck="false"
-                                        :maxlength="field.max"
-                                    />
-                                    <select
-                                        v-else-if="field.type === 'select' && field.options"
-                                        v-model="configValues[field.key]"
-                                    >
-                                        <option value="">—</option>
-                                        <option v-for="opt in field.options" :key="opt.value" :value="opt.value">
-                                            {{ opt.label }}
-                                        </option>
-                                    </select>
-                                    <input
-                                        v-else-if="field.type === 'boolean'"
-                                        type="checkbox"
-                                        :checked="configValues[field.key] === 'true'"
-                                        @change="(e) => { configValues[field.key] = (e.target as HTMLInputElement).checked ? 'true' : 'false'; }"
-                                    />
-                                    <input
-                                        v-else
-                                        v-model="configValues[field.key]"
-                                        :type="field.type === 'secret' ? 'password' : (field.type === 'number' ? 'number' : 'text')"
-                                        :placeholder="field.type === 'secret' ? '留空 = 不變更' : ''"
-                                        autocomplete="off"
-                                        spellcheck="false"
-                                        :min="field.type === 'number' ? field.min : undefined"
-                                        :max="field.type === 'number' ? field.max : undefined"
-                                        :step="field.type === 'number' ? field.step : undefined"
-                                        :maxlength="field.type !== 'number' ? field.max : undefined"
-                                        :pattern="field.pattern"
-                                    />
-                                    <span
-                                        v-if="fieldErrorFor(field.key)"
-                                        class="field-error"
-                                        role="alert"
-                                    >{{ fieldErrorFor(field.key) }}</span>
-                                </label>
+                                <PluginConfigFields
+                                    layout="stack"
+                                    :schema="item.configSchema"
+                                    :values="configValues"
+                                    :field-errors="fieldErrorMap"
+                                />
                                 <div class="config-actions">
                                     <span v-if="configSavedAt && (Date.now() - configSavedAt < 4000)" class="saved-hint">已儲存</span>
                                     <button type="button" class="btn small" :disabled="configSaving" @click="saveFeatureConfig(item)">
@@ -531,46 +489,6 @@ watch(() => props.guildId, refresh);
     display: flex;
     flex-direction: column;
     gap: 0.55rem;
-}
-.config-field {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-}
-.config-field.has-error input,
-.config-field.has-error textarea,
-.config-field.has-error select {
-    border-color: var(--danger, #dc2626);
-}
-.config-label {
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: var(--text-strong);
-    display: flex;
-    align-items: baseline;
-    gap: 0.35rem;
-    flex-wrap: wrap;
-}
-.config-label .req { color: var(--danger, #dc2626); }
-.config-label .hint { font-weight: 400; color: var(--text-muted); }
-.config-field input[type="text"],
-.config-field input[type="password"],
-.config-field input[type="number"],
-.config-field textarea,
-.config-field select {
-    padding: 0.35rem 0.5rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: var(--bg-surface);
-    color: var(--text);
-    font: inherit;
-    font-size: 0.82rem;
-    width: 100%;
-    box-sizing: border-box;
-}
-.field-error {
-    font-size: 0.75rem;
-    color: var(--danger, #dc2626);
 }
 .config-actions {
     display: flex;

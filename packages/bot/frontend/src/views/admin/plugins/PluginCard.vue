@@ -14,6 +14,7 @@ import {
     type PluginDispatchProbeResult,
     type PluginRecord
 } from '../../../api/plugins';
+import PluginConfigFields from '../../../components/PluginConfigFields.vue';
 import { dispatchProblem, lifecycleProblem, sdkCompatProblem } from './plugin-card-health';
 import { pluginInstallState } from './plugin-install-state';
 
@@ -456,47 +457,12 @@ async function confirmDelete() {
                 </header>
                 <p v-if="configLoading" class="muted">載入中…</p>
                 <p v-if="configError" class="error" role="alert">{{ configError }}</p>
-                <div v-else-if="configLoaded" class="config-grid">
-                    <label
-                        v-for="field in configSchema"
-                        :key="field.key"
-                        :class="['config-field', { full: field.type === 'textarea' }]"
-                    >
-                        <span class="config-label">
-                            {{ field.label }}
-                            <span v-if="field.required" class="req" aria-hidden="true">*</span>
-                            <span v-if="field.description" class="hint">{{ field.description }}</span>
-                        </span>
-                        <textarea
-                            v-if="field.type === 'textarea'"
-                            v-model="configValues[field.key]"
-                            rows="3"
-                            spellcheck="false"
-                        />
-                        <select
-                            v-else-if="field.type === 'select' && field.options"
-                            v-model="configValues[field.key]"
-                        >
-                            <option value="">—</option>
-                            <option v-for="opt in field.options" :key="opt.value" :value="opt.value">
-                                {{ opt.label }}
-                            </option>
-                        </select>
-                        <AppToggle
-                            v-else-if="field.type === 'boolean'"
-                            :modelValue="configValues[field.key] === 'true'"
-                            :aria-label="field.label || field.key"
-                            @update:modelValue="(v) => { configValues[field.key] = v ? 'true' : 'false'; }"
-                        />
-                        <input
-                            v-else
-                            v-model="configValues[field.key]"
-                            :type="field.type === 'secret' ? 'password' : (field.type === 'number' ? 'number' : 'text')"
-                            :placeholder="field.type === 'secret' ? '留空 = 不變更' : ''"
-                            autocomplete="off"
-                            spellcheck="false"
-                        />
-                    </label>
+                <div v-else-if="configLoaded">
+                    <PluginConfigFields
+                        :schema="configSchema"
+                        :values="configValues"
+                        layout="grid"
+                    />
                     <div class="config-actions">
                         <AppButton variant="primary" size="sm" :loading="configSaving" @click="saveConfig">
                             儲存設定
@@ -617,39 +583,8 @@ async function confirmDelete() {
 }
 .config-header h4 { margin: 0; font-size: 0.92rem; color: var(--text-strong); flex: 1; }
 .muted.saved { color: var(--accent); font-size: 0.78rem; }
-.config-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-    gap: 0.6rem 0.85rem;
-}
-.config-field {
-    display: flex; flex-direction: column; gap: 0.25rem;
-}
-.config-field.full { grid-column: 1 / -1; }
-.config-label {
-    display: flex; flex-direction: column;
-    font-size: 0.82rem;
-    color: var(--text-strong);
-    font-weight: 500;
-}
-.config-label .req { color: var(--danger); margin-left: 0.2rem; font-weight: 400; }
-.config-label .hint { color: var(--text-muted); font-weight: 400; font-size: 0.75rem; margin-top: 0.1rem; }
-.config-field input[type="text"],
-.config-field input[type="number"],
-.config-field input[type="password"],
-.config-field textarea,
-.config-field select {
-    padding: 0.35rem 0.5rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: var(--bg-surface);
-    color: var(--text);
-    font-size: 0.85rem;
-    font-family: inherit;
-}
 .config-actions {
-    grid-column: 1 / -1;
-    display: flex; justify-content: flex-end;
+    display: flex; justify-content: flex-end; margin-top: 0.6rem;
 }
 
 /* ── Scope chips ─────────────────────────────────────────────────── */

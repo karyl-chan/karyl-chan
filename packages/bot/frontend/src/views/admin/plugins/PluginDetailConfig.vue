@@ -12,6 +12,7 @@ import {
     type PluginDetailRecord,
     type PluginSettingsSummary,
 } from '../../../api/plugins';
+import PluginConfigFields from '../../../components/PluginConfigFields.vue';
 
 const props = defineProps<{
     plugin: PluginDetailRecord;
@@ -33,9 +34,6 @@ const configSavedAt = ref<number | null>(null);
 // PD-4.3: stored admin config saved under an older config_schema_version.
 const configStale = ref(false);
 const configFieldErrors = reactive<Record<string, string>>({});
-function fieldErrorFor(key: string): string | null {
-    return configFieldErrors[key] ?? null;
-}
 function clearFieldErrors(): void {
     for (const k of Object.keys(configFieldErrors)) delete configFieldErrors[k];
 }
@@ -205,61 +203,13 @@ onMounted(loadAll);
             </div>
             <p v-if="configLoading" class="muted">{{ t('common.loading') }}</p>
             <p v-if="configError" class="error" role="alert">{{ configError }}</p>
-            <div v-else-if="configLoaded" class="config-grid">
-                <label
-                    v-for="field in configSchema"
-                    :key="field.key"
-                    :class="[
-                        'config-field',
-                        { full: field.type === 'textarea', 'has-error': fieldErrorFor(field.key) !== null },
-                    ]"
-                >
-                    <span class="config-label">
-                        {{ field.label }}
-                        <span v-if="field.required" class="req" aria-hidden="true">*</span>
-                        <span v-if="field.description" class="hint">{{ field.description }}</span>
-                    </span>
-                    <textarea
-                        v-if="field.type === 'textarea'"
-                        v-model="configValues[field.key]"
-                        rows="3"
-                        spellcheck="false"
-                        :maxlength="field.max"
-                    />
-                    <select
-                        v-else-if="field.type === 'select' && field.options"
-                        v-model="configValues[field.key]"
-                    >
-                        <option value="">—</option>
-                        <option v-for="opt in field.options" :key="opt.value" :value="opt.value">
-                            {{ opt.label }}
-                        </option>
-                    </select>
-                    <input
-                        v-else-if="field.type === 'boolean'"
-                        type="checkbox"
-                        :checked="configValues[field.key] === 'true'"
-                        @change="(e) => { configValues[field.key] = (e.target as HTMLInputElement).checked ? 'true' : 'false'; }"
-                    />
-                    <input
-                        v-else
-                        v-model="configValues[field.key]"
-                        :type="field.type === 'secret' ? 'password' : (field.type === 'number' ? 'number' : 'text')"
-                        :placeholder="field.type === 'secret' ? '留空 = 不變更' : ''"
-                        autocomplete="off"
-                        spellcheck="false"
-                        :min="field.type === 'number' ? field.min : undefined"
-                        :max="field.type === 'number' ? field.max : undefined"
-                        :step="field.type === 'number' ? field.step : undefined"
-                        :maxlength="field.type !== 'number' ? field.max : undefined"
-                        :pattern="field.pattern"
-                    />
-                    <span
-                        v-if="fieldErrorFor(field.key)"
-                        class="field-error"
-                        role="alert"
-                    >{{ fieldErrorFor(field.key) }}</span>
-                </label>
+            <div v-else-if="configLoaded">
+                <PluginConfigFields
+                    :schema="configSchema"
+                    :values="configValues"
+                    :field-errors="configFieldErrors"
+                    layout="grid"
+                />
                 <div class="config-actions">
                     <button type="button" class="primary" :disabled="configSaving" @click="saveConfig">
                         {{ configSaving ? t('admin.plugins.detail.config.saving') : t('admin.plugins.detail.config.save') }}
@@ -381,40 +331,7 @@ onMounted(loadAll);
     color: var(--warning, #d97706);
 }
 .config-stale-warning .stale-icon { flex-shrink: 0; margin-top: 0.1rem; }
-.config-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-    gap: 0.6rem 0.85rem;
-}
-.config-field { display: flex; flex-direction: column; gap: 0.25rem; }
-.config-field.full { grid-column: 1 / -1; }
-.config-label {
-    display: flex; flex-direction: column;
-    font-size: 0.82rem;
-    color: var(--text-strong);
-    font-weight: 500;
-}
-.config-label .req { color: var(--danger); margin-left: 0.2rem; font-weight: 400; }
-.config-label .hint { color: var(--text-muted); font-weight: 400; font-size: 0.75rem; margin-top: 0.1rem; }
-.config-field input[type="text"],
-.config-field input[type="number"],
-.config-field input[type="password"],
-.config-field textarea,
-.config-field select {
-    padding: 0.35rem 0.5rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: var(--bg-surface);
-    color: var(--text);
-    font-size: 0.85rem;
-    font-family: inherit;
-}
-.config-field.has-error input,
-.config-field.has-error textarea,
-.config-field.has-error select { border-color: var(--danger); }
-.field-error { color: var(--danger); font-size: 0.78rem; margin-top: 0.2rem; }
-.config-field input[type="checkbox"] { align-self: flex-start; margin-top: 0.2rem; }
-.config-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; }
+.config-actions { display: flex; justify-content: flex-end; margin-top: 0.6rem; }
 .config-actions .primary {
     padding: 0.4rem 0.85rem;
     background: var(--accent);
