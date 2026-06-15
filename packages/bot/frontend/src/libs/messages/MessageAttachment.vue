@@ -3,6 +3,7 @@ import { computed } from 'vue';
 import { useMessageContext } from './context';
 import { useLightboxStore } from '../../modules/discord-chat/stores/lightboxStore';
 import { safeHref } from './safe-href';
+import { formatBytes } from '../../utils/format';
 import type { MessageAttachment } from './types';
 
 const props = defineProps<{
@@ -25,12 +26,7 @@ const kind = computed<'image' | 'video' | 'audio' | 'file'>(() => {
     return 'file';
 });
 
-const sizeLabel = computed(() => {
-    const bytes = props.attachment.size;
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-});
+const sizeLabel = computed(() => formatBytes(props.attachment.size));
 
 function open() {
     // Existing host hook (e.g. analytics) still fires for any kind.
