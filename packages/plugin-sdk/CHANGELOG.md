@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.2](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.11.1...plugin-sdk-v0.11.2) (2026-06-17)
+
+
+### Bug Fixes
+
+* **plugin-sdk:** restore claims from stored bearer on tab reload ([8e6e382](https://github.com/karyl-chan/karyl-chan/commit/8e6e38260e4e62aa9336c14df66ecde6d8537715))
+
 ## [0.11.1](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.11.0...plugin-sdk-v0.11.1) (2026-06-14)
 
 
