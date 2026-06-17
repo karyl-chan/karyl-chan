@@ -109,9 +109,12 @@ export interface SessionHandle {
   /** Message describing the denial when `denied` is true; otherwise null. */
   readonly deniedReason: string | null;
   /**
-   * The decoded JWT claims from the boot token (no signature check —
-   * the server is authoritative). Null on tab reload where no URL
-   * token was present and we restored from sessionStorage.
+   * The decoded JWT claims (no signature check — the server is
+   * authoritative). Sourced from the URL boot token on first load, and
+   * on a tab reload re-decoded from a restored single bearer so a
+   * session-tier SPA keeps its guildId. Null only when a pair-mode
+   * (exchange/manage) session is restored from sessionStorage — that
+   * access token is opaque and resumes via `hasRefreshPair` instead.
    */
   readonly claims: JwtClaims | null;
   /** `guildId` from the bootstrap claims, if any. */
@@ -199,6 +202,18 @@ export async function bootstrapPluginSession(
     // Not a denial — a fresh-tab visitor with no token just has
     // `isAuthenticated === false`.
     auth.loadStored();
+    // A restored *single* bearer IS the bot-issued JWT (stored verbatim
+    // via setBearer), so re-decode it to recover the claims — guildId in
+    // particular — that a session-tier SPA needs to resume after a reload.
+    // Without this, `claims` stays null on reload and SPAs that scope a
+    // view by guildId have no choice but to deny a still-valid session.
+    // Pair-mode restores leave getStoredBearer() null (the access token is
+    // opaque and resumes via hasRefreshPair), so claims stay null there —
+    // unchanged behaviour for the exchange/manage flow.
+    const restoredBearer = auth.getStoredBearer();
+    if (restoredBearer) {
+      claims = decodeJwt(restoredBearer);
+    }
   }
 
   // Wire the API once, sharing the auth state and the denied fanout.
