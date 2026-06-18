@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.10.0](https://github.com/karyl-chan/karyl-chan/compare/bot-v1.9.0...bot-v1.10.0) (2026-06-18)
+
+
+### Features
+
+* **bot:** admin-UI plugin manage link + requirePluginCapability guard ([12184d4](https://github.com/karyl-chan/karyl-chan/commit/12184d4d5396999dae66dcbd1467e3b6a1730fb4))
+* **bot:** align PluginCard config editor with the 設定 tab ([ffd4439](https://github.com/karyl-chan/karyl-chan/commit/ffd4439552795caf1e9f2441cb2d8c44efbe05a9))
+* **bot:** resolve guild names in the plugin settings overview (PD-2.2 follow-up) ([1263f4c](https://github.com/karyl-chan/karyl-chan/commit/1263f4c1ca78ae06e45182fb87894a2767c2d707))
+* **bot:** surface auto-approve mode in the plugin Security tab (PD-4.4) ([bbf2cde](https://github.com/karyl-chan/karyl-chan/commit/bbf2cde580a588985af8303b54ae0cacbf348020))
+* **bot:** surface lifecycle dispatch (onEnable/onDisable) out-of-sync state (PD-4.2) ([aeb252c](https://github.com/karyl-chan/karyl-chan/commit/aeb252c44ca8dad2d85ae0fad6f2e6ebbe0a3922))
+* **bot:** unified plugin settings view — new "設定" tab (PD-2.2) ([929d675](https://github.com/karyl-chan/karyl-chan/commit/929d675d225628003afdd26b9a3a4422d446a3f7))
+* **bot:** warn when stored plugin config predates the manifest's config_schema_version (PD-4.3) ([253a21b](https://github.com/karyl-chan/karyl-chan/commit/253a21b6b04a080f3d3a98be99eb5c7386e5764d))
+* **frontend:** direct "set default for all servers" entry on the plugin Features tab (PD-4.1) ([ffd8879](https://github.com/karyl-chan/karyl-chan/commit/ffd8879a0437b4ef80a9fea84502342f27a0c649))
+
+
+### Bug Fixes
+
+* **bot:** harden manage_path validation + manage-link id guard ([74ebfb4](https://github.com/karyl-chan/karyl-chan/commit/74ebfb49f7c8007ab2b1ac6a610a08ba03040e4e))
+* **bot:** harden plugin "設定" tab config editor (code-review xhigh) ([2f5815b](https://github.com/karyl-chan/karyl-chan/commit/2f5815b30092d8e6090ed22519123f28c619e587))
+* **bot:** surface orphan feature overrides in the settings matrix ([69623a6](https://github.com/karyl-chan/karyl-chan/commit/69623a62e53dc2cc6895ddd0ca60c48a0dc3cddc))
+
 ## [1.9.0](https://github.com/karyl-chan/karyl-chan/compare/bot-v1.8.0...bot-v1.9.0) (2026-06-14)
 
 
