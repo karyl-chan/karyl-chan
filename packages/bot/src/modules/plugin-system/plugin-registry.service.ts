@@ -537,6 +537,7 @@ export async function validateManifest(
         typeof mp !== "string" ||
         !/^\/[A-Za-z0-9/_-]*$/.test(mp) ||
         mp.endsWith("/") ||
+        mp.includes("//") ||
         mp.includes("..")
       ) {
         return {

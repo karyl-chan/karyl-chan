@@ -564,7 +564,7 @@ export async function registerPluginRoutes(
     "/api/plugins/:id/manage-link",
     async (request, reply) => {
       const id = Number(request.params.id);
-      if (!Number.isInteger(id)) {
+      if (!Number.isInteger(id) || id <= 0) {
         reply.code(400).send({ error: "invalid plugin id" });
         return;
       }
