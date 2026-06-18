@@ -5,6 +5,7 @@ import {
     requireAnyCapability,
     requireAnyMessagingCapability,
     requireCapability,
+    requirePluginCapability,
 } from '../src/modules/web-core/route-guards.js';
 
 /**
@@ -29,6 +30,53 @@ function fakeRequest(caps: AdminCapability[] | undefined): FastifyRequest {
         authCapabilities: caps ? new Set(caps) : undefined
     } as unknown as FastifyRequest;
 }
+
+describe('requirePluginCapability', () => {
+    it('allows the exact plugin:<key>:<cap> token', () => {
+        const { reply, code } = fakeReply();
+        expect(
+            requirePluginCapability(
+                fakeRequest(['plugin:karyl-radio:manage' as AdminCapability]),
+                reply,
+                'karyl-radio',
+                'manage',
+            ),
+        ).toBe(true);
+        expect(code).not.toHaveBeenCalled();
+    });
+
+    it('admin is a superuser bypass — no per-plugin token needed', () => {
+        const { reply, code } = fakeReply();
+        expect(
+            requirePluginCapability(fakeRequest(['admin']), reply, 'karyl-radio', 'manage'),
+        ).toBe(true);
+        expect(code).not.toHaveBeenCalled();
+    });
+
+    it('does not cross plugin boundaries — another plugin grant is denied', () => {
+        const { reply, code, send } = fakeReply();
+        expect(
+            requirePluginCapability(
+                fakeRequest(['plugin:karyl-other:manage' as AdminCapability]),
+                reply,
+                'karyl-radio',
+                'manage',
+            ),
+        ).toBe(false);
+        expect(code).toHaveBeenCalledWith(403);
+        expect(send).toHaveBeenCalledWith({
+            error: 'plugin:karyl-radio:manage capability required',
+        });
+    });
+
+    it('denies when authCapabilities is undefined (the hook never ran)', () => {
+        const { reply, code } = fakeReply();
+        expect(
+            requirePluginCapability(fakeRequest(undefined), reply, 'karyl-radio', 'manage'),
+        ).toBe(false);
+        expect(code).toHaveBeenCalledWith(403);
+    });
+});
 
 describe('requireCapability', () => {
     it('allows when the user has the exact capability', () => {

@@ -29,7 +29,7 @@ import { featureReachResolver } from "../feature-toggle/feature-reach-resolver.j
 import type { PluginManifest } from "./plugin-registry.service.js";
 import { jwtService } from "../web-core/jwt.service.js";
 import { resolveUserCapabilities } from "../admin/authorized-user.service.js";
-import { makePluginCapabilityToken } from "../admin/admin-capabilities.js";
+import { hasPluginCapability } from "../admin/admin-capabilities.js";
 import { discordErrorStatus } from "../web-core/discord-error.js";
 import { assertPluginTarget, HostPolicyError } from "../../utils/host-policy.js";
 import {
@@ -322,6 +322,46 @@ export async function quotaForGuildKv(pluginId: number): Promise<number> {
     return Math.min(declaredKb * 1024, KV_VALUE_MAX_BYTES * 16);
   }
   return DEFAULT_KV_QUOTA_BYTES;
+}
+
+/**
+ * Mint a plugin-session **manage** token for `userId` against `pluginKey`.
+ * Shared by the plugin-facing `auth.session` RPC (kind=manage) and the
+ * admin-UI manage-link endpoint so the authorization rule lives in ONE
+ * place: `hasPluginCapability` (which bypasses `admin` as a superuser —
+ * no hand-rolled `admin ||` per call site), and the token carries only
+ * the holder's `admin` + `plugin:<key>:*` subset, never another plugin's
+ * grants. Signed with this plugin's own derived key, so it verifies only
+ * against that plugin's WebUI.
+ *
+ * Returns `{ allowed: false }` when the user holds neither `admin` nor
+ * `plugin:<key>:manage`.
+ */
+export async function mintPluginManageToken(
+  pluginKey: string,
+  userId: string,
+  ttlMs: number = 15 * 60_000,
+): Promise<
+  { allowed: true; token: string; expiresAt: number } | { allowed: false }
+> {
+  const allCaps = await resolveUserCapabilities(userId);
+  if (!hasPluginCapability(allCaps, pluginKey, "manage")) {
+    return { allowed: false };
+  }
+  const pluginCaps = [...allCaps].filter(
+    (c) => c === "admin" || c.startsWith(`plugin:${pluginKey}:`),
+  );
+  const { token, expiresAt } = jwtService.signPluginSession(
+    pluginKey,
+    {
+      purpose: "plugin-session",
+      userId,
+      guildId: null,
+      capabilities: pluginCaps,
+    },
+    { ttlMs },
+  );
+  return { allowed: true, token, expiresAt };
 }
 
 /**
@@ -1787,32 +1827,22 @@ export async function registerPluginRpcRoutes(
         : defaultTtl;
     ttlMs = Math.max(60_000, Math.min(ttlMs, 7 * 24 * 60 * 60_000));
 
-    const allCaps = await resolveUserCapabilities(userId);
-    const requiredCap = makePluginCapabilityToken(
-      ctx.pluginKey,
-      "manage",
-    );
-    const privileged = allCaps.has("admin") || allCaps.has(requiredCap);
-    if (kind === "manage" && !privileged) {
-      return { allowed: false };
+    // Manage tokens go through the shared mint helper so the cap check
+    // (admin OR plugin:<key>:manage, via hasPluginCapability) and the
+    // `admin` + plugin:<key>:* cap filter stay identical to the admin
+    // UI's manage-link endpoint — one authorization rule, two call sites.
+    if (kind === "manage") {
+      return await mintPluginManageToken(ctx.pluginKey, userId, ttlMs);
     }
-    // Only `manage` tokens carry capabilities (and only `admin` + this
-    // plugin's own `plugin:<key>:*` — never another plugin's grants).
     // `session` tokens are authorized purely by the embedded guildId, so
     // they ship NO capabilities — they may end up in a link button the
     // invoker copies/shares, and a leaked token must not confer admin.
-    const pluginCaps =
-      kind === "manage"
-        ? [...allCaps].filter(
-            (c) => c === "admin" || c.startsWith(`plugin:${ctx.pluginKey}:`),
-          )
-        : [];
     // Sign with this plugin's own derived key so the token verifies ONLY
     // against the `sessionVerifyPublicKey` we hand THIS plugin — a token
     // minted here can't be replayed against a different plugin's WebUI.
     const { token, expiresAt } = jwtService.signPluginSession(
       ctx.pluginKey,
-      { purpose: "plugin-session", userId, guildId, capabilities: pluginCaps },
+      { purpose: "plugin-session", userId, guildId, capabilities: [] },
       { ttlMs },
     );
     return { allowed: true, token, expiresAt };

@@ -219,6 +219,15 @@ export interface PluginManifest {
    * 對外 token 形式 `plugin:<plugin.id>:<key>`。
    */
   capabilities?: ManifestCapabilityDecl[];
+  /**
+   * Browser-facing manage WebUI declaration (SDK ≥0.12). Present iff the
+   * plugin declared `webUI`. The admin UI shows a "Manage" link to
+   * `<publicBaseUrl><manage_path>` only when present; `manage_path`
+   * defaults to `/manage`.
+   */
+  web_ui?: {
+    manage_path?: string;
+  };
   events_subscribed_global?: string[];
   endpoints?: {
     events?: string;

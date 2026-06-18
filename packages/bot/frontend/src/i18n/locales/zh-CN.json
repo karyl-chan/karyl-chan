@@ -1096,6 +1096,8 @@
             "deleteAllConfirm": "确定删除全部 {n} 个离线 plugin？每个 plugin 的 KV / config / feature 设置都会一并删除，无法恢复。",
             "deleteAllProgress": "进度：{done} / {total}",
             "viewDetail": "查看详情",
+            "manageLink": "打开管理页面",
+            "manageLinkFailed": "无法打开管理页面，请重试。",
             "detail": {
                 "backLink": "返回插件列表",
                 "tabOverview": "总览",

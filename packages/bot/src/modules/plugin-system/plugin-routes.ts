@@ -7,7 +7,7 @@ import {
 } from "./plugin-registry.service.js";
 import { deleteAllCapabilities } from "./models/plugin-capability.model.js";
 import { pluginAuthStore, PluginAuthStore } from "./plugin-auth.service.js";
-import { requireCapability } from "../web-core/route-guards.js";
+import { requireCapability, requirePluginCapability } from "../web-core/route-guards.js";
 import { jwtService } from "../web-core/jwt.service.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { shouldRecord } from "../bot-events/bot-event-dedup.js";
@@ -30,7 +30,7 @@ import {
   upsertConfigKey,
 } from "./models/plugin-config.model.js";
 import { kvUsageByPlugin } from "./models/plugin-kv.model.js";
-import { quotaForGuildKv } from "./plugin-rpc-routes.js";
+import { quotaForGuildKv, mintPluginManageToken } from "./plugin-rpc-routes.js";
 import { encryptSecret } from "../../utils/crypto.js";
 import type { PluginManifest } from "./plugin-registry.service.js";
 import {
@@ -547,6 +547,65 @@ export async function registerPluginRoutes(
       })),
     };
   });
+
+  /**
+   * POST /api/plugins/:id/manage-link — mint a manage-WebUI link for the
+   * CURRENTLY-LOGGED-IN admin and return a ready-to-open absolute URL.
+   *
+   * Auth: `requirePluginCapability(… "manage")` — `admin` (superuser
+   * bypass) or `plugin:<key>:manage`. The plugin must declare `web_ui` in
+   * its manifest (else 400). The minted 15-min plugin-session token is
+   * embedded in the returned URL; the SDK strips it from the address bar
+   * on first load. We return a ready URL (not just the token) because the
+   * frontend's `authedFetch` refuses absolute URLs and can't know
+   * WEB_BASE_URL — URL construction stays server-side, in one place.
+   */
+  server.post<{ Params: { id: string } }>(
+    "/api/plugins/:id/manage-link",
+    async (request, reply) => {
+      const id = Number(request.params.id);
+      if (!Number.isInteger(id)) {
+        reply.code(400).send({ error: "invalid plugin id" });
+        return;
+      }
+      const plugin = await findPluginById(id);
+      if (!plugin) {
+        reply.code(404).send({ error: "plugin not found" });
+        return;
+      }
+      if (
+        !requirePluginCapability(request, reply, plugin.pluginKey, "manage")
+      ) {
+        return;
+      }
+      const manifest = safeParse(plugin.manifestJson) as PluginManifest | null;
+      if (manifest?.web_ui === undefined) {
+        reply.code(400).send({ error: "plugin does not expose a manage page" });
+        return;
+      }
+      const base = pluginPublicBaseUrl(plugin.pluginKey);
+      if (!base) {
+        reply.code(503).send({ error: "WEB_BASE_URL is not configured" });
+        return;
+      }
+      const userId = request.authUserId;
+      if (!userId) {
+        reply.code(401).send({ error: "not authenticated" });
+        return;
+      }
+      const minted = await mintPluginManageToken(plugin.pluginKey, userId);
+      if (!minted.allowed) {
+        // requirePluginCapability already gated this; belt-and-suspenders.
+        reply.code(403).send({ error: "manage capability required" });
+        return;
+      }
+      const managePath = manifest.web_ui.manage_path ?? "/manage";
+      return {
+        url: `${base}${managePath}?token=${minted.token}`,
+        expiresAt: minted.expiresAt,
+      };
+    },
+  );
 
   /** GET /api/plugins/:id — single plugin detail (manifest snapshot). */
   server.get<{ Params: { id: string } }>(

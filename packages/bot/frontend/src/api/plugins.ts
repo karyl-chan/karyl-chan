@@ -40,6 +40,14 @@ export interface PluginManifest {
     required?: boolean;
   }>;
   events_subscribed_global?: string[];
+  /**
+   * Manage-WebUI declaration (SDK ≥0.12). Present iff the plugin declared
+   * `webUI`. Its presence is what makes the admin UI show a "Manage" link;
+   * `manage_path` (default `/manage`) is where the manage SPA is served.
+   */
+  web_ui?: {
+    manage_path?: string;
+  };
   guild_features?: Array<{
     key: string;
     name: string;
@@ -259,6 +267,21 @@ export interface PluginScopeState {
   requested: string[];
   approved: string[];
   pending: string[];
+}
+
+/**
+ * Mint a manage-WebUI link for the current admin and return a ready-to-open
+ * absolute URL (token embedded). The bot gates this with the plugin's manage
+ * capability (admin bypass) and builds the URL server-side — `authedFetch`
+ * can't be handed an absolute URL. Open the result via `window.open`.
+ */
+export async function mintPluginManageLink(
+  id: number,
+): Promise<{ url: string; expiresAt: number }> {
+  const r = await authedFetch(`/api/plugins/${id}/manage-link`, {
+    method: "POST",
+  });
+  return jsonOrThrow<{ url: string; expiresAt: number }>(r);
 }
 
 export async function listPlugins(): Promise<PluginRecord[]> {

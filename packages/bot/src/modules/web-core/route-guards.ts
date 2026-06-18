@@ -1,6 +1,6 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { AdminCapability, GlobalCapability } from '../admin/authorized-user.service.js';
-import { accessibleGuildIds, hasGuildCapability, type GuildScope } from '../admin/admin-capabilities.js';
+import { accessibleGuildIds, hasGuildCapability, hasPluginCapability, type GuildScope } from '../admin/admin-capabilities.js';
 
 /**
  * Per-route global capability gate. The global onRequest hook already
@@ -22,6 +22,30 @@ export function requireCapability(
     const caps = request.authCapabilities;
     if (caps && (caps.has('admin') || caps.has(capability))) return true;
     reply.code(403).send({ error: `${capability} capability required` });
+    return false;
+}
+
+/**
+ * Per-plugin capability gate. Satisfied by `admin` (superuser bypass) or
+ * the exact `plugin:<pluginKey>:<capKey>` token — delegates to the SAME
+ * `hasPluginCapability` evaluator the plugin-session JWT path uses, so the
+ * admin-side gate and the plugin-side check can never diverge (and the
+ * admin bypass lives in one place, not hand-rolled per call site). Mirrors
+ * `requireGuildCapability` for guild-bound routes.
+ *
+ *     if (!requirePluginCapability(request, reply, pluginKey, 'manage')) return;
+ */
+export function requirePluginCapability(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    pluginKey: string,
+    capKey: string
+): boolean {
+    const caps = request.authCapabilities as Set<AdminCapability> | undefined;
+    if (caps && hasPluginCapability(caps, pluginKey, capKey)) return true;
+    reply.code(403).send({
+        error: `plugin:${pluginKey}:${capKey} capability required`
+    });
     return false;
 }
 

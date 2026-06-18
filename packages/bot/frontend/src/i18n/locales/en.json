@@ -1096,6 +1096,8 @@
             "deleteAllConfirm": "Delete all {n} offline plugins? Each plugin's KV, config, and feature settings will be removed and cannot be recovered.",
             "deleteAllProgress": "Progress: {done} / {total}",
             "viewDetail": "View details",
+            "manageLink": "Open manage page",
+            "manageLinkFailed": "Couldn't open the manage page — try again.",
             "detail": {
                 "backLink": "Back to plugins",
                 "tabOverview": "Overview",

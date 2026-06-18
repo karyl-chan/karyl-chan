@@ -523,6 +523,30 @@ export async function validateManifest(
     }
   }
 
+  // ── web_ui 驗證 ──────────────────────────────────────────────────────────
+  // Optional manage-WebUI declaration. manage_path becomes part of a URL the
+  // admin UI opens, so constrain it: must be a rooted path with safe chars,
+  // no trailing slash, no traversal.
+  if (m.web_ui !== undefined && m.web_ui !== null) {
+    if (typeof m.web_ui !== "object" || Array.isArray(m.web_ui)) {
+      return { ok: false, error: "manifest.web_ui must be an object" };
+    }
+    const mp = (m.web_ui as { manage_path?: unknown }).manage_path;
+    if (mp !== undefined) {
+      if (
+        typeof mp !== "string" ||
+        !/^\/[A-Za-z0-9/_-]*$/.test(mp) ||
+        mp.endsWith("/") ||
+        mp.includes("..")
+      ) {
+        return {
+          ok: false,
+          error: `manifest.web_ui.manage_path "${String(mp)}" invalid — must start with "/", contain only [A-Za-z0-9/_-], and have no trailing slash`,
+        };
+      }
+    }
+  }
+
   return { ok: true, manifest: input as PluginManifest };
 }
 

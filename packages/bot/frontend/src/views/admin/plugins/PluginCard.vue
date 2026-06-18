@@ -9,6 +9,7 @@ import {
     deletePlugin,
     getPluginConfig,
     probePluginDispatch,
+    mintPluginManageLink,
     setPluginConfig,
     setPluginEnabled,
     type PluginConfigField,
@@ -18,6 +19,9 @@ import {
 import PluginConfigFields from '../../../components/PluginConfigFields.vue';
 import { dispatchProblem, lifecycleProblem, sdkCompatProblem } from './plugin-card-health';
 import { pluginInstallState } from './plugin-install-state';
+import { hasPluginCapability } from '../../../libs/admin-capabilities';
+import { safeHref } from '../../../libs/messages/safe-href';
+import { useCurrentUserStore } from '../../../stores/currentUserStore';
 
 const props = defineProps<{
     plugin: PluginRecord;
@@ -41,6 +45,42 @@ const enabledLocal = ref(props.plugin.enabled);
 // Watch the prop in case the parent reloads the list and hands us a
 // fresh PluginRecord with a different `enabled`.
 watch(() => props.plugin.enabled, (next) => { enabledLocal.value = next; });
+
+// "Manage" link. Shown only when the plugin declares a manage WebUI
+// (manifest.web_ui) AND the current admin holds the manage capability
+// (admin bypasses, via the same evaluator the bot uses). The bot
+// re-checks server-side, so this only hides a button the user couldn't
+// use. Clicking mints a short-lived plugin-session token and opens the
+// plugin's manage page in a new tab.
+const currentUser = useCurrentUserStore();
+const showManage = computed(() =>
+    props.plugin.manifest?.web_ui != null &&
+    hasPluginCapability(
+        currentUser.user?.capabilities ?? [],
+        props.plugin.pluginKey,
+        'manage',
+    )
+);
+const manageOpening = ref(false);
+async function openManage(): Promise<void> {
+    if (manageOpening.value) return;
+    manageOpening.value = true;
+    try {
+        const { url } = await mintPluginManageLink(props.plugin.id);
+        const href = safeHref(url);
+        if (!href) {
+            error.value = t('admin.plugins.manageLinkFailed');
+            open.value = true;
+            return;
+        }
+        window.open(href, '_blank', 'noopener,noreferrer');
+    } catch (e) {
+        error.value = e instanceof Error ? e.message : String(e);
+        open.value = true;
+    } finally {
+        manageOpening.value = false;
+    }
+}
 
 // Plugin-level config (admin-editable). Loaded lazily on the first
 // expand so collapsed cards don't fan out N+1 GETs at page load.
@@ -324,6 +364,17 @@ async function confirmDelete() {
             >
                 <Icon icon="material-symbols:open-in-new-rounded" width="15" height="15" />
             </RouterLink>
+            <button
+                v-if="showManage"
+                type="button"
+                class="manage-link"
+                :title="t('admin.plugins.manageLink')"
+                :aria-label="t('admin.plugins.manageLink')"
+                :disabled="manageOpening"
+                @click.stop="openManage"
+            >
+                <Icon icon="material-symbols:manage-accounts-outline-rounded" width="15" height="15" />
+            </button>
             <AppToggle
                 :model-value="enabledLocal"
                 :title="enabledLocal ? t('admin.plugins.toggleEnabled') : t('admin.plugins.toggleDisabled')"
@@ -711,8 +762,9 @@ async function confirmDelete() {
     align-items: center;
 }
 
-/* ── View detail link ────────────────────────────────────────────── */
-.detail-link {
+/* ── View detail + manage links ──────────────────────────────────── */
+.detail-link,
+.manage-link {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -724,9 +776,20 @@ async function confirmDelete() {
     flex-shrink: 0;
     transition: color 0.12s, background 0.12s;
 }
-.detail-link:hover {
+.manage-link {
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    padding: 0;
+}
+.detail-link:hover,
+.manage-link:hover:not(:disabled) {
     background: var(--bg-surface-hover, var(--bg-page));
     color: var(--accent);
+}
+.manage-link:disabled {
+    opacity: 0.5;
+    cursor: default;
 }
 
 /* ── Three-dot more menu trigger (visual only; AppMenu owns the panel) ─ */
