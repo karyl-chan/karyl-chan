@@ -371,6 +371,15 @@ export interface PluginConfig {
   capabilities?: PluginCapabilityDefinition[];
 
   /**
+   * Declare a manage WebUI page. When set, the manifest carries
+   * `web_ui.manage_path` (default `/manage`) and the bot admin UI shows
+   * a "Manage" link for this plugin that opens `<publicBaseUrl><managePath>`
+   * carrying the admin's plugin-session token. Use `defineWebUI()` for
+   * eager validation, or pass `{ managePath }` inline.
+   */
+  webUI?: WebUIDefinition;
+
+  /**
    * Optional hook called once the SDK has wired its routes but BEFORE
    * `server.listen()`. Use this to register additional Fastify routes.
    */
@@ -611,6 +620,41 @@ export function definePluginCapability(
     );
   }
   return def;
+}
+
+/**
+ * Declaration for a plugin's manage WebUI.
+ */
+export interface WebUIDefinition {
+  /**
+   * Path under the plugin's public base URL where the manage SPA is
+   * served (e.g. `/manage`). The bot admin UI's "Manage" link points at
+   * `<publicBaseUrl><managePath>`. Must start with `/`, contain only
+   * `[A-Za-z0-9/_-]`, have no trailing slash and no `..`. Defaults to
+   * `/manage` when omitted.
+   */
+  managePath?: string;
+}
+
+/**
+ * Declare that this plugin exposes a manage WebUI. Its presence in the
+ * manifest is what makes the bot admin UI render a "Manage" link for the
+ * plugin. Validates `managePath` eagerly at plugin start, mirroring the
+ * other `define*` helpers, and fills the `/manage` default.
+ */
+export function defineWebUI(def: WebUIDefinition = {}): WebUIDefinition {
+  const managePath = def.managePath ?? "/manage";
+  if (
+    typeof managePath !== "string" ||
+    !/^\/[A-Za-z0-9/_-]*$/.test(managePath) ||
+    managePath.endsWith("/") ||
+    managePath.includes("..")
+  ) {
+    throw new Error(
+      `defineWebUI: managePath "${String(managePath)}" must start with "/", contain only [A-Za-z0-9/_-], and have no trailing slash`,
+    );
+  }
+  return { managePath };
 }
 
 /**

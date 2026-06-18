@@ -214,6 +214,18 @@ export interface PluginManifest {
    */
   capabilities?: ManifestCapability[];
 
+  /**
+   * Browser-facing manage WebUI declaration. Present iff the plugin
+   * declared `webUI` (via SDK `defineWebUI`). The bot admin UI shows a
+   * "Manage" link to `<publicBaseUrl><manage_path>` ONLY when this is
+   * present; `manage_path` defaults to `/manage`. The proxy itself
+   * stays unconditional — this field is purely a discoverability +
+   * routing hint for the admin UI's manage link.
+   */
+  web_ui?: {
+    manage_path?: string;
+  };
+
   events_subscribed_global?: string[];
 
   endpoints?: {

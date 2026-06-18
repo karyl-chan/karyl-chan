@@ -351,6 +351,9 @@ export function buildManifest(
     ...(guild_features.length > 0 ? { guild_features } : {}),
     ...(plugin_commands.length > 0 ? { plugin_commands } : {}),
     ...(capabilities.length > 0 ? { capabilities } : {}),
+    ...(cfg.webUI
+      ? { web_ui: { manage_path: cfg.webUI.managePath ?? "/manage" } }
+      : {}),
     endpoints: {
       plugin_command: "/commands/{command_name}",
       // Always present — SDK mounts /health/detail unconditionally so
