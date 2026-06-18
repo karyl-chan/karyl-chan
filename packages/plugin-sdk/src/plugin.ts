@@ -648,6 +648,7 @@ export function defineWebUI(def: WebUIDefinition = {}): WebUIDefinition {
     typeof managePath !== "string" ||
     !/^\/[A-Za-z0-9/_-]*$/.test(managePath) ||
     managePath.endsWith("/") ||
+    managePath.includes("//") ||
     managePath.includes("..")
   ) {
     throw new Error(
