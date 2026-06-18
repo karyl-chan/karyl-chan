@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.1](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.12.0...plugin-sdk-v0.12.1) (2026-06-18)
+
+
+### Bug Fixes
+
+* **plugin-sdk:** reject consecutive slashes in defineWebUI managePath ([e95a9d5](https://github.com/karyl-chan/karyl-chan/commit/e95a9d56d049ba636326548b0ee65d932a5e379e))
+
 ## [0.12.0](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.11.2...plugin-sdk-v0.12.0) (2026-06-18)
 
 
