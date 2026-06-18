@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.11.2...plugin-sdk-v0.12.0) (2026-06-18)
+
+
+### Features
+
+* **plugin-sdk:** add web_ui manifest field + defineWebUI helper ([471cf78](https://github.com/karyl-chan/karyl-chan/commit/471cf78eb4b18e25f1e91e2512d3363152d45212))
+
 ## [0.11.2](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.11.1...plugin-sdk-v0.11.2) (2026-06-17)
 
 
