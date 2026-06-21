@@ -25,6 +25,25 @@ import type { RuntimeContext } from "./context.js";
 const log = moduleLogger("main");
 
 /**
+ * Discord's auto-generated link/media previews, trimmed to the fields a plugin
+ * needs to understand what a link points at (an x.com post's text lands in
+ * `description`, the poster in `author_name`). Discord unfurls links
+ * ASYNCHRONOUSLY — message_create usually has none; a messageUpdate ~1s later
+ * carries them, which is why we serialize embeds on the update path too.
+ */
+function serializeEmbeds(message: Message): Array<Record<string, unknown>> {
+  return message.embeds.map((e) => ({
+    url: e.data.url ?? null,
+    type: e.data.type ?? null,
+    title: e.data.title ?? null,
+    description: e.data.description ?? null,
+    author_name: e.data.author?.name ?? null,
+    provider_name: e.data.provider?.name ?? null,
+    image_url: e.data.image?.url ?? e.data.thumbnail?.url ?? null,
+  }));
+}
+
+/**
  * Trim a Discord message down to the JSON shape plugins receive.
  * Don't send the entire djs Message object — it's huge and includes
  * circular references. Plugins that need more can RPC back for it.
@@ -52,6 +71,10 @@ function serializeMessageForPlugin(message: Message): Record<string, unknown> {
       content_type: a.contentType,
       size: a.size,
     })),
+    // Discord's unfurled link/media previews (usually empty on create; a
+    // messageUpdate fills them ~1s later). Lets a plugin understand what a link
+    // points at instead of seeing an opaque URL.
+    embeds: serializeEmbeds(message),
     // Mentioned user ids + @everyone flag, and the replied-to message reference,
     // so plugins can detect being addressed / threading without a refetch.
     mentions: [...message.mentions.users.keys()],
@@ -345,6 +368,10 @@ export function registerRuntimeEvents(ctx: RuntimeContext): void {
         channel_id: full.channelId,
         guild_id: full.guildId,
         content: full.content ?? "",
+        // The reason update matters beyond edits: Discord fires it when it
+        // finishes unfurling a link into an embed. Ship the embeds so a plugin
+        // can enrich the stored message with the link's content.
+        embeds: serializeEmbeds(full),
         edited_at: full.editedTimestamp ?? Date.now(),
       }, full.guildId);
     } catch {
