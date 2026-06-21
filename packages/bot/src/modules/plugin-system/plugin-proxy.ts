@@ -312,7 +312,10 @@ export async function registerPluginProxy(
         typeof cl === "string" && cl.length > 0 && cl !== "0";
 
       return reply.from(target, {
-        timeout: 30_000,
+        // Generous upstream timeout: a plugin WebUI action may drive a large
+        // hosted LLM call (e.g. a ~100s 397B inference) end-to-end. SSE is still
+        // dropped at this bound; a genuinely-hung plugin fails here.
+        timeout: 210_000,
 
         // Bound the recreate-race retry to a single attempt. The actual
         // gating (transient connect codes + body-replay safety + delay)
