@@ -66,6 +66,21 @@
     --radius-lg: 8px;
     --radius-xl: 12px;
     --radius-pill: 999px;
+
+    /* Spacing scale — the single source of truth for gaps between
+     * elements. Consume via the <Stack> / <Cluster> layout primitives
+     * (gap="4") rather than hand-authoring margins/gaps per view, so
+     * inter-element rhythm is owned by the layout layer, not by each
+     * component. Theme-independent (spacing doesn't change light/dark). */
+    --space-0: 0;
+    --space-1: 0.25rem;
+    --space-2: 0.5rem;
+    --space-3: 0.75rem;
+    --space-4: 1rem;
+    --space-5: 1.5rem;
+    --space-6: 2rem;
+    --space-7: 3rem;
+    --space-8: 4rem;
 }
 
 /* Pin the UA-side color-scheme hint so native widgets (form controls,

@@ -7,6 +7,19 @@
 //   import "@karyl-chan/ui/use-drawer.css";
 //   import "@karyl-chan/ui/use-popover.css";
 
+// ── Layout primitives ────────────────────────────────────────────────────
+// Own the space BETWEEN elements so views (and the components inside them)
+// don't hand-author flex+gap or per-element margins. See lib/space.ts for
+// the `gap` scale.
+export { default as Stack } from "./components/Stack.vue";
+export { default as Cluster } from "./components/Cluster.vue";
+export { default as Spacer } from "./components/Spacer.vue";
+export {
+  resolveSpace,
+  type Align,
+  type Justify,
+} from "./lib/space";
+
 // ── Components ───────────────────────────────────────────────────────────
 export { default as AppBadge } from "./components/AppBadge.vue";
 export type { BadgeSize, BadgeTone, BadgeVariant } from "./components/AppBadge.vue";
