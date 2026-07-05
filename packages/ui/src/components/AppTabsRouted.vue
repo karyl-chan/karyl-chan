@@ -36,11 +36,16 @@ const props = withDefaults(defineProps<{
      *  routed AppTabs share a page. Empty (default) = plain `tab` /
      *  `sub`; non-empty = `${name}-tab` / `${name}-sub`. */
     name?: string;
+    /** Primary-tab appearance (desktop only). `'pill'` (default) = filled
+     *  pill buttons; `'underline'` = borderless with an accent underline on
+     *  the active tab. Matches AppTabs' `variant`. */
+    variant?: 'pill' | 'underline';
 }>(), {
     subModelValue: undefined,
     subTabs: () => [],
     subLayout: 'top',
-    name: ''
+    name: '',
+    variant: 'pill'
 });
 
 const emit = defineEmits<{
@@ -154,7 +159,7 @@ function subLinkTo(key: string) {
     <!-- Desktop, sub-tabs below primary. -->
     <div
         v-else-if="!hasSub || subLayout === 'top'"
-        class="tabs-root desktop top"
+        :class="['tabs-root', 'desktop', 'top', { underline: variant === 'underline' }]"
     >
         <nav class="primary-row" role="tablist">
             <template v-for="t in tabs" :key="t.key">
@@ -212,7 +217,7 @@ function subLinkTo(key: string) {
     </div>
 
     <!-- Desktop, sub-tabs as a vertical sidebar. -->
-    <div v-else class="tabs-root desktop sidebar">
+    <div v-else :class="['tabs-root', 'desktop', 'sidebar', { underline: variant === 'underline' }]">
         <nav class="primary-row" role="tablist">
             <template v-for="t in tabs" :key="t.key">
                 <RouterLink
@@ -312,6 +317,31 @@ function subLinkTo(key: string) {
     color: var(--accent-text-strong);
 }
 .tab:disabled { opacity: 0.45; cursor: default; }
+
+/* Underline variant — see AppTabs.vue. Kept in sync with its plain sibling. */
+.tabs-root.underline .primary-row {
+    border-bottom: none;
+    padding-bottom: 0;
+    gap: 0.15rem;
+}
+.tabs-root.underline .tab {
+    background: none;
+    border: none;
+    border-radius: 0;
+    border-bottom: 2px solid transparent;
+    color: var(--text-muted);
+    padding: 0.45rem 0.6rem;
+}
+.tabs-root.underline .tab:hover:not(:disabled) {
+    background: none;
+    color: var(--text);
+}
+.tabs-root.underline .tab.active {
+    background: none;
+    border-color: transparent;
+    border-bottom-color: var(--accent);
+    color: var(--accent-text-strong);
+}
 
 .sub-row {
     display: flex;

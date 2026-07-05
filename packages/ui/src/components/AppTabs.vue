@@ -32,10 +32,19 @@ const props = withDefaults(defineProps<{
     subTabs?: TabDef[];
     /** Where sub-tabs render on desktop. Has no effect on mobile. */
     subLayout?: 'top' | 'sidebar';
+    /**
+     * Primary-tab appearance (desktop only — mobile always uses the
+     * dropdown). `'pill'` (default) = filled/bordered pill buttons;
+     * `'underline'` = borderless tabs with an accent underline on the
+     * active one (the quieter, header-strip look). Sub-tabs are always
+     * underline-styled regardless.
+     */
+    variant?: 'pill' | 'underline';
 }>(), {
     subModelValue: undefined,
     subTabs: () => [],
-    subLayout: 'top'
+    subLayout: 'top',
+    variant: 'pill'
 });
 
 const emit = defineEmits<{
@@ -82,7 +91,7 @@ const subOptions = computed<SelectOption<string>[]>(() =>
     <!-- Desktop, sub-tabs below primary. -->
     <div
         v-else-if="!hasSub || subLayout === 'top'"
-        class="tabs-root desktop top"
+        :class="['tabs-root', 'desktop', 'top', { underline: variant === 'underline' }]"
     >
         <nav class="primary-row" role="tablist">
             <button
@@ -120,7 +129,7 @@ const subOptions = computed<SelectOption<string>[]>(() =>
     </div>
 
     <!-- Desktop, sub-tabs as a vertical sidebar. -->
-    <div v-else class="tabs-root desktop sidebar">
+    <div v-else :class="['tabs-root', 'desktop', 'sidebar', { underline: variant === 'underline' }]">
         <nav class="primary-row" role="tablist">
             <button
                 v-for="t in tabs"
@@ -212,6 +221,34 @@ const subOptions = computed<SelectOption<string>[]>(() =>
     color: var(--accent-text-strong);
 }
 .tab:disabled { opacity: 0.45; cursor: default; }
+
+/* Underline variant — borderless primary tabs with an accent underline on
+   the active one (mirrors the plugin-aktest nav strip and the sub-tab
+   treatment). Railless: the row drops its bottom border so each tab owns
+   its own indicator. */
+.tabs-root.underline .primary-row {
+    border-bottom: none;
+    padding-bottom: 0;
+    gap: 0.15rem;
+}
+.tabs-root.underline .tab {
+    background: none;
+    border: none;
+    border-radius: 0;
+    border-bottom: 2px solid transparent;
+    color: var(--text-muted);
+    padding: 0.45rem 0.6rem;
+}
+.tabs-root.underline .tab:hover:not(:disabled) {
+    background: none;
+    color: var(--text);
+}
+.tabs-root.underline .tab.active {
+    background: none;
+    border-color: transparent;
+    border-bottom-color: var(--accent);
+    color: var(--accent-text-strong);
+}
 
 .sub-row {
     display: flex;

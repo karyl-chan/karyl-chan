@@ -413,6 +413,26 @@ function onInlineClose() {
         </section>
 
         <section>
+          <h2>AppTabs — <code>variant="underline"</code></h2>
+          <p class="hint">
+            The quieter header-strip look: borderless tabs with an accent
+            underline on the active one (the plugin-aktest nav style). Pairs
+            well with per-tab <code>icon</code>s. <code>variant="pill"</code> is
+            the default.
+          </p>
+          <AppTabs
+            v-model="innerTab"
+            variant="underline"
+            :tabs="[
+              {key:'first', label:'Overview', icon:'material-symbols:dashboard-outline-rounded'},
+              {key:'second', label:'Activity', icon:'material-symbols:timeline-rounded'},
+            ]"
+          >
+            <div class="panel">Active: <code>{{ innerTab }}</code></div>
+          </AppTabs>
+        </section>
+
+        <section>
           <h2>AppItemCard</h2>
           <p class="hint">
             Collapsible row card with an optional left accent stripe and
