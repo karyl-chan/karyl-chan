@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.11.0](https://github.com/karyl-chan/karyl-chan/compare/bot-v1.10.0...bot-v1.11.0) (2026-07-05)
+
+
+### Features
+
+* **plugin-proxy:** raise upstream timeout 30s → 210s ([14e759c](https://github.com/karyl-chan/karyl-chan/commit/14e759c90110b4626eb3f7f39cca44b5a743052a))
+* **runtime:** forward Discord link/media embeds to plugins ([01bd986](https://github.com/karyl-chan/karyl-chan/commit/01bd9864df92d08b9eb2b0fcca91548847d875ae))
+
 ## [1.10.0](https://github.com/karyl-chan/karyl-chan/compare/bot-v1.9.0...bot-v1.10.0) (2026-06-18)
 
 
