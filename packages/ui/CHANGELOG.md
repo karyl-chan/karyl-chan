@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0](https://github.com/karyl-chan/karyl-chan/compare/ui-v0.3.0...ui-v0.4.0) (2026-07-05)
+
+
+### Features
+
+* **ui:** AppTabs `variant="underline"` (aktest nav-strip style) ([99d9d34](https://github.com/karyl-chan/karyl-chan/commit/99d9d348ab815c4ba05c95bbf55cf4aee63387ea))
+* **ui:** layout primitives — Stack, Cluster, Spacer + --space-* scale ([f7ff7dd](https://github.com/karyl-chan/karyl-chan/commit/f7ff7ddcda5fb671ead4bf38a67757d073d23306))
+
 ## [0.3.0](https://github.com/karyl-chan/karyl-chan/compare/ui-v0.2.0...ui-v0.3.0) (2026-06-11)
 
 
