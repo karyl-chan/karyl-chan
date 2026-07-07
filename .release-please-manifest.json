@@ -1,5 +1,5 @@
 {
-  "packages/bot": "1.10.0",
+  "packages/bot": "1.11.0",
   "packages/plugin-sdk": "0.12.1",
   "packages/ui": "0.4.0"
 }
