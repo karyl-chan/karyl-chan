@@ -1,36 +1,24 @@
-import { config } from "../../config.js";
 import type {
   ButtonInteraction,
   AnySelectMenuInteraction,
 } from "discord.js";
 import { findPluginByKey, type PluginRow } from "./models/plugin.model.js";
-import type { PluginManifest } from "./plugin-registry.service.js";
 import { resolveUserCapabilities } from "../admin/authorized-user.service.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
-import { featureReachResolver } from "../feature-toggle/feature-reach-resolver.js";
 import { recordPluginDeferUpdate } from "./plugin-defer-state.js";
-import {
-  recordDispatchFetchFailure,
-  recordDispatchHttpFailure,
-  recordDispatchOk,
-  recordDispatchUnreachable,
-} from "./plugin-dispatch-health.service.js";
-import {
-  buildSignedDispatchHeaders,
-  parsePluginManifest,
-  preflightPluginTarget,
-  resolvePluginEndpoint,
-} from "./plugin-dispatch-util.js";
+import { pluginDispatcher } from "./plugin-dispatch.service.js";
 
 /**
- * Inbound Discord *component* (button) interaction → plugin dispatcher.
+ * Inbound Discord *component* (button) interaction → plugin dispatcher
+ * (thin Dispatch Kind adapter over the Plugin Dispatch module).
  *
  * A plugin owns a button by giving it a custom_id of the form
  *   `kc:<pluginKey>:<rest>`
  * (`kc` = "karyl plugin component" — a reserved prefix so the bot knows
  * to route it; `<rest>` is the plugin's own action id, optionally with a
  * `:<tail>`). On such a click the bot:
- *   1. resolves the plugin (must be installed + enabled)
+ *   1. resolves the plugin (must be installed + enabled, with any
+ *      feature reaching the guild — the module's gate)
  *   2. `deferUpdate()`s — acks within Discord's 3 s budget, no visible
  *      change to the message
  *   3. HMAC-signs and POSTs the click to the plugin's component endpoint
@@ -48,21 +36,6 @@ import {
  * fall through); false if the custom_id isn't a `kc:` token.
  */
 
-const DEFAULT_COMPONENT_PATH = "/components";
-const COMPONENT_DISPATCH_TIMEOUT_MS = config.plugin.commandDispatchTimeoutMs;
-
-const parseManifest = parsePluginManifest;
-const buildHeaders = buildSignedDispatchHeaders;
-
-function resolveComponentUrl(plugin: PluginRow, manifest: PluginManifest):
-  | string
-  | null {
-  return resolvePluginEndpoint(
-    plugin.url,
-    manifest.endpoints?.plugin_component ?? DEFAULT_COMPONENT_PATH,
-  );
-}
-
 /**
  * Parse `kc:<pluginKey>:<rest>` → `{ pluginKey }`. Returns null when the
  * custom_id isn't a `kc:` token (so the dispatcher falls through to the
@@ -77,141 +50,10 @@ function parsePluginComponentId(customId: string): { pluginKey: string } | null 
   return { pluginKey };
 }
 
-export async function dispatchComponentToPlugin(
+async function buildComponentBody(
   interaction: ButtonInteraction | AnySelectMenuInteraction,
-): Promise<boolean> {
-  const parsed = parsePluginComponentId(interaction.customId);
-  if (!parsed) return false;
-
-  const plugin = await findPluginByKey(parsed.pluginKey);
-  if (!plugin) {
-    await interaction
-      .reply({
-        content: `⚠ 找不到 plugin \`${parsed.pluginKey}\`（按鈕已失效）。`,
-        ephemeral: true,
-      })
-      .catch(() => {});
-    return true;
-  }
-  if (!plugin.enabled || plugin.status !== "active") {
-    await interaction
-      .reply({
-        content: "⚠ 此按鈕所屬的 plugin 目前離線或已被停用。",
-        ephemeral: true,
-      })
-      .catch(() => {});
-    return true;
-  }
-  const manifest = parseManifest(plugin);
-  if (!manifest) {
-    await interaction
-      .reply({
-        content: "⚠ 此 plugin 的 manifest 損壞,無法派送。",
-        ephemeral: true,
-      })
-      .catch(() => {});
-    return true;
-  }
-  // Per-guild feature gate — once an admin disables every feature of
-  // this plugin in guild G, older buttons on existing messages must
-  // stop dispatching click events into the plugin.
-  //
-  // Resolution is 3-tier (row → operator default → manifest
-  // enabled_by_default) — a plugin whose manifest defaults its features
-  // to enabled but has no row yet IS active; the prior gate that only
-  // checked enabled rows incorrectly rejected those clicks with
-  // "已停用" even though the slash commands work and the UI shows
-  // "已啟用".
-  if (
-    interaction.guildId &&
-    !(await featureReachResolver.hasAnyFeatureEnabledInGuild(
-      plugin.id,
-      interaction.guildId,
-      manifest,
-    ))
-  ) {
-    await interaction
-      .reply({
-        content: "⚠ 此功能在本伺服器已停用。",
-        ephemeral: true,
-      })
-      .catch(() => {});
-    return true;
-  }
-  const dispatchKey = plugin.dispatchHmacKey;
-  if (!dispatchKey) {
-    await interaction
-      .reply({
-        content: "⚠ Plugin 尚未完成 re-register,dispatch key 不存在。",
-        ephemeral: true,
-      })
-      .catch(() => {});
-    return true;
-  }
-
-  // Defer the update — acks the interaction without changing the message.
-  // The plugin fills in the result via interactions.respond (PATCH the
-  // message the button is on) within 15 minutes.
-  try {
-    await interaction.deferUpdate();
-    // Record kind='update' so the respond endpoint knows @original is
-    // the parent message (with the clicked component), NOT a deferred
-    // "thinking…" placeholder. Without this, the respond endpoint's
-    // mismatch handling would DELETE @original — wiping the user's own
-    // message that hosts the button.
-    recordPluginDeferUpdate(interaction.token);
-  } catch (err) {
-    botEventLog.record(
-      "warn",
-      "bot",
-      `plugin-component: deferUpdate failed for ${plugin.pluginKey} (${interaction.customId}): ${err instanceof Error ? err.message : String(err)}`,
-      { pluginId: plugin.id },
-    );
-    return true;
-  }
-
-  const url = resolveComponentUrl(plugin, manifest);
-  if (!url) {
-    recordDispatchUnreachable(
-      plugin.pluginKey,
-      "component",
-      interaction.customId,
-      "unresolvable plugin endpoint URL",
-    );
-    botEventLog.record(
-      "warn",
-      "bot",
-      `plugin-component: cannot resolve component endpoint for ${plugin.pluginKey}`,
-      { pluginId: plugin.id },
-    );
-    await interaction
-      .followUp({ content: "⚠ 無法解析 plugin 的元件端點。", ephemeral: true })
-      .catch(() => {});
-    return true;
-  }
-  const preflight = await preflightPluginTarget(url);
-  if (!preflight.ok) {
-    recordDispatchUnreachable(
-      plugin.pluginKey,
-      "component",
-      interaction.customId,
-      preflight.reason,
-    );
-    botEventLog.record(
-      "warn",
-      "bot",
-      `plugin-component: pre-flight host-policy rejected ${plugin.pluginKey}: ${preflight.reason}`,
-      { pluginId: plugin.id },
-    );
-    await interaction
-      .followUp({
-        content: `⚠ Plugin 端點不被允許: ${preflight.reason}`,
-        ephemeral: true,
-      })
-      .catch(() => {});
-    return true;
-  }
-
+  plugin: PluginRow,
+): Promise<string> {
   // Member-scoped RBAC tokens narrowed to what THIS plugin may act on
   // (mirrors plugin command dispatch). Voice channel id is exposed so a
   // plugin can gate controls on "must be in the bot's voice channel".
@@ -227,7 +69,7 @@ export async function dispatchComponentToPlugin(
     ? interaction.values
     : undefined;
   const componentType = interaction.componentType;
-  const payload = {
+  return JSON.stringify({
     interaction_id: interaction.id,
     interaction_token: interaction.token,
     application_id: interaction.applicationId,
@@ -261,55 +103,123 @@ export async function dispatchComponentToPlugin(
       : null,
     locale: interaction.locale ?? null,
     guild_locale: interaction.guildLocale ?? null,
-  };
-  const body = JSON.stringify(payload);
-  const headers = buildHeaders(dispatchKey, url, body);
+  });
+}
 
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), COMPONENT_DISPATCH_TIMEOUT_MS);
+export async function dispatchComponentToPlugin(
+  interaction: ButtonInteraction | AnySelectMenuInteraction,
+): Promise<boolean> {
+  const parsed = parsePluginComponentId(interaction.customId);
+  if (!parsed) return false;
+
+  const plugin = await findPluginByKey(parsed.pluginKey);
+  if (!plugin) {
+    await interaction
+      .reply({
+        content: `⚠ 找不到 plugin \`${parsed.pluginKey}\`（按鈕已失效）。`,
+        ephemeral: true,
+      })
+      .catch(() => {});
+    return true;
+  }
+  const gate = await pluginDispatcher.gate({
+    kind: "component",
+    plugin,
+    guildId: interaction.guildId,
+  });
+  if (!gate.ok) {
+    const content = {
+      plugin_offline: "⚠ 此按鈕所屬的 plugin 目前離線或已被停用。",
+      manifest_invalid: "⚠ 此 plugin 的 manifest 損壞,無法派送。",
+      // Feature Reach — once an admin disables every feature of this
+      // plugin in guild G, older buttons on existing messages must
+      // stop dispatching click events into the plugin.
+      reach_denied: "⚠ 此功能在本伺服器已停用。",
+      no_dispatch_key: "⚠ Plugin 尚未完成 re-register,dispatch key 不存在。",
+    }[gate.reason];
+    await interaction.reply({ content, ephemeral: true }).catch(() => {});
+    return true;
+  }
+
+  // Defer the update — acks the interaction without changing the message.
+  // The plugin fills in the result via interactions.respond (PATCH the
+  // message the button is on) within 15 minutes.
   try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers,
-      body,
-      // Don't follow redirects past the assertPluginTarget host check — a
-      // 3xx Location would bypass the SSRF guard (cf. webhook-forwarder).
-      redirect: "manual",
-      signal: ctrl.signal,
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      recordDispatchHttpFailure(plugin.pluginKey, "component", interaction.customId, res.status, text);
+    await interaction.deferUpdate();
+    // Record kind='update' so the respond endpoint knows @original is
+    // the parent message (with the clicked component), NOT a deferred
+    // "thinking…" placeholder. Without this, the respond endpoint's
+    // mismatch handling would DELETE @original — wiping the user's own
+    // message that hosts the button.
+    recordPluginDeferUpdate(interaction.token);
+  } catch (err) {
+    botEventLog.record(
+      "warn",
+      "bot",
+      `plugin-component: deferUpdate failed for ${plugin.pluginKey} (${interaction.customId}): ${err instanceof Error ? err.message : String(err)}`,
+      { pluginId: plugin.id },
+    );
+    return true;
+  }
+
+  const outcome = await pluginDispatcher.deliver({
+    kind: "component",
+    plugin,
+    label: interaction.customId,
+    payload: { body: () => buildComponentBody(interaction, plugin) },
+  });
+  if (outcome.status !== "failed") return true;
+
+  switch (outcome.reason) {
+    case "unresolvable_endpoint":
       botEventLog.record(
         "warn",
         "bot",
-        `plugin-component: ${plugin.pluginKey} (${interaction.customId}) POST returned ${res.status}: ${text.slice(0, 200)}`,
+        `plugin-component: cannot resolve component endpoint for ${plugin.pluginKey}`,
+        { pluginId: plugin.id },
+      );
+      await interaction
+        .followUp({ content: "⚠ 無法解析 plugin 的元件端點。", ephemeral: true })
+        .catch(() => {});
+      break;
+    case "preflight_denied":
+      botEventLog.record(
+        "warn",
+        "bot",
+        `plugin-component: pre-flight host-policy rejected ${plugin.pluginKey}: ${outcome.detail}`,
         { pluginId: plugin.id },
       );
       await interaction
         .followUp({
-          content: `⚠ Plugin 拒絕了此按鈕 (HTTP ${res.status})`,
+          content: `⚠ Plugin 端點不被允許: ${outcome.detail}`,
           ephemeral: true,
         })
         .catch(() => {});
-    } else {
-      recordDispatchOk(plugin.pluginKey, "component", res.status);
-    }
-    // Body not consumed — plugin completes via interactions.respond.
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    recordDispatchFetchFailure(plugin.pluginKey, "component", interaction.customId, err);
-    botEventLog.record(
-      "warn",
-      "bot",
-      `plugin-component: ${plugin.pluginKey} (${interaction.customId}) POST failed: ${msg}`,
-      { pluginId: plugin.id },
-    );
-    await interaction
-      .followUp({ content: `⚠ 無法連接 plugin: ${msg}`, ephemeral: true })
-      .catch(() => {});
-  } finally {
-    clearTimeout(timer);
+      break;
+    case "http_error":
+      botEventLog.record(
+        "warn",
+        "bot",
+        `plugin-component: ${plugin.pluginKey} (${interaction.customId}) POST returned ${outcome.httpStatus}: ${outcome.detail.slice(0, 200)}`,
+        { pluginId: plugin.id },
+      );
+      await interaction
+        .followUp({
+          content: `⚠ Plugin 拒絕了此按鈕 (HTTP ${outcome.httpStatus})`,
+          ephemeral: true,
+        })
+        .catch(() => {});
+      break;
+    default:
+      botEventLog.record(
+        "warn",
+        "bot",
+        `plugin-component: ${plugin.pluginKey} (${interaction.customId}) POST failed: ${outcome.detail}`,
+        { pluginId: plugin.id },
+      );
+      await interaction
+        .followUp({ content: `⚠ 無法連接 plugin: ${outcome.detail}`, ephemeral: true })
+        .catch(() => {});
   }
   return true;
 }

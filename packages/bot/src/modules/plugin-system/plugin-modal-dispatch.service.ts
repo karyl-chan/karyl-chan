@@ -1,26 +1,13 @@
-import { config } from "../../config.js";
 import type { ModalSubmitInteraction } from "discord.js";
 import { findPluginByKey, type PluginRow } from "./models/plugin.model.js";
-import type { PluginManifest } from "./plugin-registry.service.js";
 import { resolveUserCapabilities } from "../admin/authorized-user.service.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
-import { featureReachResolver } from "../feature-toggle/feature-reach-resolver.js";
 import { recordPluginDeferReply } from "./plugin-defer-state.js";
-import {
-  recordDispatchFetchFailure,
-  recordDispatchHttpFailure,
-  recordDispatchOk,
-  recordDispatchUnreachable,
-} from "./plugin-dispatch-health.service.js";
-import {
-  buildSignedDispatchHeaders,
-  parsePluginManifest,
-  preflightPluginTarget,
-  resolvePluginEndpoint,
-} from "./plugin-dispatch-util.js";
+import { pluginDispatcher } from "./plugin-dispatch.service.js";
 
 /**
- * Inbound Discord *modal-submit* interaction → plugin dispatcher.
+ * Inbound Discord *modal-submit* interaction → plugin dispatcher
+ * (thin Dispatch Kind adapter over the Plugin Dispatch module).
  *
  * Symmetric to plugin-component-dispatch but for `MODAL_SUBMIT` events.
  * A plugin owns a modal by giving it a custom_id of the form
@@ -41,24 +28,6 @@ import {
  * duplicate ack); false when not a `kc:` token (so the dispatcher
  * falls through to in-process layers).
  */
-
-const DEFAULT_MODAL_PATH = "/modals/{modal_id}";
-const MODAL_DISPATCH_TIMEOUT_MS = config.plugin.commandDispatchTimeoutMs;
-
-const parseManifest = parsePluginManifest;
-const buildHeaders = buildSignedDispatchHeaders;
-
-function resolveModalUrl(
-  plugin: PluginRow,
-  manifest: PluginManifest,
-  modalId: string,
-): string | null {
-  return resolvePluginEndpoint(
-    plugin.url,
-    manifest.endpoints?.plugin_modal ?? DEFAULT_MODAL_PATH,
-    { modal_id: modalId },
-  );
-}
 
 interface ParsedModalId {
   pluginKey: string;
@@ -85,132 +54,10 @@ function parsePluginModalId(customId: string): ParsedModalId | null {
   return { pluginKey, modalId };
 }
 
-export async function dispatchModalToPlugin(
+async function buildModalBody(
   interaction: ModalSubmitInteraction,
-): Promise<boolean> {
-  const parsed = parsePluginModalId(interaction.customId);
-  if (!parsed) return false;
-
-  const plugin = await findPluginByKey(parsed.pluginKey);
-  if (!plugin) {
-    await interaction
-      .reply({
-        content: `⚠ 找不到 plugin \`${parsed.pluginKey}\`（modal 已失效）。`,
-        ephemeral: true,
-      })
-      .catch(() => {});
-    return true;
-  }
-  if (!plugin.enabled || plugin.status !== "active") {
-    await interaction
-      .reply({
-        content: "⚠ 此 modal 所屬的 plugin 目前離線或已被停用。",
-        ephemeral: true,
-      })
-      .catch(() => {});
-    return true;
-  }
-  const manifest = parseManifest(plugin);
-  if (!manifest) {
-    await interaction
-      .reply({
-        content: "⚠ 此 plugin 的 manifest 損壞,無法派送。",
-        ephemeral: true,
-      })
-      .catch(() => {});
-    return true;
-  }
-  // Per-guild feature gate. 3-tier resolution (row → operator default
-  // → manifest enabled_by_default) so manifests defaulting features to
-  // enabled aren't falsely blocked before any row is materialized.
-  if (
-    interaction.guildId &&
-    !(await featureReachResolver.hasAnyFeatureEnabledInGuild(
-      plugin.id,
-      interaction.guildId,
-      manifest,
-    ))
-  ) {
-    await interaction
-      .reply({
-        content: "⚠ 此功能在本伺服器已停用。",
-        ephemeral: true,
-      })
-      .catch(() => {});
-    return true;
-  }
-  const dispatchKey = plugin.dispatchHmacKey;
-  if (!dispatchKey) {
-    await interaction
-      .reply({
-        content: "⚠ Plugin 尚未完成 re-register,dispatch key 不存在。",
-        ephemeral: true,
-      })
-      .catch(() => {});
-    return true;
-  }
-
-  // Modal submit requires an ack within 3s. deferReply ephemeral so a
-  // crashing plugin doesn't leak a public "thinking…" message; the
-  // plugin's interactions.respond will edit this reply (and can opt
-  // back to non-ephemeral via flags if desired — though once we've
-  // deferred ephemerally, Discord locks it ephemeral).
-  try {
-    await interaction.deferReply({ ephemeral: true });
-    // Modals are always deferred ephemerally; the respond endpoint
-    // uses this record to take the happy "PATCH @original" path when
-    // the plugin handler's reply matches (default; modal replies are
-    // typed ephemeral-only in the SDK).
-    recordPluginDeferReply(interaction.token, true);
-  } catch (err) {
-    botEventLog.record(
-      "warn",
-      "bot",
-      `plugin-modal: deferReply failed for ${plugin.pluginKey} (${interaction.customId}): ${err instanceof Error ? err.message : String(err)}`,
-      { pluginId: plugin.id },
-    );
-    return true;
-  }
-
-  const url = resolveModalUrl(plugin, manifest, parsed.modalId);
-  if (!url) {
-    recordDispatchUnreachable(
-      plugin.pluginKey,
-      "modal",
-      interaction.customId,
-      "unresolvable plugin endpoint URL",
-    );
-    botEventLog.record(
-      "warn",
-      "bot",
-      `plugin-modal: cannot resolve modal endpoint for ${plugin.pluginKey}`,
-      { pluginId: plugin.id },
-    );
-    await interaction
-      .editReply({ content: "⚠ 無法解析 plugin 的 modal 端點。" })
-      .catch(() => {});
-    return true;
-  }
-  const preflight = await preflightPluginTarget(url);
-  if (!preflight.ok) {
-    recordDispatchUnreachable(
-      plugin.pluginKey,
-      "modal",
-      interaction.customId,
-      preflight.reason,
-    );
-    botEventLog.record(
-      "warn",
-      "bot",
-      `plugin-modal: pre-flight host-policy rejected ${plugin.pluginKey}: ${preflight.reason}`,
-      { pluginId: plugin.id },
-    );
-    await interaction
-      .editReply({ content: `⚠ Plugin 端點不被允許: ${preflight.reason}` })
-      .catch(() => {});
-    return true;
-  }
-
+  plugin: PluginRow,
+): Promise<string> {
   const allCaps = await resolveUserCapabilities(interaction.user.id);
   const pluginCaps = [...allCaps].filter(
     (c) => c === "admin" || c.startsWith(`plugin:${plugin.pluginKey}:`),
@@ -239,7 +86,7 @@ export async function dispatchModalToPlugin(
     });
   }
 
-  const payload = {
+  return JSON.stringify({
     interaction_id: interaction.id,
     interaction_token: interaction.token,
     application_id: interaction.applicationId,
@@ -261,52 +108,121 @@ export async function dispatchModalToPlugin(
     components,
     locale: interaction.locale ?? null,
     guild_locale: interaction.guildLocale ?? null,
-  };
-  const body = JSON.stringify(payload);
-  const headers = buildHeaders(dispatchKey, url, body);
+  });
+}
 
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), MODAL_DISPATCH_TIMEOUT_MS);
+export async function dispatchModalToPlugin(
+  interaction: ModalSubmitInteraction,
+): Promise<boolean> {
+  const parsed = parsePluginModalId(interaction.customId);
+  if (!parsed) return false;
+
+  const plugin = await findPluginByKey(parsed.pluginKey);
+  if (!plugin) {
+    await interaction
+      .reply({
+        content: `⚠ 找不到 plugin \`${parsed.pluginKey}\`（modal 已失效）。`,
+        ephemeral: true,
+      })
+      .catch(() => {});
+    return true;
+  }
+  const gate = await pluginDispatcher.gate({
+    kind: "modal",
+    plugin,
+    guildId: interaction.guildId,
+  });
+  if (!gate.ok) {
+    const content = {
+      plugin_offline: "⚠ 此 modal 所屬的 plugin 目前離線或已被停用。",
+      manifest_invalid: "⚠ 此 plugin 的 manifest 損壞,無法派送。",
+      // Feature Reach. Precedence Tiers resolution (row → operator default
+      // → manifest enabled_by_default) so manifests defaulting features to
+      // enabled aren't falsely blocked before any row is materialized.
+      reach_denied: "⚠ 此功能在本伺服器已停用。",
+      no_dispatch_key: "⚠ Plugin 尚未完成 re-register,dispatch key 不存在。",
+    }[gate.reason];
+    await interaction.reply({ content, ephemeral: true }).catch(() => {});
+    return true;
+  }
+
+  // Modal submit requires an ack within 3s. deferReply ephemeral so a
+  // crashing plugin doesn't leak a public "thinking…" message; the
+  // plugin's interactions.respond will edit this reply (and can opt
+  // back to non-ephemeral via flags if desired — though once we've
+  // deferred ephemerally, Discord locks it ephemeral).
   try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers,
-      body,
-      // Don't follow redirects past the assertPluginTarget host check — a
-      // 3xx Location would bypass the SSRF guard (cf. webhook-forwarder).
-      redirect: "manual",
-      signal: ctrl.signal,
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      recordDispatchHttpFailure(plugin.pluginKey, "modal", interaction.customId, res.status, text);
-      botEventLog.record(
-        "warn",
-        "bot",
-        `plugin-modal: ${plugin.pluginKey} (${interaction.customId}) POST returned ${res.status}: ${text.slice(0, 200)}`,
-        { pluginId: plugin.id },
-      );
-      await interaction
-        .editReply({ content: `⚠ Plugin 拒絕了此 modal (HTTP ${res.status})` })
-        .catch(() => {});
-    } else {
-      recordDispatchOk(plugin.pluginKey, "modal", res.status);
-    }
-    // Body not consumed — plugin completes via interactions.respond.
+    await interaction.deferReply({ ephemeral: true });
+    // Modals are always deferred ephemerally; the respond endpoint
+    // uses this record to take the happy "PATCH @original" path when
+    // the plugin handler's reply matches (default; modal replies are
+    // typed ephemeral-only in the SDK).
+    recordPluginDeferReply(interaction.token, true);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    recordDispatchFetchFailure(plugin.pluginKey, "modal", interaction.customId, err);
     botEventLog.record(
       "warn",
       "bot",
-      `plugin-modal: ${plugin.pluginKey} (${interaction.customId}) POST failed: ${msg}`,
+      `plugin-modal: deferReply failed for ${plugin.pluginKey} (${interaction.customId}): ${err instanceof Error ? err.message : String(err)}`,
       { pluginId: plugin.id },
     );
-    await interaction
-      .editReply({ content: `⚠ 無法連接 plugin: ${msg}` })
-      .catch(() => {});
-  } finally {
-    clearTimeout(timer);
+    return true;
+  }
+
+  const outcome = await pluginDispatcher.deliver({
+    kind: "modal",
+    plugin,
+    label: interaction.customId,
+    endpointVars: { modal_id: parsed.modalId },
+    payload: { body: () => buildModalBody(interaction, plugin) },
+  });
+  if (outcome.status !== "failed") return true;
+
+  switch (outcome.reason) {
+    case "unresolvable_endpoint":
+      botEventLog.record(
+        "warn",
+        "bot",
+        `plugin-modal: cannot resolve modal endpoint for ${plugin.pluginKey}`,
+        { pluginId: plugin.id },
+      );
+      await interaction
+        .editReply({ content: "⚠ 無法解析 plugin 的 modal 端點。" })
+        .catch(() => {});
+      break;
+    case "preflight_denied":
+      botEventLog.record(
+        "warn",
+        "bot",
+        `plugin-modal: pre-flight host-policy rejected ${plugin.pluginKey}: ${outcome.detail}`,
+        { pluginId: plugin.id },
+      );
+      await interaction
+        .editReply({ content: `⚠ Plugin 端點不被允許: ${outcome.detail}` })
+        .catch(() => {});
+      break;
+    case "http_error":
+      botEventLog.record(
+        "warn",
+        "bot",
+        `plugin-modal: ${plugin.pluginKey} (${interaction.customId}) POST returned ${outcome.httpStatus}: ${outcome.detail.slice(0, 200)}`,
+        { pluginId: plugin.id },
+      );
+      await interaction
+        .editReply({
+          content: `⚠ Plugin 拒絕了此 modal (HTTP ${outcome.httpStatus})`,
+        })
+        .catch(() => {});
+      break;
+    default:
+      botEventLog.record(
+        "warn",
+        "bot",
+        `plugin-modal: ${plugin.pluginKey} (${interaction.customId}) POST failed: ${outcome.detail}`,
+        { pluginId: plugin.id },
+      );
+      await interaction
+        .editReply({ content: `⚠ 無法連接 plugin: ${outcome.detail}` })
+        .catch(() => {});
   }
   return true;
 }

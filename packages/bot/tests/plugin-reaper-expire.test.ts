@@ -19,7 +19,7 @@ import {
   expireStalePlugins,
 } from "../src/modules/plugin-system/models/plugin.model.js";
 import { PluginRegistry } from "../src/modules/plugin-system/plugin-registry.service.js";
-import { __getDispatchPoolForTests } from "../src/modules/plugin-system/plugin-event-bridge.service.js";
+import { pluginDispatcher } from "../src/modules/plugin-system/plugin-dispatch.service.js";
 import type { PluginAuthStore } from "../src/modules/plugin-system/plugin-auth.service.js";
 
 const CUTOFF = new Date("2026-01-01T00:00:00Z");
@@ -115,7 +115,7 @@ describe("reaper tears down the dispatch pool for expired plugins", () => {
     const registry = new PluginRegistry({
       revokeByPluginId: vi.fn(),
     } as unknown as PluginAuthStore);
-    const dropSpy = vi.spyOn(__getDispatchPoolForTests(), "drop");
+    const dropSpy = vi.spyOn(pluginDispatcher.pool, "drop");
     try {
       await registry.runReaperOnce(FUTURE);
       // The fix: the reaper now drops the dead plugin's pool (undici Pool +
@@ -133,7 +133,7 @@ describe("reaper tears down the dispatch pool for expired plugins", () => {
     const registry = new PluginRegistry({
       revokeByPluginId: vi.fn(),
     } as unknown as PluginAuthStore);
-    const dropSpy = vi.spyOn(__getDispatchPoolForTests(), "drop");
+    const dropSpy = vi.spyOn(pluginDispatcher.pool, "drop");
     try {
       // Use a cutoff (via now) that keeps the FRESH plugin alive.
       await registry.runReaperOnce(() => new Date("2026-01-01T00:30:00Z").getTime());
