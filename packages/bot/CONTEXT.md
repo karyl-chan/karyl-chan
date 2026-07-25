@@ -23,6 +23,18 @@ _Avoid_: global default
 **Manifest Default**:
 The `enabled_by_default` value a plugin's manifest declares for a feature — the bottom of the Precedence Tiers.
 
+**Plugin Dispatch**:
+The act of safely delivering one payload to one plugin: liveness check, Feature Reach, signing, delivery, health recording — one shared path regardless of what triggered it.
+_Avoid_: forward, post to plugin (as loose synonyms)
+
+**Dispatch Kind**:
+The variety of a Plugin Dispatch (command, autocomplete, component, modal, lifecycle, event). A kind determines the payload shape, the endpoint, and which reach policy applies.
+_Avoid_: dispatch type, channel
+
+**Dispatch Transport**:
+The channel a Plugin Dispatch travels over (direct HTTP, pooled HTTP, event bus). The transport determines which pre-delivery steps apply — e.g. SSRF preflight and signing exist only for outbound HTTP.
+_Avoid_: delivery mode, backend
+
 **Plugin Change**:
 A notification that a plugin's effective state changed (registration, enable/disable, deregistration, or a feature write for one guild). Emitted by the module that owns the mutation; caches subscribe and invalidate themselves.
 _Avoid_: cache invalidation call (that's a subscriber's private reaction, not the event)
