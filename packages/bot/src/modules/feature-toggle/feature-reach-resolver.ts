@@ -47,6 +47,7 @@
 
 import { findFeatureRowsByPluginGuild } from "./models/plugin-guild-feature.model.js";
 import { findFeatureDefaultsByPlugin } from "./models/plugin-feature-default.model.js";
+import { onPluginChange } from "../plugin-system/plugin-changes.js";
 import type { PluginManifest } from "../plugin-system/plugin-sdk-types.js";
 
 const DEFAULT_TTL_MS = 30_000;
@@ -252,6 +253,16 @@ function flightKey(pluginId: number, guildId: string): string {
   return `${pluginId}:${guildId}`;
 }
 
-/** Process-wide singleton — invalidation points live in plugin-routes
- *  (feature mutations) and plugin-event-bridge (plugin lifecycle). */
+/** Process-wide singleton. Invalidation is driven by Plugin Change
+ *  notifications (plugin-changes.ts) — mutation owners emit, this cache
+ *  reacts. Production code must emit a Plugin Change rather than call
+ *  the invalidate methods directly. */
 export const featureReachResolver = new FeatureReachResolver();
+
+onPluginChange((change) => {
+  if (change.guildId !== undefined) {
+    featureReachResolver.invalidateGuild(change.pluginId, change.guildId);
+  } else {
+    featureReachResolver.invalidatePlugin(change.pluginId);
+  }
+});

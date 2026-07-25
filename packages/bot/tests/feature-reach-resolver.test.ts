@@ -18,7 +18,11 @@ import {
   PluginFeatureDefault,
   upsertFeatureDefault,
 } from "../src/modules/feature-toggle/models/plugin-feature-default.model.js";
-import { FeatureReachResolver } from "../src/modules/feature-toggle/feature-reach-resolver.js";
+import {
+  FeatureReachResolver,
+  featureReachResolver,
+} from "../src/modules/feature-toggle/feature-reach-resolver.js";
+import { emitPluginChange } from "../src/modules/plugin-system/plugin-changes.js";
 import type { PluginManifest } from "../src/modules/plugin-system/plugin-sdk-types.js";
 
 const PLUGIN_ID = 7;
@@ -154,4 +158,32 @@ describe("FeatureReachResolver — cache + invalidation", () => {
     expect(r.size()).toBe(1);
   });
 
+});
+
+describe("FeatureReachResolver — Plugin Change subscription (#27)", () => {
+  // The singleton subscribes to Plugin Change notifications; mutation
+  // owners emit instead of calling the invalidate methods directly.
+  beforeEach(() => {
+    featureReachResolver.clear();
+  });
+
+  it("a one-guild emit drops exactly that (plugin, guild) entry", async () => {
+    const m = manifestWith([{ key: "f", enabled_by_default: true }]);
+    await featureReachResolver.isFeatureEnabledInGuild(PLUGIN_ID, GUILD, "f", m);
+    await featureReachResolver.isFeatureEnabledInGuild(PLUGIN_ID, "g2", "f", m);
+    expect(featureReachResolver.size()).toBe(2);
+    emitPluginChange({ pluginId: PLUGIN_ID, guildId: GUILD });
+    expect(featureReachResolver.size()).toBe(1);
+  });
+
+  it("a plugin-wide emit (with or without a row) drops all of that plugin's entries", async () => {
+    const m = manifestWith([{ key: "f", enabled_by_default: true }]);
+    await featureReachResolver.isFeatureEnabledInGuild(PLUGIN_ID, GUILD, "f", m);
+    await featureReachResolver.isFeatureEnabledInGuild(99, GUILD, "f", m);
+    expect(featureReachResolver.size()).toBe(2);
+    emitPluginChange({ pluginId: PLUGIN_ID });
+    expect(featureReachResolver.size()).toBe(1);
+    emitPluginChange({ pluginId: 99, row: null });
+    expect(featureReachResolver.size()).toBe(0);
+  });
 });

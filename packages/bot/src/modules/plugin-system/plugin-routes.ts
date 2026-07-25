@@ -24,7 +24,7 @@ import {
   upsertFeatureDefault,
   type PluginFeatureDefaultRow,
 } from "../feature-toggle/models/plugin-feature-default.model.js";
-import { featureReachResolver } from "../feature-toggle/feature-reach-resolver.js";
+import { emitPluginChange } from "./plugin-changes.js";
 import {
   findConfigByPluginAndSource,
   upsertConfigKey,
@@ -37,10 +37,7 @@ import {
   ManifestCommandError,
   pluginCommandRegistry,
 } from "./plugin-command-registry.service.js";
-import {
-  dropDispatchPoolForPlugin,
-  removePluginFromIndex,
-} from "./plugin-event-bridge.service.js";
+import { dropDispatchPoolForPlugin } from "./plugin-event-bridge.service.js";
 import {
   getDispatchHealth,
   clearDispatchHealth,
@@ -1071,8 +1068,9 @@ export async function registerPluginRoutes(
         enabled,
         configJson,
       });
-      // PM-8: event dispatch + RPC gates cache this resolution.
-      featureReachResolver.invalidateGuild(pluginId, guildId);
+      // PM-8: event dispatch + RPC gates cache this resolution —
+      // subscribers drop this (plugin, guild)'s cached reach.
+      emitPluginChange({ pluginId, guildId });
       // Sync the feature's guild-scoped commands to match: enabled →
       // register them in this guild; disabled → delete them. Idempotent
       // (a config-only PATCH just re-confirms the current state).
@@ -1188,8 +1186,9 @@ export async function registerPluginRoutes(
       const effective = operatorDefault ?? !!feature.enabled_by_default;
       const enabledChanged = existingRow.enabled !== effective;
       await deleteFeatureRow(pluginId, guildId, featureKey);
-      // PM-8: event dispatch + RPC gates cache this resolution.
-      featureReachResolver.invalidateGuild(pluginId, guildId);
+      // PM-8: event dispatch + RPC gates cache this resolution —
+      // subscribers drop this (plugin, guild)'s cached reach.
+      emitPluginChange({ pluginId, guildId });
       {
         const pluginRow = await pluginRegistry.findById(pluginId);
         const manifestObj = pluginRow
@@ -1356,8 +1355,10 @@ export async function registerPluginRoutes(
         request.body.enabled,
       );
       // PM-8: a default change affects every guild without an explicit
-      // row — drop all cached resolutions for this plugin.
-      featureReachResolver.invalidatePlugin(pluginId);
+      // row — subscribers drop all cached resolutions for this plugin.
+      // (No `row`: the plugin row itself is unchanged, so event routes
+      // are unaffected.)
+      emitPluginChange({ pluginId });
       // Re-evaluate this feature's slash commands across every guild —
       // un-overridden guilds now follow this default. Detached: this can
       // be one Discord API call per guild, so don't make the admin wait
@@ -1873,7 +1874,7 @@ export async function registerPluginRoutes(
       //    (O(1) instead of a full rebuild), the proxy/lookup cache,
       //    and the dispatch pool (so a previously-tripped breaker
       //    doesn't survive a same-URL re-register).
-      removePluginFromIndex(pluginId);
+      emitPluginChange({ pluginId, row: null });
       invalidatePluginById(pluginId);
       dropDispatchPoolForPlugin(plugin.pluginKey);
       clearDispatchHealth(plugin.pluginKey);

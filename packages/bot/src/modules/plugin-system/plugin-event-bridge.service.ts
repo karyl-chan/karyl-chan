@@ -37,6 +37,7 @@ import {
   type EventScope,
 } from "./plugin-event-index.js";
 import { featureReachResolver } from "../feature-toggle/feature-reach-resolver.js";
+import { onPluginChange } from "./plugin-changes.js";
 import { getPluginEventBus } from "../../adapters/registry.js";
 import type { PluginEventBus } from "../../adapters/plugin-event-bus.js";
 
@@ -200,8 +201,8 @@ function routesFor(plugin: PluginRow): Map<string, EventScope[]> {
 
 /**
  * Walk the plugins table and rebuild the in-memory event route index.
- * Called once at startup. Subsequent mutations should call
- * `applyPluginChange` / `removePluginFromIndex` instead — those apply
+ * Called once at startup. Subsequent mutations reach the index via
+ * Plugin Change notifications (plugin-changes.ts), which apply
  * O(|prev ∪ next|) deltas without rescanning the whole table.
  */
 export async function rebuildEventIndex(): Promise<void> {
@@ -217,19 +218,13 @@ export async function rebuildEventIndex(): Promise<void> {
 }
 
 /**
- * Incremental update — call after register / setEnabled /
- * heartbeat-expire to keep the event index in sync without a full
- * table walk.
- *
- * Pass the post-mutation `PluginRow` (or just enough of it). When the
- * plugin should not receive dispatch (disabled OR status!=='active'
- * OR no parseable manifest), this acts as a removal.
+ * Incremental index update on a plugin-lifecycle mutation — applies the
+ * post-mutation `PluginRow` without a full table walk. When the plugin
+ * should not receive dispatch (disabled OR status!=='active' OR no
+ * parseable manifest), this acts as a removal. Driven by the Plugin
+ * Change subscription below; mutation owners emit, they don't call in.
  */
-export function applyPluginChange(plugin: PluginRow): void {
-  // Reach state may have changed with the plugin (re-register with a new
-  // manifest, enable/disable) — drop its cached feature resolutions so
-  // the next dispatch re-reads.
-  featureReachResolver.invalidatePlugin(plugin.id);
+function applyPluginChange(plugin: PluginRow): void {
   if (!plugin.enabled || plugin.status !== "active") {
     index.applyPlugin(plugin.id, new Map());
     return;
@@ -237,11 +232,20 @@ export function applyPluginChange(plugin: PluginRow): void {
   index.applyPlugin(plugin.id, routesFor(plugin));
 }
 
-/** Drop a plugin from the index — e.g. on hard delete or heartbeat expire. */
-export function removePluginFromIndex(pluginId: number): void {
-  featureReachResolver.invalidatePlugin(pluginId);
-  index.applyPlugin(pluginId, new Map());
-}
+// The event index reacts to Plugin Changes: a lifecycle mutation
+// re-derives the plugin's routes from its post-mutation row; a gone
+// plugin (row: null) is dropped. One-guild feature writes and
+// operator-default changes don't alter routes (feature reach is
+// enforced per-event via featureReachResolver, which subscribes to the
+// same notifications independently) — skipped.
+onPluginChange((change) => {
+  if (change.guildId !== undefined || change.row === undefined) return;
+  if (change.row === null) {
+    index.applyPlugin(change.pluginId, new Map());
+    return;
+  }
+  applyPluginChange(change.row);
+});
 
 /** Test-only — read the index state. */
 export function __snapshotEventIndexForTests(): {

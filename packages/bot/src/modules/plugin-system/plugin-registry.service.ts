@@ -17,12 +17,8 @@ import { evaluateSdkCompat } from "./plugin-sdk-compat.js";
 import { scheduleRegisterProbe } from "./plugin-dispatch-probe.service.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { moduleLogger } from "../../logger.js";
-import {
-  applyPluginChange,
-  dropDispatchPoolForPlugin,
-  rebuildEventIndex,
-  removePluginFromIndex,
-} from "./plugin-event-bridge.service.js";
+import { dropDispatchPoolForPlugin } from "./plugin-event-bridge.service.js";
+import { emitPluginChange } from "./plugin-changes.js";
 import {
   invalidatePluginByKey,
   invalidatePluginById,
@@ -897,20 +893,10 @@ export class PluginRegistry {
     // plugin. Even when the URL is unchanged (operator restarts a bad
     // plugin and re-registers), the breaker should start fresh.
     dropDispatchPoolForPlugin(manifest.plugin.id);
-    // Incremental index update. The freshly-registered plugin's
-    // manifest has been persisted to `persisted.manifestJson`, so
-    // applyPluginChange computes the new subscription set from it —
-    // no full table scan.
-    try {
-      applyPluginChange(persisted);
-    } catch (err) {
-      log.error({ err }, "applyPluginChange after register failed");
-      botEventLog.record(
-        "warn",
-        "bot",
-        "applyPluginChange after register failed",
-      );
-    }
+    // The freshly-registered plugin's manifest has been persisted to
+    // `persisted.manifestJson`; subscribers (event index, feature-reach
+    // cache) re-derive their state from the post-mutation row.
+    emitPluginChange({ pluginId: persisted.id, row: persisted });
     // ── Dispatch HMAC key ──────────────────────────────────────────────
     // Generate once and persist. On re-registration the existing key is
     // reused so plugins that have cached it don't break. The cleartext
@@ -980,11 +966,7 @@ export class PluginRegistry {
       pluginEndpointRegistry.touch(touched.row.pluginKey, url);
     }
     if (touched?.revived) {
-      try {
-        applyPluginChange(touched.row);
-      } catch (err) {
-        log.error({ err }, "applyPluginChange after heartbeat revive failed");
-      }
+      emitPluginChange({ pluginId, row: touched.row });
       invalidatePluginByKey(touched.row.pluginKey);
       dropDispatchPoolForPlugin(touched.row.pluginKey);
       botEventLog.record(
@@ -1035,7 +1017,7 @@ export class PluginRegistry {
     this.auth.revokeByPluginId(pluginId);
     const deactivated = await deactivatePluginByKey(row.pluginKey);
     if (deactivated) {
-      removePluginFromIndex(pluginId);
+      emitPluginChange({ pluginId, row: null });
       invalidatePluginById(pluginId);
       dropDispatchPoolForPlugin(row.pluginKey);
       botEventLog.record(
@@ -1085,14 +1067,10 @@ export class PluginRegistry {
       }
     }
     // Toggling enabled flips whether this plugin appears in event
-    // dispatch fan-out. Apply the delta directly from the post-
+    // dispatch fan-out — subscribers apply the delta from the post-
     // mutation row instead of walking every plugin.
     if (row) {
-      try {
-        applyPluginChange(row);
-      } catch {
-        /* shape is in-memory only; nothing to do besides log */
-      }
+      emitPluginChange({ pluginId, row });
       // Invalidate proxy/lookup cache so the next request sees the
       // new enabled / status.
       invalidatePluginByKey(row.pluginKey);
@@ -1212,7 +1190,7 @@ export class PluginRegistry {
     const row = await setPluginApprovedGlobalEventSubs(pluginId, approved);
     if (!row) return null;
     // Routes are derived from the grant at index build — re-apply now.
-    applyPluginChange(row);
+    emitPluginChange({ pluginId, row });
     invalidatePluginById(pluginId);
     botEventLog.record(
       "info",
@@ -1273,7 +1251,7 @@ export class PluginRegistry {
           `Plugin marked inactive (heartbeat timeout): id=${id}`,
           { pluginId: id, cutoff: cutoff.toISOString() },
         );
-        removePluginFromIndex(id);
+        emitPluginChange({ pluginId: id, row: null });
         invalidatePluginById(id);
         dropDispatchPoolForPlugin(pluginKey);
       }

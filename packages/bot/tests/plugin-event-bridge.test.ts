@@ -11,6 +11,8 @@ import {
   getEventIndexSize,
   dispatchEventToPlugins,
 } from "../src/modules/plugin-system/plugin-event-bridge.service.js";
+import { emitPluginChange } from "../src/modules/plugin-system/plugin-changes.js";
+import { findPluginById } from "../src/modules/plugin-system/models/plugin.model.js";
 import type { PluginManifest } from "../src/modules/plugin-system/plugin-sdk-types.js";
 
 beforeAll(async () => {
@@ -153,6 +155,65 @@ describe("rebuildEventIndex", () => {
     expect(getEventIndexSize()).toBe(3);
     await rebuildEventIndex();
     expect(getEventIndexSize()).toBe(3);
+  });
+});
+
+describe("Plugin Change subscription (#27) — index reactions", () => {
+  it("a lifecycle emit with the post-mutation row (re)indexes that plugin's routes", async () => {
+    await seedPlugin({
+      id: 1,
+      key: "alpha",
+      enabled: true,
+      status: "active",
+      manifest: { events_subscribed_global: ["messageCreate"] },
+    });
+    const row = await findPluginById(1);
+    expect(getEventIndexSize()).toBe(0);
+    emitPluginChange({ pluginId: 1, row });
+    expect(getEventIndexSize()).toBe(1);
+  });
+
+  it("a row that should not receive dispatch (disabled) acts as a removal", async () => {
+    await seedPlugin({
+      id: 1,
+      key: "alpha",
+      enabled: true,
+      status: "active",
+      manifest: { events_subscribed_global: ["messageCreate"] },
+    });
+    await rebuildEventIndex();
+    expect(getEventIndexSize()).toBe(1);
+    const row = await findPluginById(1);
+    emitPluginChange({ pluginId: 1, row: { ...row!, enabled: false } });
+    expect(getEventIndexSize()).toBe(0);
+  });
+
+  it("row: null (plugin gone) drops the plugin from the index", async () => {
+    await seedPlugin({
+      id: 1,
+      key: "alpha",
+      enabled: true,
+      status: "active",
+      manifest: { events_subscribed_global: ["messageCreate"] },
+    });
+    await rebuildEventIndex();
+    expect(getEventIndexSize()).toBe(1);
+    emitPluginChange({ pluginId: 1, row: null });
+    expect(getEventIndexSize()).toBe(0);
+  });
+
+  it("one-guild feature writes and rowless plugin-wide changes leave the index alone", async () => {
+    await seedPlugin({
+      id: 1,
+      key: "alpha",
+      enabled: true,
+      status: "active",
+      manifest: { events_subscribed_global: ["messageCreate"] },
+    });
+    await rebuildEventIndex();
+    emitPluginChange({ pluginId: 1, guildId: "g1" }); // feature write
+    emitPluginChange({ pluginId: 1 }); // operator-default change
+    expect(getEventIndexSize()).toBe(1);
   });
 });
 
