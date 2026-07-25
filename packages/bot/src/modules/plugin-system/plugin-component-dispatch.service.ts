@@ -7,7 +7,7 @@ import { findPluginByKey, type PluginRow } from "./models/plugin.model.js";
 import type { PluginManifest } from "./plugin-registry.service.js";
 import { resolveUserCapabilities } from "../admin/authorized-user.service.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
-import { isPluginEffectivelyEnabledInGuild } from "../feature-toggle/feature-resolve.js";
+import { featureReachResolver } from "../feature-toggle/feature-reach-resolver.js";
 import { recordPluginDeferUpdate } from "./plugin-defer-state.js";
 import {
   recordDispatchFetchFailure,
@@ -124,7 +124,7 @@ export async function dispatchComponentToPlugin(
   // "已啟用".
   if (
     interaction.guildId &&
-    !(await isPluginEffectivelyEnabledInGuild(
+    !(await featureReachResolver.hasAnyFeatureEnabledInGuild(
       plugin.id,
       interaction.guildId,
       manifest,

@@ -4,7 +4,7 @@ import { findPluginByKey, type PluginRow } from "./models/plugin.model.js";
 import type { PluginManifest } from "./plugin-registry.service.js";
 import { resolveUserCapabilities } from "../admin/authorized-user.service.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
-import { isPluginEffectivelyEnabledInGuild } from "../feature-toggle/feature-resolve.js";
+import { featureReachResolver } from "../feature-toggle/feature-reach-resolver.js";
 import { recordPluginDeferReply } from "./plugin-defer-state.js";
 import {
   recordDispatchFetchFailure,
@@ -123,10 +123,9 @@ export async function dispatchModalToPlugin(
   // Per-guild feature gate. 3-tier resolution (row → operator default
   // → manifest enabled_by_default) so manifests defaulting features to
   // enabled aren't falsely blocked before any row is materialized.
-  // See feature-resolve.ts.
   if (
     interaction.guildId &&
-    !(await isPluginEffectivelyEnabledInGuild(
+    !(await featureReachResolver.hasAnyFeatureEnabledInGuild(
       plugin.id,
       interaction.guildId,
       manifest,

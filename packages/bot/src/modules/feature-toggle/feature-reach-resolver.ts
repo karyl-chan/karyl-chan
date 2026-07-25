@@ -11,7 +11,7 @@
  * This is the ONE place runtime gates resolve feature reach:
  *   - event dispatch (feature-scoped subscriptions, hot path)
  *   - the RPC per-guild feature gate (plugin-rpc-routes)
- *   - component/modal dispatch (via feature-resolve.ts delegate)
+ *   - component/modal dispatch
  *
  * Cache shape: `pluginId → guildId → { features: Map<featureKey,bool> }`.
  * One cache miss triggers a single two-query DB read that resolves and
@@ -138,7 +138,7 @@ export class FeatureReachResolver {
    * Is ANY declared feature effectively enabled in this guild? A plugin
    * that declares NO guild features passes unconditionally — its only
    * per-guild surface is the plugin-level enabled flag, which callers
-   * check separately (same contract feature-resolve.ts established).
+   * check separately (the always-on contract).
    */
   async hasAnyFeatureEnabledInGuild(
     pluginId: number,

@@ -2,7 +2,7 @@
  * PD-1.3 — guild feature routes: the GET aggregate's fallback-tier
  * fields (operatorDefault / manifestDefault / defaultEnabled) and the
  * DELETE clear-override route. PUT/upsert mechanics are covered in
- * plugin-guild-feature.test.ts (model) and feature-resolve.test.ts
+ * plugin-guild-feature.test.ts (model) and feature-reach-resolver.test.ts
  * (resolution); this file locks the HTTP layer the guild panel reads.
  */
 import {

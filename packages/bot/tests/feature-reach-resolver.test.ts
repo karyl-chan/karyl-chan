@@ -101,6 +101,33 @@ describe("FeatureReachResolver — 3-tier precedence", () => {
       await r.hasAnyFeatureEnabledInGuild(PLUGIN_ID, GUILD, allOff),
     ).toBe(false);
   });
+
+  // Folded from feature-resolve.test.ts (#27): the component/modal
+  // dispatch gate resolves through the full Precedence Tiers — the
+  // original regression was a gate that only saw explicit enabled rows
+  // and bounced clicks on enabled-by-default features with no row yet.
+  it("hasAnyFeatureEnabledInGuild applies all three Precedence Tiers", async () => {
+    const r = new FeatureReachResolver();
+    const m = manifestWith([{ key: "f", enabled_by_default: true }]);
+    // Guild Override (disable) beats both defaults…
+    await upsertFeatureDefault(PLUGIN_ID, "f", true);
+    await upsertFeatureRow({
+      pluginId: PLUGIN_ID,
+      guildId: GUILD,
+      featureKey: "f",
+      enabled: false,
+    });
+    expect(await r.hasAnyFeatureEnabledInGuild(PLUGIN_ID, GUILD, m)).toBe(
+      false,
+    );
+    // …and an Operator Default beats the Manifest Default where no row
+    // exists.
+    const off = manifestWith([{ key: "g", enabled_by_default: false }]);
+    await upsertFeatureDefault(PLUGIN_ID, "g", true);
+    expect(await r.hasAnyFeatureEnabledInGuild(PLUGIN_ID, "g2", off)).toBe(
+      true,
+    );
+  });
 });
 
 describe("FeatureReachResolver — cache + invalidation", () => {
