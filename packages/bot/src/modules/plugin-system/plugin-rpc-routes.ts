@@ -23,8 +23,6 @@ import {
 import { decryptSecret } from "../../utils/crypto.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { shouldRecord } from "../bot-events/bot-event-dedup.js";
-import { findFeatureRowsByPlugin } from "../feature-toggle/models/plugin-guild-feature.model.js";
-import { findFeatureDefaultsByPlugin } from "../feature-toggle/models/plugin-feature-default.model.js";
 import { featureReachResolver } from "../feature-toggle/feature-reach-resolver.js";
 import type { PluginManifest } from "./plugin-registry.service.js";
 import { jwtService } from "../web-core/jwt.service.js";
@@ -2663,42 +2661,20 @@ export async function registerPluginRpcRoutes(
       }
       const plugin = await findPluginById(ctx.pluginId);
       const manifest = plugin ? parsePluginManifest(plugin) : null;
-      const manifestFeatures = manifest?.guild_features ?? [];
-      if (manifestFeatures.length === 0) {
+      if (!manifest) {
+        // No parseable manifest → no declared features → always-on.
         return { guild_ids: Array.from(bot.guilds.cache.keys()) };
       }
-      const [rows, defaults] = await Promise.all([
-        findFeatureRowsByPlugin(ctx.pluginId),
-        findFeatureDefaultsByPlugin(ctx.pluginId),
-      ]);
-      const operatorDefaultByKey = new Map(
-        defaults.map((d) => [d.featureKey, d.enabled]),
-      );
-      const manifestDefaultByKey = new Map(
-        manifestFeatures.map((f) => [f.key, !!f.enabled_by_default]),
-      );
-      const rowsByGuild = new Map<string, Map<string, boolean>>();
-      for (const r of rows) {
-        let byKey = rowsByGuild.get(r.guildId);
-        if (!byKey) {
-          byKey = new Map();
-          rowsByGuild.set(r.guildId, byKey);
-        }
-        byKey.set(r.featureKey, r.enabled);
-      }
-      const enabledGuilds: string[] = [];
-      for (const guildId of bot.guilds.cache.keys()) {
-        const guildRows = rowsByGuild.get(guildId);
-        const anyEnabled = manifestFeatures.some((feature) => {
-          const rowVal = guildRows?.get(feature.key);
-          if (rowVal !== undefined) return rowVal;
-          const opDefault = operatorDefaultByKey.get(feature.key);
-          if (opDefault !== undefined) return opDefault;
-          return manifestDefaultByKey.get(feature.key) ?? false;
-        });
-        if (anyEnabled) enabledGuilds.push(guildId);
-      }
-      return { guild_ids: enabledGuilds };
+      // Fresh batch resolution (two queries) — the featureless
+      // always-on contract and the Precedence Tiers live in the
+      // Feature Reach module.
+      return {
+        guild_ids: await featureReachResolver.enabledGuildIds(
+          ctx.pluginId,
+          bot.guilds.cache.keys(),
+          manifest,
+        ),
+      };
     },
   );
 

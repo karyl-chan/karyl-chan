@@ -13,18 +13,16 @@ import { botEventLog } from "../bot-events/bot-event-log.js";
 import { shouldRecord } from "../bot-events/bot-event-dedup.js";
 import {
   deleteFeatureRow,
-  findFeatureRow,
-  findFeatureRowsByGuild,
   findFeatureRowsByPlugin,
   upsertFeatureRow,
 } from "../feature-toggle/models/plugin-guild-feature.model.js";
 import {
   findAllFeatureDefaults,
-  findFeatureDefaultsByPlugin,
   upsertFeatureDefault,
   type PluginFeatureDefaultRow,
 } from "../feature-toggle/models/plugin-feature-default.model.js";
 import { emitPluginChange } from "./plugin-changes.js";
+import { featureReachResolver } from "../feature-toggle/feature-reach-resolver.js";
 import {
   findConfigByPluginAndSource,
   upsertConfigKey,
@@ -820,16 +818,6 @@ export async function registerPluginRoutes(
         return;
       }
       const plugins = await pluginRegistry.list();
-      const rows = await findFeatureRowsByGuild(guildId);
-      const rowByKey = new Map(
-        rows.map((r) => [`${r.pluginId}:${r.featureKey}`, r]),
-      );
-      const defaultByKey = new Map(
-        (await findAllFeatureDefaults()).map((d) => [
-          `${d.pluginId}:${d.featureKey}`,
-          d.enabled,
-        ]),
-      );
       const items: Array<{
         pluginId: number;
         pluginKey: string;
@@ -858,11 +846,14 @@ export async function registerPluginRoutes(
       for (const p of plugins) {
         const manifest = safeParse(p.manifestJson) as PluginManifest | null;
         if (!manifest) continue;
+        const resolved = await featureReachResolver.resolveGuildFeatures(
+          p.id,
+          guildId,
+          manifest,
+        );
         for (const f of manifest.guild_features ?? []) {
-          const row = rowByKey.get(`${p.id}:${f.key}`);
-          const operatorDefault = defaultByKey.get(`${p.id}:${f.key}`) ?? null;
-          const manifestDefault = !!f.enabled_by_default;
-          const defaultEnabled = operatorDefault ?? manifestDefault;
+          const feature = resolved.get(f.key);
+          if (!feature) continue;
           items.push({
             pluginId: p.id,
             pluginKey: p.pluginKey,
@@ -873,16 +864,22 @@ export async function registerPluginRoutes(
             icon: f.icon,
             configSchema: f.config_schema ?? [],
             surfaces: f.surfaces ?? ["bot_functions_tab"],
-            enabled: row ? row.enabled : defaultEnabled,
-            overridden: !!row,
-            defaultEnabled,
-            operatorDefault,
-            manifestDefault,
-            config: row
-              ? ((safeParse(row.configJson) as Record<string, unknown>) ?? {})
+            enabled: feature.enabled,
+            overridden: feature.overridden,
+            defaultEnabled: feature.defaultEnabled,
+            operatorDefault: feature.operatorDefault,
+            manifestDefault: feature.manifestDefault,
+            config: feature.row
+              ? ((safeParse(feature.row.configJson) as Record<
+                  string,
+                  unknown
+                >) ?? {})
               : {},
-            metrics: row
-              ? ((safeParse(row.metricsJson) as Record<string, unknown>) ?? {})
+            metrics: feature.row
+              ? ((safeParse(feature.row.metricsJson) as Record<
+                  string,
+                  unknown
+                >) ?? {})
               : {},
             pluginEnabled: p.enabled,
             pluginStatus: p.status,
@@ -950,24 +947,24 @@ export async function registerPluginRoutes(
       // config-only PATCH yet — `setGuildFeatureEnabled` always sends
       // `enabled`.)
       const enabledWasGiven = body.enabled !== undefined;
-      // Read the prior row up-front so we can detect a real state
-      // change for the lifecycle dispatch below. Without this, an
+      // Resolve the pre-write state up-front: the effective value backs
+      // a config-only PATCH, and the prior row lets us detect a real
+      // state change for the lifecycle dispatch below. Without that, an
       // admin UI that re-submits an unchanged `enabled: true` would
       // refire onEnable on every save and break plugins whose hook
       // isn't perfectly idempotent (duplicate timers, INSERT
       // conflicts on seed rows, double-counted metrics).
-      const existingRow = await findFeatureRow(pluginId, guildId, featureKey);
-      let enabled: boolean;
-      if (enabledWasGiven) {
-        enabled = !!body.enabled;
-      } else {
-        enabled =
-          existingRow?.enabled ??
-          (await findFeatureDefaultsByPlugin(pluginId)).find(
-            (d) => d.featureKey === featureKey,
-          )?.enabled ??
-          !!feature.enabled_by_default;
-      }
+      const resolved = (
+        await featureReachResolver.resolveGuildFeatures(
+          pluginId,
+          guildId,
+          manifest!,
+        )
+      ).get(featureKey);
+      const existingRow = resolved?.row ?? null;
+      const enabled = enabledWasGiven
+        ? !!body.enabled
+        : (resolved?.enabled ?? false);
       const enabledChanged =
         enabledWasGiven && existingRow?.enabled !== enabled;
       let configJson: string | undefined;
@@ -1172,18 +1169,23 @@ export async function registerPluginRoutes(
           .send({ error: `feature '${featureKey}' not declared by plugin` });
         return;
       }
-      const existingRow = await findFeatureRow(pluginId, guildId, featureKey);
-      if (!existingRow) {
+      const resolved = (
+        await featureReachResolver.resolveGuildFeatures(
+          pluginId,
+          guildId,
+          manifest!,
+        )
+      ).get(featureKey);
+      const existingRow = resolved?.row;
+      if (!resolved || !existingRow) {
         reply
           .code(404)
           .send({ error: "no per-guild override to clear" });
         return;
       }
-      const operatorDefault =
-        (await findFeatureDefaultsByPlugin(pluginId)).find(
-          (d) => d.featureKey === featureKey,
-        )?.enabled ?? null;
-      const effective = operatorDefault ?? !!feature.enabled_by_default;
+      const operatorDefault = resolved.operatorDefault;
+      // What the guild reverts to once the Guild Override is gone.
+      const effective = resolved.defaultEnabled;
       const enabledChanged = existingRow.enabled !== effective;
       await deleteFeatureRow(pluginId, guildId, featureKey);
       // PM-8: event dispatch + RPC gates cache this resolution —

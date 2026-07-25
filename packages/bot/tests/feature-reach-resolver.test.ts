@@ -21,6 +21,7 @@ import {
 import {
   FeatureReachResolver,
   featureReachResolver,
+  resolvePrecedenceTiers,
 } from "../src/modules/feature-toggle/feature-reach-resolver.js";
 import { emitPluginChange } from "../src/modules/plugin-system/plugin-changes.js";
 import type { PluginManifest } from "../src/modules/plugin-system/plugin-sdk-types.js";
@@ -158,6 +159,119 @@ describe("FeatureReachResolver — cache + invalidation", () => {
     expect(r.size()).toBe(1);
   });
 
+});
+
+describe("resolvePrecedenceTiers — the one precedence rule (#27)", () => {
+  it("guild override beats operator default beats manifest default beats false", () => {
+    expect(resolvePrecedenceTiers(false, true, true)).toBe(false);
+    expect(resolvePrecedenceTiers(true, false, false)).toBe(true);
+    expect(resolvePrecedenceTiers(undefined, false, true)).toBe(false);
+    expect(resolvePrecedenceTiers(undefined, true, false)).toBe(true);
+    expect(resolvePrecedenceTiers(undefined, undefined, true)).toBe(true);
+    expect(resolvePrecedenceTiers(undefined, undefined, undefined)).toBe(false);
+  });
+});
+
+describe("FeatureReachResolver — resolveGuildFeatures (fresh admin read, #27)", () => {
+  it("reports every tier per feature, including the row for override reads", async () => {
+    const r = new FeatureReachResolver();
+    const m = manifestWith([
+      { key: "ov", enabled_by_default: true },
+      { key: "op", enabled_by_default: false },
+      { key: "mf", enabled_by_default: true },
+    ]);
+    await upsertFeatureRow({
+      pluginId: PLUGIN_ID,
+      guildId: GUILD,
+      featureKey: "ov",
+      enabled: false,
+    });
+    await upsertFeatureDefault(PLUGIN_ID, "op", true);
+    const resolved = await r.resolveGuildFeatures(PLUGIN_ID, GUILD, m);
+    expect(resolved.get("ov")).toMatchObject({
+      enabled: false,
+      overridden: true,
+      defaultEnabled: true,
+      operatorDefault: null,
+      manifestDefault: true,
+    });
+    expect(resolved.get("ov")?.row?.featureKey).toBe("ov");
+    expect(resolved.get("op")).toMatchObject({
+      enabled: true,
+      overridden: false,
+      defaultEnabled: true,
+      operatorDefault: true,
+      manifestDefault: false,
+      row: null,
+    });
+    expect(resolved.get("mf")).toMatchObject({
+      enabled: true,
+      overridden: false,
+      defaultEnabled: true,
+      operatorDefault: null,
+      manifestDefault: true,
+      row: null,
+    });
+  });
+
+  it("is fresh — a write is visible immediately even with a warm cache", async () => {
+    const r = new FeatureReachResolver();
+    const m = manifestWith([{ key: "f", enabled_by_default: false }]);
+    // Warm the TTL cache with the pre-write state…
+    expect(await r.isFeatureEnabledInGuild(PLUGIN_ID, GUILD, "f", m)).toBe(
+      false,
+    );
+    await upsertFeatureRow({
+      pluginId: PLUGIN_ID,
+      guildId: GUILD,
+      featureKey: "f",
+      enabled: true,
+    });
+    // …the admin read bypasses it.
+    const resolved = await r.resolveGuildFeatures(PLUGIN_ID, GUILD, m);
+    expect(resolved.get("f")?.enabled).toBe(true);
+  });
+});
+
+describe("FeatureReachResolver — enabledGuildIds (fresh batch read, #27)", () => {
+  it("keeps guilds where any feature is effectively enabled, across all tiers", async () => {
+    const r = new FeatureReachResolver();
+    const m = manifestWith([
+      { key: "a", enabled_by_default: false },
+      { key: "b", enabled_by_default: false },
+    ]);
+    // gRow: explicit row enables `a`. gOff: explicit rows disable both.
+    await upsertFeatureRow({
+      pluginId: PLUGIN_ID,
+      guildId: "gRow",
+      featureKey: "a",
+      enabled: true,
+    });
+    for (const key of ["a", "b"]) {
+      await upsertFeatureRow({
+        pluginId: PLUGIN_ID,
+        guildId: "gOff",
+        featureKey: key,
+        enabled: false,
+      });
+    }
+    // No rows anywhere else: gDefault follows the manifest (all-false).
+    expect(
+      await r.enabledGuildIds(PLUGIN_ID, ["gRow", "gOff", "gDefault"], m),
+    ).toEqual(["gRow"]);
+    // An operator default flips every guild without a covering row.
+    await upsertFeatureDefault(PLUGIN_ID, "b", true);
+    expect(
+      await r.enabledGuildIds(PLUGIN_ID, ["gRow", "gOff", "gDefault"], m),
+    ).toEqual(["gRow", "gDefault"]);
+  });
+
+  it("a featureless plugin passes every guild through (always-on contract)", async () => {
+    const r = new FeatureReachResolver();
+    expect(
+      await r.enabledGuildIds(PLUGIN_ID, ["g1", "g2"], manifestWith([])),
+    ).toEqual(["g1", "g2"]);
+  });
 });
 
 describe("FeatureReachResolver — Plugin Change subscription (#27)", () => {

@@ -45,12 +45,49 @@
  * resolver never parses; an unparseable manifest is the caller's gate.
  */
 
-import { findFeatureRowsByPluginGuild } from "./models/plugin-guild-feature.model.js";
+import {
+  findFeatureRowsByPlugin,
+  findFeatureRowsByPluginGuild,
+  type PluginGuildFeatureRow,
+} from "./models/plugin-guild-feature.model.js";
 import { findFeatureDefaultsByPlugin } from "./models/plugin-feature-default.model.js";
 import { onPluginChange } from "../plugin-system/plugin-changes.js";
 import type { PluginManifest } from "../plugin-system/plugin-sdk-types.js";
 
 const DEFAULT_TTL_MS = 30_000;
+
+/**
+ * The Precedence Tiers rule — Guild Override → Operator Default →
+ * Manifest Default → false. The ONE implementation, shared by the
+ * cached hot path and the fresh admin reads. `undefined` means "this
+ * tier has nothing to say, fall through".
+ */
+export function resolvePrecedenceTiers(
+  guildOverride: boolean | undefined,
+  operatorDefault: boolean | undefined,
+  manifestDefault: boolean | undefined,
+): boolean {
+  return guildOverride ?? operatorDefault ?? manifestDefault ?? false;
+}
+
+/** One feature's resolution for a guild, with every tier visible —
+ *  the shape admin reads need to render/compute override state. */
+export interface ResolvedGuildFeature {
+  /** Effective on/off after the Precedence Tiers. */
+  enabled: boolean;
+  /** True when an explicit per-guild row (Guild Override) exists. */
+  overridden: boolean;
+  /** What the guild falls back to without an override
+   *  (Operator Default → Manifest Default → false). */
+  defaultEnabled: boolean;
+  /** The Operator Default, or null when none is set. */
+  operatorDefault: boolean | null;
+  /** The manifest's enabled_by_default. */
+  manifestDefault: boolean;
+  /** The Guild Override row when one exists — admin callers need its
+   *  config/metrics JSON alongside the resolution. */
+  row: PluginGuildFeatureRow | null;
+}
 
 interface GuildEntry {
   /** Every declared feature key → its resolved enablement. A key absent
@@ -115,6 +152,97 @@ export class FeatureReachResolver {
       (await this.resolveGuild(pluginId, guildId, manifest));
     if (!map) return false;
     return features.some((f) => map.get(f.key) === true);
+  }
+
+  /**
+   * FRESH per-feature resolution for one guild — no TTL cache, no
+   * single-flight, errors propagate. For admin reads (settings matrix,
+   * effective-state computation on writes), which are low-traffic and
+   * read-after-write-critical; the cache serves only the dispatch hot
+   * path. Every declared feature key is present in the result.
+   */
+  async resolveGuildFeatures(
+    pluginId: number,
+    guildId: string,
+    manifest: PluginManifest,
+  ): Promise<Map<string, ResolvedGuildFeature>> {
+    const [rows, defaults] = await Promise.all([
+      findFeatureRowsByPluginGuild(pluginId, guildId),
+      findFeatureDefaultsByPlugin(pluginId),
+    ]);
+    const rowByKey = new Map(rows.map((r) => [r.featureKey, r]));
+    const defaultByKey = new Map(
+      defaults.map((d) => [d.featureKey, d.enabled]),
+    );
+    const resolved = new Map<string, ResolvedGuildFeature>();
+    for (const feature of manifest.guild_features ?? []) {
+      const row = rowByKey.get(feature.key) ?? null;
+      const operatorDefault = defaultByKey.get(feature.key) ?? null;
+      const manifestDefault = !!feature.enabled_by_default;
+      resolved.set(feature.key, {
+        enabled: resolvePrecedenceTiers(
+          row?.enabled,
+          operatorDefault ?? undefined,
+          manifestDefault,
+        ),
+        overridden: row !== null,
+        defaultEnabled: resolvePrecedenceTiers(
+          undefined,
+          operatorDefault ?? undefined,
+          manifestDefault,
+        ),
+        operatorDefault,
+        manifestDefault,
+        row,
+      });
+    }
+    return resolved;
+  }
+
+  /**
+   * FRESH batch read: which of `guildIds` have ANY declared feature
+   * effectively enabled? Two batch queries regardless of guild count.
+   * A featureless plugin passes every guild through (same always-on
+   * contract as hasAnyFeatureEnabledInGuild). For plugin-facing
+   * enumeration (me/enabled_guilds), where background workers must see
+   * a toggle without cache lag.
+   */
+  async enabledGuildIds(
+    pluginId: number,
+    guildIds: Iterable<string>,
+    manifest: PluginManifest,
+  ): Promise<string[]> {
+    const features = manifest.guild_features ?? [];
+    if (features.length === 0) return [...guildIds];
+    const [rows, defaults] = await Promise.all([
+      findFeatureRowsByPlugin(pluginId),
+      findFeatureDefaultsByPlugin(pluginId),
+    ]);
+    const defaultByKey = new Map(
+      defaults.map((d) => [d.featureKey, d.enabled]),
+    );
+    const rowsByGuild = new Map<string, Map<string, boolean>>();
+    for (const r of rows) {
+      let byKey = rowsByGuild.get(r.guildId);
+      if (!byKey) {
+        byKey = new Map();
+        rowsByGuild.set(r.guildId, byKey);
+      }
+      byKey.set(r.featureKey, r.enabled);
+    }
+    const enabled: string[] = [];
+    for (const guildId of guildIds) {
+      const guildRows = rowsByGuild.get(guildId);
+      const anyEnabled = features.some((f) =>
+        resolvePrecedenceTiers(
+          guildRows?.get(f.key),
+          defaultByKey.get(f.key),
+          !!f.enabled_by_default,
+        ),
+      );
+      if (anyEnabled) enabled.push(guildId);
+    }
+    return enabled;
   }
 
   /** Drop the cached entry for one (plugin, guild) pair. */
@@ -225,9 +353,11 @@ export class FeatureReachResolver {
     for (const feature of manifest.guild_features ?? []) {
       features.set(
         feature.key,
-        rowByKey.get(feature.key) ??
-          defaultByKey.get(feature.key) ??
+        resolvePrecedenceTiers(
+          rowByKey.get(feature.key),
+          defaultByKey.get(feature.key),
           !!feature.enabled_by_default,
+        ),
       );
     }
     // Cache only if no invalidation for this (plugin, guild) happened
