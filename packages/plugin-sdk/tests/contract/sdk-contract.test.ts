@@ -38,7 +38,7 @@ import {
   pluginDlqKeyFor,
   pluginStreamKeyFor,
 } from "../../src/streams-protocol.js";
-import { Events, isCanonicalEvent } from "../../src/events.js";
+import { Events, isCanonicalEvent } from "../../src/index.js";
 
 // The canonical fixtures live in the SOURCE tree at
 // tests/contract/contract-fixtures.json. tsc does not copy .json into

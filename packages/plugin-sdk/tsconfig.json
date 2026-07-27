@@ -9,7 +9,11 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+    "baseUrl": ".",
+    "paths": {
+      "@karyl-chan/plugin-wire": ["../plugin-wire/src/index.ts"]
+    }
   },
   "include": ["src/**/*"],
   "exclude": ["tests", "src/web"]
