@@ -1,10 +1,14 @@
 /**
- * Canonical Discord-side event type names.
+ * Canonical Discord-side event type names — the Wire Contract's event
+ * vocabulary.
  *
  * The bot dispatches these exact strings as the `type` field of every
- * outbound `/events` POST. Use them as keys when declaring
- * `eventHandlers` on `definePlugin` so a typo can't silently subscribe
- * to nothing.
+ * outbound `/events` POST. Plugin authors use them as keys when
+ * declaring `eventHandlers` on `definePlugin` so a typo can't silently
+ * subscribe to nothing. The published SDK re-exports `Events`,
+ * `EventName`, and `isCanonicalEvent` from here (vendored into its
+ * `dist` at build time); the bot imports the same set to reject unknown
+ * subscriptions at register time.
  *
  * Why lower-dot (`guild.message_create`) and not Discord's raw
  * `MESSAGE_CREATE`: the bot intentionally namespaces by surface
@@ -21,9 +25,11 @@
  * });
  * ```
  *
- * Adding a new emitted event on the bot side is an additive manifest
- * change — add the literal here in the same release and the bot's
- * dispatch path stays in lockstep with the plugin author's surface.
+ * The set only ever grows. Adding a new emitted event on the bot side
+ * is an additive change: add the literal here with the SDK version that
+ * introduces it (`introducedIn` below) in the same release, and the
+ * bot's dispatch path stays in lockstep with the plugin author's
+ * surface.
  */
 export const Events = {
   /** A message in a guild text channel. `data` matches the bot's
@@ -63,13 +69,37 @@ export const Events = {
 
 export type EventName = (typeof Events)[keyof typeof Events];
 
-const VALID = new Set<string>(Object.values(Events));
+/**
+ * Every Canonical Event, tagged with the `@karyl-chan/plugin-sdk`
+ * semver that introduced it. The Event Ceiling (below) is the derived
+ * max — the newest SDK version whose events this build fully knows.
+ *
+ * `introducedIn` values are historical facts (the SDK release whose
+ * `events.ts` first carried the literal) and never change once set;
+ * only new rows are appended.
+ */
+export const CANONICAL_EVENTS: ReadonlyArray<{
+  name: EventName;
+  introducedIn: string;
+}> = [
+  { name: Events.GuildMessageCreate, introducedIn: "0.9.0" },
+  { name: Events.DmMessageCreate, introducedIn: "0.9.0" },
+  { name: Events.GuildMessageReactionAdd, introducedIn: "0.9.0" },
+  { name: Events.GuildMessageReactionRemove, introducedIn: "0.9.0" },
+  { name: Events.GuildMessageUpdate, introducedIn: "0.11.1" },
+  { name: Events.GuildMessageDelete, introducedIn: "0.11.1" },
+  { name: Events.GuildMessageCreateSelf, introducedIn: "0.11.1" },
+  { name: Events.GuildMessageCreateSelfEphemeral, introducedIn: "0.11.1" },
+  { name: Events.GuildVoiceStateUpdate, introducedIn: "0.11.1" },
+];
+
+const VALID = new Set<string>(CANONICAL_EVENTS.map((e) => e.name));
 
 /**
- * Plugin authors that hard-code event keys (e.g. read from config
- * files) can call this to assert the key is one the bot will emit.
- * Returns true when valid; the manifest builder calls this at build
- * time to warn on dead subscriptions.
+ * True when `name` is a Canonical Event this build recognizes. Plugin
+ * authors that hard-code event keys (e.g. read from config files) can
+ * call this to assert the key is one the bot will emit; the manifest
+ * builder calls it at build time to warn on dead subscriptions.
  */
 export function isCanonicalEvent(name: string): name is EventName {
   return VALID.has(name);

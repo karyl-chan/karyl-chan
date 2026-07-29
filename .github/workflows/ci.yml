@@ -37,8 +37,12 @@ jobs:
 
       - name: Build & test plugin-sdk
         if: matrix.target == 'plugin-sdk'
+        # `...` builds the workspace deps (plugin-wire) before the SDK, so
+        # the SDK's tsc-based tests can resolve @karyl-chan/plugin-wire from
+        # its built dist. (The SDK build itself inlines plugin-wire from
+        # source via the tsconfig path alias and needs no prior dist.)
         run: |
-          pnpm --filter @karyl-chan/plugin-sdk build
+          pnpm --filter "@karyl-chan/plugin-sdk..." build
           pnpm --filter @karyl-chan/plugin-sdk test
 
       - name: Build & test voice

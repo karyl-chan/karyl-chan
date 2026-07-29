@@ -12,7 +12,7 @@ import type {
   PluginConfig,
 } from "./plugin.js";
 import type { CommandOption, CommandOptionTypeName } from "./types.js";
-import { isCanonicalEvent } from "./events.js";
+import { isCanonicalEvent } from "@karyl-chan/plugin-wire";
 import { createRequire } from "node:module";
 
 /**

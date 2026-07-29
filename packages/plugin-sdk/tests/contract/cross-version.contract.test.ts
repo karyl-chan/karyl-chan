@@ -22,7 +22,7 @@ import {
   NONCE_HEADER,
 } from "../../src/hmac.js";
 import { DLQ_SUFFIX } from "../../src/streams-protocol.js";
-import { Events } from "../../src/events.js";
+import { Events } from "../../src/index.js";
 
 const prevSdk = prev as Record<string, unknown>;
 

@@ -8,6 +8,7 @@ This repo is a pnpm monorepo with one bounded context per workspace package. Eac
 | UI                     | `packages/ui/`                 | `packages/ui/CONTEXT.md`            |
 | Voice                  | `packages/voice/`              | `packages/voice/CONTEXT.md`         |
 | Plugin SDK             | `packages/plugin-sdk/`         | `packages/plugin-sdk/CONTEXT.md`    |
+| Plugin wire contract   | `packages/plugin-wire/`        | `packages/plugin-wire/CONTEXT.md`   |
 | Plugin: example        | `packages/plugin-example/`     | `packages/plugin-example/CONTEXT.md` |
 | Plugin: reminder       | `packages/plugin-reminder/`    | `packages/plugin-reminder/CONTEXT.md` |
 | Plugin scaffolder      | `packages/create-karyl-plugin/` | `packages/create-karyl-plugin/CONTEXT.md` |

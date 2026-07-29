@@ -3,18 +3,14 @@
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "declaration": true,
-    "outDir": "dist",
+    "declaration": false,
+    "outDir": "dist-test",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "forceConsistentCasingInFileNames": true,
-    "baseUrl": ".",
-    "paths": {
-      "@karyl-chan/plugin-wire": ["../plugin-wire/src/index.ts"]
-    }
+    "types": ["node"]
   },
-  "include": ["src/**/*"],
-  "exclude": ["tests", "src/web"]
+  "include": ["src/**/*", "tests/**/*"]
 }

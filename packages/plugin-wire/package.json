@@ -1,0 +1,36 @@
+{
+  "name": "@karyl-chan/plugin-wire",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The bot↔plugin wire contract — Canonical Events, scope vocabulary, manifest + dispatch payload types, protocol validation, and contract fixtures. Workspace-private; never published. The bot and frontend import it via workspace:*; the published plugin-sdk vendors it into dist at build time.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/karyl-chan/karyl-chan.git",
+    "directory": "packages/plugin-wire"
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc",
+    "test": "tsc -p tsconfig.test.json && node --test \"dist-test/**/*.test.js\"",
+    "clean": "rm -rf dist dist-test"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^6.0.3"
+  }
+}
