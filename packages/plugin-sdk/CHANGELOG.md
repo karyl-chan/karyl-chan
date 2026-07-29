@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.0](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.12.1...plugin-sdk-v0.13.0) (2026-07-29)
+
+
+### Features
+
+* **plugin-sdk:** declare sub_command_group + member.permissions on dispatch payloads ([#33](https://github.com/karyl-chan/karyl-chan/issues/33)) ([997cc5f](https://github.com/karyl-chan/karyl-chan/commit/997cc5f8aa8c1e353dcfb65612a1dcf65b796e4c))
+* **plugin-sdk:** stand up plugin-wire + vendor it into dist ([#34](https://github.com/karyl-chan/karyl-chan/issues/34)) ([03ec922](https://github.com/karyl-chan/karyl-chan/commit/03ec922a473df5724ede67aae55e4ee25891403e))
+
 ## [0.12.1](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.12.0...plugin-sdk-v0.12.1) (2026-06-18)
 
 
