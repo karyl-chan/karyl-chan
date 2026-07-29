@@ -7,43 +7,19 @@ import {
 import type { PluginManifest } from "./plugin-registry.service.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { shouldRecord } from "../bot-events/bot-event-dedup.js";
-import { buildOutboundSignatureHeaders } from "../../utils/hmac.js";
-import {
-  TRACEPARENT_HEADER,
-  newTraceContext,
-} from "../../utils/trace-context.js";
-import {
-  parsePluginManifest,
-  preflightPluginTarget,
-} from "./plugin-dispatch-util.js";
-import {
-  pluginEventDispatchDuration,
-  pluginEventDispatchTotal,
-} from "../web-core/metrics.js";
-import {
-  PluginDispatchPool,
-  DEFAULT_DISPATCH_POOL_OPTIONS,
-  type DispatchOutcome,
-} from "./plugin-dispatch-pool.js";
-import {
-  recordDispatchAttempt,
-  recordDispatchUnreachable,
-  classifyDispatchHttpFailure,
-  type DispatchAttempt,
-} from "./plugin-dispatch-health.service.js";
+import { parsePluginManifest } from "./plugin-dispatch-util.js";
 import {
   EventIndex,
   collectEventRoutes,
   type EventScope,
 } from "./plugin-event-index.js";
-import { featureReachResolver } from "../feature-toggle/feature-reach-resolver.js";
 import { onPluginChange } from "./plugin-changes.js";
-import { getPluginEventBus } from "../../adapters/registry.js";
-import type { PluginEventBus } from "../../adapters/plugin-event-bus.js";
+import { pluginDispatcher } from "./plugin-dispatch.service.js";
 
 /**
- * Bot → Plugin event dispatch. Plugins declare which event types
- * they're interested in via their manifest's
+ * Bot → Plugin event routing (the index half of event dispatch; the
+ * delivery half lives in the Plugin Dispatch module). Plugins declare
+ * which event types they're interested in via their manifest's
  *
  *   guild_features[].events_subscribed   (per-feature, guild-gated)
  *   events_subscribed_global             (approval-gated firehose)
@@ -59,117 +35,26 @@ import type { PluginEventBus } from "../../adapters/plugin-event-bus.js";
  * declared ones — resolved at index build, so an unapproved global
  * subscription has no route at all). Inbound visibility therefore
  * follows the same per-guild consent the RPC gate enforces outbound.
+ * The per-event reach gate itself runs inside the dispatch module.
  *
- * Dispatch is fire-and-forget: we POST to plugin.url + manifest's
- * endpoints.events (default `/events`) with HMAC headers, then move
- * on. Plugins that want to act on the event call back through the
- * /api/plugin/* RPC routes.
+ * Dispatch is fire-and-forget: the module POSTs to plugin.url +
+ * manifest's endpoints.events (default `/events`) with HMAC headers —
+ * or XADDs into the plugin's mailbox stream when EVENT_BUS is set —
+ * then we move on. Plugins that want to act on the event call back
+ * through the /api/plugin/* RPC routes.
  */
 
-const DEFAULT_EVENTS_PATH = "/events";
-
-/**
- * Map a pool outcome onto the dispatch-health vocabulary (PM-7.9.1).
- * Failure outcomes don't carry a body, so the awaiting-register
- * refinement of 503s isn't available on this path — a plain
- * `http_error` is recorded instead. Pool-level timeouts surface as
- * undici errors and land in `network`.
- *
- * Returns null for `breaker_open` / `shed` short-circuits: they never
- * touch the network and occur at message-traffic rate once the
- * breaker trips, so recording them floods the 20-entry recent window
- * within seconds — evicting the root-cause rejected_401 entries the
- * badge keys on and inflating consecutiveFailures into the thousands.
- * The real failures that tripped the breaker were already recorded;
- * the metrics counters above still count every short-circuit.
- */
-function dispatchAttemptFromOutcome(
-  outcome: DispatchOutcome,
-  eventType: string,
-): Omit<DispatchAttempt, "at"> | null {
-  if (outcome.ok) {
-    return { ok: true, source: "event", status: outcome.status };
-  }
-  if (outcome.reason === "breaker_open" || outcome.reason === "shed") {
-    return null;
-  }
-  return {
-    ok: false,
-    source: "event",
-    ...(outcome.status !== undefined ? { status: outcome.status } : {}),
-    failureClass:
-      outcome.reason === "http_error"
-        ? classifyDispatchHttpFailure(outcome.status ?? 0, "")
-        : "network",
-    message: `${eventType}: ${outcome.message}`,
-  };
-}
-
-/**
- * Per-plugin outbound dispatch pool: HTTP keep-alive + concurrency
- * cap + circuit breaker + connect-refused retry.
- * Singleton because pools are keyed by pluginKey internally.
- */
-const dispatchPool = new PluginDispatchPool({
-  ...DEFAULT_DISPATCH_POOL_OPTIONS,
-  requestTimeoutMs: config.plugin.dispatchTimeoutMs,
-});
-
-/** Test-only — for the pool itself. */
-export function __getDispatchPoolForTests(): PluginDispatchPool {
-  return dispatchPool;
-}
-
-/** Snapshot of per-plugin pool state for metrics + admin UI. */
-export function getDispatchPoolSnapshot(): ReturnType<
-  PluginDispatchPool["snapshot"]
-> {
-  return dispatchPool.snapshot();
-}
-
-/** Stop the dispatch pool — called from gracefulShutdown. */
-export async function stopDispatchPool(): Promise<void> {
-  await dispatchPool.stop();
-}
-
-/**
- * Drop the per-plugin dispatch pool entry (closes keep-alive sockets,
- * resets breaker state). Call on plugin delete / URL change /
- * re-register so a previously-tripped breaker doesn't survive the
- * operator's recovery action.
- */
-export function dropDispatchPoolForPlugin(pluginKey: string): void {
-  dispatchPool.drop(pluginKey);
-}
+// Pool management stays importable from the bridge: the pool is owned
+// by the Plugin Dispatch module (it's the event transport), these
+// re-exports keep the registry / routes / shutdown import surface and
+// the tests that mock this module unchanged.
+export {
+  getDispatchPoolSnapshot,
+  stopDispatchPool,
+  dropDispatchPoolForPlugin,
+} from "./plugin-dispatch.service.js";
 
 const index = new EventIndex();
-
-/**
- * Optional out-of-process event bus (PR-1.2). Resolved lazily so tests
- * that set `EVENT_BUS` after importing this module still pick it up, and
- * so the default-off path never constructs a Redis client.
- *
- *   - `null` (the default — EVENT_BUS unset / http / inprocess): events
- *     fan out over HTTP via `postEventToPlugin`, byte-for-byte the
- *     pre-PR-1 behaviour.
- *   - non-null (EVENT_BUS=redis-streams): the bot XADDs the event to the
- *     shared per-type stream and the SDK consumer picks it up. The bot
- *     is then decoupled from plugin readiness — a restarting plugin
- *     drains its backlog from Redis instead of dropping events.
- *
- * `undefined` means "not yet resolved"; `null` is a resolved "no bus".
- */
-let eventBus: PluginEventBus | null | undefined;
-
-function resolveEventBus(): PluginEventBus | null {
-  if (eventBus === undefined) eventBus = getPluginEventBus();
-  return eventBus;
-}
-
-/** Test-only — drop the cached bus so the next dispatch re-reads EVENT_BUS. */
-export function __resetEventBusForTests(): void {
-  eventBus = undefined;
-}
 
 /** Per-row memoized manifest parse (shared canonical helper). */
 const parseManifest = parsePluginManifest;
@@ -247,124 +132,6 @@ onPluginChange((change) => {
   applyPluginChange(change.row);
 });
 
-/** Test-only — read the index state. */
-export function __snapshotEventIndexForTests(): {
-  map: Map<string, Map<number, EventScope[]>>;
-  perPlugin: Map<number, Map<string, EventScope[]>>;
-} {
-  return index.snapshot();
-}
-
-function resolveEventsUrl(
-  plugin: PluginRow,
-  manifest: PluginManifest,
-): string | null {
-  const path = manifest.endpoints?.events ?? DEFAULT_EVENTS_PATH;
-  try {
-    return new URL(path, plugin.url).toString();
-  } catch {
-    return null;
-  }
-}
-
-async function postEventToPlugin(
-  plugin: PluginRow,
-  eventType: string,
-  data: unknown,
-  signingKey: string,
-): Promise<void> {
-  const manifest = parseManifest(plugin);
-  if (!manifest) return;
-  const url = resolveEventsUrl(plugin, manifest);
-  if (!url) {
-    recordDispatchUnreachable(
-      plugin.pluginKey,
-      "event",
-      eventType,
-      "unresolvable plugin endpoint URL",
-    );
-    return;
-  }
-
-  const preflight = await preflightPluginTarget(url);
-  if (!preflight.ok) {
-    recordDispatchUnreachable(
-      plugin.pluginKey,
-      "event",
-      eventType,
-      preflight.reason,
-    );
-    if (shouldRecord(`plugin-dispatch-policy:${plugin.id}:${eventType}`)) {
-      botEventLog.record(
-        "warn",
-        "bot",
-        `plugin event ${eventType} → ${plugin.pluginKey} pre-flight 拒絕: ${preflight.reason}`,
-        { pluginId: plugin.id, eventType },
-      );
-    }
-    return;
-  }
-
-  const body = JSON.stringify({ type: eventType, data });
-  const sigHeaders = buildOutboundSignatureHeaders(
-    signingKey,
-    "POST",
-    new URL(url).pathname,
-    body,
-  );
-
-  // Stamp a fresh W3C trace context onto every outbound event
-  // dispatch. Discord events arriving at the bot don't carry a
-  // parent traceparent, so this is the root span for the
-  // bot→plugin→reaction chain. Plugins read this off the SDK's
-  // `ctx.traceparent` and forward it on any RPC they make back.
-  const trace = newTraceContext();
-  const headers = {
-    ...sigHeaders,
-    [TRACEPARENT_HEADER]: trace.traceparent,
-  };
-  const startedAt = Date.now();
-  const outcome = await dispatchPool.post(
-    plugin.pluginKey,
-    url,
-    headers,
-    body,
-  );
-  const elapsedSeconds = (Date.now() - startedAt) / 1000;
-  // Per-(plugin, event_type) latency + outcome counters.
-  // `shard_id` carries this process's shard label (defaults to "0" in
-  // single-shard deployments).
-  pluginEventDispatchDuration.observe(
-    { event_type: eventType, plugin_id: plugin.pluginKey, shard_id: String(config.bot.shardId) },
-    elapsedSeconds,
-  );
-  pluginEventDispatchTotal.inc({
-    event_type: eventType,
-    outcome: outcome.ok ? "ok" : outcome.reason,
-    plugin_id: plugin.pluginKey,
-    shard_id: String(config.bot.shardId),
-  });
-  const attempt = dispatchAttemptFromOutcome(outcome, eventType);
-  if (attempt) recordDispatchAttempt(plugin.pluginKey, attempt);
-  if (outcome.ok) return;
-  // Per (plugin, eventType, reason) dedup keeps a wedged plugin from
-  // flooding the bot event log at message-traffic rate.
-  const reason = outcome.reason;
-  if (shouldRecord(`plugin-dispatch-${reason}:${plugin.id}:${eventType}`)) {
-    botEventLog.record(
-      "warn",
-      "bot",
-      `plugin event ${eventType} → ${plugin.pluginKey} ${reason}: ${outcome.message}`,
-      {
-        pluginId: plugin.id,
-        eventType,
-        reason,
-        ...(outcome.status !== undefined ? { status: outcome.status } : {}),
-      },
-    );
-  }
-}
-
 /**
  * Fan out a Discord event to every plugin subscribed to its type.
  * Returns immediately; the dispatch itself runs in the background.
@@ -390,65 +157,65 @@ export function dispatchEventToPlugins(
 
   const routes = index.routes(eventType);
 
-  // Per-plugin reach gate + dispatch (PM-8). Both transports go through
-  // the SAME gate: the streams bus is per-plugin (one mailbox stream
-  // each), so an event the gate withholds is never observable by the
-  // plugin on either path.
+  // Per-plugin gate + delivery run inside the Plugin Dispatch module —
+  // both transports go through the SAME gate: the streams bus is
+  // per-plugin (one mailbox stream each), so an event the gate
+  // withholds is never observable by the plugin on either path.
   //
-  // Fire all dispatches in parallel; we do not await. Errors per
-  // plugin are logged inside postEventToPlugin and do not propagate.
-  // The outer findPluginsByIds (a DB read) is wrapped in try/catch so
-  // a transient SQLITE_BUSY cannot escape this fire-and-forget IIFE as
-  // an unhandled rejection — Node would otherwise terminate the bot
-  // process under --unhandled-rejections=throw.
+  // Fire all dispatches in parallel; we do not await. Per-plugin errors
+  // surface as `failed` outcomes and are logged below with per-(plugin,
+  // eventType, reason) dedup so a wedged plugin can't flood the bot
+  // event log at message-traffic rate. The outer findPluginsByIds (a DB
+  // read) is wrapped in try/catch so a transient SQLITE_BUSY cannot
+  // escape this fire-and-forget IIFE as an unhandled rejection — Node
+  // would otherwise terminate the bot process under
+  // --unhandled-rejections=throw.
   void (async () => {
     try {
       const pluginMap = await findPluginsByIds(routes.map((r) => r.pluginId));
-      const bus = resolveEventBus();
       await Promise.allSettled(
         routes.map(async ({ pluginId, scopes }) => {
           const plugin = pluginMap.get(pluginId);
-          if (!plugin || !plugin.enabled || plugin.status !== "active") return;
-          // Any one scope passing grants delivery exactly once:
-          //   - "global" routes exist only when approved (index build).
-          //   - feature routes need the event's guild to have that
-          //     feature effectively enabled (cached 3-tier resolution);
-          //     a guild-less event (DM) never matches a feature route.
-          let pass = false;
-          for (const scope of scopes) {
-            if (scope === "global") {
-              pass = true;
-              break;
+          if (!plugin) return;
+          const outcome = await pluginDispatcher.dispatch({
+            kind: "event",
+            plugin,
+            guildId,
+            scopes,
+            label: eventType,
+            payload: { data },
+          });
+          if (outcome.status !== "failed") return;
+          // Unresolvable endpoint: recorded into dispatch health by the
+          // module; deliberately not logged (pre-existing behavior).
+          if (outcome.reason === "unresolvable_endpoint") return;
+          if (outcome.reason === "preflight_denied") {
+            if (shouldRecord(`plugin-dispatch-policy:${plugin.id}:${eventType}`)) {
+              botEventLog.record(
+                "warn",
+                "bot",
+                `plugin event ${eventType} → ${plugin.pluginKey} pre-flight 拒絕: ${outcome.detail}`,
+                { pluginId: plugin.id, eventType },
+              );
             }
-            if (!guildId) continue;
-            // parseManifest is memoized per row, so this parses at most
-            // once per dispatch. An unparseable manifest fails this scope
-            // closed but does NOT abort the loop, so a co-declared
-            // "global" scope can still grant delivery.
-            const manifest = parseManifest(plugin);
-            if (!manifest) continue;
-            if (
-              await featureReachResolver.isFeatureEnabledInGuild(
-                pluginId,
-                guildId,
-                scope.featureKey,
-                manifest,
-              )
-            ) {
-              pass = true;
-              break;
-            }
-          }
-          if (!pass) return;
-          if (bus) {
-            // Streams transport: XADD into this plugin's private
-            // mailbox. Fire-and-forget inside the impl.
-            bus.dispatchToPlugin(pluginId, plugin.pluginKey, eventType, data);
             return;
           }
-          const signingKey = plugin.dispatchHmacKey;
-          if (!signingKey) return;
-          await postEventToPlugin(plugin, eventType, data, signingKey);
+          const reason = outcome.reason;
+          if (shouldRecord(`plugin-dispatch-${reason}:${plugin.id}:${eventType}`)) {
+            botEventLog.record(
+              "warn",
+              "bot",
+              `plugin event ${eventType} → ${plugin.pluginKey} ${reason}: ${outcome.detail}`,
+              {
+                pluginId: plugin.id,
+                eventType,
+                reason,
+                ...(outcome.httpStatus !== undefined
+                  ? { status: outcome.httpStatus }
+                  : {}),
+              },
+            );
+          }
         }),
       );
     } catch (err) {

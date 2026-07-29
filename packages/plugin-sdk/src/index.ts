@@ -130,6 +130,18 @@ export { verifyWebhookToken } from "./webhook-token.js";
 export { BotRpcError } from "./server.js";
 export type { BotRpcErrorReason } from "./server.js";
 
+// Dispatch payload interfaces — the wire shapes the bot POSTs to the
+// SDK's built-in interaction routes. Exported so tooling, tests, and
+// downstream consumers can type raw dispatch bodies against the same
+// contract the SDK parses. (The SDK surfaces the useful fields on the
+// `*Context` objects; these are the pre-context wire types.)
+export type {
+  InteractionPayload,
+  ComponentPayload,
+  AutocompletePayload,
+  ModalPayload,
+} from "./server.js";
+
 export {
   verifyPluginSession,
   hasPluginCapability,

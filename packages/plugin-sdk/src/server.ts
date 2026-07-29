@@ -76,13 +76,18 @@ export interface PluginServerOptions {
   hasEventHandlers?: boolean;
 }
 
-interface InteractionPayload {
+/** Body the bot POSTs to `/commands/:name` on a slash-command invocation. */
+export interface InteractionPayload {
   interaction_id: string;
   interaction_token: string;
   /** Bot application id — needed for `interactions.send_modal` REST call. */
   application_id: string;
   command_name: string;
   sub_command_name: string | null;
+  /** Subcommand-group name for grouped subcommands (`/cmd group sub`);
+   *  null for top-level or single-level-subcommand invocations. The bot
+   *  has been sending this since the dispatch service was written. */
+  sub_command_group: string | null;
   options: Array<{ name: string; type: number; value?: unknown }>;
   guild_id: string | null;
   /** Channel the slash was invoked in. The bot has been sending this
@@ -90,8 +95,14 @@ interface InteractionPayload {
    *  it on `CommandContext`. */
   channel_id: string | null;
   user: { id: string; username?: string; global_name?: string | null };
-  /** Bot-resolved subset of the invoker's RBAC tokens: `admin` + this plugin's `plugin:<key>:*`. */
-  member?: { capabilities?: string[] };
+  member?: {
+    /** Bot-resolved subset of the invoker's RBAC tokens: `admin` + this plugin's `plugin:<key>:*`. */
+    capabilities?: string[];
+    /** The invoker's Discord permission bitfield as a decimal string
+     *  (`memberPermissions.bitfield.toString()`); null when the bot
+     *  couldn't resolve it. Absent on older bots. */
+    permissions?: string | null;
+  };
   /** BCP-47 locale of the user (from Discord's interaction.locale). May be absent on older bots. */
   locale?: string | null;
   /** BCP-47 locale of the server (Discord's interaction.guildLocale). */
@@ -99,7 +110,7 @@ interface InteractionPayload {
 }
 
 /** Body the bot POSTs to `/components` on a button click / select submit. */
-interface ComponentPayload {
+export interface ComponentPayload {
   interaction_id: string;
   interaction_token: string;
   custom_id: string;
@@ -117,13 +128,16 @@ interface ComponentPayload {
   member?: {
     voice_channel_id?: string | null;
     capabilities?: string[];
+    /** The invoker's Discord permission bitfield as a decimal string;
+     *  null when unresolved. Absent on older bots. */
+    permissions?: string | null;
   } | null;
   locale?: string | null;
   guild_locale?: string | null;
 }
 
 /** Body the bot POSTs to `/commands/:name/autocomplete`. */
-interface AutocompletePayload {
+export interface AutocompletePayload {
   interaction_id: string;
   command_name: string;
   sub_command_name: string | null;
@@ -136,14 +150,19 @@ interface AutocompletePayload {
 }
 
 /** Body the bot POSTs to `/modals/:modalId` on MODAL_SUBMIT. */
-interface ModalPayload {
+export interface ModalPayload {
   interaction_id: string;
   interaction_token: string;
   custom_id: string;
   guild_id: string | null;
   channel_id: string | null;
   user: { id: string; username?: string; global_name?: string | null };
-  member?: { capabilities?: string[] } | null;
+  member?: {
+    capabilities?: string[];
+    /** The invoker's Discord permission bitfield as a decimal string;
+     *  null when unresolved. Absent on older bots. */
+    permissions?: string | null;
+  } | null;
   /** Submitted text-input values, keyed by each text input's custom_id. */
   components: Array<{ custom_id: string; value: string }>;
   locale?: string | null;

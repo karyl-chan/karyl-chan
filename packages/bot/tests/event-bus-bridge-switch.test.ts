@@ -19,7 +19,6 @@ import { Plugin } from "../src/modules/plugin-system/models/plugin.model.js";
 import {
   rebuildEventIndex,
   dispatchEventToPlugins,
-  __resetEventBusForTests,
 } from "../src/modules/plugin-system/plugin-event-bridge.service.js";
 import { __resetAdaptersForTests } from "../src/adapters/registry.js";
 import {
@@ -118,7 +117,8 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await Plugin.destroy({ where: {}, truncate: true });
-  __resetEventBusForTests();
+  // The dispatcher resolves the bus through the adapters registry on
+  // every fan-out, so resetting the registry is all the isolation needed.
   __resetAdaptersForTests();
   delete process.env.EVENT_BUS;
   delete process.env.REDIS_URL;
@@ -127,7 +127,6 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
-  __resetEventBusForTests();
   __resetAdaptersForTests();
   setRedisClientForTests(null);
   delete process.env.EVENT_BUS;

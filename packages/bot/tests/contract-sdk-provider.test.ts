@@ -280,15 +280,18 @@ describe("contract: register response envelope", () => {
 
 describe("contract: dispatch envelope shape", () => {
   it("bot HTTP event dispatch carries the contract body keys", () => {
-    // plugin-event-bridge.service.ts builds JSON.stringify({ type, data }).
-    const bridge = readFileSync(
+    // plugin-dispatch.service.ts builds JSON.stringify({ type, data })
+    // for the event/lifecycle envelope (#28 deep module).
+    const dispatch = readFileSync(
       resolve(
         here,
-        "../src/modules/plugin-system/plugin-event-bridge.service.ts",
+        "../src/modules/plugin-system/plugin-dispatch.service.ts",
       ),
       "utf8",
     );
-    expect(bridge.includes("{ type: eventType, data }")).toBe(true);
+    expect(
+      dispatch.includes("{ type: req.label, data: req.payload.data }"),
+    ).toBe(true);
     expect(fixtures.dispatchEnvelope.httpBodyKeys).toContain("type");
     expect(fixtures.dispatchEnvelope.httpBodyKeys).toContain("data");
   });

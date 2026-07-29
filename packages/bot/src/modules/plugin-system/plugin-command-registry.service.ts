@@ -448,9 +448,9 @@ export class PluginCommandRegistry {
     // follows the default — no "apply to all" step. (When the operator
     // default changes, the feature-defaults route re-runs this sync.)
     const featureRows = await findFeatureRowsByPlugin(plugin.id);
-    const rowEnabled = new Map<string, boolean>(); // `${featureKey} ${guildId}` → enabled
+    const rowEnabled = new Map<string, boolean>(); // `${featureKey}\u0000${guildId}` → enabled
     for (const r of featureRows) {
-      rowEnabled.set(`${r.featureKey} ${r.guildId}`, r.enabled);
+      rowEnabled.set(`${r.featureKey}\u0000${r.guildId}`, r.enabled);
     }
     const opDefaultEnabled = new Map<string, boolean>();
     for (const d of await findFeatureDefaultsByPlugin(plugin.id)) {
@@ -463,7 +463,7 @@ export class PluginCommandRegistry {
       const manifestDefault = !!feature.enabled_by_default;
       for (const guildId of allGuildIds) {
         const enabled =
-          rowEnabled.get(`${feature.key} ${guildId}`) ??
+          rowEnabled.get(`${feature.key}\u0000${guildId}`) ??
           opDefaultEnabled.get(feature.key) ??
           manifestDefault;
         if (!enabled) continue; // off — any leftover row gets cleaned below

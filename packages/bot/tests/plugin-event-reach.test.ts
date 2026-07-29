@@ -36,9 +36,8 @@ import { featureReachResolver } from "../src/modules/feature-toggle/feature-reac
 import {
   rebuildEventIndex,
   dispatchEventToPlugins,
-  __resetEventBusForTests,
-  __getDispatchPoolForTests,
 } from "../src/modules/plugin-system/plugin-event-bridge.service.js";
+import { pluginDispatcher } from "../src/modules/plugin-system/plugin-dispatch.service.js";
 import type { PluginManifest } from "../src/modules/plugin-system/plugin-sdk-types.js";
 
 const GUILD_ON = "900000000000000111";
@@ -92,9 +91,8 @@ beforeEach(async () => {
   await PluginGuildFeature.destroy({ where: {} });
   await PluginFeatureDefault.destroy({ where: {} });
   featureReachResolver.clear();
-  __resetEventBusForTests();
   postSpy = vi
-    .spyOn(__getDispatchPoolForTests(), "post")
+    .spyOn(pluginDispatcher.pool, "post")
     .mockResolvedValue({ ok: true, status: 204, bodyText: "" });
 });
 

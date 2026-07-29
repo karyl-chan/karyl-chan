@@ -1,4 +1,3 @@
-import { config } from "../../config.js";
 import {
   type Interaction,
   type ChatInputCommandInteraction,
@@ -13,22 +12,11 @@ import type { PluginManifest } from "./plugin-registry.service.js";
 import { resolveUserCapabilities } from "../admin/authorized-user.service.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { recordPluginDeferReply } from "./plugin-defer-state.js";
-import {
-  classifyDispatchHttpFailure,
-  recordDispatchFetchFailure,
-  recordDispatchHttpFailure,
-  recordDispatchOk,
-  recordDispatchUnreachable,
-} from "./plugin-dispatch-health.service.js";
-import {
-  buildSignedDispatchHeaders,
-  parsePluginManifest,
-  preflightPluginTarget,
-  resolvePluginEndpoint,
-} from "./plugin-dispatch-util.js";
+import { pluginDispatcher } from "./plugin-dispatch.service.js";
 
 /**
- * Inbound Discord interaction → plugin dispatcher.
+ * Inbound Discord interaction → plugin dispatcher (thin Dispatch Kind
+ * adapter over the Plugin Dispatch module).
  *
  * Returns true if the interaction was claimed by a plugin (caller
  * should NOT pass it to discordx); false if no plugin owns the
@@ -49,14 +37,6 @@ import {
  * Component / modal interactions land here too via the prefix-routed
  * customId convention; handled in a follow-up.
  */
-
-const DEFAULT_COMMAND_PATH = "/commands/{command_name}";
-const DEFAULT_AUTOCOMPLETE_PATH = "/commands/{command_name}/autocomplete";
-const COMMAND_DISPATCH_TIMEOUT_MS = config.plugin.commandDispatchTimeoutMs;
-const AUTOCOMPLETE_TIMEOUT_MS = config.plugin.autocompleteTimeoutMs;
-
-const parseManifest = parsePluginManifest;
-const buildHeaders = buildSignedDispatchHeaders;
 
 interface OptionEntry {
   name: string;
@@ -90,98 +70,10 @@ function serializeOptions(interaction: ChatInputCommandInteraction): {
   };
 }
 
-async function dispatchChatInputCommand(
+async function buildCommandBody(
   interaction: ChatInputCommandInteraction,
   plugin: PluginRow,
-  manifest: PluginManifest,
-): Promise<void> {
-  const dispatchKey = plugin.dispatchHmacKey;
-  if (!dispatchKey) {
-    await interaction.reply({
-      content: "⚠ Plugin 尚未完成 re-register，dispatch key 不存在。",
-      ephemeral: true,
-    });
-    return;
-  }
-  // Look up the command's manifest entry to decide:
-  //  (a) `modal: true` → skip defer entirely (Discord rejects
-  //      modal-after-defer); plugin will send_modal via RPC within 3 s.
-  //  (b) all other commands defer with the manifest's declared
-  //      `default_ephemeral` (default true when unspecified).
-  //
-  // Discord locks ephemerality at defer time, so the bot has to commit
-  // before the plugin runs. Plugins that want the opposite of their
-  // declared default for a specific case can still flip via the
-  // `ephemeral` field on their CommandReply — the respond endpoint
-  // posts a follow-up of the desired ephemerality and DELETEs @original
-  // so the user only sees one message of the right kind.
-  const cmdName = interaction.commandName;
-  const allCmds = [
-    ...(manifest.plugin_commands ?? []),
-    ...(manifest.guild_features ?? []).flatMap((f) => f.commands ?? []),
-  ];
-  const cmdDef = allCmds.find((c) => c.name === cmdName);
-  const isModal = cmdDef?.modal ?? false;
-  const defaultEphemeral = cmdDef?.default_ephemeral ?? true;
-
-  if (!isModal) {
-    try {
-      await interaction.deferReply({ ephemeral: defaultEphemeral });
-      recordPluginDeferReply(interaction.token, defaultEphemeral);
-    } catch (err) {
-      // Already acknowledged or token expired — nothing else we can do.
-      botEventLog.record(
-        "warn",
-        "bot",
-        `plugin-interaction: defer failed for ${plugin.pluginKey}/${interaction.commandName}: ${err instanceof Error ? err.message : String(err)}`,
-        { pluginId: plugin.id },
-      );
-      return;
-    }
-  }
-
-  // Modal commands skipped defer, so error messaging here must use
-  // `reply` (no deferred state to edit); all other commands use
-  // `editReply`. Wrap once so the rest of the function stays linear.
-  const replyError = (content: string): Promise<unknown> =>
-    isModal
-      ? interaction.reply({ content, ephemeral: true }).catch(() => {})
-      : interaction.editReply({ content }).catch(() => {});
-
-  const url = resolvePluginEndpoint(
-    plugin.url,
-    manifest.endpoints?.plugin_command ?? DEFAULT_COMMAND_PATH,
-    { command_name: interaction.commandName },
-  );
-  if (!url) {
-    recordDispatchUnreachable(
-      plugin.pluginKey,
-      "command",
-      interaction.commandName,
-      "unresolvable plugin endpoint URL",
-    );
-    await replyError("⚠ 無法解析 plugin 的指令端點。");
-    return;
-  }
-
-  const preflight = await preflightPluginTarget(url);
-  if (!preflight.ok) {
-    recordDispatchUnreachable(
-      plugin.pluginKey,
-      "command",
-      interaction.commandName,
-      preflight.reason,
-    );
-    botEventLog.record(
-      "warn",
-      "bot",
-      `plugin-interaction: pre-flight host-policy 拒絕 ${plugin.pluginKey}/${interaction.commandName}: ${preflight.reason}`,
-      { pluginId: plugin.id },
-    );
-    await replyError(`⚠ Plugin 端點不被允許: ${preflight.reason}`);
-    return;
-  }
-
+): Promise<string> {
   const opts = serializeOptions(interaction);
   // The invoker's plugin-relevant RBAC tokens, narrowed to what THIS
   // plugin may act on: the `admin` superuser token plus this plugin's
@@ -227,37 +119,95 @@ async function dispatchChatInputCommand(
     locale: interaction.locale ?? null,
     guild_locale: interaction.guildLocale ?? null,
   };
-  const body = JSON.stringify(payload);
-  const headers = buildHeaders(dispatchKey, url, body);
+  return JSON.stringify(payload);
+}
 
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), COMMAND_DISPATCH_TIMEOUT_MS);
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers,
-      body,
-      // Don't follow redirects past the assertPluginTarget host check — a
-      // 3xx Location would bypass the SSRF guard (cf. webhook-forwarder).
-      redirect: "manual",
-      signal: ctrl.signal,
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
+async function dispatchChatInputCommand(
+  interaction: ChatInputCommandInteraction,
+  plugin: PluginRow,
+  manifest: PluginManifest,
+): Promise<void> {
+  // Look up the command's manifest entry to decide:
+  //  (a) `modal: true` → skip defer entirely (Discord rejects
+  //      modal-after-defer); plugin will send_modal via RPC within 3 s.
+  //  (b) all other commands defer with the manifest's declared
+  //      `default_ephemeral` (default true when unspecified).
+  //
+  // Discord locks ephemerality at defer time, so the bot has to commit
+  // before the plugin runs. Plugins that want the opposite of their
+  // declared default for a specific case can still flip via the
+  // `ephemeral` field on their CommandReply — the respond endpoint
+  // posts a follow-up of the desired ephemerality and DELETEs @original
+  // so the user only sees one message of the right kind.
+  const cmdName = interaction.commandName;
+  const allCmds = [
+    ...(manifest.plugin_commands ?? []),
+    ...(manifest.guild_features ?? []).flatMap((f) => f.commands ?? []),
+  ];
+  const cmdDef = allCmds.find((c) => c.name === cmdName);
+  const isModal = cmdDef?.modal ?? false;
+  const defaultEphemeral = cmdDef?.default_ephemeral ?? true;
+
+  if (!isModal) {
+    try {
+      await interaction.deferReply({ ephemeral: defaultEphemeral });
+      recordPluginDeferReply(interaction.token, defaultEphemeral);
+    } catch (err) {
+      // Already acknowledged or token expired — nothing else we can do.
+      botEventLog.record(
+        "warn",
+        "bot",
+        `plugin-interaction: defer failed for ${plugin.pluginKey}/${interaction.commandName}: ${err instanceof Error ? err.message : String(err)}`,
+        { pluginId: plugin.id },
+      );
+      return;
+    }
+  }
+
+  // Modal commands skipped defer, so error messaging here must use
+  // `reply` (no deferred state to edit); all other commands use
+  // `editReply`. Wrap once so the rest of the function stays linear.
+  const replyError = (content: string): Promise<unknown> =>
+    isModal
+      ? interaction.reply({ content, ephemeral: true }).catch(() => {})
+      : interaction.editReply({ content }).catch(() => {});
+
+  const outcome = await pluginDispatcher.deliver({
+    kind: "command",
+    plugin,
+    label: interaction.commandName,
+    endpointVars: { command_name: interaction.commandName },
+    payload: { body: () => buildCommandBody(interaction, plugin) },
+  });
+  if (outcome.status !== "failed") return;
+
+  switch (outcome.reason) {
+    case "unresolvable_endpoint":
+      await replyError("⚠ 無法解析 plugin 的指令端點。");
+      return;
+    case "preflight_denied":
+      botEventLog.record(
+        "warn",
+        "bot",
+        `plugin-interaction: pre-flight host-policy 拒絕 ${plugin.pluginKey}/${interaction.commandName}: ${outcome.detail}`,
+        { pluginId: plugin.id },
+      );
+      await replyError(`⚠ Plugin 端點不被允許: ${outcome.detail}`);
+      return;
+    case "http_error": {
       // SDK answers 503 "dispatch HMAC key not available" while its
       // register handshake hasn't completed (plugin restarted and the
       // bot is dispatching on persisted command rows). Name that state
       // for the operator — the 2026-06-11 incident sat in it for hours
       // with only a bare status code on either side. The classifier is
       // the single owner of that detection.
-      const isAwaitingRegister = classifyDispatchHttpFailure(res.status, text) === "awaiting_register";
-      recordDispatchHttpFailure(plugin.pluginKey, "command", interaction.commandName, res.status, text);
+      const isAwaitingRegister = outcome.failureClass === "awaiting_register";
       botEventLog.record(
         "warn",
         "bot",
         isAwaitingRegister
           ? `plugin-interaction: ${plugin.pluginKey}/${interaction.commandName} refused — plugin is up but has NOT completed its register handshake; check its register attempts (401/429/timeout?) and this bot's /api/plugins/register handling`
-          : `plugin-interaction: ${plugin.pluginKey}/${interaction.commandName} POST returned ${res.status}: ${text.slice(0, 200)}`,
+          : `plugin-interaction: ${plugin.pluginKey}/${interaction.commandName} POST returned ${outcome.httpStatus}: ${outcome.detail.slice(0, 200)}`,
         { pluginId: plugin.id },
       );
       // For modal commands, we deliberately do NOT call replyError
@@ -272,123 +222,75 @@ async function dispatchChatInputCommand(
         await replyError(
           isAwaitingRegister
             ? "⚠ Plugin 正在重新連線（註冊未完成），請稍後再試"
-            : `⚠ Plugin 拒絕了此指令 (HTTP ${res.status})`,
+            : `⚠ Plugin 拒絕了此指令 (HTTP ${outcome.httpStatus})`,
         );
       }
-    } else {
-      recordDispatchOk(plugin.pluginKey, "command", res.status);
+      return;
     }
-    // We do NOT consume res body. Plugin completes the deferred
-    // reply via RPC interactions.respond. Synchronous body action
-    // would race the plugin's own RPC call.
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    recordDispatchFetchFailure(plugin.pluginKey, "command", interaction.commandName, err);
-    botEventLog.record(
-      "warn",
-      "bot",
-      `plugin-interaction: ${plugin.pluginKey}/${interaction.commandName} POST failed: ${msg}`,
-      { pluginId: plugin.id },
-    );
-    // Same modal-race reasoning as the non-ok branch above.
-    if (!isModal) {
-      await replyError(`⚠ 無法連接 plugin: ${msg}`);
-    }
-  } finally {
-    clearTimeout(timer);
+    default:
+      botEventLog.record(
+        "warn",
+        "bot",
+        `plugin-interaction: ${plugin.pluginKey}/${interaction.commandName} POST failed: ${outcome.detail}`,
+        { pluginId: plugin.id },
+      );
+      // Same modal-race reasoning as the http_error branch above.
+      if (!isModal) {
+        await replyError(`⚠ 無法連接 plugin: ${outcome.detail}`);
+      }
   }
 }
 
 async function dispatchAutocomplete(
   interaction: AutocompleteInteraction,
   plugin: PluginRow,
-  manifest: PluginManifest,
 ): Promise<void> {
-  const dispatchKey = plugin.dispatchHmacKey;
-  if (!dispatchKey) {
-    await interaction.respond([]).catch(() => {});
-    return;
-  }
-  const url = resolvePluginEndpoint(plugin.url, DEFAULT_AUTOCOMPLETE_PATH, {
-    command_name: interaction.commandName,
+  const outcome = await pluginDispatcher.deliver({
+    kind: "autocomplete",
+    plugin,
+    label: interaction.commandName,
+    endpointVars: { command_name: interaction.commandName },
+    payload: {
+      body: () => {
+        const focused = interaction.options.getFocused(true);
+        // Subcommand + sibling-option context so the SDK's AutocompleteContext
+        // matches what dispatchChatInputCommand sends. Without these, the SDK
+        // sets subCommandName=undefined (not null per the type) and ctx.options
+        // is empty — autocomplete handlers that filter by already-typed sibling
+        // options can't access them.
+        const subGroup = interaction.options.getSubcommandGroup(false) ?? null;
+        const sub = interaction.options.getSubcommand(false) ?? null;
+        const raw = (
+          interaction.options as unknown as { _hoistedOptions?: OptionEntry[] }
+        )._hoistedOptions;
+        return JSON.stringify({
+          interaction_id: interaction.id,
+          command_name: interaction.commandName,
+          sub_command_name: sub,
+          sub_command_group: subGroup,
+          options: raw ?? [],
+          focused: {
+            name: focused.name,
+            value: focused.value,
+            type: focused.type,
+          },
+          guild_id: interaction.guildId,
+          user: { id: interaction.user.id },
+          locale: interaction.locale ?? null,
+          guild_locale: interaction.guildLocale ?? null,
+        });
+      },
+    },
   });
-  if (!url) {
-    recordDispatchUnreachable(
-      plugin.pluginKey,
-      "autocomplete",
-      interaction.commandName,
-      "unresolvable plugin endpoint URL",
-    );
-    await interaction.respond([]).catch(() => {});
-    return;
-  }
-
-  const preflight = await preflightPluginTarget(url);
-  if (!preflight.ok) {
-    recordDispatchUnreachable(
-      plugin.pluginKey,
-      "autocomplete",
-      interaction.commandName,
-      preflight.reason,
-    );
-    await interaction.respond([]).catch(() => {});
-    return;
-  }
-
-  const focused = interaction.options.getFocused(true);
-  // Subcommand + sibling-option context so the SDK's AutocompleteContext
-  // matches what dispatchChatInputCommand sends. Without these, the SDK
-  // sets subCommandName=undefined (not null per the type) and ctx.options
-  // is empty — autocomplete handlers that filter by already-typed sibling
-  // options can't access them.
-  const subGroup = interaction.options.getSubcommandGroup(false) ?? null;
-  const sub = interaction.options.getSubcommand(false) ?? null;
-  const raw = (
-    interaction.options as unknown as { _hoistedOptions?: OptionEntry[] }
-  )._hoistedOptions;
-  const payload = {
-    interaction_id: interaction.id,
-    command_name: interaction.commandName,
-    sub_command_name: sub,
-    sub_command_group: subGroup,
-    options: raw ?? [],
-    focused: { name: focused.name, value: focused.value, type: focused.type },
-    guild_id: interaction.guildId,
-    user: { id: interaction.user.id },
-    locale: interaction.locale ?? null,
-    guild_locale: interaction.guildLocale ?? null,
-  };
-  const body = JSON.stringify(payload);
-  const headers = buildHeaders(dispatchKey, url, body);
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), AUTOCOMPLETE_TIMEOUT_MS);
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers,
-      body,
-      // Don't follow redirects past the assertPluginTarget host check — a
-      // 3xx Location would bypass the SSRF guard (cf. webhook-forwarder).
-      redirect: "manual",
-      signal: ctrl.signal,
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      recordDispatchHttpFailure(plugin.pluginKey, "autocomplete", interaction.commandName, res.status, text);
-      await interaction.respond([]).catch(() => {});
-      return;
-    }
-    recordDispatchOk(plugin.pluginKey, "autocomplete", res.status);
-    const data = (await res.json().catch(() => null)) as {
+  if (outcome.status === "ok") {
+    const data = outcome.body as {
       choices?: Array<{ name: string; value: string | number }>;
     } | null;
     await interaction.respond(data?.choices ?? []).catch(() => {});
-  } catch (err) {
-    recordDispatchFetchFailure(plugin.pluginKey, "autocomplete", interaction.commandName, err);
-    await interaction.respond([]).catch(() => {});
-  } finally {
-    clearTimeout(timer);
+    return;
   }
+  // Any failure → empty choices so the input box still works.
+  await interaction.respond([]).catch(() => {});
 }
 
 export async function dispatchInteractionToPlugin(
@@ -404,40 +306,57 @@ export async function dispatchInteractionToPlugin(
     if (!cmd) return false;
     const plugin = await findPluginById(cmd.pluginId);
     if (!plugin) return false;
-    if (!plugin.enabled || plugin.status !== "active") {
-      // Plugin's command still registered with Discord but the plugin
-      // isn't accepting traffic right now. Reply ephemeral so the
-      // user knows why nothing happened.
-      if (interaction.isChatInputCommand()) {
-        await interaction
-          .reply({
-            content: "⚠ 此指令所屬的 plugin 目前離線或已被停用。",
-            ephemeral: true,
-          })
-          .catch(() => {});
-      } else {
+    const gate = await pluginDispatcher.gate({
+      kind: interaction.isAutocomplete() ? "autocomplete" : "command",
+      plugin,
+    });
+    if (!gate.ok) {
+      if (interaction.isAutocomplete()) {
         await interaction.respond([]).catch(() => {});
+        return true;
       }
-      return true;
-    }
-    const manifest = parseManifest(plugin);
-    if (!manifest) {
-      if (interaction.isChatInputCommand()) {
-        await interaction
-          .reply({
-            content: "⚠ 此 plugin 的 manifest 損壞,無法派送指令。",
+      switch (gate.reason) {
+        case "plugin_offline":
+          // Plugin's command still registered with Discord but the plugin
+          // isn't accepting traffic right now. Reply ephemeral so the
+          // user knows why nothing happened.
+          await interaction
+            .reply({
+              content: "⚠ 此指令所屬的 plugin 目前離線或已被停用。",
+              ephemeral: true,
+            })
+            .catch(() => {});
+          break;
+        case "manifest_invalid":
+          await interaction
+            .reply({
+              content: "⚠ 此 plugin 的 manifest 損壞,無法派送指令。",
+              ephemeral: true,
+            })
+            .catch(() => {});
+          break;
+        case "no_dispatch_key":
+          await interaction.reply({
+            content: "⚠ Plugin 尚未完成 re-register，dispatch key 不存在。",
             ephemeral: true,
-          })
-          .catch(() => {});
-      } else {
-        await interaction.respond([]).catch(() => {});
+          });
+          break;
+        case "reach_denied":
+          // Unreachable: command/autocomplete reach policy is `none` —
+          // feature-keyed commands are gated at registration time.
+          break;
       }
       return true;
     }
     if (interaction.isAutocomplete()) {
-      await dispatchAutocomplete(interaction, plugin, manifest);
+      await dispatchAutocomplete(interaction, plugin);
     } else {
-      await dispatchChatInputCommand(interaction, plugin, manifest);
+      // The command gate requires a parseable manifest, so ok ⇒ non-null.
+      await dispatchChatInputCommand(
+        interaction,
+        plugin,
+        gate.manifest as PluginManifest,
+      );
     }
     return true;
   }
