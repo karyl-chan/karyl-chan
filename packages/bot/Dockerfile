@@ -25,6 +25,7 @@ COPY pnpm-workspace.yaml pnpm-lock.yaml package.json .npmrc ./
 COPY packages/bot/package.json packages/bot/
 COPY packages/bot/frontend/package.json packages/bot/frontend/
 COPY packages/plugin-sdk/package.json packages/plugin-sdk/
+COPY packages/plugin-wire/package.json packages/plugin-wire/
 COPY packages/ui/package.json packages/ui/
 # @karyl-chan/voice is a workspace dep of the bot (PR-2.3); e2e is a
 # workspace member (PR-6). Their manifests must exist so the frozen
@@ -35,10 +36,14 @@ COPY e2e/package.json e2e/
 
 FROM base AS frontend-build
 # --filter ...^ resolves workspace deps transitively (karyl-chan-frontend
-# now depends on @karyl-chan/ui via workspace:*).
+# depends on @karyl-chan/ui and @karyl-chan/plugin-wire via workspace:*).
 RUN pnpm install --frozen-lockfile --filter karyl-chan-frontend...
 COPY packages/ui packages/ui
+COPY packages/plugin-wire packages/plugin-wire
 COPY packages/bot/frontend packages/bot/frontend
+# The frontend imports @karyl-chan/plugin-wire; vue-tsc + vite resolve
+# its types and JS from the built dist, so compile plugin-wire first.
+RUN pnpm --filter @karyl-chan/plugin-wire build
 RUN pnpm --filter karyl-chan-frontend build
 
 
