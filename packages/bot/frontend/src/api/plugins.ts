@@ -10,77 +10,15 @@ import { ApiError, authedFetch, jsonOrThrow } from "./client";
 export type PluginStatus = "active" | "inactive";
 
 /**
- * Loosely-typed manifest as it arrives from the bot. The bot validated
- * `schema_version=1` shape on accept; we trust `plugin.{id,name,...}`
- * exists and treat optional sections as truly optional in the UI.
+ * The plugin manifest as it arrives from the bot — the authoritative wire
+ * shape, owned by `@karyl-chan/plugin-wire` and re-exported here so the
+ * admin views keep importing it from `../api/plugins`. This replaced a
+ * hand-maintained loose copy that had drifted (snake_case `storage`
+ * fields that never matched the wire, a wrongly-required `schema_version`,
+ * and a top-level `commands` field the wire never sends).
  */
-export interface PluginManifest {
-  schema_version: string;
-  plugin: {
-    id: string;
-    name: string;
-    version: string;
-    description?: string;
-    author?: string;
-    homepage?: string;
-    url: string;
-    healthcheck_path?: string;
-  };
-  rpc_methods_used?: string[];
-  storage?: {
-    guild_kv?: boolean;
-    guild_kv_quota_kb?: number;
-    requires_secrets?: boolean;
-  };
-  config_schema?: Array<{
-    key: string;
-    type: string;
-    label: string;
-    description?: string;
-    required?: boolean;
-  }>;
-  events_subscribed_global?: string[];
-  /**
-   * Manage-WebUI declaration (SDK ≥0.12). Present iff the plugin declared
-   * `webUI`. Its presence is what makes the admin UI show a "Manage" link;
-   * `manage_path` (default `/manage`) is where the manage SPA is served.
-   */
-  web_ui?: {
-    manage_path?: string;
-  };
-  guild_features?: Array<{
-    key: string;
-    name: string;
-    icon?: string;
-    description?: string;
-    events_subscribed?: string[];
-    surfaces?: string[];
-    /**
-     * Slash commands declared inside this feature, registered per-
-     * guild and gated by the per-guild feature toggle.
-     */
-    commands?: Array<{
-      name: string;
-      description: string;
-      scope?: "guild" | "global";
-    }>;
-  }>;
-  /** v2 manifest plugin_commands（軌三），admin 只能 on/off */
-  plugin_commands?: Array<{
-    name: string;
-    description?: string;
-    scope?: string;
-    integration_types?: string[];
-    contexts?: string[];
-    default_member_permissions?: string;
-    default_ephemeral?: boolean;
-  }>;
-  commands?: Array<{
-    name: string;
-    description: string;
-    scope?: "guild" | "global";
-  }>;
-}
+export type { PluginManifest } from "@karyl-chan/plugin-wire";
+import type { PluginManifest } from "@karyl-chan/plugin-wire";
 
 /** 軌三 plugin_command DB 行（詳情頁專用） */
 export interface PluginCommandRecord {

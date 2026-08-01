@@ -70,30 +70,31 @@ const MAX_PLUGIN_CAPABILITIES = 32;
 const HEARTBEAT_TIMEOUT_MS = config.plugin.heartbeatTimeoutMs;
 const REAPER_INTERVAL_MS = config.plugin.reaperIntervalMs;
 
-// Manifest types live in `plugin-sdk-types.ts` so plugin authors
-// have a single, narrow file to import for the wire format. The
-// re-export below preserves every existing `import { PluginManifest,
-// ManifestCommand, ... } from "./plugin-registry.service.js"` site
-// across the codebase.
+// Manifest types are owned by `@karyl-chan/plugin-wire` (the single home
+// for the bot↔plugin wire contract). The re-export below preserves every
+// existing `import { PluginManifest, ManifestCommand, ... } from
+// "./plugin-registry.service.js"` site across the codebase. The bot's
+// historical `ManifestCapabilityDecl` name is kept as a local alias for
+// the wire's `ManifestCapability`.
 export type {
   ManifestCommandOption,
   ManifestCommand,
   ManifestConfigField,
   ManifestGuildFeature,
-  ManifestCapabilityDecl,
+  ManifestCapability as ManifestCapabilityDecl,
   ManifestPluginCommand,
   PluginManifest,
-} from "./plugin-sdk-types.js";
+} from "@karyl-chan/plugin-wire";
 
 import type {
   ManifestCommand,
   ManifestCommandOption,
   ManifestConfigField,
-  ManifestCapabilityDecl,
+  ManifestCapability as ManifestCapabilityDecl,
   ManifestGuildFeature,
   ManifestPluginCommand,
   PluginManifest,
-} from "./plugin-sdk-types.js";
+} from "@karyl-chan/plugin-wire";
 
 /**
  * Purge `plugin:<pluginKey>:<capKey>` capability tokens from every

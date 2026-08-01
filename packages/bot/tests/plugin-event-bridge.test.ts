@@ -13,7 +13,7 @@ import {
 } from "../src/modules/plugin-system/plugin-event-bridge.service.js";
 import { emitPluginChange } from "../src/modules/plugin-system/plugin-changes.js";
 import { findPluginById } from "../src/modules/plugin-system/models/plugin.model.js";
-import type { PluginManifest } from "../src/modules/plugin-system/plugin-sdk-types.js";
+import type { PluginManifest } from "@karyl-chan/plugin-wire";
 
 beforeAll(async () => {
   await sequelize.sync({ force: true });

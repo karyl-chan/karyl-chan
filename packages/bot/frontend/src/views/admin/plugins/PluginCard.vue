@@ -290,10 +290,11 @@ const probeText = computed(() => {
 const probeOkState = computed(() => probeResult.value?.outcome === 'signature_ok');
 
 const guildFeatureCount = computed(() => props.plugin.manifest?.guild_features?.length ?? 0);
-// Top-level (truly global) commands and per-feature commands count
+// Plugin-owned (track 3) commands and per-feature commands count
 // separately — they have different runtime gating semantics, so the
-// admin UI surfaces both.
-const globalCommandCount = computed(() => props.plugin.manifest?.commands?.length ?? 0);
+// admin UI surfaces both. Track-3 commands live in `plugin_commands`
+// (the wire has no top-level `commands` array).
+const globalCommandCount = computed(() => props.plugin.manifest?.plugin_commands?.length ?? 0);
 const featureCommandCount = computed(() =>
     (props.plugin.manifest?.guild_features ?? []).reduce(
         (n, f) => n + (f.commands?.length ?? 0), 0

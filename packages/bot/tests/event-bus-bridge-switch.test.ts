@@ -25,7 +25,7 @@ import {
   setRedisClientForTests,
   type RedisLike,
 } from "../src/adapters/redis/client.js";
-import type { PluginManifest } from "../src/modules/plugin-system/plugin-sdk-types.js";
+import type { PluginManifest } from "@karyl-chan/plugin-wire";
 
 interface XaddCall {
   key: string;

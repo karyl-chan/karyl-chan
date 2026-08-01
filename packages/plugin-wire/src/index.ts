@@ -18,3 +18,18 @@ export { EVENT_CEILING, classifyEventSubscription } from "./event-ceiling.js";
 
 // SDK-version comparison used across the contract's compat statements.
 export { compareSemver, maxSemver } from "./semver.js";
+
+// Manifest contract: the register document + every nested wire shape,
+// and the config-field / command-option scope vocabularies.
+export { CONFIG_FIELD_TYPES, COMMAND_OPTION_TYPES } from "./manifest.js";
+export type {
+  ConfigFieldType,
+  CommandOptionType,
+  ManifestCommandOption,
+  ManifestConfigField,
+  ManifestCommand,
+  ManifestPluginCommand,
+  ManifestCapability,
+  ManifestGuildFeature,
+  PluginManifest,
+} from "./manifest.js";

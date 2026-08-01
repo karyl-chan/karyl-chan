@@ -1,4 +1,4 @@
-import type { ManifestConfigField } from "./plugin-sdk-types.js";
+import type { ManifestConfigField } from "@karyl-chan/plugin-wire";
 
 /**
  * Single canonical validator for plugin config values.
