@@ -15,6 +15,10 @@ _Avoid_: event type (free-form strings are precisely what this term exists to ru
 **Event Ceiling**:
 The newest SDK version whose Canonical Events a given bot build fully knows. An unrecognized subscription from at or below the ceiling is a typo; one from above it may be an event this bot hasn't learned yet.
 
+**Protocol Rule**:
+A validity rule answerable from the wire document alone — shape, closed vocabularies, Discord's own constraints. Owned here and run by both sides: the bot at register, the SDK's `buildManifest` at build, so an author sees the same message either way. A rule needing bot state is not one: whether `plugin.url` names a target the bot may reach is the operator's host policy (DNS, allowlist), unanswerable from the author's machine, and stays bot-side.
+_Avoid_: validation (unqualified — it hides which side owns the rule)
+
 **Compat Floor**:
 The oldest SDK version the bot commits to interoperating with. The cross-version contract test proves the floor version still interops — the floor and the test always point at the same version.
 _Avoid_: minimum SDK version (as a loose phrase; the floor is a single named constant, not a vibe)

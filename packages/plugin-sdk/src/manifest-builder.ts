@@ -13,7 +13,10 @@ import type {
   PluginConfig,
 } from "./plugin.js";
 import type { CommandOption, CommandOptionTypeName } from "./types.js";
-import { isCanonicalEvent } from "@karyl-chan/plugin-wire";
+import {
+  isCanonicalEvent,
+  validateManifestProtocol,
+} from "@karyl-chan/plugin-wire";
 import { createRequire } from "node:module";
 
 /**
@@ -86,15 +89,42 @@ function normalizeOption(
 }
 
 // Pulled in so `buildManifest` can stamp the SDK version onto every
-// manifest. Bot reads this for per-version compat shims. We use
-// `createRequire` (not a JSON import) so tsc's rootDir stays under
-// `src/` — a top-level JSON import would pull the package.json into
-// the compile root and reshape dist/ to `dist/src/index.js`, breaking
-// the published `main` path.
-const pkg = createRequire(import.meta.url)("../package.json") as {
-  version: string;
-};
-const SDK_VERSION: string = pkg.version;
+// manifest. Bot reads this for per-version compat shims and for the
+// Event Ceiling verdict. We use `createRequire` (not a JSON import) so
+// tsc's rootDir stays under `src/` — a top-level JSON import would pull
+// the package.json into the compile root and reshape dist/ to
+// `dist/src/index.js`, breaking the published `main` path.
+//
+// Two layouts to hit, in order: the published bundle (`dist/index.js`,
+// one level under the package root) and the test build (tsc emits
+// `dist-test/src/manifest-builder.js`, two levels under). Never guess a
+// fallback version — a manifest that understates its SDK version would
+// silently change how the bot classifies its event subscriptions.
+function readSdkVersion(): string {
+  const require = createRequire(import.meta.url);
+  let lastErr: unknown;
+  for (const candidate of ["../package.json", "../../package.json"]) {
+    let pkg: { version?: unknown };
+    try {
+      pkg = require(candidate) as { version?: unknown };
+    } catch (err) {
+      // Not this layout (or unreadable) — remember why, try the next.
+      lastErr = err;
+      continue;
+    }
+    if (typeof pkg.version !== "string" || pkg.version.length === 0) {
+      throw new Error(
+        `plugin-sdk: ${candidate} has no usable "version" to stamp as manifest.sdk_version`,
+      );
+    }
+    return pkg.version;
+  }
+  throw new Error(
+    `plugin-sdk: cannot locate package.json to stamp manifest.sdk_version` +
+      `${lastErr instanceof Error ? ` (${lastErr.message})` : ""}`,
+  );
+}
+const SDK_VERSION: string = readSdkVersion();
 
 /**
  * True iff any of the plugin's commands (top-level or guild-feature) declares
@@ -201,26 +231,14 @@ export function buildManifest(
     }),
   );
 
+  // Cap count / duplicate-key / format rules are the wire contract's —
+  // `validateManifest` at the bottom of this function enforces them.
   const capabilities: ManifestCapability[] = (cfg.capabilities ?? []).map(
     (c: PluginCapabilityDefinition): ManifestCapability => ({
       key: c.key,
       description: c.description,
     }),
   );
-  if (capabilities.length > 32) {
-    throw new Error(
-      `buildManifest: at most 32 capabilities allowed (got ${capabilities.length})`,
-    );
-  }
-  const seenCapKeys = new Set<string>();
-  for (const c of capabilities) {
-    if (seenCapKeys.has(c.key)) {
-      throw new Error(
-        `buildManifest: capability key '${c.key}' is declared more than once`,
-      );
-    }
-    seenCapKeys.add(c.key);
-  }
 
   const guild_features: ManifestGuildFeature[] = (cfg.guildFeatures ?? []).map(
     (f: GuildFeatureDefinition): ManifestGuildFeature => ({
@@ -418,6 +436,19 @@ export function buildManifest(
     for (const k of uncoveredHandlerKeys) existing.add(k);
     for (const k of explicitGlobal) existing.add(k);
     manifest.events_subscribed_global = [...existing];
+  }
+
+  // Build-time protocol check. Same rules the bot applies at register
+  // (they are the wire contract's, not either side's), run here so a
+  // malformed manifest fails at plugin startup with the exact message
+  // the bot would have returned — instead of a 400 the author has to
+  // go read a bot log to understand.
+  const validation = validateManifestProtocol(manifest);
+  if (!validation.ok) {
+    throw new Error(
+      `buildManifest: invalid manifest — ${validation.error} ` +
+        `(the bot rejects this at register by the same rule)`,
+    );
   }
 
   // Build-time canonical-event check. The bot dispatches a small set

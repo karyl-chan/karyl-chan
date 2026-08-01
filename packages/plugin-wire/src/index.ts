@@ -33,3 +33,19 @@ export type {
   ManifestGuildFeature,
   PluginManifest,
 } from "./manifest.js";
+
+// Protocol validation for the register document — the rules both sides
+// of the wire enforce (the bot at register, the SDK at build).
+export {
+  validateManifestProtocol,
+  MAX_PLUGIN_CAPABILITIES,
+} from "./validate-manifest.js";
+export type { ManifestValidation } from "./validate-manifest.js";
+
+// Config-field validity: is the declaration well-formed, and does a
+// value satisfy it. The bot's admin-save orchestration wraps these.
+export { validateConfigSchema, validateConfigValue } from "./validate-config.js";
+export type {
+  ConfigFieldError,
+  ConfigFieldErrorCode,
+} from "./validate-config.js";

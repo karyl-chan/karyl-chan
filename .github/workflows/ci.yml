@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [bot, plugin-sdk, voice]
+        target: [bot, plugin-sdk, plugin-wire, voice]
     steps:
       - uses: actions/checkout@v4
 
@@ -44,6 +44,15 @@ jobs:
         run: |
           pnpm --filter "@karyl-chan/plugin-sdk..." build
           pnpm --filter @karyl-chan/plugin-sdk test
+
+      - name: Build & test plugin-wire
+        if: matrix.target == 'plugin-wire'
+        # Its own cell rather than a step under plugin-sdk: plugin-wire owns
+        # the register-time rejection rules both sides run, so a break here
+        # should name plugin-wire, not read as an SDK failure.
+        run: |
+          pnpm --filter @karyl-chan/plugin-wire build
+          pnpm --filter @karyl-chan/plugin-wire test
 
       - name: Build & test voice
         if: matrix.target == 'voice'

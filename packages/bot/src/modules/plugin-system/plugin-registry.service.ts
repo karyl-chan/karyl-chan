@@ -49,9 +49,6 @@ import { randomBytes } from "crypto";
 
 const log = moduleLogger("plugin-registry");
 
-/** Hard cap on how many capabilities one plugin may declare. */
-const MAX_PLUGIN_CAPABILITIES = 32;
-
 /**
  * Plugin lifecycle owner. Sits between the HTTP layer (plugin-routes)
  * and the model layer (plugin.model). Holds:
@@ -59,9 +56,11 @@ const MAX_PLUGIN_CAPABILITIES = 32;
  *   - cached parsed manifests for fast event-dispatch path
  *   - the wiring to revoke tokens on admin disable / on stale-out
  *
- * Manifest schema validation is done here too — we'd rather fail a
+ * Manifest validation is gated here too — we'd rather fail a
  * registration with a clear error than store a malformed manifest
- * that breaks event dispatch later.
+ * that breaks event dispatch later. The protocol rules themselves are
+ * the wire contract's (`@karyl-chan/plugin-wire`); this module adds the
+ * host-policy check that needs bot state.
  */
 
 // A plugin must heartbeat at least this often, otherwise we mark it
@@ -83,18 +82,19 @@ export type {
   ManifestGuildFeature,
   ManifestCapability as ManifestCapabilityDecl,
   ManifestPluginCommand,
+  ManifestValidation,
   PluginManifest,
 } from "@karyl-chan/plugin-wire";
 
 import type {
-  ManifestCommand,
-  ManifestCommandOption,
-  ManifestConfigField,
   ManifestCapability as ManifestCapabilityDecl,
-  ManifestGuildFeature,
-  ManifestPluginCommand,
+  ManifestValidation,
   PluginManifest,
 } from "@karyl-chan/plugin-wire";
+
+// The Protocol Rules half of manifest validation; the Host Policy half
+// is this module's own (see `validateManifest` below).
+import { validateManifestProtocol } from "@karyl-chan/plugin-wire";
 
 /**
  * Purge `plugin:<pluginKey>:<capKey>` capability tokens from every
@@ -179,83 +179,34 @@ async function reconcilePluginCapabilities(
   return removed;
 }
 
-export type ManifestValidation =
-  | { ok: true; manifest: PluginManifest }
-  | { ok: false; error: string };
-
 /**
- * Validate a plugin manifest.
+ * Validate a plugin manifest: the wire contract's Protocol Rules, then
+ * the one check that needs bot state.
  *
- * Implements V-02 ~ V-08 + V-C1 / V-C2 / V-C3 from B-sdk §4. (V-01
- * was `schema_version === "1"` which is no longer enforced; the SDK
- * dropped the field — see manifest.ts.)
+ * Protocol (V-02 ~ V-08, V-C1 ~ V-C3, capabilities, config_schema,
+ * web_ui) lives in `@karyl-chan/plugin-wire` so the SDK's
+ * `buildManifest` enforces exactly the same rules at build time — an
+ * author sees a bad manifest at plugin startup, not as a 400 here.
+ *
+ * The SSRF guard stays: whether `plugin.url` resolves to a target this
+ * bot is allowed to reach is Host Policy (DNS + operator allowlist),
+ * not something a plugin author can check from their own machine.
+ *
+ * Ordering note: host policy used to run mid-protocol, right after the
+ * URL parse. It now runs after the full protocol pass, so a manifest
+ * that is BOTH malformed and pointed at a blocked host reports the
+ * protocol error first. Deliberate — a malformed manifest is wrong
+ * wherever it points, and the author can fix it without an operator.
  */
 export async function validateManifest(
   input: unknown,
 ): Promise<ManifestValidation> {
-  if (!input || typeof input !== "object") {
-    return { ok: false, error: "manifest must be an object" };
-  }
-  const m = input as Record<string, unknown>;
+  const protocol = validateManifestProtocol(input);
+  if (!protocol.ok) return protocol;
 
-  // schema_version was the V-01 check — pre-release SDK dropped the
-  // field, so we tolerate both absent and the legacy "1" value. Any
-  // other value is still rejected because it signals a deliberate
-  // future-schema attempt that the bot doesn't understand.
-  if (
-    m.schema_version !== undefined &&
-    m.schema_version !== null &&
-    m.schema_version !== "1"
-  ) {
-    return {
-      ok: false,
-      error: `unsupported schema_version (got ${JSON.stringify(m.schema_version)})`,
-    };
-  }
-
-  // sdk_version is informational metadata stamped by buildManifest from
-  // the SDK's package.json. Required to be a semver-ish string when
-  // present; absent is allowed (older SDKs didn't emit it). Bot uses
-  // this to apply per-version compat shims as the wire format evolves.
-  if (m.sdk_version !== undefined && m.sdk_version !== null) {
-    if (
-      typeof m.sdk_version !== "string" ||
-      !/^\d+\.\d+\.\d+(-[A-Za-z0-9.-]+)?$/.test(m.sdk_version)
-    ) {
-      return {
-        ok: false,
-        error: `manifest.sdk_version must be a semver string (got ${JSON.stringify(m.sdk_version)})`,
-      };
-    }
-  }
-
-  // V-02：plugin.id 格式
-  const plugin = m.plugin as Record<string, unknown> | undefined;
-  if (!plugin || typeof plugin !== "object") {
-    return { ok: false, error: "manifest.plugin missing" };
-  }
-  for (const k of ["id", "name", "version", "url"] as const) {
-    if (typeof plugin[k] !== "string" || (plugin[k] as string).length === 0) {
-      return { ok: false, error: `manifest.plugin.${k} required` };
-    }
-  }
-  if (!/^[a-z0-9][a-z0-9-]*$/.test(plugin.id as string)) {
-    return {
-      ok: false,
-      error: "manifest.plugin.id must match [a-z0-9][a-z0-9-]*",
-    };
-  }
-
-  // V-03：plugin.url 必須是 http/https，通過 SSRF guard
-  let parsedUrl: URL;
-  try {
-    parsedUrl = new URL(plugin.url as string);
-    if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
-      return { ok: false, error: "manifest.plugin.url must be http(s)" };
-    }
-  } catch {
-    return { ok: false, error: "manifest.plugin.url is not a valid URL" };
-  }
+  // V-03 (bot half)：plugin.url 已確認是可解析的 http(s) URL，這裡再過
+  // SSRF guard。
+  const parsedUrl = new URL(protocol.manifest.plugin.url);
   const pluginPort = parsedUrl.port
     ? Number(parsedUrl.port)
     : parsedUrl.protocol === "https:"
@@ -269,283 +220,7 @@ export async function validateManifest(
     return { ok: false, error: `manifest.plugin.url: ${msg}` };
   }
 
-  // V-04：plugin_commands / guild_features / … 若存在必須是 array
-  for (const k of [
-    "rpc_methods_used",
-    "plugin_commands",
-    "guild_features",
-    "capabilities",
-    "events_subscribed_global",
-  ] as const) {
-    if (m[k] !== undefined && !Array.isArray(m[k])) {
-      return { ok: false, error: `manifest.${k} must be an array` };
-    }
-  }
-
-  // ── capabilities[] 驗證 ──────────────────────────────────────────────────
-  // key 格式 [a-z0-9][a-z0-9._-]*、description 非空、key 不重複、≤32 個。
-  const capabilities =
-    (m.capabilities as ManifestCapabilityDecl[] | undefined) ?? [];
-  if (capabilities.length > MAX_PLUGIN_CAPABILITIES) {
-    return {
-      ok: false,
-      error: `manifest.capabilities: at most ${MAX_PLUGIN_CAPABILITIES} allowed (got ${capabilities.length})`,
-    };
-  }
-  const seenCapKeys = new Set<string>();
-  for (let i = 0; i < capabilities.length; i++) {
-    const c = capabilities[i];
-    if (!c || typeof c !== "object") {
-      return { ok: false, error: `capabilities[${i}] must be an object` };
-    }
-    if (typeof c.key !== "string" || !/^[a-z0-9][a-z0-9._-]*$/.test(c.key)) {
-      return {
-        ok: false,
-        error: `capabilities[${i}].key "${String(c.key)}" must match [a-z0-9][a-z0-9._-]*`,
-      };
-    }
-    if (typeof c.description !== "string" || c.description.trim().length === 0) {
-      return {
-        ok: false,
-        error: `capabilities[${c.key}].description must be a non-empty string`,
-      };
-    }
-    if (c.description.length > 200) {
-      return {
-        ok: false,
-        error: `capabilities[${c.key}].description must be ≤200 chars`,
-      };
-    }
-    if (seenCapKeys.has(c.key)) {
-      return {
-        ok: false,
-        error: `capabilities[${c.key}].key is declared more than once`,
-      };
-    }
-    seenCapKeys.add(c.key);
-  }
-
-
-  // ── plugin_commands[] 驗證（V-05 ~ V-08、V-C1 / V-C2 / V-C3）────────────
-  const pluginCommands =
-    (m.plugin_commands as ManifestPluginCommand[] | undefined) ?? [];
-  const seenCommandNames = new Set<string>();
-  for (let i = 0; i < pluginCommands.length; i++) {
-    const cmd = pluginCommands[i];
-    if (!cmd || typeof cmd !== "object") {
-      return { ok: false, error: `plugin_commands[${i}] must be an object` };
-    }
-
-    // V-05：description 必須是非空字串
-    if (
-      !cmd.description ||
-      typeof cmd.description !== "string" ||
-      cmd.description.trim().length === 0
-    ) {
-      return {
-        ok: false,
-        error: `plugin_commands[${i}].description must be a non-empty string (V-05)`,
-      };
-    }
-
-    // name 格式（Discord constraint）
-    if (!cmd.name || !/^[a-z0-9][a-z0-9-]{0,31}$/.test(cmd.name)) {
-      return {
-        ok: false,
-        error:
-          `plugin_commands[${i}].name "${String(cmd.name)}" invalid ` +
-          `(Discord constraint: ^[a-z0-9][a-z0-9-]{0,31}$)`,
-      };
-    }
-    if (seenCommandNames.has(cmd.name)) {
-      return {
-        ok: false,
-        error: `plugin_commands[${i}].name "${cmd.name}" is declared more than once`,
-      };
-    }
-    seenCommandNames.add(cmd.name);
-
-    // V-06：scope
-    if (cmd.scope !== "guild" && cmd.scope !== "global") {
-      return {
-        ok: false,
-        error: `plugin_commands[${cmd.name}].scope must be "guild" or "global" (V-06)`,
-      };
-    }
-
-    // V-07：integration_types 必須是合法子集且非空
-    if (!Array.isArray(cmd.integration_types) || cmd.integration_types.length === 0) {
-      return {
-        ok: false,
-        error: `plugin_commands[${cmd.name}].integration_types must be a non-empty array (V-07)`,
-      };
-    }
-    const VALID_INTEGRATION_TYPES = new Set(["guild_install", "user_install"]);
-    for (const it of cmd.integration_types) {
-      if (typeof it !== "string" || !VALID_INTEGRATION_TYPES.has(it)) {
-        return {
-          ok: false,
-          error:
-            `plugin_commands[${cmd.name}].integration_types contains invalid value "${String(it)}" (V-07)`,
-        };
-      }
-    }
-
-    // V-08：contexts 必須是非空子集
-    if (!Array.isArray(cmd.contexts) || cmd.contexts.length === 0) {
-      return {
-        ok: false,
-        error: `plugin_commands[${cmd.name}].contexts must be a non-empty array (V-08)`,
-      };
-    }
-    const VALID_CONTEXTS_SET = new Set(["Guild", "BotDM", "PrivateChannel"]);
-    for (const ctx of cmd.contexts) {
-      if (typeof ctx !== "string" || !VALID_CONTEXTS_SET.has(ctx)) {
-        return {
-          ok: false,
-          error:
-            `plugin_commands[${cmd.name}].contexts contains invalid value "${String(ctx)}" (V-08)`,
-        };
-      }
-    }
-
-    const integrationTypesSet = new Set(cmd.integration_types);
-    const contextsSet = new Set(cmd.contexts);
-
-    // V-C1：scope="guild" 時，contexts 不能包含 BotDM 或 PrivateChannel
-    if (cmd.scope === "guild") {
-      if (contextsSet.has("BotDM") || contextsSet.has("PrivateChannel")) {
-        return {
-          ok: false,
-          error:
-            `plugin_commands[${cmd.name}]: scope="guild" is incompatible with BotDM/PrivateChannel contexts (V-C1)`,
-        };
-      }
-    }
-
-    // V-C2：scope="guild" 時，integration_types 不能包含 user_install
-    if (cmd.scope === "guild") {
-      if (integrationTypesSet.has("user_install")) {
-        return {
-          ok: false,
-          error:
-            `plugin_commands[${cmd.name}]: scope="guild" is incompatible with user_install (V-C2)`,
-        };
-      }
-    }
-
-    // V-C3：scope="global" 且 integration_types 不含 user_install 時，
-    //       contexts 不能包含 BotDM 或 PrivateChannel
-    if (
-      cmd.scope === "global" &&
-      !integrationTypesSet.has("user_install")
-    ) {
-      if (contextsSet.has("BotDM") || contextsSet.has("PrivateChannel")) {
-        return {
-          ok: false,
-          error:
-            `plugin_commands[${cmd.name}]: scope="global" with guild_install-only cannot have BotDM/PrivateChannel contexts (V-C3)`,
-        };
-      }
-    }
-  }
-
-  // ── guild_features[] 驗證（沿用 v1 邏輯）────────────────────────────────
-  // guild_features 的 commands[] 格式沿用 ManifestCommand（v1 相容）
-  const seenFeatureCommandNames = new Set<string>();
-  const validateFeatureCommand = (
-    c: ManifestCommand,
-    origin: string,
-  ): { ok: false; error: string } | null => {
-    if (!c.name || !c.description) {
-      return { ok: false, error: `${origin}: name + description required` };
-    }
-    if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(c.name)) {
-      return {
-        ok: false,
-        error: `${origin}: command.name '${c.name}' invalid (Discord constraint: ^[a-z0-9][a-z0-9-]{0,31}$)`,
-      };
-    }
-    if (seenFeatureCommandNames.has(c.name)) {
-      return {
-        ok: false,
-        error: `${origin}: command.name '${c.name}' is declared more than once in the manifest`,
-      };
-    }
-    seenFeatureCommandNames.add(c.name);
-    return null;
-  };
-
-  for (const f of
-    (m.guild_features as ManifestGuildFeature[] | undefined) ?? []) {
-    if (!f.key || !f.name) {
-      return {
-        ok: false,
-        error: "every guild_feature requires key + name",
-      };
-    }
-    for (const c of f.commands ?? []) {
-      const fail = validateFeatureCommand(
-        c,
-        `guild_features[${f.key}].commands`,
-      );
-      if (fail) return fail;
-    }
-  }
-
-  // Register-time config_schema validation. Reject manifests with
-  // malformed defaults / invalid regex / inverted ranges so the bug
-  // surfaces at plugin startup instead of after an admin opens the
-  // config editor and gets an unhelpful save error.
-  const { validateSchema } = await import("./config-validator.js");
-  if (Array.isArray(m.config_schema)) {
-    const fail = validateSchema(m.config_schema as ManifestConfigField[]);
-    if (fail) {
-      return {
-        ok: false,
-        error: `config_schema[${fail.key}]: ${fail.message}`,
-      };
-    }
-  }
-  for (const f of
-    (m.guild_features as ManifestGuildFeature[] | undefined) ?? []) {
-    if (Array.isArray(f.config_schema)) {
-      const fail = validateSchema(f.config_schema as ManifestConfigField[]);
-      if (fail) {
-        return {
-          ok: false,
-          error: `guild_features[${f.key}].config_schema[${fail.key}]: ${fail.message}`,
-        };
-      }
-    }
-  }
-
-  // ── web_ui 驗證 ──────────────────────────────────────────────────────────
-  // Optional manage-WebUI declaration. manage_path becomes part of a URL the
-  // admin UI opens, so constrain it: must be a rooted path with safe chars,
-  // no trailing slash, no traversal.
-  if (m.web_ui !== undefined && m.web_ui !== null) {
-    if (typeof m.web_ui !== "object" || Array.isArray(m.web_ui)) {
-      return { ok: false, error: "manifest.web_ui must be an object" };
-    }
-    const mp = (m.web_ui as { manage_path?: unknown }).manage_path;
-    if (mp !== undefined) {
-      if (
-        typeof mp !== "string" ||
-        !/^\/[A-Za-z0-9/_-]*$/.test(mp) ||
-        mp.endsWith("/") ||
-        mp.includes("//") ||
-        mp.includes("..")
-      ) {
-        return {
-          ok: false,
-          error: `manifest.web_ui.manage_path "${String(mp)}" invalid — must start with "/", contain only [A-Za-z0-9/_-], and have no trailing slash`,
-        };
-      }
-    }
-  }
-
-  return { ok: true, manifest: input as PluginManifest };
+  return protocol;
 }
 
 export interface RegisterResult {
