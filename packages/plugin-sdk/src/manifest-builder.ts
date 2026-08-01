@@ -1,6 +1,7 @@
 import type {
   ManifestCapability,
   ManifestCommand,
+  ManifestCommandOption,
   ManifestGuildFeature,
   ManifestPluginCommand,
   PluginManifest,
@@ -65,10 +66,14 @@ function normalizeOption(
     descriptionLocalizations?: Record<string, string>;
     nameLocalizations?: Record<string, string>;
   },
-): CommandOption {
+): ManifestCommandOption {
   const descLoc = o.description_localizations ?? o.descriptionLocalizations;
   const nameLoc = o.name_localizations ?? o.nameLocalizations;
-  const { descriptionLocalizations, nameLocalizations, ...rest } = o;
+  // Pull `options` out of the spread: `rest` would otherwise carry the
+  // author-form `CommandOption[]` (whose `type` allows the numeric enum),
+  // which conflicts with the wire-form `ManifestCommandOption[]` we
+  // rebuild below from the recursively-normalized options.
+  const { descriptionLocalizations, nameLocalizations, options, ...rest } = o;
   void descriptionLocalizations;
   void nameLocalizations;
   return {
@@ -76,7 +81,7 @@ function normalizeOption(
     type: normalizeOptionType(o.type),
     ...(descLoc ? { description_localizations: descLoc } : {}),
     ...(nameLoc ? { name_localizations: nameLoc } : {}),
-    ...(o.options ? { options: o.options.map(normalizeOption) } : {}),
+    ...(options ? { options: options.map(normalizeOption) } : {}),
   };
 }
 

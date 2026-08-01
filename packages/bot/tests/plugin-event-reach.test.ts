@@ -38,7 +38,7 @@ import {
   dispatchEventToPlugins,
 } from "../src/modules/plugin-system/plugin-event-bridge.service.js";
 import { pluginDispatcher } from "../src/modules/plugin-system/plugin-dispatch.service.js";
-import type { PluginManifest } from "../src/modules/plugin-system/plugin-sdk-types.js";
+import type { PluginManifest } from "@karyl-chan/plugin-wire";
 
 const GUILD_ON = "900000000000000111";
 const GUILD_OFF = "900000000000000222";

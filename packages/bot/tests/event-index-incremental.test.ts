@@ -16,7 +16,7 @@ import {
   parseManifestJson,
   type EventScope,
 } from "../src/modules/plugin-system/plugin-event-index.js";
-import type { PluginManifest } from "../src/modules/plugin-system/plugin-sdk-types.js";
+import type { PluginManifest } from "@karyl-chan/plugin-wire";
 
 function manifest(m: Partial<PluginManifest>): PluginManifest {
   return {

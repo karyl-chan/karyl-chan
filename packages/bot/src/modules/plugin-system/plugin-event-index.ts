@@ -20,7 +20,7 @@
  * `plugin-event-bridge.service.ts` and feed into here.
  */
 
-import type { PluginManifest } from "./plugin-sdk-types.js";
+import type { PluginManifest } from "@karyl-chan/plugin-wire";
 
 export type EventScope = "global" | { featureKey: string };
 

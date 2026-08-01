@@ -26,7 +26,7 @@ vi.mock(
 );
 
 import { FeatureReachResolver } from "../src/modules/feature-toggle/feature-reach-resolver.js";
-import type { PluginManifest } from "../src/modules/plugin-system/plugin-sdk-types.js";
+import type { PluginManifest } from "@karyl-chan/plugin-wire";
 
 const PLUGIN_ID = 7;
 const GUILD = "g1";

@@ -52,7 +52,7 @@ import {
 } from "./models/plugin-guild-feature.model.js";
 import { findFeatureDefaultsByPlugin } from "./models/plugin-feature-default.model.js";
 import { onPluginChange } from "../plugin-system/plugin-changes.js";
-import type { PluginManifest } from "../plugin-system/plugin-sdk-types.js";
+import type { PluginManifest } from "@karyl-chan/plugin-wire";
 
 const DEFAULT_TTL_MS = 30_000;
 
