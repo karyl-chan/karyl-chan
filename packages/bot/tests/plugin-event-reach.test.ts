@@ -100,8 +100,35 @@ afterEach(() => {
   postSpy.mockRestore();
 });
 
+/**
+ * `dispatchEventToPlugins` returns immediately and fans out in the
+ * background, so every assertion here has to wait for work nobody
+ * awaited. The two directions need different waits:
+ *
+ *  - **Something should happen** → `waitFor`. Polls until the condition
+ *    holds, so a slow CI runner costs latency, not a red build. A fixed
+ *    sleep here was flaky by construction: 25 ms is plenty on an idle
+ *    laptop and not always enough on a loaded runner.
+ *  - **Nothing should happen** → `settle`. There is no condition to poll
+ *    for — the only honest option is to give the fan-out a chance to
+ *    misbehave and then check it didn't. Generous on purpose.
+ */
+async function waitFor(
+  condition: () => boolean,
+  what: string,
+  timeoutMs = 2000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) {
+      throw new Error(`timed out after ${timeoutMs}ms waiting for ${what}`);
+    }
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
 async function settle(): Promise<void> {
-  await new Promise((r) => setTimeout(r, 25));
+  await new Promise((r) => setTimeout(r, 100));
 }
 
 describe("PM-8 dispatch reach gate (HTTP fan-out)", () => {
@@ -129,7 +156,10 @@ describe("PM-8 dispatch reach gate (HTTP fan-out)", () => {
     await rebuildEventIndex();
 
     dispatchEventToPlugins("guild.message_create", { guild_id: GUILD_ON }, GUILD_ON);
-    await settle();
+    await waitFor(
+      () => dispatchedUrls().some((u) => u.includes("feat-plugin")),
+      "a dispatch to feat-plugin",
+    );
     expect(dispatchedUrls().some((u) => u.includes("feat-plugin"))).toBe(true);
 
     postSpy.mockClear();
@@ -155,7 +185,10 @@ describe("PM-8 dispatch reach gate (HTTP fan-out)", () => {
     });
     await rebuildEventIndex();
     dispatchEventToPlugins("guild.message_create", { guild_id: GUILD_OFF }, GUILD_OFF);
-    await settle();
+    await waitFor(
+      () => postSpy.mock.calls.length > 0,
+      "a dispatch to a default-enabled feature",
+    );
     expect(postSpy).toHaveBeenCalled();
   });
 
@@ -195,7 +228,10 @@ describe("PM-8 dispatch reach gate (HTTP fan-out)", () => {
     });
     await rebuildEventIndex();
     dispatchEventToPlugins("dm.message_create", { hi: 1 }, null);
-    await settle();
+    await waitFor(
+      () => dispatchedUrls().some((u) => u.includes("global-plugin")),
+      "a global-subscription dispatch to global-plugin",
+    );
     expect(dispatchedUrls().some((u) => u.includes("global-plugin"))).toBe(
       true,
     );
@@ -231,7 +267,10 @@ describe("PM-8 dispatch reach gate (HTTP fan-out)", () => {
     });
     featureReachResolver.invalidateGuild(1, GUILD_ON);
     dispatchEventToPlugins("guild.message_create", { guild_id: GUILD_ON }, GUILD_ON);
-    await settle();
+    await waitFor(
+      () => postSpy.mock.calls.length > 0,
+      "a dispatch after the feature was enabled",
+    );
     expect(postSpy).toHaveBeenCalled();
   });
 });
