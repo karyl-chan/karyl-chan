@@ -42,6 +42,7 @@ import {
 } from "./plugin-dispatch-health.service.js";
 import { probePluginDispatch } from "./plugin-dispatch-probe.service.js";
 import { evaluateSdkCompatFromManifestJson } from "./plugin-sdk-compat.js";
+import { evaluateEventSubscriptionsFromManifestJson } from "./plugin-event-subscriptions.js";
 import { invalidatePluginById } from "./plugin-lookup-cache.js";
 import { dispatchLifecycleToPlugin } from "./plugin-lifecycle-dispatch.service.js";
 import { recordAudit } from "../admin/admin-audit.service.js";
@@ -363,6 +364,12 @@ export async function registerPluginRoutes(
           // background after this response; status is visible to the
           // operator via the admin plugin views.
           commandSync: "deferred",
+          // Unknown event-subscription verdict (#29 decisions 4/6/7).
+          // Always present, `status: "ok"` when every subscription is a
+          // Canonical Event. Warn-only this release: a non-ok status is
+          // information, not a failure — the plugin is registered.
+          // Declared in CONTRACT_FIXTURES.register.optionalResponseFields.
+          eventSubscriptions: result.eventSubscriptions,
         };
       } catch (err) {
         if (err instanceof ManifestError) {
@@ -539,6 +546,13 @@ export async function registerPluginRoutes(
         // placeholder row just means "never registered" — combine with
         // version === "0.0.0" before alarming.
         sdkCompat: evaluateSdkCompatFromManifestJson(p.manifestJson),
+        // Unknown event-subscription verdict (#29 decisions 4/6/7),
+        // rendered on the health card next to sdkCompat. Warn-only this
+        // release, so an already-registered plugin with a doomed
+        // subscription is visible here before the reject phase lands.
+        eventSubscriptions: evaluateEventSubscriptionsFromManifestJson(
+          p.manifestJson,
+        ),
       })),
     };
   });
@@ -639,6 +653,9 @@ export async function registerPluginRoutes(
         commandSync: pluginRegistry.getCommandSyncState(p.pluginKey),
         dispatch: getDispatchHealth(p.pluginKey),
         sdkCompat: evaluateSdkCompatFromManifestJson(p.manifestJson),
+        eventSubscriptions: evaluateEventSubscriptionsFromManifestJson(
+          p.manifestJson,
+        ),
         ...(health ? { health } : {}),
         ...(metrics ? { metrics } : {}),
       };
@@ -726,6 +743,9 @@ export async function registerPluginRoutes(
           })),
           dispatch: getDispatchHealth(p.pluginKey),
           sdkCompat: evaluateSdkCompatFromManifestJson(p.manifestJson),
+          eventSubscriptions: evaluateEventSubscriptionsFromManifestJson(
+            p.manifestJson,
+          ),
           ...(health ? { health } : {}),
           ...(metrics ? { metrics } : {}),
         },

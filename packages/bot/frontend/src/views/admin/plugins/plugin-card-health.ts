@@ -9,6 +9,7 @@
  */
 import type {
   PluginDispatchHealth,
+  PluginEventSubscriptionCheck,
   PluginSdkCompat,
 } from "../../../api/plugins";
 
@@ -117,4 +118,47 @@ export function sdkCompatProblem(
     };
   }
   return null;
+}
+
+export interface UnknownEventProblem {
+  /**
+   *  - `typo`: every unrecognized name came from an SDK this build
+   *    already knows in full — nothing will ever be delivered for them.
+   *  - `maybeNewerSdk`: every one came from a manifest newer than this
+   *    build's Event Ceiling — upgrading the bot may be the fix.
+   *  - `mixed`: both, so neither single sentence is honest.
+   */
+  kind: "typo" | "maybeNewerSdk" | "mixed";
+  /** The offending names — a warning that doesn't name them is noise. */
+  events: string[];
+  /** The bot's own reason text, joined; rendered as the detail line. */
+  detail: string;
+}
+
+/**
+ * The plugin's manifest subscribes to event names this bot build does
+ * not recognize (#29 decisions 4/6/7). Independent of dispatch health:
+ * these subscriptions produce no traffic at all, so no failure streak
+ * will ever surface them.
+ *
+ * The bot decides what the names mean; this only picks the wording.
+ * Whether the register was actually refused is `check.enforced` — false
+ * for the warn-only phase, when the card is the only place an operator
+ * would ever see this.
+ */
+export function unknownEventProblem(
+  check: PluginEventSubscriptionCheck | undefined,
+): UnknownEventProblem | null {
+  if (!check || check.unknown.length === 0) return null;
+  const typos = check.unknown.filter((u) => u.verdict === "reject").length;
+  return {
+    kind:
+      typos === check.unknown.length
+        ? "typo"
+        : typos === 0
+          ? "maybeNewerSdk"
+          : "mixed",
+    events: check.unknown.map((u) => u.event),
+    detail: check.unknown.map((u) => u.message).join(" "),
+  };
 }

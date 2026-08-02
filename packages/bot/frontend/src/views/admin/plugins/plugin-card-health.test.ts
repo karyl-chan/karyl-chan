@@ -10,11 +10,13 @@ import {
   dispatchProblem,
   lifecycleProblem,
   sdkCompatProblem,
+  unknownEventProblem,
   DISPATCH_FAILING_THRESHOLD,
 } from "./plugin-card-health";
 import type {
   PluginDispatchHealth,
   PluginDispatchAttempt,
+  PluginEventSubscriptionCheck,
   PluginSdkCompat,
 } from "../../../api/plugins";
 
@@ -93,6 +95,101 @@ describe("sdkCompatProblem", () => {
   it("is quiet when compatible or when the bot didn't send a verdict", () => {
     expect(sdkCompatProblem(compat("ok", "0.10.0"), "1.0.0")).toBeNull();
     expect(sdkCompatProblem(undefined, "1.0.0")).toBeNull();
+  });
+});
+
+describe("unknownEventProblem (#29 decisions 4/6/7)", () => {
+  const check = (
+    unknown: PluginEventSubscriptionCheck["unknown"],
+  ): PluginEventSubscriptionCheck => ({
+    enforced: false,
+    status: unknown.length === 0 ? "ok" : "warn",
+    ceiling: "0.11.1",
+    sdkVersion: "0.13.0",
+    unknown,
+  });
+
+  it("is quiet when every subscription is known, or the bot sent no verdict", () => {
+    expect(unknownEventProblem(check([]))).toBeNull();
+    expect(unknownEventProblem(undefined)).toBeNull();
+  });
+
+  it("names the offending events and keeps the bot's reason text", () => {
+    const p = unknownEventProblem(
+      check([
+        {
+          event: "guild.message_creat",
+          source: "events_subscribed_global",
+          verdict: "reject",
+          message: "Unknown event 'guild.message_creat' … typo …",
+        },
+      ]),
+    );
+    expect(p).not.toBeNull();
+    expect(p!.events).toEqual(["guild.message_creat"]);
+    expect(p!.detail).toContain("typo");
+  });
+
+  it("is a typo problem only when EVERY unknown name is one", () => {
+    // A newer-SDK name is the escape hatch, not an authoring mistake:
+    // one of those in the list downgrades the whole card's wording.
+    const mixed = unknownEventProblem(
+      check([
+        {
+          event: "guild.message_creat",
+          source: "events_subscribed_global",
+          verdict: "reject",
+          message: "typo",
+        },
+        {
+          event: "guild.future",
+          source: "events_subscribed_global",
+          verdict: "warn",
+          message: "newer sdk",
+        },
+      ]),
+    );
+    expect(mixed!.kind).toBe("mixed");
+    expect(mixed!.events).toHaveLength(2);
+
+    const allTypos = unknownEventProblem(
+      check([
+        {
+          event: "guild.message_creat",
+          source: "events_subscribed_global",
+          verdict: "reject",
+          message: "typo",
+        },
+      ]),
+    );
+    expect(allTypos!.kind).toBe("typo");
+
+    const allNewer = unknownEventProblem(
+      check([
+        {
+          event: "guild.future",
+          source: "events_subscribed_global",
+          verdict: "warn",
+          message: "newer sdk",
+        },
+      ]),
+    );
+    expect(allNewer!.kind).toBe("maybeNewerSdk");
+  });
+
+  it("still alarms once the reject phase is on", () => {
+    const enforced: PluginEventSubscriptionCheck = {
+      ...check([
+        {
+          event: "guild.message_creat",
+          source: "events_subscribed_global",
+          verdict: "reject",
+          message: "typo",
+        },
+      ]),
+      enforced: true,
+    };
+    expect(unknownEventProblem(enforced)!.kind).toBe("typo");
   });
 });
 

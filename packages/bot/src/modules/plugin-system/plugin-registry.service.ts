@@ -14,6 +14,10 @@ import {
 import { config } from "../../config.js";
 import { pluginAuthStore, PluginAuthStore } from "./plugin-auth.service.js";
 import { evaluateSdkCompat } from "./plugin-sdk-compat.js";
+import {
+  evaluateEventSubscriptions,
+  type EventSubscriptionCheck,
+} from "./plugin-event-subscriptions.js";
 import { scheduleRegisterProbe } from "./plugin-dispatch-probe.service.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { moduleLogger } from "../../logger.js";
@@ -234,6 +238,13 @@ export interface RegisterResult {
    * dispatch signatures from the bot.
    */
   dispatchHmacKey: string;
+  /**
+   * Verdict on the manifest's event subscriptions (#29 decisions 4/6/7).
+   * Warn-only this release, so a non-`ok` status still got here — the
+   * route echoes it back so the plugin author sees the doomed
+   * subscription in their own startup log, not only in the admin UI.
+   */
+  eventSubscriptions: EventSubscriptionCheck;
 }
 
 /**
@@ -393,6 +404,24 @@ export class PluginRegistry {
     }
     const manifest = v.manifest;
 
+    // ── Unknown event subscriptions (#29 decisions 4/6/7) ──────────
+    // Host policy, not a Protocol Rule: whether a name is one this
+    // BUILD knows is unanswerable from the author's machine, so the
+    // wire classifies and this module decides. The gate sits before
+    // anything is persisted so phase 2 leaves no half-registered row.
+    // `status` can only be "reject" once
+    // `REJECT_UNKNOWN_EVENT_SUBSCRIPTIONS` (plugin-event-subscriptions.ts)
+    // is flipped, so in this warn-only release the throw is unreachable.
+    const eventSubscriptions = evaluateEventSubscriptions(manifest);
+    if (eventSubscriptions.status === "reject") {
+      throw new ManifestError(
+        eventSubscriptions.unknown
+          .filter((u) => u.verdict === "reject")
+          .map((u) => u.message)
+          .join(" "),
+      );
+    }
+
     // ── Requested vs approved RPC scopes ───────────────────────────
     // Requested = what this manifest declares. Approved = what the
     // token will actually carry. Under auto-approve they're equal;
@@ -524,6 +553,23 @@ export class PluginRegistry {
         { pluginId: persisted.id, pluginKey: manifest.plugin.id },
       );
     }
+    // Unknown event subscriptions (#29 decisions 4/6/7), warn-only for
+    // this release. The response tells the plugin author; this line
+    // tells the operator, who is the one who has to decide whether the
+    // reject phase can be turned on.
+    if (eventSubscriptions.unknown.length > 0) {
+      botEventLog.record(
+        "warn",
+        "bot",
+        `Plugin '${manifest.plugin.id}' subscribes to ${eventSubscriptions.unknown.length} unknown event(s) — registered anyway (warn-only phase). ${eventSubscriptions.unknown.map((u) => u.message).join(" ")}`,
+        {
+          pluginId: persisted.id,
+          pluginKey: manifest.plugin.id,
+          unknownEvents: eventSubscriptions.unknown.map((u) => u.event),
+          eventCeiling: eventSubscriptions.ceiling,
+        },
+      );
+    }
     // Reconcile plugin-declared RBAC capabilities. A re-register that
     // drops a capability auto-removes it from every role (mirrors how
     // dropped RPC scopes are auto-removed above). Failures here don't
@@ -608,6 +654,7 @@ export class PluginRegistry {
       manifest,
       token: real.token,
       dispatchHmacKey: dispatchHmacKeyCleartext,
+      eventSubscriptions,
     };
   }
 

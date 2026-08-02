@@ -7,3 +7,4 @@ Chosen over always-reject (would brick a plugin built on a newer SDK against a l
 ## Consequences
 
 - Rollout is two-phase: one bot release runs the full logic warn-only so already-registered plugins with doomed subscriptions surface in the admin UI first; the next release flips a single boolean to reject.
+- Phase 1 shipped: the bot classifies every declared subscription in `packages/bot/src/modules/plugin-system/plugin-event-subscriptions.ts` and reports the verdict in the register response (`eventSubscriptions`) and on the admin plugin health card. The phase-2 flip is the one constant `REJECT_UNKNOWN_EVENT_SUBSCRIPTIONS` in that file; the classification each subscription carries is already the phase-2 answer, so flipping it changes behaviour only.
