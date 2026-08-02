@@ -19,6 +19,10 @@ The newest SDK version whose Canonical Events a given bot build fully knows. An 
 A validity rule answerable from the wire document alone — shape, closed vocabularies, Discord's own constraints. Owned here and run by both sides: the bot at register, the SDK's `buildManifest` at build, so an author sees the same message either way. A rule needing bot state is not one: whether `plugin.url` names a target the bot may reach is the operator's host policy (DNS, allowlist), unanswerable from the author's machine, and stays bot-side.
 _Avoid_: validation (unqualified — it hides which side owns the rule)
 
+**Contract Fixture**:
+A literal both sides of the wire must agree on — a golden HMAC hex, a stream key, an RPC path, a register response field, a dispatch payload field list. Lives here as one typed module (`CONTRACT_FIXTURES`) that every contract test imports; the bot's suite REPLAYS each literal through its real routes and dispatch services rather than grepping its own source for it.
+_Avoid_: test data (fixtures are the contract's assertions, not scaffolding for one test), snapshot (nothing here is generated from current behaviour)
+
 **Compat Floor**:
 The oldest SDK version the bot commits to interoperating with. The cross-version contract test proves the floor version still interops — the floor and the test always point at the same version.
 _Avoid_: minimum SDK version (as a loose phrase; the floor is a single named constant, not a vibe)

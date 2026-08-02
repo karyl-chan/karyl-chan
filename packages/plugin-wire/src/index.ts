@@ -54,3 +54,15 @@ export type {
   ConfigFieldError,
   ConfigFieldErrorCode,
 } from "./validate-config.js";
+
+// Contract fixtures — the literals every contract test on either side
+// of the wire replays. Test-only data that lives with the contract it
+// describes, so no consumer reads a file across a package boundary.
+// (Never referenced by SDK `src`, so the SDK's tsup bundle drops it.)
+export { CONTRACT_FIXTURES } from "./contract-fixtures.js";
+export type {
+  ContractFixtures,
+  HmacGoldenVector,
+  StreamKeySample,
+  DispatchPayloadContract,
+} from "./contract-fixtures.js";
