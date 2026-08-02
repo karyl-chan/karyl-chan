@@ -1,14 +1,14 @@
 /**
  * BH-2.3 — the behavior custom-webhook contract, locked against the
- * shared fixtures (contract-fixtures.json `behaviorWebhook` section).
+ * shared fixtures (`CONTRACT_FIXTURES.behaviorWebhook`, owned by
+ * `@karyl-chan/plugin-wire` — imported as a package, never read as a
+ * file across a package boundary).
  *
  * If the bot changes the outbound payload shape, the END sentinel, or
  * the embed whitelist without updating the fixtures, this goes red —
  * external webhook authors read the fixtures as the canonical schema.
  */
 import { vi, describe, it, expect, beforeAll, type Mock } from "vitest";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 
 vi.hoisted(() => {
   process.env.SQLITE_DB_PATH = ":memory:";
@@ -42,37 +42,10 @@ import { InteractionDispatcher } from "../src/modules/command-system/interaction
 import { sanitizeEmbeds } from "../src/modules/command-system/webhook-forwarder.service.js";
 import type { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
 import { encryptSecret } from "../src/utils/crypto.js";
+import { CONTRACT_FIXTURES } from "@karyl-chan/plugin-wire";
 
-const fixtures = JSON.parse(
-  readFileSync(
-    fileURLToPath(
-      new URL(
-        "../../plugin-sdk/tests/contract/contract-fixtures.json",
-        import.meta.url,
-      ),
-    ),
-    "utf8",
-  ),
-) as {
-  behaviorWebhook: {
-    endSentinel: string;
-    request: {
-      topLevelKeys: string[];
-      patternMetaKeys: string[];
-      slashMetaKeys: string[];
-      userKeys: string[];
-      sessionKeys: { inactive: string[]; active: string[] };
-      attachmentKeys: string[];
-    };
-    response: {
-      fields: string[];
-      embedWhitelist: string[];
-      maxEmbeds: number;
-    };
-  };
-};
+const C = CONTRACT_FIXTURES.behaviorWebhook;
 
-const C = fixtures.behaviorWebhook;
 
 beforeAll(async () => {
   await sequelize.sync({ force: true });
