@@ -24,18 +24,15 @@ export const SIGNATURE_HEADER = "x-karyl-signature";
 export const TIMESTAMP_HEADER = "x-karyl-timestamp";
 export const NONCE_HEADER = "x-karyl-nonce";
 
-/**
- * The oldest @karyl-chan/plugin-sdk release whose dispatch
- * verification understands the CURRENT signed-payload format above.
- * The admin panel's sdkCompat verdict is derived from this constant —
- * it lives HERE, next to the format definition, so the next wire
- * format break cannot update the scheme without staring at the floor
- * (the 2026-06-11 incident was exactly a bot and an SDK disagreeing
- * on this format while every dashboard stayed green).
- *
- * nonce scheme (`<METHOD>:<path>:<ts>:<nonce>:<body>`) → SDK 0.10.0.
- */
-export const DISPATCH_HMAC_MIN_SDK_VERSION = "0.10.0";
+// The oldest @karyl-chan/plugin-sdk release whose dispatch verification
+// understands the signed-payload format above is the Compat Floor —
+// `COMPAT_FLOOR` in @karyl-chan/plugin-wire. It is deliberately NOT
+// redeclared here: the bot's sdkCompat verdict and the SDK's
+// cross-version test pin read that one definition (#29). Changing the
+// format above without bumping it reproduces the 2026-06-11 incident, a
+// bot and an SDK disagreeing on the format while every dashboard stayed
+// green. Current floor: the nonce scheme
+// (`<METHOD>:<path>:<ts>:<nonce>:<body>`) → SDK 0.10.0.
 
 /** Fresh random nonce for one outbound request. */
 export function generateNonce(): string {

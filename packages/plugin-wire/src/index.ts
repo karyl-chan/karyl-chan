@@ -16,6 +16,11 @@ export type { EventName } from "./events.js";
 // Event Ceiling + the unknown-subscription verdict it drives.
 export { EVENT_CEILING, classifyEventSubscription } from "./event-ceiling.js";
 
+// Compat Floor — the ceiling's opposite end: the oldest SDK the bot
+// interoperates with. One definition, read by the bot's compat verdict
+// and by the SDK's cross-version alias pin.
+export { COMPAT_FLOOR } from "./compat-floor.js";
+
 // SDK-version comparison used across the contract's compat statements.
 export { compareSemver, maxSemver } from "./semver.js";
 

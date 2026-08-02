@@ -1,14 +1,16 @@
 /**
  * PM-7.9.3 — SDK wire-format compatibility verdict.
  *
- * The floor (MIN_COMPAT_SDK_VERSION) is set by the nonced dispatch
- * HMAC scheme: an SDK below it registers and heartbeats green while
- * rejecting every dispatch with 401. These tests lock the verdict the
- * admin UI badge and the register-time warning are built on.
+ * The Compat Floor (`COMPAT_FLOOR`, owned by @karyl-chan/plugin-wire) is
+ * set by the nonced dispatch HMAC scheme: an SDK below it registers and
+ * heartbeats green while rejecting every dispatch with 401. These tests
+ * lock the verdict the admin UI badge and the register-time warning are
+ * built on — asserting against the wire constant rather than a literal,
+ * so a floor bump doesn't need this file edited.
  */
 import { describe, it, expect } from "vitest";
+import { COMPAT_FLOOR } from "@karyl-chan/plugin-wire";
 import {
-  MIN_COMPAT_SDK_VERSION,
   compareSdkVersions,
   evaluateSdkCompat,
   evaluateSdkCompatFromManifestJson,
@@ -34,17 +36,17 @@ describe("evaluateSdkCompat", () => {
     const v = evaluateSdkCompat("0.9.0");
     expect(v.status).toBe("below_minimum");
     expect(v.sdkVersion).toBe("0.9.0");
-    expect(v.minCompatible).toBe(MIN_COMPAT_SDK_VERSION);
+    expect(v.minCompatible).toBe(COMPAT_FLOOR);
   });
 
   it("accepts the floor itself and anything above", () => {
-    expect(evaluateSdkCompat(MIN_COMPAT_SDK_VERSION).status).toBe("ok");
+    expect(evaluateSdkCompat(COMPAT_FLOOR).status).toBe("ok");
     expect(evaluateSdkCompat("0.11.0").status).toBe("ok");
     expect(evaluateSdkCompat("1.0.0").status).toBe("ok");
   });
 
   it("flags a prerelease of the floor as below it", () => {
-    expect(evaluateSdkCompat(`${MIN_COMPAT_SDK_VERSION}-beta.1`).status).toBe(
+    expect(evaluateSdkCompat(`${COMPAT_FLOOR}-beta.1`).status).toBe(
       "below_minimum",
     );
   });
