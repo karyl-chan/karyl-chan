@@ -3,12 +3,12 @@
  *
  * The bot, not the admin UI, owns the judgement of "is this plugin's
  * SDK still speaking our wire format" — the UI only renders the
- * verdict. Today the floor is set by the nonced dispatch HMAC scheme
- * (BH-2.4, SDK 0.10.0): an older SDK verifies `<METHOD>:<path>:<ts>:
- * <body>` while this bot signs `<METHOD>:<path>:<ts>:<nonce>:<body>`,
- * so every dispatch is rejected with 401 while register/heartbeat
- * (which don't cross that path) stay green — the 2026-06-11 incident
- * signature. Bump the floor whenever the wire format breaks again.
+ * verdict. What that judgement is measured against is the Compat Floor,
+ * and the floor is a property of the wire, not of this module: it is
+ * defined once as `COMPAT_FLOOR` in `@karyl-chan/plugin-wire` and read
+ * from there by everyone who has an opinion about it (this verdict, and
+ * the SDK's cross-version alias pin). See that constant for why the
+ * floor sits where it does today.
  *
  * `manifest.sdk_version` is stamped by the SDK's buildManifest since
  * 0.9.0 and format-validated at register; absence means the SDK
@@ -16,14 +16,7 @@
  * registered) — callers must treat `unknown` accordingly.
  */
 
-import { DISPATCH_HMAC_MIN_SDK_VERSION } from "../../utils/hmac.js";
-
-/**
- * Re-exported from utils/hmac.ts so the floor physically lives next
- * to the signed-payload format it tracks — the next wire-format break
- * can't update the scheme without staring at this constant.
- */
-export const MIN_COMPAT_SDK_VERSION = DISPATCH_HMAC_MIN_SDK_VERSION;
+import { COMPAT_FLOOR } from "@karyl-chan/plugin-wire";
 
 export interface SdkCompat {
   /** As stamped in the registered manifest; null when absent. */
@@ -72,15 +65,15 @@ export function evaluateSdkCompat(
   if (sdkVersion === null || sdkVersion === undefined || sdkVersion === "") {
     return {
       sdkVersion: null,
-      minCompatible: MIN_COMPAT_SDK_VERSION,
+      minCompatible: COMPAT_FLOOR,
       status: "unknown",
     };
   }
   return {
     sdkVersion,
-    minCompatible: MIN_COMPAT_SDK_VERSION,
+    minCompatible: COMPAT_FLOOR,
     status:
-      compareSdkVersions(sdkVersion, MIN_COMPAT_SDK_VERSION) >= 0
+      compareSdkVersions(sdkVersion, COMPAT_FLOOR) >= 0
         ? "ok"
         : "below_minimum",
   };
