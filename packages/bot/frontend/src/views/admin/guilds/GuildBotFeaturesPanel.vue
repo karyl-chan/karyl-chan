@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { Icon } from '@iconify/vue';
 import { useI18n } from 'vue-i18n';
 import { AppConfirmDialog, AppToggle } from '@karyl-chan/ui';
@@ -10,8 +10,8 @@ import {
     setGuildFeatureEnabled,
     type GuildFeatureItem
 } from '../../../api/plugin-features';
-import { ConfigValidationError } from '../../../api/plugins';
 import PluginConfigFields from '../../../components/PluginConfigFields.vue';
+import { usePluginConfigEditor } from '../../../composables/use-plugin-config-editor';
 import {
     listBuiltinFeatureState,
     setBuiltinFeatureState,
@@ -151,66 +151,53 @@ async function confirmClearOverride() {
     }
 }
 
-// 行內 config 編輯器：一次展開一列，欄位渲染比照 plugin 詳情頁的
-// config editor（字串值表單；boolean 存 'true'/'false'；secret 用
-// '********' sentinel 表示「已存值、留著不變」）。
-const configOpenKey = ref<string | null>(null);
-const configValues = reactive<Record<string, string>>({});
-const configFieldErrors = ref<Array<{ key: string; message: string }>>([]);
-const configSaving = ref(false);
-const configError = ref<string | null>(null);
-const configSavedAt = ref<number | null>(null);
+// 行內 config 編輯器：一次展開一列。表單行為（seed、secret sentinel、
+// 422 → 逐欄錯誤、已儲存提示）由 usePluginConfigEditor 提供，與 plugin
+// 詳情頁 / plugin 卡片共用同一份實作（#31）。
+const configTarget = ref<GuildFeatureItem | null>(null);
+const configOpenKey = computed(() => (configTarget.value ? pluginKey(configTarget.value) : null));
 
-function toggleConfig(item: GuildFeatureItem) {
-    const k = pluginKey(item);
-    if (configOpenKey.value === k) {
-        configOpenKey.value = null;
-        return;
-    }
-    configOpenKey.value = k;
-    configFieldErrors.value = [];
-    configError.value = null;
-    for (const key of Object.keys(configValues)) delete configValues[key];
-    for (const field of item.configSchema) {
-        const raw = item.config[field.key];
-        if (field.type === 'secret') {
-            // 後端不回 secret 明文（存的是加密 blob）——非空即視為已設。
-            configValues[field.key] = typeof raw === 'string' && raw.length > 0 ? '********' : '';
-        } else if (field.type === 'boolean') {
-            configValues[field.key] = raw === true || raw === 'true' ? 'true' : 'false';
-        } else if (raw === null || raw === undefined) {
-            configValues[field.key] = (field.default as string | undefined) ?? '';
-        } else {
-            configValues[field.key] = String(raw);
-        }
-    }
-}
-
-const fieldErrorMap = computed<Record<string, string>>(() => {
-    const m: Record<string, string> = {};
-    for (const e of configFieldErrors.value) m[e.key] = e.message;
-    return m;
+const {
+    fields: configFields,
+    values: configValues,
+    fieldErrors: fieldErrorMap,
+    saving: configSaving,
+    saved: configSaved,
+    error: configError,
+    invalidCount: configInvalidCount,
+    apply: applyFeatureConfig,
+    save: saveConfig,
+} = usePluginConfigEditor({
+    // 這裡（與 plugin 層設定不同）會用 manifest 預設值預填空欄位：
+    // per-guild config 是整列覆寫，操作者打開時要看到「現在生效的值」。
+    seedDefaults: true,
+    save: (values) => {
+        const item = configTarget.value!;
+        return setGuildFeatureConfig(item.pluginId, props.guildId, item.featureKey, values);
+    },
+    // 401/403 已由 useApiError 接手（會導向登入頁）——那種情況不再另外
+    // 顯示訊息。
+    describeError: (err) =>
+        handleApiError(err) !== 'unhandled'
+            ? null
+            : err instanceof Error
+              ? err.message
+              : 'save failed',
 });
 
-async function saveFeatureConfig(item: GuildFeatureItem) {
-    if (configSaving.value) return;
-    configSaving.value = true;
-    configError.value = null;
-    configFieldErrors.value = [];
-    try {
-        await setGuildFeatureConfig(item.pluginId, props.guildId, item.featureKey, { ...configValues });
-        configSavedAt.value = Date.now();
-        await refresh();
-    } catch (err) {
-        if (err instanceof ConfigValidationError) {
-            configFieldErrors.value = err.fieldErrors;
-            return;
-        }
-        if (handleApiError(err) !== 'unhandled') return;
-        configError.value = err instanceof Error ? err.message : 'save failed';
-    } finally {
-        configSaving.value = false;
+function toggleConfig(item: GuildFeatureItem) {
+    if (configOpenKey.value === pluginKey(item)) {
+        configTarget.value = null;
+        return;
     }
+    configTarget.value = item;
+    // 後端不回 secret 明文（存的是加密 blob）——非空即視為已設，改由
+    // sentinel 呈現。
+    applyFeatureConfig({ schema: item.configSchema, values: item.config });
+}
+
+async function saveFeatureConfig() {
+    if (await saveConfig()) await refresh();
 }
 
 async function onToggleBuiltin(row: BuiltinRow) {
@@ -334,15 +321,18 @@ watch(() => props.guildId, refresh);
                             <!-- 行內 per-guild config 編輯器（PD-1.3） -->
                             <div v-if="configOpenKey === pluginKey(item)" class="config-editor">
                                 <p v-if="configError" class="error" role="alert">{{ configError }}</p>
+                                <p v-else-if="configInvalidCount > 0" class="error" role="alert">
+                                    {{ $t('admin.plugins.configFieldErrors', { n: configInvalidCount }) }}
+                                </p>
                                 <PluginConfigFields
                                     layout="stack"
-                                    :schema="item.configSchema"
+                                    :schema="configFields"
                                     :values="configValues"
                                     :field-errors="fieldErrorMap"
                                 />
                                 <div class="config-actions">
-                                    <span v-if="configSavedAt && (Date.now() - configSavedAt < 4000)" class="saved-hint">已儲存</span>
-                                    <button type="button" class="btn small" :disabled="configSaving" @click="saveFeatureConfig(item)">
+                                    <span v-if="configSaved" class="saved-hint">已儲存</span>
+                                    <button type="button" class="btn small" :disabled="configSaving" @click="saveFeatureConfig">
                                         {{ configSaving ? '儲存中…' : '儲存設定' }}
                                     </button>
                                 </div>

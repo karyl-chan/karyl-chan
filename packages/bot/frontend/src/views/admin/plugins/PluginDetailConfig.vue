@@ -1,17 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@iconify/vue';
 import { AppBadge } from '@karyl-chan/ui';
 import {
-    ConfigValidationError,
     setPluginConfig,
     getPluginSettings,
-    type PluginConfigField,
     type PluginDetailRecord,
     type PluginSettings,
 } from '../../../api/plugins';
 import PluginConfigFields from '../../../components/PluginConfigFields.vue';
+import { fromPluginConfigPayload, usePluginConfigEditor } from '../../../composables/use-plugin-config-editor';
 import { formatBytes } from '../../../utils/format';
 
 const props = defineProps<{
@@ -29,18 +28,24 @@ const loadError = ref<string | null>(null);
 const loaded = ref(false);
 const summary = ref<PluginSettings | null>(null);
 
-// Config editor state (operator-owned, global). PD-2.2.
-const configSchema = ref<PluginConfigField[]>([]);
-const configValues = reactive<Record<string, string>>({});
-const configSaving = ref(false);
-const configError = ref<string | null>(null); // save-time error only
-const configSavedAt = ref<number | null>(null);
-// PD-4.3: stored admin config saved under an older config_schema_version.
-const configStale = ref(false);
-const configFieldErrors = reactive<Record<string, string>>({});
-function clearFieldErrors(): void {
-    for (const k of Object.keys(configFieldErrors)) delete configFieldErrors[k];
-}
+// Config editor state (operator-owned, global). PD-2.2. Seeding, drift
+// detection and 422 mapping live in the composable (#31); the fetch stays
+// here because one request feeds both the editor and the overview below.
+const {
+    fields: configSchema,
+    values: configValues,
+    fieldErrors: configFieldErrors,
+    stale: configStale,
+    saving: configSaving,
+    saved: configSaved,
+    error: configError, // save-time error only; the fetch has its own
+    invalidCount: configInvalidCount,
+    apply: applyConfig,
+    reset: resetConfigEditor,
+    save: saveConfig,
+} = usePluginConfigEditor({
+    save: (values) => setPluginConfig(props.plugin.id, values),
+});
 
 const features = computed(() => manifest.value?.guild_features ?? []);
 
@@ -83,31 +88,6 @@ function kvPct(used: number): number {
     return Math.min(100, Math.round((used / kvQuota.value) * 100));
 }
 
-/** Seed the editor from the fetched config payload. Values are stored as
- *  strings keyed by field; defaults arrive as raw manifest JSON. */
-function applyConfig(config: PluginSettings['config']): void {
-    configSchema.value = config.schema;
-    configStale.value =
-        config.storedConfigSchemaVersion != null &&
-        config.configSchemaVersion != null &&
-        config.storedConfigSchemaVersion < config.configSchemaVersion;
-    for (const k of Object.keys(configValues)) delete configValues[k];
-    for (const v of config.values) configValues[v.key] = v.value ?? '';
-    for (const f of config.schema) {
-        if (!(f.key in configValues)) {
-            const raw = f.default;
-            configValues[f.key] =
-                f.type === 'boolean'
-                    ? raw === true || raw === 'true'
-                        ? 'true'
-                        : 'false'
-                    : raw == null
-                      ? ''
-                      : String(raw);
-        }
-    }
-}
-
 async function load() {
     if (loading.value) return;
     loading.value = true;
@@ -116,7 +96,7 @@ async function load() {
     try {
         const r = await getPluginSettings(requestedId);
         if (props.plugin.id !== requestedId) return;
-        applyConfig(r.config);
+        applyConfig(fromPluginConfigPayload(r.config));
         summary.value = r;
         loaded.value = true;
     } catch (err) {
@@ -128,40 +108,9 @@ async function load() {
 }
 
 function resetState(): void {
-    for (const k of Object.keys(configValues)) delete configValues[k];
-    configSchema.value = [];
-    clearFieldErrors();
-    configError.value = null;
-    configSavedAt.value = null;
-    configStale.value = false;
+    resetConfigEditor();
     summary.value = null;
     loaded.value = false;
-}
-
-async function saveConfig() {
-    if (configSaving.value) return;
-    configSaving.value = true;
-    configError.value = null;
-    clearFieldErrors();
-    try {
-        await setPluginConfig(props.plugin.id, { ...configValues });
-        configSavedAt.value = Date.now();
-        configStale.value = false;
-    } catch (err) {
-        if (err instanceof ConfigValidationError) {
-            for (const fe of err.fieldErrors) {
-                configFieldErrors[fe.key] = fe.message;
-            }
-            configError.value =
-                err.fieldErrors.length === 1
-                    ? `1 field has errors — correct it and save again.`
-                    : `${err.fieldErrors.length} fields have errors — correct them and save again.`;
-        } else {
-            configError.value = err instanceof Error ? err.message : String(err);
-        }
-    } finally {
-        configSaving.value = false;
-    }
 }
 
 watch(
@@ -185,7 +134,7 @@ onMounted(load);
             <section v-if="hasConfigSchema" class="section config-section">
                 <div class="section-header">
                     <h3 class="section-title">{{ t('admin.plugins.detail.config.pluginConfigTitle') }}</h3>
-                    <AppBadge v-if="configSavedAt && (Date.now() - configSavedAt < 4000)" tone="success" size="sm">
+                    <AppBadge v-if="configSaved" tone="success" size="sm">
                         {{ t('admin.plugins.detail.config.saved') }}
                     </AppBadge>
                 </div>
@@ -194,6 +143,9 @@ onMounted(load);
                     <span>{{ t('admin.plugins.detail.configStale') }}</span>
                 </div>
                 <p v-if="configError" class="error" role="alert">{{ configError }}</p>
+                <p v-else-if="configInvalidCount > 0" class="error" role="alert">
+                    {{ t('admin.plugins.configFieldErrors', { n: configInvalidCount }) }}
+                </p>
                 <PluginConfigFields
                     :schema="configSchema"
                     :values="configValues"
