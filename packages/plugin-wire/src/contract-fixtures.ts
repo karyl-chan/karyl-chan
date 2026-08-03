@@ -381,6 +381,12 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
       "publicBaseUrl",
       "heartbeat",
       "commandSync",
+      // The bot's verdict on this manifest's event subscriptions
+      // (#29 decisions 4/6/7) — `{ enforced, status, ceiling,
+      // sdkVersion, unknown[] }`. Always sent; `status: "ok"` when
+      // every subscription is a Canonical Event. The SDK ignores it
+      // today, so it is optional to the consumer half.
+      "eventSubscriptions",
     ],
     heartbeatEndpoint: "/api/plugins/heartbeat",
   },

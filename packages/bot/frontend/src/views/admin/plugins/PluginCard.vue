@@ -17,7 +17,7 @@ import {
     type PluginRecord
 } from '../../../api/plugins';
 import PluginConfigFields from '../../../components/PluginConfigFields.vue';
-import { dispatchProblem, lifecycleProblem, sdkCompatProblem } from './plugin-card-health';
+import { dispatchProblem, lifecycleProblem, sdkCompatProblem, unknownEventProblem } from './plugin-card-health';
 import { pluginInstallState } from './plugin-install-state';
 import { hasPluginCapability } from '../../../libs/admin-capabilities';
 import { safeHref } from '../../../libs/messages/safe-href';
@@ -230,6 +230,10 @@ watch(() => props.plugin.dispatch, () => { dispatchOverride.value = undefined; }
 const dispatchState = computed(() => dispatchOverride.value !== undefined ? dispatchOverride.value : props.plugin.dispatch);
 const dispatchAlarm = computed(() => dispatchProblem(dispatchState.value));
 const sdkAlarm = computed(() => sdkCompatProblem(props.plugin.sdkCompat, props.plugin.version));
+// Subscriptions to event names this bot build doesn't know (#29
+// decisions 4/6/7). No dispatch is ever attempted for them, so no
+// failure streak can surface them — this badge is the only signal.
+const unknownEventAlarm = computed(() => unknownEventProblem(props.plugin.eventSubscriptions));
 const lifecycleAlarm = computed(() => lifecycleProblem(dispatchState.value));
 
 // Install-journey position (PD-1.2): the card badges the states the
@@ -479,6 +483,21 @@ async function confirmDelete() {
                     }}
                 </AppBadge>
                 <AppBadge
+                    v-if="unknownEventAlarm"
+                    variant="outline"
+                    icon="material-symbols:notifications-off-outline-rounded"
+                    class="dispatch-problem-badge"
+                    :title="unknownEventAlarm.detail || t('admin.plugins.unknownEventsHint')"
+                >
+                    {{
+                        unknownEventAlarm.kind === 'typo'
+                            ? t('admin.plugins.unknownEventsTypo', { n: unknownEventAlarm.events.length })
+                            : unknownEventAlarm.kind === 'maybeNewerSdk'
+                                ? t('admin.plugins.unknownEventsNewer', { n: unknownEventAlarm.events.length })
+                                : t('admin.plugins.unknownEvents', { n: unknownEventAlarm.events.length })
+                    }}
+                </AppBadge>
+                <AppBadge
                     v-if="lifecycleAlarm"
                     variant="outline"
                     icon="material-symbols:sync-problem"
@@ -521,6 +540,17 @@ async function confirmDelete() {
                     <dt>{{ t('admin.plugins.sdkVersionLabel') }}</dt>
                     <dd :class="{ 'dispatch-bad': sdkAlarm }">
                         <code>{{ plugin.sdkCompat?.sdkVersion ?? t('admin.plugins.sdkNoStamp') }}</code>
+                    </dd>
+                </div>
+                <!-- Unknown event subscriptions (#29 decisions 4/6/7),
+                     deliberately next to the SDK-compat row: both are
+                     the bot's verdict on how well this manifest matches
+                     what this build speaks. Naming the events is the
+                     point — a count alone is not actionable. -->
+                <div class="meta-row" v-if="unknownEventAlarm">
+                    <dt>{{ t('admin.plugins.unknownEventsLabel') }}</dt>
+                    <dd class="dispatch-bad" :title="unknownEventAlarm.detail">
+                        <code v-for="e in unknownEventAlarm.events" :key="e" class="scope-chip">{{ e }}</code>
                     </dd>
                 </div>
                 <div class="meta-row" v-if="rpcScopes.length > 0">

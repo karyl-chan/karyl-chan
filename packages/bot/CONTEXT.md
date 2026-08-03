@@ -35,6 +35,10 @@ _Avoid_: dispatch type, channel
 The channel a Plugin Dispatch travels over (direct HTTP, pooled HTTP, event bus). The transport determines which pre-delivery steps apply — e.g. SSRF preflight and signing exist only for outbound HTTP.
 _Avoid_: delivery mode, backend
 
+**Subscription Verdict**:
+The bot's answer to "does this manifest subscribe to event names this build knows" — computed at register from the wire's classification, reported in the register response and on the admin health card. Host policy: what a given build knows is unanswerable from the plugin author's machine. Currently warn-only; one named constant turns it into a refusal.
+_Avoid_: event validation (the wire owns whether the manifest is well-formed; this is about what this build recognizes)
+
 **Plugin Change**:
 A notification that a plugin's effective state changed (registration, enable/disable, deregistration, or a feature write for one guild). Emitted by the module that owns the mutation; caches subscribe and invalidate themselves.
 _Avoid_: cache invalidation call (that's a subscriber's private reaction, not the event)

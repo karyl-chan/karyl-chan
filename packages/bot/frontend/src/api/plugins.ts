@@ -110,6 +110,11 @@ export interface PluginRecord {
   dispatch?: PluginDispatchHealth | null;
   /** SDK wire-format compat verdict computed by the bot (PM-7.9.3). */
   sdkCompat?: PluginSdkCompat;
+  /**
+   * Unknown event-subscription verdict computed by the bot (#29
+   * decisions 4/6/7) — sits next to sdkCompat on the health card.
+   */
+  eventSubscriptions?: PluginEventSubscriptionCheck;
 }
 
 export interface PluginCommandSyncState {
@@ -174,6 +179,31 @@ export interface PluginSdkCompat {
   minCompatible: string;
   /** `unknown` = no sdk_version stamp (pre-0.9 SDK or never registered). */
   status: "ok" | "below_minimum" | "unknown";
+}
+
+/** One manifest subscription the bot does not recognize. */
+export interface PluginUnknownEventSubscription {
+  event: string;
+  /** `events_subscribed_global` or `guild_features[<key>].events_subscribed`. */
+  source: string;
+  /** `reject` = typo; `warn` = may be an event this bot build lacks. */
+  verdict: "warn" | "reject";
+  /** The bot's reason text, rendered as-is (like a dispatch detail). */
+  message: string;
+}
+
+/**
+ * The bot's verdict on a plugin's declared event subscriptions (#29
+ * decisions 4/6/7). `enforced` is false for the whole warn-only rollout
+ * phase — while it is false a non-ok status never blocked a register.
+ */
+export interface PluginEventSubscriptionCheck {
+  enforced: boolean;
+  status: "ok" | "warn" | "reject";
+  /** Event Ceiling the verdict was measured against. */
+  ceiling: string;
+  sdkVersion: string | null;
+  unknown: PluginUnknownEventSubscription[];
 }
 
 /** Verdict of the signed dispatch probe (PM-7.9.4). */
