@@ -21,6 +21,7 @@ import {
 } from "./models/plugin-command.model.js";
 import { findFeatureRowsByPlugin } from "../feature-toggle/models/plugin-guild-feature.model.js";
 import { findFeatureDefaultsByPlugin } from "../feature-toggle/models/plugin-feature-default.model.js";
+import { resolvePrecedenceTiers } from "../feature-toggle/feature-reach-resolver.js";
 import { findAllPlugins, type PluginRow } from "./models/plugin.model.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { findEnabledSlashCommandNames } from "../behavior/models/behavior.model.js";
@@ -441,12 +442,13 @@ export class PluginCommandRegistry {
 
     // ── Per-feature commands ─────────────────────────────────────
     // A feature's slash commands are registered in a guild iff the
-    // feature resolves to "on" there. Resolution mirrors built-in
-    // features (resolveBuiltinFeatureEnabled): per-guild row →
-    // plugin_feature_defaults (operator default) → manifest
-    // enabled_by_default → false. So a guild that's never been touched
-    // follows the default — no "apply to all" step. (When the operator
-    // default changes, the feature-defaults route re-runs this sync.)
+    // feature resolves to "on" there, by the Precedence Tiers —
+    // resolvePrecedenceTiers owns the order; this site only supplies
+    // the tiers. Being a bulk pass (every feature × every guild), it
+    // prefetches the two tier tables once per plugin instead of paying
+    // a query per pair. So a guild that's never been touched follows
+    // the default — no "apply to all" step. (When the operator default
+    // changes, the feature-defaults route re-runs this sync.)
     const featureRows = await findFeatureRowsByPlugin(plugin.id);
     const rowEnabled = new Map<string, boolean>(); // `${featureKey}\u0000${guildId}` → enabled
     for (const r of featureRows) {
@@ -462,10 +464,11 @@ export class PluginCommandRegistry {
       if (cmds.length === 0) continue;
       const manifestDefault = !!feature.enabled_by_default;
       for (const guildId of allGuildIds) {
-        const enabled =
-          rowEnabled.get(`${feature.key}\u0000${guildId}`) ??
-          opDefaultEnabled.get(feature.key) ??
-          manifestDefault;
+        const enabled = resolvePrecedenceTiers(
+          rowEnabled.get(`${feature.key}\u0000${guildId}`),
+          opDefaultEnabled.get(feature.key),
+          manifestDefault,
+        );
         if (!enabled) continue; // off — any leftover row gets cleaned below
         for (const cmd of cmds) {
           // Diff: unchanged definition that already made it to Discord
@@ -617,11 +620,9 @@ export class PluginCommandRegistry {
 
   /**
    * Re-evaluate one feature's slash commands across every guild the bot
-   * is in — register where it resolves "on", delete where it resolves
-   * "off". Resolution per guild: per-guild row → operator default
-   * (plugin_feature_defaults) → manifest enabled_by_default → false.
-   * Called when the operator default for the feature changes (there's
-   * no "apply to all" step anymore).
+   * is in — register where the Precedence Tiers resolve "on", delete
+   * where they resolve "off". Called when the operator default for the
+   * feature changes (there's no "apply to all" step anymore).
    */
   async syncFeatureCommandsAcrossGuilds(
     plugin: PluginRow,
@@ -650,7 +651,11 @@ export class PluginCommandRegistry {
       existingByGuild.set(r.guildId, list);
     }
     for (const guildId of bot.guilds.cache.keys()) {
-      const enabled = rowEnabled.get(guildId) ?? opDefault ?? manifestDefault;
+      const enabled = resolvePrecedenceTiers(
+        rowEnabled.get(guildId),
+        opDefault,
+        manifestDefault,
+      );
       if (enabled) {
         for (const cmd of cmds) {
           await this.registerFeatureCommandInGuild(
@@ -671,7 +676,7 @@ export class PluginCommandRegistry {
   /**
    * When the bot joins a guild: register the feature commands of every
    * active plugin whose feature resolves "on" in that brand-new guild
-   * (no per-guild row can exist yet → operator default / manifest
+   * (the Guild Override tier is skipped → operator default / manifest
    * default decides). Mirrors syncInProcessCommandsForGuild for
    * built-in features.
    */
@@ -693,7 +698,15 @@ export class PluginCommandRegistry {
         const opDefault = opDefaults.find(
           (d) => d.featureKey === feature.key,
         )?.enabled;
-        const enabled = opDefault ?? !!feature.enabled_by_default;
+        // Top tier deliberately empty: a guild the bot just joined has
+        // no Guild Override to read. (A row surviving an earlier
+        // membership is not consulted here — the next sync() applies
+        // it.) Same rule, one tier short of its input.
+        const enabled = resolvePrecedenceTiers(
+          undefined,
+          opDefault,
+          !!feature.enabled_by_default,
+        );
         if (!enabled) continue;
         for (const cmd of cmds) {
           await this.registerFeatureCommandInGuild(
