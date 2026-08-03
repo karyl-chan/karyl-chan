@@ -9,7 +9,7 @@ Whether a plugin's declared guild feature is effectively enabled in a specific g
 _Avoid_: feature gate check, guild feature check (as loose synonyms)
 
 **Precedence Tiers**:
-The fixed 3-tier resolution order for Feature Reach: per-guild row → operator default → manifest default. There is exactly one implementation of this rule, inside the Feature Reach module.
+The fixed 3-tier resolution order for Feature Reach: per-guild row → operator default → manifest default. There is exactly one implementation of this rule — `resolvePrecedenceTiers`, inside the Feature Reach module. Callers supply the tiers from whatever source suits them (cached read, fresh admin query, bulk prefetch for command registration) but never re-apply the order themselves.
 _Avoid_: fallback chain, cascade
 
 **Guild Override**:
