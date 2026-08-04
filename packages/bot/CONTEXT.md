@@ -42,3 +42,15 @@ _Avoid_: event validation (the wire owns whether the manifest is well-formed; th
 **Plugin Change**:
 A notification that a plugin's effective state changed (registration, enable/disable, deregistration, or a feature write for one guild). Emitted by the module that owns the mutation; caches subscribe and invalidate themselves.
 _Avoid_: cache invalidation call (that's a subscriber's private reaction, not the event)
+
+**Plugin Admin**:
+The single entry point for everything an operator does *to* a plugin — enable it, approve its scopes, edit its config, delete it — reads included, so an admin route depends on one module and nothing else. Membership is decided by who initiates the action and by nothing else: operator-initiated belongs here, plugin-initiated stays with registration and heartbeat.
+_Avoid_: plugin service, plugin manager (neither names an actor, so neither tells the next person what belongs inside)
+
+**Admin Refusal**:
+An expected, operator-facing outcome that Plugin Admin returns rather than throws, drawn from a closed set so the compiler forces every route to map every case. A plugin's protocol violation is not one — that is thrown, from the plugin-initiated side. Neither are auth failures or malformed requests: both resolve before an operation is reached.
+_Avoid_: error, validation failure (both blur the line between an outcome to show someone and a bug to fix)
+
+**Config Intake**:
+Turning an admin config payload into validated, storage-ready values — normalize, validate, resolve the secret sentinel and encryption — before either storage model claims it. The one part the two config-write paths genuinely share; what each does afterwards is not.
+_Avoid_: config validation (validation is one of its three jobs; naming it that invites a second copy of the other two)
