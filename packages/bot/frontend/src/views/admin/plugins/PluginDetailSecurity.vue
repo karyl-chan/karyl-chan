@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@iconify/vue';
 import { AppModal } from '@karyl-chan/ui';
@@ -10,6 +10,7 @@ import {
     setPluginApprovedScopes,
     type PluginDetailRecord,
 } from '../../../api/plugins';
+import { useApprovalSet } from '../../../composables/use-approval-set';
 import { rootEnvLine } from './plugin-install-snippets';
 
 const props = defineProps<{
@@ -21,100 +22,46 @@ const { t } = useI18n();
 // ─── RPC scope approval (PM-3.2) ──────────────────────────────────────
 // requested = what the manifest declares; approved = the subset the
 // issued token carries. The admin checks the scopes to grant and saves.
-const requestedScopes = computed<string[]>(
-    () => props.plugin.rpcMethods ?? props.plugin.manifest?.rpc_methods_used ?? [],
-);
-const approved = ref<string[]>([...(props.plugin.approvedRpcScopes ?? [])]);
-const checkedScopes = ref<string[]>([...(props.plugin.approvedRpcScopes ?? [])]);
-const scopesSaving = ref(false);
-const scopesSaved = ref(false);
-const scopeError = ref<string | null>(null);
-
-const scopesDirty = computed(() => {
-    const a = new Set(checkedScopes.value);
-    const b = new Set(approved.value);
-    if (a.size !== b.size) return true;
-    for (const s of a) if (!b.has(s)) return true;
-    return false;
+// The machine itself is shared with the global-subs section below (#31).
+const {
+    requested: requestedScopes,
+    approved,
+    checked: checkedScopes,
+    dirty: scopesDirty,
+    pendingCount,
+    saving: scopesSaving,
+    saved: scopesSaved,
+    error: scopeError,
+    isApproved,
+    approveAll: approveAllScopes,
+    save: saveScopes,
+} = useApprovalSet({
+    requested: () => props.plugin.rpcMethods ?? props.plugin.manifest?.rpc_methods_used ?? [],
+    approved: () => props.plugin.approvedRpcScopes ?? [],
+    save: (approved) => setPluginApprovedScopes(props.plugin.id, approved),
 });
-const pendingCount = computed(
-    () => requestedScopes.value.filter((s) => !approved.value.includes(s)).length,
-);
-
-function isApproved(scope: string): boolean {
-    return approved.value.includes(scope);
-}
-
-function approveAllScopes() {
-    checkedScopes.value = [...requestedScopes.value];
-}
-
-async function saveScopes() {
-    if (scopesSaving.value || !scopesDirty.value) return;
-    scopesSaving.value = true;
-    scopeError.value = null;
-    try {
-        const state = await setPluginApprovedScopes(props.plugin.id, checkedScopes.value);
-        approved.value = [...state.approved];
-        checkedScopes.value = [...state.approved];
-        scopesSaved.value = true;
-        setTimeout(() => { scopesSaved.value = false; }, 2000);
-    } catch (err) {
-        scopeError.value = err instanceof Error ? err.message : String(err);
-    } finally {
-        scopesSaving.value = false;
-    }
-}
 
 // ─── Global event subscriptions (PM-8) ────────────────────────────────
 // Mirrors the RPC scope approval UX. requested = manifest's
 // events_subscribed_global; approved = the persisted grant. Feature-
 // scoped subscriptions don't appear here — they're gated per guild by
 // the feature toggle, not by an approval.
-const requestedGlobalSubs = computed<string[]>(
-    () => props.plugin.manifest?.events_subscribed_global ?? [],
-);
-const approvedGlobal = ref<string[]>([...(props.plugin.approvedGlobalEventSubs ?? [])]);
-const checkedGlobalSubs = ref<string[]>([...(props.plugin.approvedGlobalEventSubs ?? [])]);
-const globalSubsSaving = ref(false);
-const globalSubsSaved = ref(false);
-const globalSubsError = ref<string | null>(null);
-
-const globalSubsDirty = computed(() => {
-    const a = new Set(checkedGlobalSubs.value);
-    const b = new Set(approvedGlobal.value);
-    if (a.size !== b.size) return true;
-    for (const sub of a) if (!b.has(sub)) return true;
-    return false;
+const {
+    requested: requestedGlobalSubs,
+    checked: checkedGlobalSubs,
+    dirty: globalSubsDirty,
+    pendingCount: pendingGlobalCount,
+    saving: globalSubsSaving,
+    saved: globalSubsSaved,
+    error: globalSubsError,
+    isApproved: isGlobalSubApproved,
+    approveAll: approveAllGlobalSubs,
+    save: saveGlobalSubs,
+} = useApprovalSet({
+    requested: () => props.plugin.manifest?.events_subscribed_global ?? [],
+    approved: () => props.plugin.approvedGlobalEventSubs ?? [],
+    save: (approved) => setPluginApprovedGlobalEventSubs(props.plugin.id, approved),
 });
-const pendingGlobalCount = computed(
-    () => requestedGlobalSubs.value.filter((e) => !approvedGlobal.value.includes(e)).length,
-);
-
-function isGlobalSubApproved(sub: string): boolean {
-    return approvedGlobal.value.includes(sub);
-}
-
-function approveAllGlobalSubs() {
-    checkedGlobalSubs.value = [...requestedGlobalSubs.value];
-}
-
-async function saveGlobalSubs() {
-    if (globalSubsSaving.value || !globalSubsDirty.value) return;
-    globalSubsSaving.value = true;
-    globalSubsError.value = null;
-    try {
-        const state = await setPluginApprovedGlobalEventSubs(props.plugin.id, checkedGlobalSubs.value);
-        approvedGlobal.value = [...state.approved];
-        checkedGlobalSubs.value = [...state.approved];
-        globalSubsSaved.value = true;
-        setTimeout(() => { globalSubsSaved.value = false; }, 2000);
-    } catch (err) {
-        globalSubsError.value = err instanceof Error ? err.message : String(err);
-    } finally {
-        globalSubsSaving.value = false;
-    }
-}
 
 const setupSecretConfirmOpen = ref(false);
 const setupSecretResultOpen = ref(false);

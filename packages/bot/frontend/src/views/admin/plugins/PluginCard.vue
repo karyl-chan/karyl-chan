@@ -1,22 +1,21 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@iconify/vue';
 import { RouterLink } from 'vue-router';
 import { AppBadge, AppButton, AppConfirmDialog, AppItemCard, AppMenu, AppMenuItem, AppToggle } from '@karyl-chan/ui';
 import {
-    ConfigValidationError,
     deletePlugin,
     getPluginConfig,
     probePluginDispatch,
     mintPluginManageLink,
     setPluginConfig,
     setPluginEnabled,
-    type PluginConfigField,
     type PluginDispatchProbeResult,
     type PluginRecord
 } from '../../../api/plugins';
 import PluginConfigFields from '../../../components/PluginConfigFields.vue';
+import { fromPluginConfigPayload, usePluginConfigEditor } from '../../../composables/use-plugin-config-editor';
 import { dispatchProblem, lifecycleProblem, sdkCompatProblem, unknownEventProblem } from './plugin-card-health';
 import { pluginInstallState } from './plugin-install-state';
 import { hasPluginCapability } from '../../../libs/admin-capabilities';
@@ -84,97 +83,30 @@ async function openManage(): Promise<void> {
 
 // Plugin-level config (admin-editable). Loaded lazily on the first
 // expand so collapsed cards don't fan out N+1 GETs at page load.
-// Each field's "set" status drives the secret placeholder UX —
-// secrets come back as "********" sentinel; keeping the sentinel in
-// the form means the PUT will skip re-encrypting when the user didn't
-// change it (see backend route comment).
-const configSchema = ref<PluginConfigField[]>([]);
-const configValues = reactive<Record<string, string>>({});
-const configLoaded = ref(false);
-const configLoading = ref(false);
-const configSaving = ref(false);
-const configError = ref<string | null>(null);
-const configSavedAt = ref<number | null>(null);
-// PD-4.3: stored admin config saved under an older config_schema_version.
-const configStale = ref(false);
-const configFieldErrors = reactive<Record<string, string>>({});
-function clearFieldErrors(): void {
-    for (const k of Object.keys(configFieldErrors)) delete configFieldErrors[k];
-}
+// Seeding / drift / 422 mapping live in the composable (#31); the card
+// keeps only its own chrome. Secrets arrive as the "********" sentinel
+// and are sent back unchanged, so the PUT skips re-encrypting them.
+const {
+    fields: configSchema,
+    values: configValues,
+    fieldErrors: configFieldErrors,
+    stale: configStale,
+    loaded: configLoaded,
+    loading: configLoading,
+    saving: configSaving,
+    saved: configSaved,
+    error: configError,
+    invalidCount: configInvalidCount,
+    load: loadConfig,
+    save: saveConfig,
+} = usePluginConfigEditor({
+    load: async () => fromPluginConfigPayload(await getPluginConfig(props.plugin.id)),
+    save: (values) => setPluginConfig(props.plugin.id, values),
+});
 
 const hasConfigSchema = computed(() =>
     (props.plugin.manifest?.config_schema?.length ?? 0) > 0
 );
-
-async function loadConfig() {
-    if (configLoaded.value || configLoading.value) return;
-    configLoading.value = true;
-    configError.value = null;
-    try {
-        const r = await getPluginConfig(props.plugin.id);
-        configSchema.value = r.schema;
-        configStale.value =
-            r.storedConfigSchemaVersion != null &&
-            r.configSchemaVersion != null &&
-            r.storedConfigSchemaVersion < r.configSchemaVersion;
-        for (const v of r.values) {
-            // Use empty string for "unset" so two-way binding has a real
-            // string. The save path treats "" + non-secret type as
-            // "store empty value" which round-trips fine.
-            configValues[v.key] = v.value ?? '';
-        }
-        // Seed defaults for keys the server didn't return (e.g. brand-
-        // new schema field). Defaults arrive as raw manifest JSON
-        // (boolean/number/string); store everything as a string by type.
-        for (const f of r.schema) {
-            if (!(f.key in configValues)) {
-                const raw = f.default;
-                configValues[f.key] =
-                    f.type === 'boolean'
-                        ? raw === true || raw === 'true'
-                            ? 'true'
-                            : 'false'
-                        : raw == null
-                          ? ''
-                          : String(raw);
-            }
-        }
-        configLoaded.value = true;
-    } catch (err) {
-        configError.value = err instanceof Error ? err.message : String(err);
-    } finally {
-        configLoading.value = false;
-    }
-}
-
-async function saveConfig() {
-    if (configSaving.value) return;
-    configSaving.value = true;
-    configError.value = null;
-    clearFieldErrors();
-    try {
-        // Send everything in the form back. The backend skips secret
-        // fields whose value is still the "********" sentinel, so
-        // unchanged secrets stay encrypted at rest.
-        await setPluginConfig(props.plugin.id, { ...configValues });
-        configSavedAt.value = Date.now();
-        configStale.value = false;
-    } catch (err) {
-        if (err instanceof ConfigValidationError) {
-            for (const fe of err.fieldErrors) {
-                configFieldErrors[fe.key] = fe.message;
-            }
-            configError.value =
-                err.fieldErrors.length === 1
-                    ? `1 field has errors — correct it and save again.`
-                    : `${err.fieldErrors.length} fields have errors — correct them and save again.`;
-        } else {
-            configError.value = err instanceof Error ? err.message : String(err);
-        }
-    } finally {
-        configSaving.value = false;
-    }
-}
 
 // Lazily fetch config the first time the card opens AND there is a
 // schema to render. Subsequent opens reuse the in-memory state.
@@ -567,7 +499,7 @@ async function confirmDelete() {
             <section v-if="hasConfigSchema" class="config-section">
                 <header class="config-header">
                     <h4>外掛設定</h4>
-                    <span v-if="configSavedAt && (Date.now() - configSavedAt < 4000)" class="muted saved">已儲存</span>
+                    <span v-if="configSaved" class="muted saved">已儲存</span>
                 </header>
                 <div v-if="configStale && configLoaded" class="config-stale-warning" role="alert">
                     <Icon icon="material-symbols:warning-outline-rounded" width="15" height="15" class="stale-icon" />
@@ -575,7 +507,10 @@ async function confirmDelete() {
                 </div>
                 <p v-if="configLoading" class="muted">載入中…</p>
                 <p v-if="configError" class="error" role="alert">{{ configError }}</p>
-                <div v-else-if="configLoaded">
+                <p v-else-if="configInvalidCount > 0" class="error" role="alert">
+                    {{ t('admin.plugins.configFieldErrors', { n: configInvalidCount }) }}
+                </p>
+                <div v-if="configLoaded">
                     <PluginConfigFields
                         :schema="configSchema"
                         :values="configValues"

@@ -1046,6 +1046,7 @@
             "heartbeatHoursAgo": "{n} 小时前",
             "rpcScopes": "RPC 权限",
             "manifestRaw": "显示完整 manifest",
+            "configFieldErrors": "有 {n} 个字段未通过验证——修正后再保存一次。",
             "dmBehaviorsCount": "DM 行为 × {n}",
             "guildFeaturesCount": "服务器功能 × {n}",
             "commandsCount": "Slash 指令 × {n}",

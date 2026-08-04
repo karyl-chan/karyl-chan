@@ -1046,6 +1046,7 @@
             "heartbeatHoursAgo": "{n} h ago",
             "rpcScopes": "RPC scopes",
             "manifestRaw": "Show raw manifest",
+            "configFieldErrors": "{n} field(s) failed validation — fix them and save again.",
             "dmBehaviorsCount": "{n} DM behavior(s)",
             "guildFeaturesCount": "{n} guild feature(s)",
             "commandsCount": "{n} slash command(s)",
