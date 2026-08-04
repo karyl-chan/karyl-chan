@@ -28,7 +28,8 @@ import {
   upsertConfigKey,
 } from "./models/plugin-config.model.js";
 import { kvUsageByPlugin } from "./models/plugin-kv.model.js";
-import { quotaForGuildKv, mintPluginManageToken } from "./plugin-rpc-routes.js";
+import { quotaForGuildKv } from "./plugin-kv-quota.js";
+import { mintPluginManageToken } from "./plugin-manage-token.js";
 import { encryptSecret } from "../../utils/crypto.js";
 import type { PluginManifest } from "./plugin-registry.service.js";
 import {

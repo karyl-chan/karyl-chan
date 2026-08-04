@@ -5,6 +5,8 @@ import { ChannelType, Routes, MessageFlags } from "discord.js";
 import { RateLimiter } from "../../utils/rate-limiter.js";
 import { findPluginById } from "./models/plugin.model.js";
 import { parsePluginManifest } from "./plugin-dispatch-util.js";
+import { KV_VALUE_MAX_BYTES, quotaForGuildKv } from "./plugin-kv-quota.js";
+import { mintPluginManageToken } from "./plugin-manage-token.js";
 import {
   deleteKv,
   getKv,
@@ -26,8 +28,6 @@ import { shouldRecord } from "../bot-events/bot-event-dedup.js";
 import { featureReachResolver } from "../feature-toggle/feature-reach-resolver.js";
 import type { PluginManifest } from "./plugin-registry.service.js";
 import { jwtService } from "../web-core/jwt.service.js";
-import { resolveUserCapabilities } from "../admin/authorized-user.service.js";
-import { hasPluginCapability } from "../admin/admin-capabilities.js";
 import { discordErrorStatus } from "../web-core/discord-error.js";
 import { assertPluginTarget, HostPolicyError } from "../../utils/host-policy.js";
 import {
@@ -126,9 +126,8 @@ const defaultDmLimiter = new RateLimiter({
   windowMs: config.plugin.dmWindowMs,
 });
 
+/** Longest KV key a plugin may write. */
 const KV_KEY_MAX = 200;
-const KV_VALUE_MAX_BYTES = config.plugin.kvValueMaxBytes; // hard ceiling regardless of manifest quota
-const DEFAULT_KV_QUOTA_BYTES = 64 * 1024;
 
 function rejectForbidden(reply: FastifyReply, scope: string): void {
   reply.code(403).send({ error: `plugin token missing scope '${scope}'` });
@@ -307,59 +306,6 @@ async function requireScope(
     return null;
   }
   return { pluginId: auth.pluginId, pluginKey: auth.pluginKey };
-}
-
-export async function quotaForGuildKv(pluginId: number): Promise<number> {
-  // Read quota from the plugin's stored manifest. Falls back to a
-  // bot-wide default if the plugin didn't declare one.
-  const plugin = await findPluginById(pluginId);
-  if (!plugin) return DEFAULT_KV_QUOTA_BYTES;
-  const manifest = parsePluginManifest(plugin);
-  const declaredKb = manifest?.storage?.guildKvQuotaKb;
-  if (typeof declaredKb === "number" && declaredKb > 0) {
-    return Math.min(declaredKb * 1024, KV_VALUE_MAX_BYTES * 16);
-  }
-  return DEFAULT_KV_QUOTA_BYTES;
-}
-
-/**
- * Mint a plugin-session **manage** token for `userId` against `pluginKey`.
- * Shared by the plugin-facing `auth.session` RPC (kind=manage) and the
- * admin-UI manage-link endpoint so the authorization rule lives in ONE
- * place: `hasPluginCapability` (which bypasses `admin` as a superuser —
- * no hand-rolled `admin ||` per call site), and the token carries only
- * the holder's `admin` + `plugin:<key>:*` subset, never another plugin's
- * grants. Signed with this plugin's own derived key, so it verifies only
- * against that plugin's WebUI.
- *
- * Returns `{ allowed: false }` when the user holds neither `admin` nor
- * `plugin:<key>:manage`.
- */
-export async function mintPluginManageToken(
-  pluginKey: string,
-  userId: string,
-  ttlMs: number = 15 * 60_000,
-): Promise<
-  { allowed: true; token: string; expiresAt: number } | { allowed: false }
-> {
-  const allCaps = await resolveUserCapabilities(userId);
-  if (!hasPluginCapability(allCaps, pluginKey, "manage")) {
-    return { allowed: false };
-  }
-  const pluginCaps = [...allCaps].filter(
-    (c) => c === "admin" || c.startsWith(`plugin:${pluginKey}:`),
-  );
-  const { token, expiresAt } = jwtService.signPluginSession(
-    pluginKey,
-    {
-      purpose: "plugin-session",
-      userId,
-      guildId: null,
-      capabilities: pluginCaps,
-    },
-    { ttlMs },
-  );
-  return { allowed: true, token, expiresAt };
 }
 
 /**
