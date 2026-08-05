@@ -94,6 +94,7 @@ import {
 // registration is delegated to registerModuleRoutes (module-routes.ts)
 // so this file no longer enumerates every module (PM-4).
 import { registerPluginProxy } from "../plugin-system/plugin-proxy.js";
+import { STRICT_RPC_AJV_OPTIONS } from "../plugin-system/plugin-rpc-schema.js";
 import { registerModuleRoutes } from "./module-routes.js";
 import {
   pluginAuthStore,
@@ -179,6 +180,12 @@ export async function createWebServer(
       level: config.logging.level,
     },
     bodyLimit: config.web.bodyLimitBytes,
+    // Ajv takes its options at the factory only. The plugin RPC family
+    // declares its request parsing as body schemas, and those schemas
+    // must refuse exactly what the hand-rolled `typeof` checks refused
+    // — which they do not under ajv's Fastify default of
+    // `coerceTypes: 'array'`. See plugin-rpc-schema.ts.
+    ajv: { customOptions: { ...STRICT_RPC_AJV_OPTIONS } },
     ...(https ? { https } : {}),
     ...(trustProxy !== false ? { trustProxy } : {}),
   });

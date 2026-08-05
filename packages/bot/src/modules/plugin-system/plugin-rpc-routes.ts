@@ -40,6 +40,10 @@ import {
   readPluginDeferState,
 } from "./plugin-defer-state.js";
 import { maybeForwardGuildRpc } from "./shard-forward-routes.js";
+import {
+  installPluginRpcSchemaErrors,
+  SNOWFLAKE_PATTERN,
+} from "./plugin-rpc-schema.js";
 
 /**
  * Strip dangerous `parse` entries from a plugin-supplied
@@ -50,7 +54,7 @@ import { maybeForwardGuildRpc } from "./shard-forward-routes.js";
  * `<@&id>` token in the content. Snowflake-shaped strings only on the
  * id lists (defence in depth against `everyone` smuggled into `roles`).
  */
-const SNOWFLAKE_RE = /^[0-9]{17,20}$/;
+const SNOWFLAKE_RE = new RegExp(SNOWFLAKE_PATTERN);
 /**
  * Subset of MessageFlags a plugin is allowed to set via
  * `interactions.respond` / `interactions.followup`. Ephemeral is
@@ -128,6 +132,33 @@ const defaultDmLimiter = new RateLimiter({
 
 /** Longest KV key a plugin may write. */
 const KV_KEY_MAX = 200;
+
+// ─── shared body-schema fragments ───────────────────────────────────
+/**
+ * Building blocks for the route body schemas. Each one mirrors a guard
+ * the handlers used to hand-roll — a check whose failure was already a
+ * 400 — so the schema refuses exactly what the `typeof` guard refused,
+ * no wider and no narrower.
+ */
+const snowflakeField = { type: "string", pattern: SNOWFLAKE_PATTERN };
+const stringField = { type: "string" };
+const nonEmptyStringField = { type: "string", minLength: 1 };
+
+/**
+ * A field the schema names but does not constrain.
+ *
+ * Not every hand-rolled `typeof` in this file is a guard. Some are
+ * normalisers: a wrong type is silently treated as *absent* and the
+ * request carries on, often to a 200. Giving those a type would turn a
+ * call that succeeds today into a 400 — a narrowing we cannot scope,
+ * because `callBotRpc` takes an untyped body and we cannot enumerate
+ * who passes a loose one. That tightening is worth doing, but as its
+ * own release-noted behaviour change, not smuggled inside a refactor.
+ *
+ * So the normaliser stays in the handler and the field is declared
+ * without a type. Every use below cites the line it is preserving.
+ */
+const unconstrainedField = {};
 
 function rejectForbidden(reply: FastifyReply, scope: string): void {
   reply.code(403).send({ error: `plugin token missing scope '${scope}'` });
@@ -341,10 +372,29 @@ async function assertChannelInGuild(
   }
 }
 
+/**
+ * Mount the plugin RPC family inside its own Fastify scope.
+ *
+ * The scope exists so `installPluginRpcSchemaErrors` — the schema error
+ * formatter and the error handler that renders it in this family's
+ * historical `{ error }` body — applies to these routes and nothing
+ * else. The admin route family, registered on the parent instance,
+ * keeps Fastify's defaults untouched.
+ */
 export async function registerPluginRpcRoutes(
   server: FastifyInstance,
   options: PluginRpcOptions,
 ): Promise<void> {
+  await server.register(async (rpc) => {
+    installPluginRpcSchemaErrors(rpc);
+    registerRpcRoutes(rpc, options);
+  });
+}
+
+function registerRpcRoutes(
+  server: FastifyInstance,
+  options: PluginRpcOptions,
+): void {
   const bot = options.bot;
   const dmLimiter = options.dmLimiter ?? defaultDmLimiter;
 
@@ -373,144 +423,164 @@ export async function registerPluginRpcRoutes(
    */
   server.post<{
     Body: {
-      channel_id?: unknown;
+      channel_id: string;
       content?: unknown;
       embeds?: unknown;
       components?: unknown;
       allowed_mentions?: unknown;
       attachments?: unknown;
-      reply_to?: unknown;
+      reply_to?: string;
     };
-  }>("/api/plugin/messages.send", async (request, reply) => {
-    const ctx = await requireScope(request, reply, "messages.send");
-    if (!ctx) return;
-    if (!bot) {
-      reply.code(503).send({ error: "bot client unavailable" });
-      return;
-    }
-    const body = request.body ?? {};
-    if (typeof body.channel_id !== "string" || body.channel_id.length === 0) {
-      reply.code(400).send({ error: "channel_id required" });
-      return;
-    }
-    const content = typeof body.content === "string" ? body.content : undefined;
-    const embeds = Array.isArray(body.embeds) ? body.embeds : undefined;
-    const components = Array.isArray(body.components)
-      ? body.components
-      : undefined;
-    if (!content && !embeds) {
-      reply.code(400).send({ error: "content or embeds required" });
-      return;
-    }
-    if (body.reply_to !== undefined) {
-      if (
-        typeof body.reply_to !== "string" ||
-        !SNOWFLAKE_RE.test(body.reply_to)
-      ) {
-        reply.code(400).send({ error: "reply_to must be a message id" });
-        return;
-      }
-    }
-    const replyTo = typeof body.reply_to === "string" ? body.reply_to : undefined;
-    if (components) {
-      const failure = findUnownedCustomId(ctx.pluginKey, components);
-      if (failure) {
-        reply.code(400).send({
-          error: describeOwnershipFailure(ctx.pluginKey, failure),
-        });
-        return;
-      }
-    }
-    let attachments: Array<{ name: string; data: Buffer }>;
-    try {
-      attachments = await resolvePluginAttachments(
-        ctx.pluginId,
-        body.attachments,
-      );
-    } catch (err) {
-      const m = err instanceof Error ? err.message : String(err);
-      reply.code(400).send({ error: `attachment error: ${m}` });
-      return;
-    }
-    const channel = await fetchChannelOr404(bot, body.channel_id, reply);
-    if (channel === undefined) return;
-    if (!channel || !channel.isTextBased() || !("send" in channel)) {
-      reply.code(400).send({ error: "channel is not text-sendable" });
-      return;
-    }
-    if (!(await passesGuildFeatureGate(channel, ctx, reply, { warnVerb: "send" }))) return;
-    // Sanitize allowed_mentions — plugins must not be able to force
-    // mass-ping behaviour. We strip `parse` entirely (the field that
-    // toggles broad @everyone / @here / "every role mention in
-    // content" parsing) and only forward the explicit `users` /
-    // `roles` / `repliedUser` allowlists. A plugin wanting to ping
-    // role X must list `<@&X>` in the content AND `roles: ["X"]`
-    // explicitly — no bulk opt-in.
-    const allowedMentions = safeAllowedMentions(body.allowed_mentions);
-    // Reply-ping rule (three-way, matching raw Discord semantics for
-    // anyone who crafted allowed_mentions themselves):
-    //   - no allowed_mentions in the request → replies ping their
-    //     author by default, like a human reply (we always attach an
-    //     allowed_mentions object for the parse-stripping above, and
-    //     with one present Discord would default replied_user to
-    //     false — so we set it true here);
-    //   - allowed_mentions provided WITH replied_user/repliedUser
-    //     boolean → honored verbatim;
-    //   - allowed_mentions provided WITHOUT it → Discord's own
-    //     default (no ping): a plugin that wrote an explicit mention
-    //     allowlist (even an empty one) said exactly who to ping.
-    const pluginProvidedMentions =
-      typeof body.allowed_mentions === "object" &&
-      body.allowed_mentions !== null;
-    if (
-      replyTo &&
-      !pluginProvidedMentions &&
-      allowedMentions.repliedUser === undefined
-    ) {
-      allowedMentions.repliedUser = true;
-    }
-    try {
-      const sent = await channel.send({
-        content,
-        // discord.js v14 accepts raw embed objects; if it's malformed
-        // it'll throw, which we surface as a 400.
-        embeds: embeds as never,
-        // Discord component-v1 action rows passed through verbatim
-        // (e.g. link buttons + action buttons on a "now playing" card).
-        components: components as never,
-        allowedMentions: allowedMentions as never,
-        // Plugin-supplied files (bot fetched them from the plugin's
-        // own HTTP surface). An embed can reference one via
-        // `attachment://<name>`.
-        ...(attachments.length > 0
-          ? {
-              files: attachments.map((a) => ({
-                attachment: a.data,
-                name: a.name,
-              })),
-            }
-          : {}),
-        ...(replyTo
-          ? { reply: { messageReference: replyTo, failIfNotExists: false } }
-          : {}),
-      });
-      botEventLog.record(
-        "info",
-        "bot",
-        `plugin ${ctx.pluginKey} sent message in channel ${body.channel_id}`,
-        {
-          pluginId: ctx.pluginId,
-          channelId: body.channel_id,
-          messageId: sent.id,
+  }>(
+    "/api/plugin/messages.send",
+    {
+      schema: {
+        body: {
+          type: "object",
+          properties: {
+            channel_id: nonEmptyStringField,
+            reply_to: snowflakeField,
+            // Normalisers, not guards — see unconstrainedField:
+            //   content:    `typeof body.content === "string" ? … : undefined`
+            //   embeds:     `Array.isArray(body.embeds) ? … : undefined`
+            //   components: `Array.isArray(body.components) ? … : undefined`
+            content: unconstrainedField,
+            embeds: unconstrainedField,
+            components: unconstrainedField,
+            // safeAllowedMentions: `if (!raw || typeof raw !== "object")
+            // return { parse: [] }` — a non-object is absent, not a 400.
+            allowed_mentions: unconstrainedField,
+            // resolvePluginAttachments owns the whole descriptor shape,
+            // including the array check, and is shared with the
+            // interactions family; repeating it here would only change
+            // the message it produces.
+            attachments: unconstrainedField,
+          },
+          required: ["channel_id"],
         },
-      );
-      return { id: sent.id, channel_id: sent.channelId };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      reply.code(discordErrorStatus(err)).send({ error: `send failed: ${msg}` });
-      return;
-    }
-  });
+      },
+    },
+    async (request, reply) => {
+      const ctx = await requireScope(request, reply, "messages.send");
+      if (!ctx) return;
+      if (!bot) {
+        reply.code(503).send({ error: "bot client unavailable" });
+        return;
+      }
+      const body = request.body;
+      const content = typeof body.content === "string" ? body.content : undefined;
+      const embeds = Array.isArray(body.embeds) ? body.embeds : undefined;
+      const components = Array.isArray(body.components)
+        ? body.components
+        : undefined;
+      // Guard over the *normalised* values: a non-string content counts
+      // as absent here. It cannot move into the schema while content and
+      // embeds are unconstrained, because the schema sees the raw body.
+      if (!content && !embeds) {
+        reply.code(400).send({ error: "content or embeds required" });
+        return;
+      }
+      const replyTo = body.reply_to;
+      if (components) {
+        const failure = findUnownedCustomId(ctx.pluginKey, components);
+        if (failure) {
+          reply.code(400).send({
+            error: describeOwnershipFailure(ctx.pluginKey, failure),
+          });
+          return;
+        }
+      }
+      let attachments: Array<{ name: string; data: Buffer }>;
+      try {
+        attachments = await resolvePluginAttachments(
+          ctx.pluginId,
+          body.attachments,
+        );
+      } catch (err) {
+        const m = err instanceof Error ? err.message : String(err);
+        reply.code(400).send({ error: `attachment error: ${m}` });
+        return;
+      }
+      const channel = await fetchChannelOr404(bot, body.channel_id, reply);
+      if (channel === undefined) return;
+      if (!channel || !channel.isTextBased() || !("send" in channel)) {
+        reply.code(400).send({ error: "channel is not text-sendable" });
+        return;
+      }
+      if (!(await passesGuildFeatureGate(channel, ctx, reply, { warnVerb: "send" }))) return;
+      // Sanitize allowed_mentions — plugins must not be able to force
+      // mass-ping behaviour. We strip `parse` entirely (the field that
+      // toggles broad @everyone / @here / "every role mention in
+      // content" parsing) and only forward the explicit `users` /
+      // `roles` / `repliedUser` allowlists. A plugin wanting to ping
+      // role X must list `<@&X>` in the content AND `roles: ["X"]`
+      // explicitly — no bulk opt-in.
+      const allowedMentions = safeAllowedMentions(body.allowed_mentions);
+      // Reply-ping rule (three-way, matching raw Discord semantics for
+      // anyone who crafted allowed_mentions themselves):
+      //   - no allowed_mentions in the request → replies ping their
+      //     author by default, like a human reply (we always attach an
+      //     allowed_mentions object for the parse-stripping above, and
+      //     with one present Discord would default replied_user to
+      //     false — so we set it true here);
+      //   - allowed_mentions provided WITH replied_user/repliedUser
+      //     boolean → honored verbatim;
+      //   - allowed_mentions provided WITHOUT it → Discord's own
+      //     default (no ping): a plugin that wrote an explicit mention
+      //     allowlist (even an empty one) said exactly who to ping.
+      const pluginProvidedMentions =
+        typeof body.allowed_mentions === "object" &&
+        body.allowed_mentions !== null;
+      if (
+        replyTo &&
+        !pluginProvidedMentions &&
+        allowedMentions.repliedUser === undefined
+      ) {
+        allowedMentions.repliedUser = true;
+      }
+      try {
+        const sent = await channel.send({
+          content,
+          // discord.js v14 accepts raw embed objects; if it's malformed
+          // it'll throw, which we surface as a 400.
+          embeds: embeds as never,
+          // Discord component-v1 action rows passed through verbatim
+          // (e.g. link buttons + action buttons on a "now playing" card).
+          components: components as never,
+          allowedMentions: allowedMentions as never,
+          // Plugin-supplied files (bot fetched them from the plugin's
+          // own HTTP surface). An embed can reference one via
+          // `attachment://<name>`.
+          ...(attachments.length > 0
+            ? {
+                files: attachments.map((a) => ({
+                  attachment: a.data,
+                  name: a.name,
+                })),
+              }
+            : {}),
+          ...(replyTo
+            ? { reply: { messageReference: replyTo, failIfNotExists: false } }
+            : {}),
+        });
+        botEventLog.record(
+          "info",
+          "bot",
+          `plugin ${ctx.pluginKey} sent message in channel ${body.channel_id}`,
+          {
+            pluginId: ctx.pluginId,
+            channelId: body.channel_id,
+            messageId: sent.id,
+          },
+        );
+        return { id: sent.id, channel_id: sent.channelId };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        reply.code(discordErrorStatus(err)).send({ error: `send failed: ${msg}` });
+        return;
+      }
+    },
+  );
 
   // ─── messages.send_dm ─────────────────────────────────────────────
   /**
@@ -531,123 +601,150 @@ export async function registerPluginRpcRoutes(
    */
   server.post<{
     Body: {
-      user_id?: unknown;
+      user_id: string;
       content?: unknown;
       embeds?: unknown;
       allowed_mentions?: unknown;
     };
-  }>("/api/plugin/messages.send_dm", async (request, reply) => {
-    const ctx = await requireScope(request, reply, "messages.send_dm");
-    if (!ctx) return;
-    if (!bot) {
-      reply.code(503).send({ error: "bot client unavailable" });
-      return;
-    }
-    const body = request.body ?? {};
-    if (typeof body.user_id !== "string" || body.user_id.length === 0) {
-      reply.code(400).send({ error: "user_id required" });
-      return;
-    }
-    const content = typeof body.content === "string" ? body.content : undefined;
-    const embeds = Array.isArray(body.embeds) ? body.embeds : undefined;
-    if (!content && !embeds) {
-      reply.code(400).send({ error: "content or embeds required" });
-      return;
-    }
-    // Per-plugin DM rate limit: enforced *before* bot.users.fetch() so
-    // attackers can't spam invalid user_ids to hammer Discord's REST
-    // (each fetch is a real GET /users/:id) without ever consuming the
-    // bucket. Cost: every well-formed call consumes one slot even if
-    // the user turns out not to exist — that's exactly what we want
-    // because Discord doesn't care whether the id resolves.
-    if (dmLimiter.isRateLimited(`plugin:${ctx.pluginId}:send_dm`)) {
-      if (shouldRecord(`plugin-rpc-dm-rate:${ctx.pluginId}`)) {
-        botEventLog.record(
-          "warn",
-          "bot",
-          `plugin ${ctx.pluginKey} exceeded DM rate limit`,
-          { pluginId: ctx.pluginId },
-        );
-      }
-      reply
-        .code(429)
-        .header("Retry-After", "1")
-        .send({ error: "rate limited" });
-      return;
-    }
-    let user;
-    try {
-      user = await bot.users.fetch(body.user_id);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      reply.code(404).send({ error: `user fetch failed: ${msg}` });
-      return;
-    }
-    const allowedMentions = safeAllowedMentions(body.allowed_mentions);
-    try {
-      const sent = await user.send({
-        content,
-        embeds: embeds as never,
-        allowedMentions: allowedMentions as never,
-      });
-      botEventLog.record(
-        "info",
-        "bot",
-        `plugin ${ctx.pluginKey} DM'd user ${body.user_id}`,
-        {
-          pluginId: ctx.pluginId,
-          userId: body.user_id,
-          messageId: sent.id,
+  }>(
+    "/api/plugin/messages.send_dm",
+    {
+      schema: {
+        body: {
+          type: "object",
+          properties: {
+            user_id: nonEmptyStringField,
+            // Normalisers, not guards — see unconstrainedField:
+            //   content: `typeof body.content === "string" ? … : undefined`
+            //   embeds:  `Array.isArray(body.embeds) ? … : undefined`
+            //   allowed_mentions: safeAllowedMentions treats a non-object
+            //   as absent.
+            content: unconstrainedField,
+            embeds: unconstrainedField,
+            allowed_mentions: unconstrainedField,
+          },
+          required: ["user_id"],
         },
-      );
-      return { id: sent.id, channel_id: sent.channelId };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      reply.code(discordErrorStatus(err)).send({ error: `send_dm failed: ${msg}` });
-      return;
-    }
-  });
+      },
+    },
+    async (request, reply) => {
+      const ctx = await requireScope(request, reply, "messages.send_dm");
+      if (!ctx) return;
+      if (!bot) {
+        reply.code(503).send({ error: "bot client unavailable" });
+        return;
+      }
+      const body = request.body;
+      const content = typeof body.content === "string" ? body.content : undefined;
+      const embeds = Array.isArray(body.embeds) ? body.embeds : undefined;
+      // Guard over the normalised values; see messages.send.
+      if (!content && !embeds) {
+        reply.code(400).send({ error: "content or embeds required" });
+        return;
+      }
+      // Per-plugin DM rate limit: enforced *before* bot.users.fetch() so
+      // attackers can't spam invalid user_ids to hammer Discord's REST
+      // (each fetch is a real GET /users/:id) without ever consuming the
+      // bucket. Cost: every well-formed call consumes one slot even if
+      // the user turns out not to exist — that's exactly what we want
+      // because Discord doesn't care whether the id resolves.
+      if (dmLimiter.isRateLimited(`plugin:${ctx.pluginId}:send_dm`)) {
+        if (shouldRecord(`plugin-rpc-dm-rate:${ctx.pluginId}`)) {
+          botEventLog.record(
+            "warn",
+            "bot",
+            `plugin ${ctx.pluginKey} exceeded DM rate limit`,
+            { pluginId: ctx.pluginId },
+          );
+        }
+        reply
+          .code(429)
+          .header("Retry-After", "1")
+          .send({ error: "rate limited" });
+        return;
+      }
+      let user;
+      try {
+        user = await bot.users.fetch(body.user_id);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        reply.code(404).send({ error: `user fetch failed: ${msg}` });
+        return;
+      }
+      const allowedMentions = safeAllowedMentions(body.allowed_mentions);
+      try {
+        const sent = await user.send({
+          content,
+          embeds: embeds as never,
+          allowedMentions: allowedMentions as never,
+        });
+        botEventLog.record(
+          "info",
+          "bot",
+          `plugin ${ctx.pluginKey} DM'd user ${body.user_id}`,
+          {
+            pluginId: ctx.pluginId,
+            userId: body.user_id,
+            messageId: sent.id,
+          },
+        );
+        return { id: sent.id, channel_id: sent.channelId };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        reply.code(discordErrorStatus(err)).send({ error: `send_dm failed: ${msg}` });
+        return;
+      }
+    },
+  );
 
   // ─── messages.delete ──────────────────────────────────────────────
   server.post<{
-    Body: { channel_id?: unknown; message_id?: unknown };
-  }>("/api/plugin/messages.delete", async (request, reply) => {
-    const ctx = await requireScope(request, reply, "messages.delete");
-    if (!ctx) return;
-    if (!bot) {
-      reply.code(503).send({ error: "bot client unavailable" });
-      return;
-    }
-    const body = request.body ?? {};
-    if (
-      typeof body.channel_id !== "string" ||
-      typeof body.message_id !== "string"
-    ) {
-      reply.code(400).send({ error: "channel_id + message_id required" });
-      return;
-    }
-    const channel = await fetchChannelOr404(bot, body.channel_id, reply);
-    if (channel === undefined) return;
-    if (
-      !channel ||
-      !channel.isTextBased() ||
-      channel.type === ChannelType.GroupDM
-    ) {
-      reply.code(400).send({ error: "channel not text-based" });
-      return;
-    }
-    // Gate symmetric with messages.send/edit: a plugin enabled in guild A
-    // cannot delete messages in guild B even if it knows the ids.
-    if (!(await passesGuildFeatureGate(channel, ctx, reply))) return;
-    try {
-      const msg = await channel.messages.fetch(body.message_id);
-      await msg.delete();
-      return { ok: true };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      reply.code(discordErrorStatus(err)).send({ error: `delete failed: ${msg}` });
-    }
-  });
+    Body: { channel_id: string; message_id: string };
+  }>(
+    "/api/plugin/messages.delete",
+    {
+      schema: {
+        body: {
+          type: "object",
+          properties: {
+            channel_id: stringField,
+            message_id: stringField,
+          },
+          required: ["channel_id", "message_id"],
+        },
+      },
+    },
+    async (request, reply) => {
+      const ctx = await requireScope(request, reply, "messages.delete");
+      if (!ctx) return;
+      if (!bot) {
+        reply.code(503).send({ error: "bot client unavailable" });
+        return;
+      }
+      const body = request.body;
+      const channel = await fetchChannelOr404(bot, body.channel_id, reply);
+      if (channel === undefined) return;
+      if (
+        !channel ||
+        !channel.isTextBased() ||
+        channel.type === ChannelType.GroupDM
+      ) {
+        reply.code(400).send({ error: "channel not text-based" });
+        return;
+      }
+      // Gate symmetric with messages.send/edit: a plugin enabled in guild A
+      // cannot delete messages in guild B even if it knows the ids.
+      if (!(await passesGuildFeatureGate(channel, ctx, reply))) return;
+      try {
+        const msg = await channel.messages.fetch(body.message_id);
+        await msg.delete();
+        return { ok: true };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        reply.code(discordErrorStatus(err)).send({ error: `delete failed: ${msg}` });
+      }
+    },
+  );
 
   // ─── messages.edit ────────────────────────────────────────────────
   /**
@@ -663,100 +760,127 @@ export async function registerPluginRpcRoutes(
    */
   server.post<{
     Body: {
-      channel_id?: unknown;
-      message_id?: unknown;
+      channel_id: string;
+      message_id: string;
       content?: unknown;
       embeds?: unknown;
       components?: unknown;
     };
-  }>("/api/plugin/messages.edit", async (request, reply) => {
-    const ctx = await requireScope(request, reply, "messages.edit");
-    if (!ctx) return;
-    if (!bot) {
-      reply.code(503).send({ error: "bot client unavailable" });
-      return;
-    }
-    const body = request.body ?? {};
-    if (
-      typeof body.channel_id !== "string" ||
-      typeof body.message_id !== "string"
-    ) {
-      reply.code(400).send({ error: "channel_id + message_id required" });
-      return;
-    }
-    const channel = await fetchChannelOr404(bot, body.channel_id, reply);
-    if (channel === undefined) return;
-    if (
-      !channel ||
-      !channel.isTextBased() ||
-      channel.type === ChannelType.GroupDM
-    ) {
-      reply.code(400).send({ error: "channel not text-based" });
-      return;
-    }
-    if (!(await passesGuildFeatureGate(channel, ctx, reply))) return;
-    if (Array.isArray(body.components)) {
-      const failure = findUnownedCustomId(ctx.pluginKey, body.components);
-      if (failure) {
-        reply.code(400).send({
-          error: describeOwnershipFailure(ctx.pluginKey, failure),
-        });
+  }>(
+    "/api/plugin/messages.edit",
+    {
+      schema: {
+        body: {
+          type: "object",
+          properties: {
+            channel_id: stringField,
+            message_id: stringField,
+            // Normalisers, not guards — see unconstrainedField. Each of
+            // these was a "copy it across only if it is the right type"
+            // test, so a wrong type left the field untouched on Discord
+            // rather than failing the call:
+            //   content:    `if (typeof body.content === "string") editPayload.content = …`
+            //   embeds:     `if (Array.isArray(body.embeds)) editPayload.embeds = …`
+            //   components: `if (Array.isArray(body.components)) editPayload.components = …`
+            content: unconstrainedField,
+            embeds: unconstrainedField,
+            components: unconstrainedField,
+            // `attachments` is deliberately absent: the SDK sends it on
+            // edit and this route has always ignored it.
+          },
+          required: ["channel_id", "message_id"],
+        },
+      },
+    },
+    async (request, reply) => {
+      const ctx = await requireScope(request, reply, "messages.edit");
+      if (!ctx) return;
+      if (!bot) {
+        reply.code(503).send({ error: "bot client unavailable" });
         return;
       }
-    }
-    const editPayload: Record<string, unknown> = {
-      allowed_mentions: { parse: [] },
-    };
-    if (typeof body.content === "string") editPayload.content = body.content;
-    if (Array.isArray(body.embeds)) editPayload.embeds = body.embeds;
-    if (Array.isArray(body.components)) editPayload.components = body.components;
-    try {
-      const msg = await channel.messages.fetch(body.message_id);
-      await msg.edit(editPayload as never);
-      return { id: msg.id, channel_id: msg.channelId };
-    } catch (err) {
-      const m = err instanceof Error ? err.message : String(err);
-      reply.code(discordErrorStatus(err)).send({ error: `edit failed: ${m}` });
-    }
-  });
+      const body = request.body;
+      const channel = await fetchChannelOr404(bot, body.channel_id, reply);
+      if (channel === undefined) return;
+      if (
+        !channel ||
+        !channel.isTextBased() ||
+        channel.type === ChannelType.GroupDM
+      ) {
+        reply.code(400).send({ error: "channel not text-based" });
+        return;
+      }
+      if (!(await passesGuildFeatureGate(channel, ctx, reply))) return;
+      if (Array.isArray(body.components)) {
+        const failure = findUnownedCustomId(ctx.pluginKey, body.components);
+        if (failure) {
+          reply.code(400).send({
+            error: describeOwnershipFailure(ctx.pluginKey, failure),
+          });
+          return;
+        }
+      }
+      const editPayload: Record<string, unknown> = {
+        allowed_mentions: { parse: [] },
+      };
+      if (typeof body.content === "string") editPayload.content = body.content;
+      if (Array.isArray(body.embeds)) editPayload.embeds = body.embeds;
+      if (Array.isArray(body.components))
+        editPayload.components = body.components;
+      try {
+        const msg = await channel.messages.fetch(body.message_id);
+        await msg.edit(editPayload as never);
+        return { id: msg.id, channel_id: msg.channelId };
+      } catch (err) {
+        const m = err instanceof Error ? err.message : String(err);
+        reply.code(discordErrorStatus(err)).send({ error: `edit failed: ${m}` });
+      }
+    },
+  );
 
   // ─── messages.add_reaction ────────────────────────────────────────
   server.post<{
-    Body: { channel_id?: unknown; message_id?: unknown; emoji?: unknown };
-  }>("/api/plugin/messages.add_reaction", async (request, reply) => {
-    const ctx = await requireScope(request, reply, "messages.add_reaction");
-    if (!ctx) return;
-    if (!bot) {
-      reply.code(503).send({ error: "bot client unavailable" });
-      return;
-    }
-    const body = request.body ?? {};
-    if (
-      typeof body.channel_id !== "string" ||
-      typeof body.message_id !== "string" ||
-      typeof body.emoji !== "string"
-    ) {
-      reply
-        .code(400)
-        .send({ error: "channel_id + message_id + emoji required" });
-      return;
-    }
-    const channel = await fetchChannelOr404(bot, body.channel_id, reply);
-    if (channel === undefined) return;
-    if (!channel || !channel.isTextBased()) {
-      reply.code(400).send({ error: "channel not text-based" });
-      return;
-    }
-    if (!(await passesGuildFeatureGate(channel, ctx, reply))) return;
-    try {
-      const msg = await channel.messages.fetch(body.message_id);
-      await msg.react(body.emoji);
-      return { ok: true };
-    } catch (err) {
-      const m = err instanceof Error ? err.message : String(err);
-      reply.code(discordErrorStatus(err)).send({ error: `add_reaction failed: ${m}` });
-    }
-  });
+    Body: { channel_id: string; message_id: string; emoji: string };
+  }>(
+    "/api/plugin/messages.add_reaction",
+    {
+      schema: {
+        body: {
+          type: "object",
+          properties: {
+            channel_id: stringField,
+            message_id: stringField,
+            emoji: stringField,
+          },
+          required: ["channel_id", "message_id", "emoji"],
+        },
+      },
+    },
+    async (request, reply) => {
+      const ctx = await requireScope(request, reply, "messages.add_reaction");
+      if (!ctx) return;
+      if (!bot) {
+        reply.code(503).send({ error: "bot client unavailable" });
+        return;
+      }
+      const body = request.body;
+      const channel = await fetchChannelOr404(bot, body.channel_id, reply);
+      if (channel === undefined) return;
+      if (!channel || !channel.isTextBased()) {
+        reply.code(400).send({ error: "channel not text-based" });
+        return;
+      }
+      if (!(await passesGuildFeatureGate(channel, ctx, reply))) return;
+      try {
+        const msg = await channel.messages.fetch(body.message_id);
+        await msg.react(body.emoji);
+        return { ok: true };
+      } catch (err) {
+        const m = err instanceof Error ? err.message : String(err);
+        reply.code(discordErrorStatus(err)).send({ error: `add_reaction failed: ${m}` });
+      }
+    },
+  );
 
   // ─── messages.trigger_typing ──────────────────────────────────────
   /**
@@ -771,36 +895,44 @@ export async function registerPluginRpcRoutes(
    * audit story stays 1:1 with Discord calls).
    */
   server.post<{
-    Body: { channel_id?: unknown };
-  }>("/api/plugin/messages.trigger_typing", async (request, reply) => {
-    const ctx = await requireScope(request, reply, "messages.trigger_typing");
-    if (!ctx) return;
-    if (!bot) {
-      reply.code(503).send({ error: "bot client unavailable" });
-      return;
-    }
-    const body = request.body ?? {};
-    if (typeof body.channel_id !== "string" || body.channel_id.length === 0) {
-      reply.code(400).send({ error: "channel_id required" });
-      return;
-    }
-    const channel = await fetchChannelOr404(bot, body.channel_id, reply);
-    if (channel === undefined) return;
-    if (!channel || !channel.isTextBased() || !("sendTyping" in channel)) {
-      reply.code(400).send({ error: "channel does not support typing" });
-      return;
-    }
-    if (!(await passesGuildFeatureGate(channel, ctx, reply))) return;
-    try {
-      await channel.sendTyping();
-      return { ok: true };
-    } catch (err) {
-      const m = err instanceof Error ? err.message : String(err);
-      reply
-        .code(discordErrorStatus(err))
-        .send({ error: `trigger_typing failed: ${m}` });
-    }
-  });
+    Body: { channel_id: string };
+  }>(
+    "/api/plugin/messages.trigger_typing",
+    {
+      schema: {
+        body: {
+          type: "object",
+          properties: { channel_id: nonEmptyStringField },
+          required: ["channel_id"],
+        },
+      },
+    },
+    async (request, reply) => {
+      const ctx = await requireScope(request, reply, "messages.trigger_typing");
+      if (!ctx) return;
+      if (!bot) {
+        reply.code(503).send({ error: "bot client unavailable" });
+        return;
+      }
+      const body = request.body;
+      const channel = await fetchChannelOr404(bot, body.channel_id, reply);
+      if (channel === undefined) return;
+      if (!channel || !channel.isTextBased() || !("sendTyping" in channel)) {
+        reply.code(400).send({ error: "channel does not support typing" });
+        return;
+      }
+      if (!(await passesGuildFeatureGate(channel, ctx, reply))) return;
+      try {
+        await channel.sendTyping();
+        return { ok: true };
+      } catch (err) {
+        const m = err instanceof Error ? err.message : String(err);
+        reply
+          .code(discordErrorStatus(err))
+          .send({ error: `trigger_typing failed: ${m}` });
+      }
+    },
+  );
 
   // ─── config.get ────────────────────────────────────────────────────
   /**
@@ -2312,55 +2444,53 @@ export async function registerPluginRpcRoutes(
    * of a channel in a different guild and read across the boundary.
    */
   server.post<{
-    Body: { guild_id?: unknown; channel_id?: unknown; message_id?: unknown };
-  }>("/api/plugin/messages.get", async (request, reply) => {
-    const ctx = await requireScope(request, reply, "messages.get");
-    if (!ctx) return;
-    if (!bot) {
-      reply.code(503).send({ error: "bot client unavailable" });
-      return;
-    }
-    const body = request.body ?? {};
-    if (typeof body.guild_id !== "string" || !SNOWFLAKE_RE.test(body.guild_id)) {
-      reply.code(400).send({ error: "guild_id required" });
-      return;
-    }
-    if (
-      typeof body.channel_id !== "string" ||
-      !SNOWFLAKE_RE.test(body.channel_id)
-    ) {
-      reply.code(400).send({ error: "channel_id required" });
-      return;
-    }
-    if (
-      typeof body.message_id !== "string" ||
-      !SNOWFLAKE_RE.test(body.message_id)
-    ) {
-      reply.code(400).send({ error: "message_id required" });
-      return;
-    }
-    if (!(await pluginHasGuildReach(ctx.pluginId, body.guild_id))) {
-      reply.code(403).send({ error: "plugin not enabled in this guild" });
-      return;
-    }
-    if (!(await assertChannelInGuild(bot, body.channel_id, body.guild_id))) {
-      reply
-        .code(403)
-        .send({ error: "channel does not belong to specified guild" });
-      return;
-    }
-    try {
-      const message = await bot.rest.get(
-        Routes.channelMessage(body.channel_id, body.message_id),
-      );
-      return { message };
-    } catch (err) {
-      const m = err instanceof Error ? err.message : String(err);
-      reply.code(discordErrorStatus(err)).send({
-        error: `messages.get failed: ${m}`,
-      });
-    }
-  });
+    Body: { guild_id: string; channel_id: string; message_id: string };
+  }>(
+    "/api/plugin/messages.get",
+    {
+      schema: {
+        body: {
+          type: "object",
+          properties: {
+            guild_id: snowflakeField,
+            channel_id: snowflakeField,
+            message_id: snowflakeField,
+          },
+          required: ["guild_id", "channel_id", "message_id"],
+        },
+      },
+    },
+    async (request, reply) => {
+      const ctx = await requireScope(request, reply, "messages.get");
+      if (!ctx) return;
+      if (!bot) {
+        reply.code(503).send({ error: "bot client unavailable" });
+        return;
+      }
+      const body = request.body;
+      if (!(await pluginHasGuildReach(ctx.pluginId, body.guild_id))) {
+        reply.code(403).send({ error: "plugin not enabled in this guild" });
+        return;
+      }
+      if (!(await assertChannelInGuild(bot, body.channel_id, body.guild_id))) {
+        reply
+          .code(403)
+          .send({ error: "channel does not belong to specified guild" });
+        return;
+      }
+      try {
+        const message = await bot.rest.get(
+          Routes.channelMessage(body.channel_id, body.message_id),
+        );
+        return { message };
+      } catch (err) {
+        const m = err instanceof Error ? err.message : String(err);
+        reply.code(discordErrorStatus(err)).send({
+          error: `messages.get failed: ${m}`,
+        });
+      }
+    },
+  );
 
   // ─── messages.fetch_history ──────────────────────────────────────
   /**
@@ -2375,73 +2505,88 @@ export async function registerPluginRpcRoutes(
    */
   server.post<{
     Body: {
-      guild_id?: unknown;
-      channel_id?: unknown;
+      guild_id: string;
+      channel_id: string;
       limit?: unknown;
       before?: unknown;
       after?: unknown;
       around?: unknown;
     };
-  }>("/api/plugin/messages.fetch_history", async (request, reply) => {
-    const ctx = await requireScope(request, reply, "messages.fetch_history");
-    if (!ctx) return;
-    if (!bot) {
-      reply.code(503).send({ error: "bot client unavailable" });
-      return;
-    }
-    const body = request.body ?? {};
-    if (typeof body.guild_id !== "string" || !SNOWFLAKE_RE.test(body.guild_id)) {
-      reply.code(400).send({ error: "guild_id required" });
-      return;
-    }
-    if (
-      typeof body.channel_id !== "string" ||
-      !SNOWFLAKE_RE.test(body.channel_id)
-    ) {
-      reply.code(400).send({ error: "channel_id required" });
-      return;
-    }
-    if (!(await pluginHasGuildReach(ctx.pluginId, body.guild_id))) {
-      reply.code(403).send({ error: "plugin not enabled in this guild" });
-      return;
-    }
-    if (!(await assertChannelInGuild(bot, body.channel_id, body.guild_id))) {
-      reply
-        .code(403)
-        .send({ error: "channel does not belong to specified guild" });
-      return;
-    }
-    const limit =
-      typeof body.limit === "number" && Number.isInteger(body.limit)
-        ? Math.max(1, Math.min(100, body.limit))
-        : 50;
-    const query = new URLSearchParams({ limit: String(limit) });
-    if (typeof body.before === "string" && SNOWFLAKE_RE.test(body.before)) {
-      query.set("before", body.before);
-    }
-    if (typeof body.after === "string" && SNOWFLAKE_RE.test(body.after)) {
-      query.set("after", body.after);
-    }
-    if (typeof body.around === "string" && SNOWFLAKE_RE.test(body.around)) {
-      query.set("around", body.around);
-    }
-    try {
-      // Pass `query` as an option rather than concatenating into the
-      // URL: @discordjs/rest derives the rate-limit bucket from the
-      // raw route string, which would otherwise fragment buckets per
-      // unique query combination and break 429 handling.
-      const messages = await bot.rest.get(
-        Routes.channelMessages(body.channel_id),
-        { query },
-      );
-      return { messages };
-    } catch (err) {
-      const m = err instanceof Error ? err.message : String(err);
-      reply.code(discordErrorStatus(err)).send({
-        error: `messages.fetch_history failed: ${m}`,
-      });
-    }
-  });
+  }>(
+    "/api/plugin/messages.fetch_history",
+    {
+      schema: {
+        body: {
+          type: "object",
+          properties: {
+            guild_id: snowflakeField,
+            channel_id: snowflakeField,
+            // Normalisers, not guards — see unconstrainedField:
+            //   limit:  `typeof body.limit === "number" && Number.isInteger(body.limit) ? clamp : 50`
+            //           (anything else falls back to 50, and an
+            //           out-of-range integer is clamped, not refused)
+            //   cursors: `if (typeof body.before === "string" &&
+            //           SNOWFLAKE_RE.test(body.before)) query.set(…)` —
+            //           a malformed cursor is dropped from the query.
+            limit: unconstrainedField,
+            before: unconstrainedField,
+            after: unconstrainedField,
+            around: unconstrainedField,
+          },
+          required: ["guild_id", "channel_id"],
+        },
+      },
+    },
+    async (request, reply) => {
+      const ctx = await requireScope(request, reply, "messages.fetch_history");
+      if (!ctx) return;
+      if (!bot) {
+        reply.code(503).send({ error: "bot client unavailable" });
+        return;
+      }
+      const body = request.body;
+      if (!(await pluginHasGuildReach(ctx.pluginId, body.guild_id))) {
+        reply.code(403).send({ error: "plugin not enabled in this guild" });
+        return;
+      }
+      if (!(await assertChannelInGuild(bot, body.channel_id, body.guild_id))) {
+        reply
+          .code(403)
+          .send({ error: "channel does not belong to specified guild" });
+        return;
+      }
+      const limit =
+        typeof body.limit === "number" && Number.isInteger(body.limit)
+          ? Math.max(1, Math.min(100, body.limit))
+          : 50;
+      const query = new URLSearchParams({ limit: String(limit) });
+      if (typeof body.before === "string" && SNOWFLAKE_RE.test(body.before)) {
+        query.set("before", body.before);
+      }
+      if (typeof body.after === "string" && SNOWFLAKE_RE.test(body.after)) {
+        query.set("after", body.after);
+      }
+      if (typeof body.around === "string" && SNOWFLAKE_RE.test(body.around)) {
+        query.set("around", body.around);
+      }
+      try {
+        // Pass `query` as an option rather than concatenating into the
+        // URL: @discordjs/rest derives the rate-limit bucket from the
+        // raw route string, which would otherwise fragment buckets per
+        // unique query combination and break 429 handling.
+        const messages = await bot.rest.get(
+          Routes.channelMessages(body.channel_id),
+          { query },
+        );
+        return { messages };
+      } catch (err) {
+        const m = err instanceof Error ? err.message : String(err);
+        reply.code(discordErrorStatus(err)).send({
+          error: `messages.fetch_history failed: ${m}`,
+        });
+      }
+    },
+  );
 
   // ─── messages.remove_reaction ────────────────────────────────────
   /**
@@ -2456,83 +2601,84 @@ export async function registerPluginRpcRoutes(
    */
   server.post<{
     Body: {
-      guild_id?: unknown;
-      channel_id?: unknown;
-      message_id?: unknown;
-      emoji?: unknown;
+      guild_id: string;
+      channel_id: string;
+      message_id: string;
+      emoji: string;
       user_id?: unknown;
     };
-  }>("/api/plugin/messages.remove_reaction", async (request, reply) => {
-    const ctx = await requireScope(request, reply, "messages.remove_reaction");
-    if (!ctx) return;
-    if (!bot) {
-      reply.code(503).send({ error: "bot client unavailable" });
-      return;
-    }
-    const body = request.body ?? {};
-    if (typeof body.guild_id !== "string" || !SNOWFLAKE_RE.test(body.guild_id)) {
-      reply.code(400).send({ error: "guild_id required" });
-      return;
-    }
-    if (
-      typeof body.channel_id !== "string" ||
-      !SNOWFLAKE_RE.test(body.channel_id)
-    ) {
-      reply.code(400).send({ error: "channel_id required" });
-      return;
-    }
-    if (
-      typeof body.message_id !== "string" ||
-      !SNOWFLAKE_RE.test(body.message_id)
-    ) {
-      reply.code(400).send({ error: "message_id required" });
-      return;
-    }
-    if (typeof body.emoji !== "string" || body.emoji.length === 0) {
-      reply.code(400).send({ error: "emoji required" });
-      return;
-    }
-    const userId =
-      typeof body.user_id === "string" && SNOWFLAKE_RE.test(body.user_id)
-        ? body.user_id
-        : null;
-    if (!(await pluginHasGuildReach(ctx.pluginId, body.guild_id))) {
-      reply.code(403).send({ error: "plugin not enabled in this guild" });
-      return;
-    }
-    if (!(await assertChannelInGuild(bot, body.channel_id, body.guild_id))) {
-      reply
-        .code(403)
-        .send({ error: "channel does not belong to specified guild" });
-      return;
-    }
-    try {
-      // Discord's reaction endpoint requires the literal `:` for
-      // custom emoji (`name:id`). Plain encodeURIComponent percent-
-      // encodes the colon, which Discord then rejects as Unknown
-      // Emoji (10014). Encode everything else but restore the colon.
-      const encoded = encodeURIComponent(body.emoji).replace(/%3A/gi, ":");
-      const route = userId
-        ? Routes.channelMessageUserReaction(
-            body.channel_id,
-            body.message_id,
-            encoded,
-            userId,
-          )
-        : Routes.channelMessageOwnReaction(
-            body.channel_id,
-            body.message_id,
-            encoded,
-          );
-      await bot.rest.delete(route);
-      return { ok: true };
-    } catch (err) {
-      const m = err instanceof Error ? err.message : String(err);
-      reply.code(discordErrorStatus(err)).send({
-        error: `remove_reaction failed: ${m}`,
-      });
-    }
-  });
+  }>(
+    "/api/plugin/messages.remove_reaction",
+    {
+      schema: {
+        body: {
+          type: "object",
+          properties: {
+            guild_id: snowflakeField,
+            channel_id: snowflakeField,
+            message_id: snowflakeField,
+            emoji: nonEmptyStringField,
+            // Normaliser, not a guard — see unconstrainedField:
+            // `typeof body.user_id === "string" && SNOWFLAKE_RE.test(…)
+            // ? body.user_id : null`, i.e. a malformed user_id falls
+            // back to removing the bot's own reaction.
+            user_id: unconstrainedField,
+          },
+          required: ["guild_id", "channel_id", "message_id", "emoji"],
+        },
+      },
+    },
+    async (request, reply) => {
+      const ctx = await requireScope(request, reply, "messages.remove_reaction");
+      if (!ctx) return;
+      if (!bot) {
+        reply.code(503).send({ error: "bot client unavailable" });
+        return;
+      }
+      const body = request.body;
+      // Absent (or malformed) user_id = remove the bot's own reaction.
+      const userId =
+        typeof body.user_id === "string" && SNOWFLAKE_RE.test(body.user_id)
+          ? body.user_id
+          : null;
+      if (!(await pluginHasGuildReach(ctx.pluginId, body.guild_id))) {
+        reply.code(403).send({ error: "plugin not enabled in this guild" });
+        return;
+      }
+      if (!(await assertChannelInGuild(bot, body.channel_id, body.guild_id))) {
+        reply
+          .code(403)
+          .send({ error: "channel does not belong to specified guild" });
+        return;
+      }
+      try {
+        // Discord's reaction endpoint requires the literal `:` for
+        // custom emoji (`name:id`). Plain encodeURIComponent percent-
+        // encodes the colon, which Discord then rejects as Unknown
+        // Emoji (10014). Encode everything else but restore the colon.
+        const encoded = encodeURIComponent(body.emoji).replace(/%3A/gi, ":");
+        const route = userId
+          ? Routes.channelMessageUserReaction(
+              body.channel_id,
+              body.message_id,
+              encoded,
+              userId,
+            )
+          : Routes.channelMessageOwnReaction(
+              body.channel_id,
+              body.message_id,
+              encoded,
+            );
+        await bot.rest.delete(route);
+        return { ok: true };
+      } catch (err) {
+        const m = err instanceof Error ? err.message : String(err);
+        reply.code(discordErrorStatus(err)).send({
+          error: `remove_reaction failed: ${m}`,
+        });
+      }
+    },
+  );
 
   // ─── guilds.get ──────────────────────────────────────────────────
   /**
