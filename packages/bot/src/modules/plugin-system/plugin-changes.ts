@@ -2,8 +2,9 @@
  * Plugin Change notifier (#27) — the in-process seam between the modules
  * that OWN plugin mutations and the caches that must react to them.
  *
- * Mutation owners (plugin registry register/deregister/setEnabled/reaper,
- * the admin feature-write routes, hard delete) emit; subscribers — the
+ * Mutation owners (plugin registry register/deregister/reaper, Plugin
+ * Admin's operator actions, the admin feature-write routes, hard
+ * delete) emit; subscribers — the
  * feature-reach cache and the event-dispatch index — invalidate or
  * re-index themselves. Emitters never name a cache; a new cache
  * subscribes here instead of adding another call site to every mutation.

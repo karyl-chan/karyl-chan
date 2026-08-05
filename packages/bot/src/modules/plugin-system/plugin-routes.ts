@@ -5,6 +5,7 @@ import {
   pluginRegistry,
   purgePluginCapabilityGrants,
 } from "./plugin-registry.service.js";
+import { pluginAdmin, unhandledRefusal } from "./plugin-admin.service.js";
 import { deleteAllCapabilities } from "./models/plugin-capability.model.js";
 import { pluginAuthStore, PluginAuthStore } from "./plugin-auth.service.js";
 import { requireCapability, requirePluginCapability } from "../web-core/route-guards.js";
@@ -1676,11 +1677,17 @@ export async function registerPluginRoutes(
         return;
       }
       const enabled = !!request.body?.enabled;
-      const updated = await pluginRegistry.setEnabled(id, enabled);
-      if (!updated) {
-        reply.code(404).send({ error: "plugin not found" });
-        return;
+      const outcome = await pluginAdmin.setEnabled(id, enabled);
+      if (!outcome.ok) {
+        switch (outcome.refusal) {
+          case "not_found":
+            reply.code(404).send({ error: "plugin not found" });
+            return;
+          default:
+            return unhandledRefusal(outcome.refusal);
+        }
       }
+      const updated = outcome.value;
       botEventLog.record(
         "info",
         "bot",
@@ -1745,11 +1752,17 @@ export async function registerPluginRoutes(
         reply.code(400).send({ error: "approved must be a string array" });
         return;
       }
-      const state = await pluginRegistry.setApprovedScopes(id, approvedRaw);
-      if (!state) {
-        reply.code(404).send({ error: "plugin not found" });
-        return;
+      const outcome = await pluginAdmin.setApprovedScopes(id, approvedRaw);
+      if (!outcome.ok) {
+        switch (outcome.refusal) {
+          case "not_found":
+            reply.code(404).send({ error: "plugin not found" });
+            return;
+          default:
+            return unhandledRefusal(outcome.refusal);
+        }
       }
+      const state = outcome.value;
       botEventLog.record(
         "info",
         "bot",
@@ -1788,14 +1801,20 @@ export async function registerPluginRoutes(
         reply.code(400).send({ error: "approved must be a string array" });
         return;
       }
-      const state = await pluginRegistry.setApprovedGlobalEventSubs(
+      const outcome = await pluginAdmin.setApprovedGlobalEventSubs(
         id,
         approvedRaw,
       );
-      if (!state) {
-        reply.code(404).send({ error: "plugin not found" });
-        return;
+      if (!outcome.ok) {
+        switch (outcome.refusal) {
+          case "not_found":
+            reply.code(404).send({ error: "plugin not found" });
+            return;
+          default:
+            return unhandledRefusal(outcome.refusal);
+        }
       }
+      const state = outcome.value;
       botEventLog.record(
         "info",
         "bot",

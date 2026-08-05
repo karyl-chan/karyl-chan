@@ -3,9 +3,6 @@ import {
   findAllPlugins,
   findPluginById,
   findPluginByKey,
-  setPluginApprovedGlobalEventSubs,
-  setPluginApprovedRpcScopes,
-  setPluginEnabled as setEnabledModel,
   setPluginDispatchHmacKey,
   touchHeartbeat,
   upsertPluginRegistration,
@@ -58,7 +55,14 @@ const log = moduleLogger("plugin-registry");
  * and the model layer (plugin.model). Holds:
  *   - the heartbeat reaper interval
  *   - cached parsed manifests for fast event-dispatch path
- *   - the wiring to revoke tokens on admin disable / on stale-out
+ *   - the wiring to revoke tokens on stale-out
+ *
+ * Scope is decided by the actor: this module owns what the *plugin*
+ * initiates — register, heartbeat, deregister, the reaper, and the
+ * queries the runtime shares. What an *operator* initiates belongs to
+ * Plugin Admin (`plugin-admin.service.ts`); see ADR 0002. The other
+ * half of that line is the error convention: this module throws, and
+ * Plugin Admin returns an Admin Refusal. Both are deliberate.
  *
  * Manifest validation is gated here too — we'd rather fail a
  * registration with a clear error than store a malformed manifest
@@ -753,58 +757,13 @@ export class PluginRegistry {
   }
 
   /**
-   * Admin toggle. Disabling a plugin revokes its token immediately —
-   * any in-flight RPC fails with 401. Re-enabling requires the plugin
-   * to re-register (no automatic resurrection).
-   */
-  async setEnabled(
-    pluginId: number,
-    enabled: boolean,
-  ): Promise<PluginRow | null> {
-    const row = await setEnabledModel(pluginId, enabled);
-    if (row && !enabled) {
-      this.auth.revokeByPluginId(pluginId);
-      // Strip Discord-side commands for the disabled plugin so users
-      // don't see ghost commands they can't invoke.
-      await pluginCommandRegistry.unregisterAll(pluginId).catch(() => {
-        /* logged inside the registry */
-      });
-    } else if (row && enabled) {
-      // Re-enable: re-sync commands. The plugin row's manifestJson
-      // is still authoritative even though the plugin process may
-      // have heartbeat-expired. If status='inactive' we skip — sync
-      // will run again when the plugin re-registers.
-      if (row.status === "active") {
-        const manifest = (() => {
-          try {
-            return JSON.parse(row.manifestJson) as PluginManifest;
-          } catch {
-            return null;
-          }
-        })();
-        if (manifest) {
-          await pluginCommandRegistry.sync(row, manifest).catch(() => {
-            /* logged inside the registry */
-          });
-        }
-      }
-    }
-    // Toggling enabled flips whether this plugin appears in event
-    // dispatch fan-out — subscribers apply the delta from the post-
-    // mutation row instead of walking every plugin.
-    if (row) {
-      emitPluginChange({ pluginId, row });
-      // Invalidate proxy/lookup cache so the next request sees the
-      // new enabled / status.
-      invalidatePluginByKey(row.pluginKey);
-    }
-    return row;
-  }
-
-  /**
    * Admin view of a plugin's RPC scope state: what the current manifest
    * requests, what's approved, and the still-pending delta. Returns null
    * if the plugin doesn't exist.
+   *
+   * An admin read, so it belongs to Plugin Admin by the actor line —
+   * it is still here only because admin reads move as one batch in a
+   * later increment (see ADR 0002). Plugin Admin calls it meanwhile.
    */
   async getScopeState(pluginId: number): Promise<{
     requested: string[];
@@ -825,103 +784,6 @@ export class PluginRegistry {
     })();
     const approved = row.approvedRpcScopes;
     const pending = requested.filter((s) => !approved.includes(s));
-    return { requested, approved, pending };
-  }
-
-  /**
-   * Set a plugin's approved RPC scope set (admin approve / deny). The
-   * approved set is intersected with what the manifest actually requests
-   * — an admin can't grant a scope the plugin never declared. Persists
-   * the result and updates the plugin's live token in place so the change
-   * takes effect immediately, without waiting for a re-register. Returns
-   * the new scope state, or null if the plugin doesn't exist.
-   */
-  async setApprovedScopes(
-    pluginId: number,
-    scopes: string[],
-  ): Promise<{
-    requested: string[];
-    approved: string[];
-    pending: string[];
-  } | null> {
-    const state = await this.getScopeState(pluginId);
-    if (!state) return null;
-    // Clamp to the requested set and de-dup; an admin can only approve
-    // what the manifest declares.
-    const approved = [...new Set(scopes)].filter((s) =>
-      state.requested.includes(s),
-    );
-    const row = await setPluginApprovedRpcScopes(pluginId, approved);
-    if (!row) return null;
-    // Live-update the cached token's scopes so RPC calls see the new
-    // grant at once. No-op if the plugin has no live token (it'll pick
-    // the set up from the persisted column on its next register).
-    this.auth.setScopesByPluginId(pluginId, approved);
-    invalidatePluginById(pluginId);
-    botEventLog.record(
-      "info",
-      "bot",
-      `Plugin '${row.pluginKey}' approved RPC scopes updated: [${approved.join(", ")}]`,
-      { pluginId, approved },
-    );
-    const pending = state.requested.filter((s) => !approved.includes(s));
-    return { requested: state.requested, approved, pending };
-  }
-
-  /**
-   * Approve every scope the plugin currently requests. Convenience over
-   * `setApprovedScopes` for the common "approve all" admin action.
-   */
-  async approveAllScopes(pluginId: number): Promise<{
-    requested: string[];
-    approved: string[];
-    pending: string[];
-  } | null> {
-    const state = await this.getScopeState(pluginId);
-    if (!state) return null;
-    return this.setApprovedScopes(pluginId, state.requested);
-  }
-
-  /**
-   * Set the admin-approved GLOBAL event subscription grant (PM-8) —
-   * mirrors setApprovedScopes: clamps to what the manifest declares,
-   * persists, and re-indexes event routes so the change takes effect
-   * without a re-register. Only meaningful with PLUGIN_AUTO_APPROVE=false
-   * (auto-approve grants the declared set at index build regardless).
-   */
-  async setApprovedGlobalEventSubs(
-    pluginId: number,
-    subs: string[],
-  ): Promise<{
-    requested: string[];
-    approved: string[];
-    pending: string[];
-  } | null> {
-    const plugin = await findPluginById(pluginId);
-    if (!plugin) return null;
-    const requested = (() => {
-      try {
-        return (
-          (JSON.parse(plugin.manifestJson) as PluginManifest)
-            .events_subscribed_global ?? []
-        ).filter((e): e is string => typeof e === "string" && e.length > 0);
-      } catch {
-        return [];
-      }
-    })();
-    const approved = [...new Set(subs)].filter((e) => requested.includes(e));
-    const row = await setPluginApprovedGlobalEventSubs(pluginId, approved);
-    if (!row) return null;
-    // Routes are derived from the grant at index build — re-apply now.
-    emitPluginChange({ pluginId, row });
-    invalidatePluginById(pluginId);
-    botEventLog.record(
-      "info",
-      "bot",
-      `Plugin '${row.pluginKey}' approved global event subscriptions updated: [${approved.join(", ")}]`,
-      { pluginId, approved },
-    );
-    const pending = requested.filter((e) => !approved.includes(e));
     return { requested, approved, pending };
   }
 

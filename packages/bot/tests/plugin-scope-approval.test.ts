@@ -61,6 +61,13 @@ import {
   type RegisterResult,
 } from "../src/modules/plugin-system/plugin-registry.service.js";
 import { PluginAuthStore } from "../src/modules/plugin-system/plugin-auth.service.js";
+// The approve actions are operator-initiated, so they live on Plugin
+// Admin (#47). Same behaviour, same shared auth store — only the
+// receiver moved, plus the Admin Refusal wrapper on the return.
+import {
+  PluginAdmin,
+  type AdminOutcome,
+} from "../src/modules/plugin-system/plugin-admin.service.js";
 
 function makeManifest(scopes: string[], pluginKey = "scope-plugin") {
   return {
@@ -77,6 +84,7 @@ function makeManifest(scopes: string[], pluginKey = "scope-plugin") {
 
 let auth: PluginAuthStore;
 let registry: PluginRegistry;
+let admin: PluginAdmin;
 
 beforeAll(async () => {
   await sequelize.sync({ force: true });
@@ -86,9 +94,17 @@ beforeEach(async () => {
   await Plugin.destroy({ where: {} });
   auth = new PluginAuthStore();
   registry = new PluginRegistry(auth);
+  admin = new PluginAdmin(auth, registry);
   // Restore the default; individual tests flip it as needed.
   config.plugin.autoApproveScopes = true;
 });
+
+/** Unwrap a Plugin Admin outcome; an Admin Refusal fails the test. */
+function granted<T>(outcome: AdminOutcome<T>): T {
+  if (!outcome.ok)
+    throw new Error(`unexpected Admin Refusal: ${outcome.refusal}`);
+  return outcome.value;
+}
 
 /** Scopes the live token for `result` actually carries. */
 function tokenScopes(result: RegisterResult): string[] {
@@ -139,7 +155,7 @@ describe("3. approveAllScopes", () => {
     // Before approval the live token carries nothing.
     expect(tokenScopes(res)).toEqual([]);
 
-    const state = await registry.approveAllScopes(res.plugin.id);
+    const state = granted(await admin.approveAllScopes(res.plugin.id));
     expect(state).toEqual({
       requested: ["messages.send"],
       approved: ["messages.send"],
@@ -160,7 +176,7 @@ describe("4. approval is sticky across re-register", () => {
 
   it("keeps approved scopes and leaves a newly-added scope pending", async () => {
     const first = await registry.register(makeManifest(["messages.send"]));
-    await registry.approveAllScopes(first.plugin.id);
+    await admin.approveAllScopes(first.plugin.id);
 
     // Plugin re-registers asking for an extra scope.
     const second = await registry.register(
@@ -184,7 +200,7 @@ describe("5. dropping a requested scope on re-register", () => {
     const first = await registry.register(
       makeManifest(["messages.send", "config.get"]),
     );
-    await registry.approveAllScopes(first.plugin.id);
+    await admin.approveAllScopes(first.plugin.id);
 
     // Re-register without config.get.
     const second = await registry.register(makeManifest(["messages.send"]));
@@ -204,11 +220,13 @@ describe("6. setApprovedScopes clamps to the requested set", () => {
   it("ignores scopes the manifest never declared", async () => {
     const res = await registry.register(makeManifest(["messages.send"]));
     // Admin tries to approve an extra, undeclared scope.
-    const state = await registry.setApprovedScopes(res.plugin.id, [
-      "messages.send",
-      "messages.delete",
-    ]);
-    expect(state?.approved).toEqual(["messages.send"]);
+    const state = granted(
+      await admin.setApprovedScopes(res.plugin.id, [
+        "messages.send",
+        "messages.delete",
+      ]),
+    );
+    expect(state.approved).toEqual(["messages.send"]);
     expect(tokenScopes(res)).toEqual(["messages.send"]);
   });
 });
