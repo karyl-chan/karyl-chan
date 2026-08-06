@@ -1051,28 +1051,44 @@ function registerRpcRoutes(
    * silently overwritten by the next admin save and the source-
    * isolation rule in upsertConfigKey rejects the write outright.
    */
-  server.post<{ Body: { key?: unknown; value?: unknown } }>(
+  server.post<{ Body: { key: string; value?: string | null } }>(
     "/api/plugin/config.set",
+    {
+      schema: {
+        body: {
+          type: "object",
+          properties: {
+            key: { type: "string", minLength: 1, maxLength: 200 },
+            // `null` deletes — the old guard's explicit union
+            // (`value !== null && value !== undefined && typeof value
+            // !== "string"` → 400) becomes the schema's type union.
+            // Absent stays legal (not in `required`) and also deletes.
+            value: { type: ["string", "null"] },
+          },
+          required: ["key"],
+        },
+      },
+      // Three texts ajv's defaults would regress: the empty-key and
+      // over-long-key messages, and the value union (ajv says `value
+      // must be string,null`, which leaks the union spelling).
+      schemaErrorFormatter: preservingSchemaErrorFormatter([
+        { instancePath: "/key", keyword: "minLength", message: "key required" },
+        {
+          instancePath: "/key",
+          keyword: "maxLength",
+          message: "key exceeds 200 chars",
+        },
+        {
+          instancePath: "/value",
+          keyword: "type",
+          message: "value must be string or null",
+        },
+      ]),
+    },
     async (request, reply) => {
       const ctx = await requireScope(request, reply, "config.set");
       if (!ctx) return;
-      const body = request.body ?? {};
-      if (typeof body.key !== "string" || body.key.length === 0) {
-        reply.code(400).send({ error: "key required" });
-        return;
-      }
-      if (body.key.length > 200) {
-        reply.code(400).send({ error: "key exceeds 200 chars" });
-        return;
-      }
-      if (
-        body.value !== null &&
-        body.value !== undefined &&
-        typeof body.value !== "string"
-      ) {
-        reply.code(400).send({ error: "value must be string or null" });
-        return;
-      }
+      const body = request.body;
       try {
         if (body.value === null || body.value === undefined) {
           const removed = await deleteConfigKey(
@@ -1455,7 +1471,7 @@ function registerRpcRoutes(
    */
   server.post<{
     Body: {
-      interaction_token?: unknown;
+      interaction_token: string;
       content?: unknown;
       embeds?: unknown;
       components?: unknown;
@@ -1463,21 +1479,43 @@ function registerRpcRoutes(
       flags?: unknown;
       attachments?: unknown;
     };
-  }>("/api/plugin/interactions.respond", async (request, reply) => {
+  }>(
+    "/api/plugin/interactions.respond",
+    {
+      schema: {
+        body: {
+          type: "object",
+          properties: {
+            interaction_token: nonEmptyStringField,
+            // Normalisers, not guards — see unconstrainedField:
+            //   content:    `typeof body.content === "string" ? … : undefined`
+            //   embeds:     `Array.isArray(body.embeds) ? … : undefined`
+            //   components: `Array.isArray(body.components) ? … : undefined`
+            //   ephemeral:  `body.ephemeral === undefined ? null :
+            //               body.ephemeral !== false` — any non-false
+            //               value (any type) means "ephemeral".
+            //   flags:      sanitizePluginFlags treats a non-number as 0.
+            content: unconstrainedField,
+            embeds: unconstrainedField,
+            components: unconstrainedField,
+            ephemeral: unconstrainedField,
+            flags: unconstrainedField,
+            // resolvePluginAttachments owns the whole descriptor shape —
+            // see messages.send.
+            attachments: unconstrainedField,
+          },
+          required: ["interaction_token"],
+        },
+      },
+    },
+    async (request, reply) => {
     const ctx = await requireScope(request, reply, "interactions.respond");
     if (!ctx) return;
     if (!bot || !bot.application) {
       reply.code(503).send({ error: "bot client unavailable" });
       return;
     }
-    const body = request.body ?? {};
-    if (
-      typeof body.interaction_token !== "string" ||
-      body.interaction_token.length === 0
-    ) {
-      reply.code(400).send({ error: "interaction_token required" });
-      return;
-    }
+    const body = request.body;
     const content = typeof body.content === "string" ? body.content : undefined;
     const embeds = Array.isArray(body.embeds) ? body.embeds : undefined;
     const components = Array.isArray(body.components)
@@ -1668,7 +1706,7 @@ function registerRpcRoutes(
    */
   server.post<{
     Body: {
-      interaction_token?: unknown;
+      interaction_token: string;
       content?: unknown;
       embeds?: unknown;
       components?: unknown;
@@ -1676,21 +1714,42 @@ function registerRpcRoutes(
       flags?: unknown;
       attachments?: unknown;
     };
-  }>("/api/plugin/interactions.followup", async (request, reply) => {
+  }>(
+    "/api/plugin/interactions.followup",
+    {
+      schema: {
+        body: {
+          type: "object",
+          properties: {
+            interaction_token: nonEmptyStringField,
+            // Normalisers, not guards — see unconstrainedField:
+            //   content:    `typeof body.content === "string" ? … : undefined`
+            //   embeds:     `Array.isArray(body.embeds) ? … : undefined`
+            //   components: `Array.isArray(body.components) ? … : undefined`
+            //   ephemeral:  `body.ephemeral === true` — any non-true
+            //               value (any type) means public.
+            //   flags:      sanitizePluginFlags treats a non-number as 0.
+            content: unconstrainedField,
+            embeds: unconstrainedField,
+            components: unconstrainedField,
+            ephemeral: unconstrainedField,
+            flags: unconstrainedField,
+            // resolvePluginAttachments owns the whole descriptor shape —
+            // see messages.send.
+            attachments: unconstrainedField,
+          },
+          required: ["interaction_token"],
+        },
+      },
+    },
+    async (request, reply) => {
     const ctx = await requireScope(request, reply, "interactions.followup");
     if (!ctx) return;
     if (!bot || !bot.application) {
       reply.code(503).send({ error: "bot client unavailable" });
       return;
     }
-    const body = request.body ?? {};
-    if (
-      typeof body.interaction_token !== "string" ||
-      body.interaction_token.length === 0
-    ) {
-      reply.code(400).send({ error: "interaction_token required" });
-      return;
-    }
+    const body = request.body;
     const content = typeof body.content === "string" ? body.content : undefined;
     const embeds = Array.isArray(body.embeds) ? body.embeds : undefined;
     const components = Array.isArray(body.components)
@@ -1769,10 +1828,28 @@ function registerRpcRoutes(
    */
   server.post<{
     Body: {
-      interaction_token?: unknown;
-      message_id?: unknown;
+      interaction_token: string;
+      message_id: string;
     };
-  }>("/api/plugin/interactions.delete_followup", async (request, reply) => {
+  }>(
+    "/api/plugin/interactions.delete_followup",
+    {
+      schema: {
+        body: {
+          type: "object",
+          properties: {
+            // No snowflake pattern on message_id: the old guard was a
+            // bare non-empty typeof, and followup ids are whatever
+            // Discord's webhook API returned — mirror the check, don't
+            // upgrade it.
+            interaction_token: nonEmptyStringField,
+            message_id: nonEmptyStringField,
+          },
+          required: ["interaction_token", "message_id"],
+        },
+      },
+    },
+    async (request, reply) => {
     const ctx = await requireScope(
       request,
       reply,
@@ -1783,21 +1860,7 @@ function registerRpcRoutes(
       reply.code(503).send({ error: "bot client unavailable" });
       return;
     }
-    const body = request.body ?? {};
-    if (
-      typeof body.interaction_token !== "string" ||
-      body.interaction_token.length === 0
-    ) {
-      reply.code(400).send({ error: "interaction_token required" });
-      return;
-    }
-    if (
-      typeof body.message_id !== "string" ||
-      body.message_id.length === 0
-    ) {
-      reply.code(400).send({ error: "message_id required" });
-      return;
-    }
+    const body = request.body;
     try {
       await bot.rest.delete(
         Routes.webhookMessage(
@@ -1827,14 +1890,38 @@ function registerRpcRoutes(
    */
   server.post<{
     Body: {
-      interaction_token?: unknown;
-      message_id?: unknown;
+      interaction_token: string;
+      message_id: string;
       content?: unknown;
       embeds?: unknown;
       components?: unknown;
       allowed_mentions?: unknown;
     };
-  }>("/api/plugin/interactions.edit_followup", async (request, reply) => {
+  }>(
+    "/api/plugin/interactions.edit_followup",
+    {
+      schema: {
+        body: {
+          type: "object",
+          properties: {
+            interaction_token: nonEmptyStringField,
+            message_id: nonEmptyStringField,
+            // Normalisers, not guards — see unconstrainedField:
+            //   content:    `typeof body.content === "string" ? … : undefined`
+            //   embeds:     `Array.isArray(body.embeds) ? … : undefined`
+            //   components: `Array.isArray(body.components) ? … : undefined`
+            //   allowed_mentions: safeAllowedMentions treats a non-object
+            //   as absent.
+            content: unconstrainedField,
+            embeds: unconstrainedField,
+            components: unconstrainedField,
+            allowed_mentions: unconstrainedField,
+          },
+          required: ["interaction_token", "message_id"],
+        },
+      },
+    },
+    async (request, reply) => {
     const ctx = await requireScope(
       request,
       reply,
@@ -1845,21 +1932,7 @@ function registerRpcRoutes(
       reply.code(503).send({ error: "bot client unavailable" });
       return;
     }
-    const body = request.body ?? {};
-    if (
-      typeof body.interaction_token !== "string" ||
-      body.interaction_token.length === 0
-    ) {
-      reply.code(400).send({ error: "interaction_token required" });
-      return;
-    }
-    if (
-      typeof body.message_id !== "string" ||
-      body.message_id.length === 0
-    ) {
-      reply.code(400).send({ error: "message_id required" });
-      return;
-    }
+    const body = request.body;
     const content =
       typeof body.content === "string" ? body.content : undefined;
     const embeds = Array.isArray(body.embeds) ? body.embeds : undefined;
@@ -1926,36 +1999,46 @@ function registerRpcRoutes(
    */
   server.post<{
     Body: {
-      interaction_id?: unknown;
-      interaction_token?: unknown;
-      modal?: unknown;
+      interaction_id: string;
+      interaction_token: string;
+      modal: unknown;
     };
-  }>("/api/plugin/interactions.send_modal", async (request, reply) => {
+  }>(
+    "/api/plugin/interactions.send_modal",
+    {
+      schema: {
+        body: {
+          type: "object",
+          properties: {
+            interaction_id: nonEmptyStringField,
+            interaction_token: nonEmptyStringField,
+            // The old guard was `!body.modal || typeof body.modal !==
+            // "object"`, and in JS an *array* passes that — it then went
+            // to findUnownedModalCustomId like any other modal. JSON
+            // Schema's "object" excludes arrays, so the type union keeps
+            // that accepted case accepted (same trick as metrics.push).
+            // Null/false/0/"" are all refused by the type, as the falsy
+            // half of the guard refused them.
+            modal: { type: ["object", "array"] },
+          },
+          required: ["interaction_id", "interaction_token", "modal"],
+        },
+      },
+      // The guard folded every modal failure mode into one message; keep
+      // it (ajv's default `modal must be object,array` leaks the array
+      // quirk).
+      schemaErrorFormatter: preservingSchemaErrorFormatter([
+        { instancePath: "/modal", keyword: "type", message: "modal required" },
+      ]),
+    },
+    async (request, reply) => {
     const ctx = await requireScope(request, reply, "interactions.send_modal");
     if (!ctx) return;
     if (!bot || !bot.application) {
       reply.code(503).send({ error: "bot client unavailable" });
       return;
     }
-    const body = request.body ?? {};
-    if (
-      typeof body.interaction_id !== "string" ||
-      body.interaction_id.length === 0
-    ) {
-      reply.code(400).send({ error: "interaction_id required" });
-      return;
-    }
-    if (
-      typeof body.interaction_token !== "string" ||
-      body.interaction_token.length === 0
-    ) {
-      reply.code(400).send({ error: "interaction_token required" });
-      return;
-    }
-    if (!body.modal || typeof body.modal !== "object") {
-      reply.code(400).send({ error: "modal required" });
-      return;
-    }
+    const body = request.body;
     {
       const failure = findUnownedModalCustomId(ctx.pluginKey, body.modal);
       if (failure) {
@@ -2075,29 +2158,52 @@ function registerRpcRoutes(
    * caller keeps whatever name it captured at interaction time.
    */
   server.post<{
-    Body: { guild_id?: unknown; user_ids?: unknown };
-  }>("/api/plugin/members.get", async (request, reply) => {
+    Body: { guild_id: string; user_ids: unknown[] };
+  }>(
+    "/api/plugin/members.get",
+    {
+      schema: {
+        body: {
+          type: "object",
+          properties: {
+            // Bare non-empty typeof at HEAD — NOT snowflake-checked
+            // (unlike members.add_role), so no pattern here.
+            guild_id: nonEmptyStringField,
+            // The array check was a guard (`!Array.isArray` → 400); the
+            // per-item filtering below is a normaliser and stays in the
+            // handler, so `items` is deliberately unconstrained.
+            user_ids: { type: "array" },
+          },
+          required: ["guild_id", "user_ids"],
+        },
+      },
+      // The wrong-typed case keeps its old text verbatim (ajv renders
+      // "user_ids must be array" — same meaning, different bytes). The
+      // *missing* case sharpens to the family's "user_ids required":
+      // an (instancePath "", keyword "required") override cannot be
+      // scoped to one property and would swallow a missing guild_id too.
+      schemaErrorFormatter: preservingSchemaErrorFormatter([
+        {
+          instancePath: "/user_ids",
+          keyword: "type",
+          message: "user_ids must be an array",
+        },
+      ]),
+    },
+    async (request, reply) => {
     const ctx = await requireScope(request, reply, "members.get");
     if (!ctx) return;
     if (!bot) {
       reply.code(503).send({ error: "bot client unavailable" });
       return;
     }
-    const body = request.body ?? {};
-    if (typeof body.guild_id !== "string" || body.guild_id.length === 0) {
-      reply.code(400).send({ error: "guild_id required" });
-      return;
-    }
+    const body = request.body;
     const guildId = body.guild_id;
     // Cross-shard forward (PR-3.3): if another shard owns this guild and
     // a forward target is configured, relay the whole RPC there and
     // return its response. No-op in the single-shard default. Placed
     // after guild_id validation, before any local guild work.
     if ((await maybeForwardGuildRpc(request, reply, guildId)).handled) return;
-    if (!Array.isArray(body.user_ids)) {
-      reply.code(400).send({ error: "user_ids must be an array" });
-      return;
-    }
     // Snowflake-shaped strings only, de-duplicated. A malformed id
     // can't poison the batch — it's dropped before the fetch.
     const userIds = [
@@ -2392,8 +2498,18 @@ function registerRpcRoutes(
    * Body:    { guild_id: string }
    * Returns: { roles: APIRole[] }
    */
-  server.post<{ Body: { guild_id?: unknown } }>(
+  server.post<{ Body: { guild_id: string } }>(
     "/api/plugin/roles.list",
+    {
+      schema: {
+        body: {
+          type: "object",
+          // The old guard ran SNOWFLAKE_RE — accepted set unchanged.
+          properties: { guild_id: snowflakeField },
+          required: ["guild_id"],
+        },
+      },
+    },
     async (request, reply) => {
       const ctx = await requireScope(request, reply, "roles.list");
       if (!ctx) return;
@@ -2401,11 +2517,7 @@ function registerRpcRoutes(
         reply.code(503).send({ error: "bot client unavailable" });
         return;
       }
-      const body = request.body ?? {};
-      if (typeof body.guild_id !== "string" || !SNOWFLAKE_RE.test(body.guild_id)) {
-        reply.code(400).send({ error: "guild_id required" });
-        return;
-      }
+      const body = request.body;
       if (!(await pluginHasGuildReach(ctx.pluginId, body.guild_id))) {
         reply.code(403).send({ error: "plugin not enabled in this guild" });
         return;
@@ -2431,8 +2543,21 @@ function registerRpcRoutes(
    * Discord has no single-role endpoint — under the hood this fetches
    * the full role list (cached by the bot) and picks the entry.
    */
-  server.post<{ Body: { guild_id?: unknown; role_id?: unknown } }>(
+  server.post<{ Body: { guild_id: string; role_id: string } }>(
     "/api/plugin/roles.get",
+    {
+      schema: {
+        body: {
+          type: "object",
+          // Both old guards ran SNOWFLAKE_RE — accepted set unchanged.
+          properties: {
+            guild_id: snowflakeField,
+            role_id: snowflakeField,
+          },
+          required: ["guild_id", "role_id"],
+        },
+      },
+    },
     async (request, reply) => {
       const ctx = await requireScope(request, reply, "roles.get");
       if (!ctx) return;
@@ -2440,15 +2565,7 @@ function registerRpcRoutes(
         reply.code(503).send({ error: "bot client unavailable" });
         return;
       }
-      const body = request.body ?? {};
-      if (typeof body.guild_id !== "string" || !SNOWFLAKE_RE.test(body.guild_id)) {
-        reply.code(400).send({ error: "guild_id required" });
-        return;
-      }
-      if (typeof body.role_id !== "string" || !SNOWFLAKE_RE.test(body.role_id)) {
-        reply.code(400).send({ error: "role_id required" });
-        return;
-      }
+      const body = request.body;
       if (!(await pluginHasGuildReach(ctx.pluginId, body.guild_id))) {
         reply.code(403).send({ error: "plugin not enabled in this guild" });
         return;
@@ -2485,27 +2602,33 @@ function registerRpcRoutes(
    * sees the actionable hint ("Missing Permissions").
    */
   server.post<{
-    Body: { guild_id?: unknown; user_id?: unknown; role_id?: unknown };
-  }>("/api/plugin/members.add_role", async (request, reply) => {
+    Body: { guild_id: string; user_id: string; role_id: string };
+  }>(
+    "/api/plugin/members.add_role",
+    {
+      schema: {
+        body: {
+          type: "object",
+          // The old guards ran SNOWFLAKE_RE on all three — the same
+          // pattern the schema fragment compiles — so the accepted set
+          // is unchanged.
+          properties: {
+            guild_id: snowflakeField,
+            user_id: snowflakeField,
+            role_id: snowflakeField,
+          },
+          required: ["guild_id", "user_id", "role_id"],
+        },
+      },
+    },
+    async (request, reply) => {
     const ctx = await requireScope(request, reply, "members.add_role");
     if (!ctx) return;
     if (!bot) {
       reply.code(503).send({ error: "bot client unavailable" });
       return;
     }
-    const body = request.body ?? {};
-    if (typeof body.guild_id !== "string" || !SNOWFLAKE_RE.test(body.guild_id)) {
-      reply.code(400).send({ error: "guild_id required" });
-      return;
-    }
-    if (typeof body.user_id !== "string" || !SNOWFLAKE_RE.test(body.user_id)) {
-      reply.code(400).send({ error: "user_id required" });
-      return;
-    }
-    if (typeof body.role_id !== "string" || !SNOWFLAKE_RE.test(body.role_id)) {
-      reply.code(400).send({ error: "role_id required" });
-      return;
-    }
+    const body = request.body;
     if (!(await pluginHasGuildReach(ctx.pluginId, body.guild_id))) {
       reply.code(403).send({ error: "plugin not enabled in this guild" });
       return;
@@ -2525,27 +2648,31 @@ function registerRpcRoutes(
 
   // ─── members.remove_role ──────────────────────────────────────────
   server.post<{
-    Body: { guild_id?: unknown; user_id?: unknown; role_id?: unknown };
-  }>("/api/plugin/members.remove_role", async (request, reply) => {
+    Body: { guild_id: string; user_id: string; role_id: string };
+  }>(
+    "/api/plugin/members.remove_role",
+    {
+      schema: {
+        // Same shape as members.add_role, including the snowflake guards.
+        body: {
+          type: "object",
+          properties: {
+            guild_id: snowflakeField,
+            user_id: snowflakeField,
+            role_id: snowflakeField,
+          },
+          required: ["guild_id", "user_id", "role_id"],
+        },
+      },
+    },
+    async (request, reply) => {
     const ctx = await requireScope(request, reply, "members.remove_role");
     if (!ctx) return;
     if (!bot) {
       reply.code(503).send({ error: "bot client unavailable" });
       return;
     }
-    const body = request.body ?? {};
-    if (typeof body.guild_id !== "string" || !SNOWFLAKE_RE.test(body.guild_id)) {
-      reply.code(400).send({ error: "guild_id required" });
-      return;
-    }
-    if (typeof body.user_id !== "string" || !SNOWFLAKE_RE.test(body.user_id)) {
-      reply.code(400).send({ error: "user_id required" });
-      return;
-    }
-    if (typeof body.role_id !== "string" || !SNOWFLAKE_RE.test(body.role_id)) {
-      reply.code(400).send({ error: "role_id required" });
-      return;
-    }
+    const body = request.body;
     if (!(await pluginHasGuildReach(ctx.pluginId, body.guild_id))) {
       reply.code(403).send({ error: "plugin not enabled in this guild" });
       return;
