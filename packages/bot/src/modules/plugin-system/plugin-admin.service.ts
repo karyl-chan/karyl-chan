@@ -3,6 +3,7 @@ import {
   findPluginById,
   setPluginApprovedGlobalEventSubs,
   setPluginApprovedRpcScopes,
+  setPluginConfigSchemaVersion,
   setPluginEnabled as setEnabledModel,
   type PluginRow,
 } from "./models/plugin.model.js";
@@ -25,6 +26,18 @@ import { clearDispatchHealth } from "./plugin-dispatch-health.service.js";
 import { recordAudit } from "../admin/admin-audit.service.js";
 import type { CommandReconciler } from "../command-system/reconcile.service.js";
 import type { PluginManifest } from "@karyl-chan/plugin-wire";
+import {
+  configIntake,
+  type FieldValidationError,
+} from "./config-validator.js";
+import { encryptSecret } from "../../utils/crypto.js";
+import {
+  upsertFeatureRow,
+  type PluginGuildFeatureRow,
+} from "../feature-toggle/models/plugin-guild-feature.model.js";
+import { featureReachResolver } from "../feature-toggle/feature-reach-resolver.js";
+import { upsertConfigKey } from "./models/plugin-config.model.js";
+import { dispatchLifecycleToPlugin } from "./plugin-lifecycle-dispatch.service.js";
 
 /**
  * Plugin Admin — the entry point for everything an operator does *to* a
@@ -42,21 +55,32 @@ import type { PluginManifest } from "@karyl-chan/plugin-wire";
  * The closed set of Admin Refusals — the expected, operator-facing
  * outcomes a Plugin Admin operation can return instead of a value.
  *
- * **It currently has exactly one member, and that is not a mistake.** The
- * operations moved in the first increment (#47) can only fail by naming a
- * plugin that does not exist: their auth guard and their request parsing
- * both resolve *before* the operation is reached, so neither produces a
- * refusal (glossary: Admin Refusal). The delete teardown (#49) also
- * refuses only a missing plugin — its refuse-an-active-plugin 409 guard
- * predates the move and stayed with the route, so that increment could
- * remain a pure move; folding it in as a `conflict` member is a call for
- * a later increment, not a fait accompli. The next member arrives with
- * A3: the config writes refuse a payload that fails validation.
- * Collapsing this to `null` or an exception now would cost the
- * compiler's exhaustiveness check on every route that maps one, which is
- * the whole reason the convention exists.
+ * A discriminated union rather than a string union since A3 (#50):
+ * a config save that fails validation is a refusal WITH a payload —
+ * the accumulated field errors the admin UI renders — so members carry
+ * data and routes switch on `kind`. The exhaustiveness guarantee is
+ * unchanged: `switch (outcome.refusal.kind)` with
+ * {@link unhandledRefusal} in `default` narrows to `never` only while
+ * every member is mapped, so adding a member stops every route from
+ * compiling until it says what status code that refusal becomes.
+ *
+ * Every route maps every member, including members its operation can
+ * never return — that is the convention's price, paid so the mapping
+ * stays mechanical: each member has one canonical translation
+ * (`not_found`/`feature_not_found` → 404, `validation_failed` → 422
+ * with `{ error, fieldErrors }`, a shape the frontend parses and which
+ * must stay byte-identical).
+ *
+ * The delete teardown's refuse-an-active-plugin 409 guard still lives
+ * route-side (see #49's note on {@link PluginAdmin.teardown}).
  */
-export type AdminRefusal = "not_found";
+export type AdminRefusal =
+  | { kind: "not_found" }
+  | { kind: "feature_not_found"; featureKey: string }
+  | {
+      kind: "validation_failed";
+      fieldErrors: FieldValidationError[];
+    };
 
 /**
  * What a Plugin Admin operation returns: a value, or an Admin Refusal.
@@ -76,7 +100,7 @@ export type AdminOutcome<T> =
  * part of the convention.
  */
 export function unhandledRefusal(refusal: never): never {
-  throw new Error(`unhandled Admin Refusal: ${String(refusal)}`);
+  throw new Error(`unhandled Admin Refusal: ${JSON.stringify(refusal)}`);
 }
 
 /** A plugin's RPC scope (or global event subscription) approval state. */
@@ -90,10 +114,10 @@ export class PluginAdmin {
   constructor(
     private readonly auth: PluginAuthStore,
     /**
-     * Only for `getScopeState`, which is an admin *read* and therefore
-     * moves here with the rest of the admin reads in increment A4. Until
-     * then, reading it from its current home beats keeping a second copy
-     * of the manifest parse.
+     * For `getScopeState` and the shared row/manifest queries the config
+     * writes use. The admin *reads* themselves move here with increment
+     * A4; until then, reading them from their current home beats keeping
+     * a second copy of the manifest parse.
      */
     private readonly registry: PluginRegistry,
   ) {}
@@ -108,7 +132,7 @@ export class PluginAdmin {
     enabled: boolean,
   ): Promise<AdminOutcome<PluginRow>> {
     const row = await setEnabledModel(pluginId, enabled);
-    if (!row) return { ok: false, refusal: "not_found" };
+    if (!row) return { ok: false, refusal: { kind: "not_found" } };
     if (!enabled) {
       this.auth.revokeByPluginId(pluginId);
       // Strip Discord-side commands for the disabled plugin so users
@@ -158,14 +182,14 @@ export class PluginAdmin {
     scopes: string[],
   ): Promise<AdminOutcome<PluginScopeState>> {
     const state = await this.registry.getScopeState(pluginId);
-    if (!state) return { ok: false, refusal: "not_found" };
+    if (!state) return { ok: false, refusal: { kind: "not_found" } };
     // Clamp to the requested set and de-dup; an admin can only approve
     // what the manifest declares.
     const approved = [...new Set(scopes)].filter((s) =>
       state.requested.includes(s),
     );
     const row = await setPluginApprovedRpcScopes(pluginId, approved);
-    if (!row) return { ok: false, refusal: "not_found" };
+    if (!row) return { ok: false, refusal: { kind: "not_found" } };
     // Live-update the cached token's scopes so RPC calls see the new
     // grant at once. No-op if the plugin has no live token (it'll pick
     // the set up from the persisted column on its next register).
@@ -192,7 +216,7 @@ export class PluginAdmin {
     pluginId: number,
   ): Promise<AdminOutcome<PluginScopeState>> {
     const state = await this.registry.getScopeState(pluginId);
-    if (!state) return { ok: false, refusal: "not_found" };
+    if (!state) return { ok: false, refusal: { kind: "not_found" } };
     return this.setApprovedScopes(pluginId, state.requested);
   }
 
@@ -208,7 +232,7 @@ export class PluginAdmin {
     subs: string[],
   ): Promise<AdminOutcome<PluginScopeState>> {
     const plugin = await findPluginById(pluginId);
-    if (!plugin) return { ok: false, refusal: "not_found" };
+    if (!plugin) return { ok: false, refusal: { kind: "not_found" } };
     const requested = (() => {
       try {
         return (
@@ -221,7 +245,7 @@ export class PluginAdmin {
     })();
     const approved = [...new Set(subs)].filter((e) => requested.includes(e));
     const row = await setPluginApprovedGlobalEventSubs(pluginId, approved);
-    if (!row) return { ok: false, refusal: "not_found" };
+    if (!row) return { ok: false, refusal: { kind: "not_found" } };
     // Routes are derived from the grant at index build — re-apply now.
     emitPluginChange({ pluginId, row });
     invalidatePluginById(pluginId);
@@ -257,7 +281,7 @@ export class PluginAdmin {
     getReconciler: () => CommandReconciler,
   ): Promise<AdminOutcome<void>> {
     const plugin = await findPluginById(pluginId);
-    if (!plugin) return { ok: false, refusal: "not_found" };
+    if (!plugin) return { ok: false, refusal: { kind: "not_found" } };
 
     // 1. Revoke in-memory token so any lingering bearer auth fails.
     this.auth.revokeByPluginId(pluginId);
@@ -348,6 +372,267 @@ export class PluginAdmin {
     );
 
     return { ok: true, value: undefined };
+  }
+
+  // ─── The two config writes (A3, #50) ─────────────────────────────
+  //
+  // Both start with the same Config Intake step (config-validator.ts:
+  // normalize → validate → secret sentinel → encryption) and then
+  // deliberately part ways — decision 7 converges the FRONT HALF ONLY.
+  // `saveGuildFeature` writes ONE JSON document holding native types,
+  // then syncs feature commands and emits a Plugin Change;
+  // `savePluginConfig` writes one string-valued row PER KEY, then
+  // stamps the schema version and logs. No shared persistence, no mode
+  // flag. Round-trip caveat (decision 8) documented on `configIntake`.
+
+  /**
+   * Upsert one per-guild feature row: the enabled toggle and/or the
+   * feature's per-guild config document.
+   *
+   * `enabled === undefined` means "not given" (config-only save): the
+   * row keeps today's *effective* value (per-guild row → operator
+   * default → manifest default → false) rather than defaulting to
+   * false. NOTE: that does mean a config-only save on a guild with no
+   * prior row materialises an explicit (`overridden`) row pinned to the
+   * current default — so a later operator-default change won't
+   * propagate to it. There's no "follow default" sentinel for
+   * `plugin_guild_features.enabled` (it's a plain boolean); accepted
+   * for now. (No UI does config-only saves without `enabled` yet —
+   * `setGuildFeatureEnabled` always sends it.)
+   *
+   * Back half, this operation's own: the config document is written
+   * wholesale with NATIVE types (a boolean field stores `false`, a
+   * number field stores `42`), unknown keys are tolerated and passed
+   * through verbatim (old guilds may hold orphaned keys from an older
+   * schema version), a sentinel-skipped secret keeps its previously
+   * stored (encrypted) value, then guild-scoped commands are synced and
+   * a Plugin Change is emitted. The plugin's onEnable/onDisable
+   * lifecycle fires only when the toggle actually flipped — an
+   * unchanged re-submit of `enabled: true` or a config-only save must
+   * not re-fire hooks that aren't perfectly idempotent (duplicate
+   * timers, INSERT conflicts on seed rows, double-counted metrics).
+   */
+  async saveGuildFeature(
+    input: {
+      pluginId: number;
+      guildId: string;
+      featureKey: string;
+      enabled: boolean | undefined;
+      config: Record<string, unknown> | undefined;
+    },
+    actor: string | undefined,
+  ): Promise<AdminOutcome<PluginGuildFeatureRow>> {
+    const { pluginId, guildId, featureKey } = input;
+    const plugin = (await this.registry.list()).find((p) => p.id === pluginId);
+    if (!plugin) return { ok: false, refusal: { kind: "not_found" } };
+    const manifest = safeParseJson(plugin.manifestJson) as
+      | PluginManifest
+      | null;
+    const feature = manifest?.guild_features?.find((f) => f.key === featureKey);
+    if (!feature) {
+      return { ok: false, refusal: { kind: "feature_not_found", featureKey } };
+    }
+    // Resolve the pre-write state up-front: the effective value backs a
+    // config-only save, and the prior row lets us detect a real state
+    // change for the lifecycle dispatch below.
+    const enabledWasGiven = input.enabled !== undefined;
+    const resolved = (
+      await featureReachResolver.resolveGuildFeatures(
+        pluginId,
+        guildId,
+        manifest!,
+      )
+    ).get(featureKey);
+    const existingRow = resolved?.row ?? null;
+    const enabled = enabledWasGiven
+      ? input.enabled!
+      : (resolved?.enabled ?? false);
+    const enabledChanged = enabledWasGiven && existingRow?.enabled !== enabled;
+
+    let configJson: string | undefined;
+    if (input.config !== undefined) {
+      // Config Intake — the shared front half. Per-caller policy:
+      // per-guild feature config historically tolerates unknown keys
+      // (orphaned values from an older schema version — we don't want
+      // to break old guilds by tightening here).
+      const intake = configIntake(feature.config_schema ?? [], input.config, {
+        allowUnknownKeys: true,
+        encryptSecret,
+      });
+      if (!intake.ok) {
+        return {
+          ok: false,
+          refusal: {
+            kind: "validation_failed",
+            fieldErrors: intake.fieldErrors,
+          },
+        };
+      }
+      // This path's own storage form: one JSON document, native types.
+      const stored: Record<string, unknown> = {};
+      for (const entry of intake.entries) {
+        if (entry.kind === "unknown") {
+          // Preserve the caller's native value so admin scripts that
+          // pass `{flag: false, n: 42}` survive a JSON round-trip.
+          stored[entry.key] =
+            entry.native === undefined ? entry.value : entry.native;
+          continue;
+        }
+        if (entry.field.type === "boolean") {
+          stored[entry.key] = entry.value === "true";
+          continue;
+        }
+        if (entry.field.type === "number") {
+          stored[entry.key] =
+            entry.value.length === 0 ? null : Number(entry.value);
+          continue;
+        }
+        // Secrets arrive from intake already encrypted (or "" when
+        // cleared); everything else is the string verbatim.
+        stored[entry.key] = entry.value;
+      }
+      // The document is replaced wholesale, so a sentinel-skipped
+      // secret must carry its previously stored (encrypted) value over
+      // — "leave the stored value alone" would otherwise drop the key.
+      if (intake.skippedSecretKeys.length > 0) {
+        const existingDoc = existingRow
+          ? ((safeParseJson(existingRow.configJson) as Record<
+              string,
+              unknown
+            >) ?? {})
+          : {};
+        for (const key of intake.skippedSecretKeys) {
+          if (key in existingDoc) stored[key] = existingDoc[key];
+        }
+      }
+      configJson = JSON.stringify(stored);
+    }
+
+    const row = await upsertFeatureRow({
+      pluginId,
+      guildId,
+      featureKey,
+      enabled,
+      configJson,
+    });
+    // PM-8: event dispatch + RPC gates cache this resolution —
+    // subscribers drop this (plugin, guild)'s cached reach.
+    emitPluginChange({ pluginId, guildId });
+    // Sync the feature's guild-scoped commands to match: enabled →
+    // register them in this guild; disabled → delete them. Idempotent
+    // (a config-only save just re-confirms the current state).
+    {
+      const pluginRow = await this.registry.findById(pluginId);
+      const manifestObj = pluginRow
+        ? (safeParseJson(pluginRow.manifestJson) as PluginManifest | null)
+        : null;
+      if (pluginRow && manifestObj) {
+        await pluginCommandRegistry
+          .syncFeatureCommandsForGuild(
+            pluginRow,
+            featureKey,
+            guildId,
+            enabled,
+            manifestObj,
+          )
+          .catch(() => {
+            /* logged inside the registry */
+          });
+      }
+    }
+    botEventLog.record(
+      "info",
+      "bot",
+      `plugin guild feature ${enabledWasGiven ? (enabled ? "enabled" : "disabled") : "config updated"}: ${plugin.pluginKey}/${featureKey}@${guildId}`,
+      { pluginId, guildId, featureKey, enabled, actor },
+    );
+    // Notify the plugin so it can run onEnable / onDisable hooks.
+    // Fire-and-forget: a slow plugin shouldn't delay the admin UI
+    // response.
+    if (enabledChanged) {
+      dispatchLifecycleToPlugin(
+        pluginId,
+        enabled ? "plugin.guild.enabled" : "plugin.guild.disabled",
+        guildId,
+        featureKey,
+      );
+    }
+    return { ok: true, value: row };
+  }
+
+  /**
+   * Save the plugin-level admin config. The full payload runs through
+   * Config Intake BEFORE any persistence, so the admin UI gets every
+   * field error in one refusal instead of an early-abort on the first
+   * bad key. Per-caller policy: unknown keys are REJECTED here (the
+   * plugin-level editor always submits schema keys), unlike the
+   * per-guild path.
+   *
+   * Back half, this operation's own: one string-valued row per key
+   * ("" = clear/delete, secrets stored encrypted), then the PD-4.3
+   * schema-version stamp — so a later manifest config_schema_version
+   * bump surfaces as "stale config" — and the audit log entry. Note
+   * the round-trip caveat on `configIntake`: this storage form keeps a
+   * decision-8-coerced boolean/number as its string form.
+   *
+   * Returns which keys were written (`accepted`) and which were left
+   * untouched by the secret sentinel (`skipped`).
+   */
+  async savePluginConfig(
+    pluginId: number,
+    values: Record<string, unknown>,
+    actor: string | undefined,
+  ): Promise<AdminOutcome<{ accepted: string[]; skipped: string[] }>> {
+    const plugin = (await this.registry.list()).find((p) => p.id === pluginId);
+    if (!plugin) return { ok: false, refusal: { kind: "not_found" } };
+    const manifest = safeParseJson(plugin.manifestJson) as
+      | PluginManifest
+      | null;
+    const schema = manifest?.config_schema ?? [];
+    const intake = configIntake(schema, values, {
+      allowUnknownKeys: false,
+      encryptSecret,
+    });
+    if (!intake.ok) {
+      return {
+        ok: false,
+        refusal: { kind: "validation_failed", fieldErrors: intake.fieldErrors },
+      };
+    }
+    // This path's own storage form: one string row per key.
+    const accepted: string[] = [];
+    for (const entry of intake.entries) {
+      // allowUnknownKeys:false ⇒ every entry is a declared field; the
+      // value is storage-ready (encrypted secret / "" clear / verbatim).
+      await upsertConfigKey(pluginId, entry.key, entry.value, "admin");
+      accepted.push(entry.key);
+    }
+    const skipped = intake.skippedSecretKeys;
+    // PD-4.3: stamp the schema version this save was written against.
+    await setPluginConfigSchemaVersion(
+      pluginId,
+      manifest?.config_schema_version ?? null,
+    );
+    botEventLog.record(
+      "info",
+      "bot",
+      `plugin '${plugin.pluginKey}' admin config updated (${accepted.length} keys)`,
+      {
+        pluginId,
+        keys: accepted,
+        skippedSecretKeys: skipped,
+        actor,
+      },
+    );
+    return { ok: true, value: { accepted, skipped } };
+  }
+}
+
+function safeParseJson(json: string): unknown {
+  try {
+    return JSON.parse(json);
+  } catch {
+    return null;
   }
 }
 

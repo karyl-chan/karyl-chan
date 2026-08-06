@@ -10,7 +10,6 @@ import { shouldRecord } from "../bot-events/bot-event-dedup.js";
 import {
   deleteFeatureRow,
   findFeatureRowsByPlugin,
-  upsertFeatureRow,
 } from "../feature-toggle/models/plugin-guild-feature.model.js";
 import {
   findAllFeatureDefaults,
@@ -19,14 +18,10 @@ import {
 } from "../feature-toggle/models/plugin-feature-default.model.js";
 import { emitPluginChange } from "./plugin-changes.js";
 import { featureReachResolver } from "../feature-toggle/feature-reach-resolver.js";
-import {
-  findConfigByPluginAndSource,
-  upsertConfigKey,
-} from "./models/plugin-config.model.js";
+import { findConfigByPluginAndSource } from "./models/plugin-config.model.js";
 import { kvUsageByPlugin } from "./models/plugin-kv.model.js";
 import { quotaForGuildKv } from "./plugin-kv-quota.js";
 import { mintPluginManageToken } from "./plugin-manage-token.js";
-import { encryptSecret } from "../../utils/crypto.js";
 import type { PluginManifest } from "./plugin-registry.service.js";
 import {
   ManifestCommandError,
@@ -42,7 +37,6 @@ import { config } from "../../config.js";
 import {
   findPluginByKey,
   findPluginById,
-  setPluginConfigSchemaVersion,
   setPluginSetupSecretHash,
   upsertPluginRegistration,
   type PluginRow,
@@ -905,10 +899,13 @@ export async function registerPluginRoutes(
    * PUT /api/plugins/:id/guilds/:guildId/features/:featureKey
    * Body: { enabled?: boolean, config?: Record<string, unknown> }
    *
-   * Upsert one feature row. Validates featureKey exists in the
-   * plugin's manifest. `secret`-typed config fields are encrypted at
-   * rest the same way behavior webhookSecret is — value never leaves
-   * the server in plaintext through any read endpoint.
+   * Upsert one feature row — owned by Plugin Admin
+   * (`pluginAdmin.saveGuildFeature`): shared Config Intake (same 422 +
+   * fieldErrors shape as the plugin-level PUT so the admin UI can
+   * render both panels identically), then this path's own back half
+   * (native-typed JSON document, feature-command sync, Plugin Change,
+   * lifecycle dispatch on a real flip). This handler keeps what
+   * resolves before the operation: the admin guard and request parsing.
    */
   server.put<{
     Params: { id: string; guildId: string; featureKey: string };
@@ -927,202 +924,45 @@ export async function registerPluginRoutes(
         reply.code(400).send({ error: "guildId + featureKey required" });
         return;
       }
-      const plugin = (await pluginRegistry.list()).find(
-        (p) => p.id === pluginId,
-      );
-      if (!plugin) {
-        reply.code(404).send({ error: "plugin not found" });
-        return;
-      }
-      const manifest = safeParse(plugin.manifestJson) as PluginManifest | null;
-      const feature = manifest?.guild_features?.find(
-        (f) => f.key === featureKey,
-      );
-      if (!feature) {
-        reply
-          .code(404)
-          .send({ error: `feature '${featureKey}' not declared by plugin` });
-        return;
-      }
       const body = request.body ?? {};
-      // Resolve the effective on/off: per-guild row → operator default →
-      // manifest default → false. When `enabled` isn't in the body
-      // (config-only PATCH) we pass the *resolved* value to
-      // upsertFeatureRow so the new row matches today's effective state
-      // rather than wrongly defaulting to false. NOTE: this does mean a
-      // config-only PATCH on a guild with no prior row materialises an
-      // explicit (`overridden`) row pinned to the current default — so a
-      // later operator-default change won't propagate to it. There's no
-      // "follow default" sentinel for `plugin_guild_features.enabled`
-      // (it's a plain boolean); accept this for now. (No UI does
-      // config-only PATCH yet — `setGuildFeatureEnabled` always sends
-      // `enabled`.)
-      const enabledWasGiven = body.enabled !== undefined;
-      // Resolve the pre-write state up-front: the effective value backs
-      // a config-only PATCH, and the prior row lets us detect a real
-      // state change for the lifecycle dispatch below. Without that, an
-      // admin UI that re-submits an unchanged `enabled: true` would
-      // refire onEnable on every save and break plugins whose hook
-      // isn't perfectly idempotent (duplicate timers, INSERT
-      // conflicts on seed rows, double-counted metrics).
-      const resolved = (
-        await featureReachResolver.resolveGuildFeatures(
-          pluginId,
-          guildId,
-          manifest!,
-        )
-      ).get(featureKey);
-      const existingRow = resolved?.row ?? null;
-      const enabled = enabledWasGiven
-        ? !!body.enabled
-        : (resolved?.enabled ?? false);
-      const enabledChanged =
-        enabledWasGiven && existingRow?.enabled !== enabled;
-      let configJson: string | undefined;
-      if (body.config !== undefined) {
-        if (!body.config || typeof body.config !== "object") {
-          reply.code(400).send({ error: "config must be an object" });
-          return;
-        }
-        const incomingObj = body.config as Record<string, unknown>;
-        // Validate every per-guild config value through the shared
-        // validator before persisting. Same 422 + fieldErrors
-        // shape as the plugin-level PUT so the admin UI can render
-        // both panels identically.
-        //
-        // The validator expects Record<string,string>. We build that
-        // shadow map for validation only — booleans / numbers from
-        // non-UI callers are stringified to "true" / "42" so the
-        // validator can range-/type-check them, but the stored shape
-        // preserves the caller's native type below so a JSON
-        // round-trip keeps `false` as `false` (not the truthy string
-        // "false") and `42` as a number (not "42").
-        const stringValues: Record<string, string> = {};
-        const earlyErrors: Array<{ key: string; message: string; code: string }> = [];
-        for (const [key, raw] of Object.entries(incomingObj)) {
-          if (raw === null || raw === undefined) {
-            stringValues[key] = "";
-            continue;
-          }
-          if (typeof raw === "boolean" || typeof raw === "number") {
-            stringValues[key] = String(raw);
-            continue;
-          }
-          if (typeof raw !== "string") {
-            earlyErrors.push({
-              key,
-              message: `'${key}' must be a string`,
-              code: "type_mismatch",
-            });
-            continue;
-          }
-          stringValues[key] = raw;
-        }
-        const featureSchema = feature.config_schema ?? [];
-        const { validateValues } = await import("./config-validator.js");
-        const result = validateValues(featureSchema, stringValues, {
-          // Per-guild feature config historically tolerates unknown
-          // keys (e.g. orphaned values from an older schema version
-          // — we don't want to break old guilds by tightening here).
-          allowUnknownKeys: true,
-        });
-        if (earlyErrors.length > 0 || !result.ok) {
-          reply.code(422).send({
-            error: "config validation failed",
-            fieldErrors: [...earlyErrors, ...result.errors],
-          });
-          return;
-        }
-        const stored: Record<string, unknown> = {};
-        const schemaByKey = new Map(featureSchema.map((f) => [f.key, f]));
-        for (const [key, sv] of Object.entries(stringValues)) {
-          const field = schemaByKey.get(key);
-          if (!field) {
-            // unknown key — keep historical pass-through behaviour,
-            // but never persist the literal secret sentinel: the bot
-            // would otherwise store "********" for a key that used to
-            // be a secret in an older schema version. Drop instead.
-            if (sv === "********") continue;
-            // Preserve the caller's native type so admin scripts that
-            // pass `{flag: false, n: 42}` survive a JSON round-trip.
-            const original = incomingObj[key];
-            stored[key] = original === undefined ? sv : original;
-            continue;
-          }
-          if (field.type === "secret" && sv === "********") {
-            // sentinel — skip; preserves existing stored value
-            continue;
-          }
-          if (field.type === "secret") {
-            stored[field.key] = sv.length > 0 ? encryptSecret(sv) : "";
-            continue;
-          }
-          if (field.type === "boolean") {
-            stored[field.key] = sv === "true";
-            continue;
-          }
-          if (field.type === "number") {
-            stored[field.key] = sv.length === 0 ? null : Number(sv);
-            continue;
-          }
-          stored[field.key] = sv;
-        }
-        configJson = JSON.stringify(stored);
+      if (
+        body.config !== undefined &&
+        (!body.config || typeof body.config !== "object")
+      ) {
+        reply.code(400).send({ error: "config must be an object" });
+        return;
       }
-      const row = await upsertFeatureRow({
-        pluginId,
-        guildId,
-        featureKey,
-        enabled,
-        configJson,
-      });
-      // PM-8: event dispatch + RPC gates cache this resolution —
-      // subscribers drop this (plugin, guild)'s cached reach.
-      emitPluginChange({ pluginId, guildId });
-      // Sync the feature's guild-scoped commands to match: enabled →
-      // register them in this guild; disabled → delete them. Idempotent
-      // (a config-only PATCH just re-confirms the current state).
-      {
-        const pluginRow = await pluginRegistry.findById(pluginId);
-        const manifestObj = pluginRow
-          ? (safeParse(pluginRow.manifestJson) as PluginManifest | null)
-          : null;
-        if (pluginRow && manifestObj) {
-          await pluginCommandRegistry
-            .syncFeatureCommandsForGuild(
-              pluginRow,
-              featureKey,
-              guildId,
-              enabled,
-              manifestObj,
-            )
-            .catch(() => {
-              /* logged inside the registry */
-            });
-        }
-      }
-      botEventLog.record(
-        "info",
-        "bot",
-        `plugin guild feature ${enabledWasGiven ? (enabled ? "enabled" : "disabled") : "config updated"}: ${plugin.pluginKey}/${featureKey}@${guildId}`,
-        { pluginId, guildId, featureKey, enabled, actor: request.authUserId },
-      );
-      // Notify the plugin so it can run onEnable / onDisable hooks.
-      // Fire-and-forget: a slow plugin shouldn't delay the admin UI
-      // response. Only dispatched when the toggle actually flipped
-      // (`enabledChanged`) — a config-only PATCH or an unchanged
-      // re-submit of `enabled: true` does NOT re-fire. Plugins that
-      // didn't declare lifecycle hooks have no
-      // `endpoints.plugin_lifecycle` in their manifest, so the
-      // dispatcher silently skips them.
-      if (enabledChanged) {
-        dispatchLifecycleToPlugin(
+      const outcome = await pluginAdmin.saveGuildFeature(
+        {
           pluginId,
-          enabled ? "plugin.guild.enabled" : "plugin.guild.disabled",
           guildId,
           featureKey,
-        );
+          enabled: body.enabled === undefined ? undefined : !!body.enabled,
+          config: body.config as Record<string, unknown> | undefined,
+        },
+        request.authUserId,
+      );
+      if (!outcome.ok) {
+        switch (outcome.refusal.kind) {
+          case "not_found":
+            reply.code(404).send({ error: "plugin not found" });
+            return;
+          case "feature_not_found":
+            reply.code(404).send({
+              error: `feature '${outcome.refusal.featureKey}' not declared by plugin`,
+            });
+            return;
+          case "validation_failed":
+            reply.code(422).send({
+              error: "config validation failed",
+              fieldErrors: outcome.refusal.fieldErrors,
+            });
+            return;
+          default:
+            return unhandledRefusal(outcome.refusal);
+        }
       }
+      const row = outcome.value;
       return {
         feature: {
           pluginId: row.pluginId,
@@ -1544,15 +1384,15 @@ export async function registerPluginRoutes(
 
   /**
    * PUT /api/plugins/:id/config
-   * Body: { values: Record<string, string | null> }
+   * Body: { values: Record<string, string | boolean | number | null> }
    *
-   * Validation pipeline. The full payload is run through
-   * `validateValues` BEFORE any persistence so the admin UI gets every
-   * field error in one 422 response instead of an early-abort on the
-   * first bad key. Validation rules: required+empty, type-mismatch
-   * (number / boolean / url / regex / select / snowflake), min/max
-   * (numeric value bounds or string length bounds per type),
-   * configured regex pattern, secret sentinel skip.
+   * Save the plugin-level admin config — owned by Plugin Admin
+   * (`pluginAdmin.savePluginConfig`): shared Config Intake (every field
+   * error accumulated into one 422; decision 8 coerces JSON
+   * booleans/numbers to their string form on this path too), then this
+   * path's own back half (one string row per key, schema-version
+   * stamp, log). This handler keeps what resolves before the
+   * operation: the admin guard and request parsing.
    */
   server.put<{
     Params: { id: string };
@@ -1564,95 +1404,37 @@ export async function registerPluginRoutes(
       reply.code(400).send({ error: "invalid plugin id" });
       return;
     }
-    const plugin = (await pluginRegistry.list()).find((p) => p.id === pluginId);
-    if (!plugin) {
-      reply.code(404).send({ error: "plugin not found" });
-      return;
-    }
-    const manifest = safeParse(plugin.manifestJson) as PluginManifest | null;
-    const schema = manifest?.config_schema ?? [];
     const body = request.body ?? {};
     if (!body.values || typeof body.values !== "object") {
       reply.code(400).send({ error: "values object required" });
       return;
     }
-    const incoming = body.values as Record<string, unknown>;
-
-    // Normalise to Record<string,string> for the validator.
-    // null/undefined → empty string (delete intent).
-    // Non-string values → rejected up-front as type_mismatch with
-    // string requirement (admin UI always submits strings).
-    const stringValues: Record<string, string> = {};
-    const earlyErrors: Array<{ key: string; message: string; code: string }> = [];
-    for (const [key, raw] of Object.entries(incoming)) {
-      if (raw === null || raw === undefined) {
-        stringValues[key] = "";
-        continue;
-      }
-      if (typeof raw !== "string") {
-        earlyErrors.push({
-          key,
-          message: `'${key}' must be a string`,
-          code: "type_mismatch",
-        });
-        continue;
-      }
-      stringValues[key] = raw;
-    }
-
-    const { validateValues } = await import("./config-validator.js");
-    const result = validateValues(schema, stringValues, {
-      allowUnknownKeys: false,
-    });
-    if (earlyErrors.length > 0 || !result.ok) {
-      reply.code(422).send({
-        error: "config validation failed",
-        fieldErrors: [...earlyErrors, ...result.errors],
-      });
-      return;
-    }
-
-    // Validation passed — persist. accepted/skipped lists track what
-    // we actually wrote vs left unchanged (secret sentinel).
-    const accepted: string[] = [];
-    const skipped: string[] = [];
-    const schemaByKey = new Map(schema.map((f) => [f.key, f]));
-    for (const [key, raw] of Object.entries(stringValues)) {
-      const field = schemaByKey.get(key);
-      if (!field) continue; // already rejected by validator above
-      if (field.type === "secret" && raw === "********") {
-        skipped.push(key);
-        continue;
-      }
-      if (raw.length === 0) {
-        // Empty string = clear / delete. Same semantics as before.
-        await upsertConfigKey(pluginId, key, "", "admin");
-        accepted.push(key);
-        continue;
-      }
-      const stored =
-        field.type === "secret" && raw.length > 0 ? encryptSecret(raw) : raw;
-      await upsertConfigKey(pluginId, key, stored, "admin");
-      accepted.push(key);
-    }
-    // PD-4.3: stamp the schema version this save was written against, so a
-    // later manifest config_schema_version bump surfaces as "stale config".
-    await setPluginConfigSchemaVersion(
+    const outcome = await pluginAdmin.savePluginConfig(
       pluginId,
-      manifest?.config_schema_version ?? null,
+      body.values as Record<string, unknown>,
+      request.authUserId,
     );
-    botEventLog.record(
-      "info",
-      "bot",
-      `plugin '${plugin.pluginKey}' admin config updated (${accepted.length} keys)`,
-      {
-        pluginId,
-        keys: accepted,
-        skippedSecretKeys: skipped,
-        actor: request.authUserId,
-      },
-    );
-    return { accepted, skipped };
+    if (!outcome.ok) {
+      switch (outcome.refusal.kind) {
+        case "not_found":
+          reply.code(404).send({ error: "plugin not found" });
+          return;
+        case "feature_not_found":
+          reply.code(404).send({
+            error: `feature '${outcome.refusal.featureKey}' not declared by plugin`,
+          });
+          return;
+        case "validation_failed":
+          reply.code(422).send({
+            error: "config validation failed",
+            fieldErrors: outcome.refusal.fieldErrors,
+          });
+          return;
+        default:
+          return unhandledRefusal(outcome.refusal);
+      }
+    }
+    return outcome.value;
   });
 
   /** POST /api/plugins/:id/enable | /disable */
@@ -1668,9 +1450,20 @@ export async function registerPluginRoutes(
       const enabled = !!request.body?.enabled;
       const outcome = await pluginAdmin.setEnabled(id, enabled);
       if (!outcome.ok) {
-        switch (outcome.refusal) {
+        switch (outcome.refusal.kind) {
           case "not_found":
             reply.code(404).send({ error: "plugin not found" });
+            return;
+          case "feature_not_found":
+            reply.code(404).send({
+              error: `feature '${outcome.refusal.featureKey}' not declared by plugin`,
+            });
+            return;
+          case "validation_failed":
+            reply.code(422).send({
+              error: "config validation failed",
+              fieldErrors: outcome.refusal.fieldErrors,
+            });
             return;
           default:
             return unhandledRefusal(outcome.refusal);
@@ -1743,9 +1536,20 @@ export async function registerPluginRoutes(
       }
       const outcome = await pluginAdmin.setApprovedScopes(id, approvedRaw);
       if (!outcome.ok) {
-        switch (outcome.refusal) {
+        switch (outcome.refusal.kind) {
           case "not_found":
             reply.code(404).send({ error: "plugin not found" });
+            return;
+          case "feature_not_found":
+            reply.code(404).send({
+              error: `feature '${outcome.refusal.featureKey}' not declared by plugin`,
+            });
+            return;
+          case "validation_failed":
+            reply.code(422).send({
+              error: "config validation failed",
+              fieldErrors: outcome.refusal.fieldErrors,
+            });
             return;
           default:
             return unhandledRefusal(outcome.refusal);
@@ -1795,9 +1599,20 @@ export async function registerPluginRoutes(
         approvedRaw,
       );
       if (!outcome.ok) {
-        switch (outcome.refusal) {
+        switch (outcome.refusal.kind) {
           case "not_found":
             reply.code(404).send({ error: "plugin not found" });
+            return;
+          case "feature_not_found":
+            reply.code(404).send({
+              error: `feature '${outcome.refusal.featureKey}' not declared by plugin`,
+            });
+            return;
+          case "validation_failed":
+            reply.code(422).send({
+              error: "config validation failed",
+              fieldErrors: outcome.refusal.fieldErrors,
+            });
             return;
           default:
             return unhandledRefusal(outcome.refusal);
@@ -1861,9 +1676,20 @@ export async function registerPluginRoutes(
         getReconciler,
       );
       if (!outcome.ok) {
-        switch (outcome.refusal) {
+        switch (outcome.refusal.kind) {
           case "not_found":
             reply.code(404).send({ error: "plugin not found" });
+            return;
+          case "feature_not_found":
+            reply.code(404).send({
+              error: `feature '${outcome.refusal.featureKey}' not declared by plugin`,
+            });
+            return;
+          case "validation_failed":
+            reply.code(422).send({
+              error: "config validation failed",
+              fieldErrors: outcome.refusal.fieldErrors,
+            });
             return;
           default:
             return unhandledRefusal(outcome.refusal);
