@@ -1,6 +1,8 @@
 import {
   deletePlugin,
+  findAllPlugins,
   findPluginById,
+  findPluginByKey,
   setPluginApprovedGlobalEventSubs,
   setPluginApprovedRpcScopes,
   setPluginConfigSchemaVersion,
@@ -18,11 +20,24 @@ import {
 import { pluginCommandRegistry } from "./plugin-command-registry.service.js";
 import {
   pluginRegistry,
-  PluginRegistry,
   purgePluginCapabilityGrants,
 } from "./plugin-registry.service.js";
 import { dropDispatchPoolForPlugin } from "./plugin-event-bridge.service.js";
-import { clearDispatchHealth } from "./plugin-dispatch-health.service.js";
+import {
+  clearDispatchHealth,
+  getDispatchHealth,
+} from "./plugin-dispatch-health.service.js";
+import { evaluateSdkCompatFromManifestJson } from "./plugin-sdk-compat.js";
+import { evaluateEventSubscriptionsFromManifestJson } from "./plugin-event-subscriptions.js";
+import { config } from "../../config.js";
+import { kvUsageByPlugin } from "./models/plugin-kv.model.js";
+import { quotaForGuildKv } from "./plugin-kv-quota.js";
+import { findConfigByPluginAndSource } from "./models/plugin-config.model.js";
+import { findPluginCommandsByPlugin } from "./models/plugin-command.model.js";
+import {
+  findAllFeatureDefaults,
+  type PluginFeatureDefaultRow,
+} from "../feature-toggle/models/plugin-feature-default.model.js";
 import { recordAudit } from "../admin/admin-audit.service.js";
 import type { CommandReconciler } from "../command-system/reconcile.service.js";
 import type { PluginManifest } from "@karyl-chan/plugin-wire";
@@ -32,6 +47,7 @@ import {
 } from "./config-validator.js";
 import { encryptSecret } from "../../utils/crypto.js";
 import {
+  findFeatureRowsByPlugin,
   upsertFeatureRow,
   type PluginGuildFeatureRow,
 } from "../feature-toggle/models/plugin-guild-feature.model.js";
@@ -111,16 +127,245 @@ export interface PluginScopeState {
 }
 
 export class PluginAdmin {
-  constructor(
-    private readonly auth: PluginAuthStore,
-    /**
-     * For `getScopeState` and the shared row/manifest queries the config
-     * writes use. The admin *reads* themselves move here with increment
-     * A4; until then, reading them from their current home beats keeping
-     * a second copy of the manifest parse.
-     */
-    private readonly registry: PluginRegistry,
-  ) {}
+  constructor(private readonly auth: PluginAuthStore) {}
+
+  /**
+   * Admin view of a plugin's RPC scope state: what the current manifest
+   * requests, what's approved, and the still-pending delta. Returns null
+   * if the plugin doesn't exist. Moved from `PluginRegistry` with the
+   * A4 admin-reads batch (#51) — it is an admin read, so the actor line
+   * puts it here; the constructor's registry dependency went with it.
+   */
+  async getScopeState(pluginId: number): Promise<PluginScopeState | null> {
+    const row = await findPluginById(pluginId);
+    if (!row) return null;
+    const requested = (() => {
+      try {
+        return (
+          (JSON.parse(row.manifestJson) as PluginManifest).rpc_methods_used ??
+          []
+        );
+      } catch {
+        return [];
+      }
+    })();
+    const approved = row.approvedRpcScopes;
+    const pending = requested.filter((s) => !approved.includes(s));
+    return { requested, approved, pending };
+  }
+
+  // ─── Admin reads (A4, #51) ───────────────────────────────────────
+  //
+  // Decision 2: Plugin Admin is the complete admin-facing entry, reads
+  // included, so an admin route depends on this module and nothing
+  // else. Each read assembles the exact payload its route used to
+  // compose inline — the response bodies are consumed by the frontend
+  // and must stay byte-identical, so the assembly functions below are
+  // verbatim moves, field order preserved. Reads that can miss return
+  // an Admin Refusal like every other operation.
+
+  /**
+   * The admin plugin list (GET /api/plugins): every known plugin, each
+   * entry assembled from the row plus the four runtime sources — the
+   * sdk-compat verdict, the Subscription Verdict, dispatch health, and
+   * background command-sync state. A list cannot miss, so this returns
+   * the entries directly rather than an {@link AdminOutcome}.
+   */
+  async listPlugins(): Promise<AdminPluginListEntry[]> {
+    const rows = await findAllPlugins();
+    return rows.map((p) => assembleAdminListEntry(p));
+  }
+
+  /**
+   * Single plugin detail (GET /api/plugins/:id): manifest snapshot plus
+   * command-sync / dispatch / compat verdicts, with the latest health
+   * probe + metrics snapshot inlined so the admin UI doesn't need a
+   * second round-trip per plugin card.
+   */
+  async getPluginDetail(
+    pluginId: number,
+  ): Promise<AdminOutcome<AdminPluginDetail>> {
+    const p = await findPluginById(pluginId);
+    if (!p) return { ok: false, refusal: { kind: "not_found" } };
+    return { ok: true, value: await assemblePluginDetail(p) };
+  }
+
+  /**
+   * Plugin detail by key (GET /api/plugins/by-key/:pluginKey) — the
+   * plugin 詳情頁 payload: same fields as the by-id detail plus the
+   * read-only rpcMethods / scope-approval state and the third-track
+   * (featureKey=null) plugin commands.
+   */
+  async getPluginDetailByKey(
+    pluginKey: string,
+  ): Promise<AdminOutcome<AdminPluginDetailByKey>> {
+    const p = await findPluginByKey(pluginKey);
+    if (!p) return { ok: false, refusal: { kind: "not_found" } };
+    return { ok: true, value: await assemblePluginDetailByKey(p) };
+  }
+
+  /**
+   * Every feature offered by every plugin, joined with this guild's
+   * override / config state (GET /api/plugins/guilds/:guildId/features).
+   * Pure read, aggregated across plugins so the UI doesn't have to N+1
+   * the manifest store. An unknown guild simply yields entries with no
+   * overrides — not a miss, so no refusal.
+   */
+  async listGuildFeatures(guildId: string): Promise<AdminGuildFeatureItem[]> {
+    const plugins = await findAllPlugins();
+    const items: AdminGuildFeatureItem[] = [];
+    for (const p of plugins) {
+      const manifest = safeParseJson(p.manifestJson) as PluginManifest | null;
+      if (!manifest) continue;
+      const resolved = await featureReachResolver.resolveGuildFeatures(
+        p.id,
+        guildId,
+        manifest,
+      );
+      for (const f of manifest.guild_features ?? []) {
+        const feature = resolved.get(f.key);
+        if (!feature) continue;
+        items.push({
+          pluginId: p.id,
+          pluginKey: p.pluginKey,
+          pluginName: p.name,
+          featureKey: f.key,
+          name: f.name,
+          description: f.description,
+          icon: f.icon,
+          configSchema: f.config_schema ?? [],
+          surfaces: f.surfaces ?? ["bot_functions_tab"],
+          enabled: feature.enabled,
+          overridden: feature.overridden,
+          defaultEnabled: feature.defaultEnabled,
+          operatorDefault: feature.operatorDefault,
+          manifestDefault: feature.manifestDefault,
+          config: feature.row
+            ? ((safeParseJson(feature.row.configJson) as Record<
+                string,
+                unknown
+              >) ?? {})
+            : {},
+          metrics: feature.row
+            ? ((safeParseJson(feature.row.metricsJson) as Record<
+                string,
+                unknown
+              >) ?? {})
+            : {},
+          pluginEnabled: p.enabled,
+          pluginStatus: p.status,
+        });
+      }
+    }
+    return items;
+  }
+
+  /**
+   * Cross-plugin "All Servers" overview (GET /api/plugins/feature-
+   * defaults): every plugin × feature with the manifest default, the
+   * operator override (if any), and the per-guild opt-in/out counts.
+   * Defaults effective = override ?? manifest_default ?? false.
+   */
+  async listFeatureDefaults(): Promise<AdminFeatureDefaultItem[]> {
+    const plugins = await findAllPlugins();
+    const overrides = await findAllFeatureDefaults();
+    const overrideByKey = new Map<string, PluginFeatureDefaultRow>(
+      overrides.map((o) => [`${o.pluginId}:${o.featureKey}`, o]),
+    );
+    const items: AdminFeatureDefaultItem[] = [];
+    for (const p of plugins) {
+      const manifest = safeParseJson(p.manifestJson) as PluginManifest | null;
+      if (!manifest) continue;
+      const guildRows = await findFeatureRowsByPlugin(p.id);
+      for (const f of manifest.guild_features ?? []) {
+        const override = overrideByKey.get(`${p.id}:${f.key}`);
+        const manifestDefault = !!f.enabled_by_default;
+        const effective = override ? override.enabled : manifestDefault;
+        const guildRowsForFeature = guildRows.filter(
+          (r) => r.featureKey === f.key,
+        );
+        items.push({
+          pluginId: p.id,
+          pluginKey: p.pluginKey,
+          pluginName: p.name,
+          pluginEnabled: p.enabled,
+          pluginStatus: p.status,
+          featureKey: f.key,
+          featureName: f.name,
+          featureDescription: f.description,
+          featureIcon: f.icon,
+          manifestDefault,
+          override: override ? override.enabled : null,
+          effectiveDefault: effective,
+          enabledGuildCount: guildRowsForFeature.filter((r) => r.enabled)
+            .length,
+          disabledGuildCount: guildRowsForFeature.filter((r) => !r.enabled)
+            .length,
+        });
+      }
+    }
+    return items;
+  }
+
+  /**
+   * The admin config editor payload (GET /api/plugins/:id/config): the
+   * manifest's config_schema joined with currently-stored values,
+   * secrets masked. Plugin-self KV (source='plugin') is excluded —
+   * that's the plugin's private state, not admin-controlled.
+   */
+  async getPluginConfig(
+    pluginId: number,
+  ): Promise<AdminOutcome<AdminConfigEditorPayload>> {
+    const plugin = await findPluginById(pluginId);
+    if (!plugin) return { ok: false, refusal: { kind: "not_found" } };
+    return { ok: true, value: await buildConfigPayload(plugin) };
+  }
+
+  /**
+   * One-shot payload for the plugin's "設定" tab (GET
+   * /api/plugins/:id/settings, PD-2.2): the config editor payload PLUS
+   * the cross-surface overview — which guilds override which features,
+   * and per-guild KV usage vs quota (COUNT/bytes only, never values —
+   * the PD-2.1 boundary).
+   *
+   * `resolveGuildName` is passed in like teardown's `getReconciler`:
+   * guild names live in the route-injected discord.js client's cache,
+   * which is route wiring, not admin state. null = the bot isn't in
+   * that guild / cache miss; the UI falls back to the id.
+   */
+  async getPluginSettings(
+    pluginId: number,
+    resolveGuildName: (guildId: string) => string | null,
+  ): Promise<AdminOutcome<AdminPluginSettings>> {
+    const plugin = await findPluginById(pluginId);
+    if (!plugin) return { ok: false, refusal: { kind: "not_found" } };
+    const [config, kvGuilds, kvQuotaBytes, featureRows] = await Promise.all([
+      buildConfigPayload(plugin),
+      kvUsageByPlugin(pluginId),
+      quotaForGuildKv(pluginId),
+      findFeatureRowsByPlugin(pluginId),
+    ]);
+    const guildNames: Record<string, string | null> = {};
+    for (const gid of new Set([
+      ...kvGuilds.map((g) => g.guildId),
+      ...featureRows.map((r) => r.guildId),
+    ])) {
+      guildNames[gid] = resolveGuildName(gid);
+    }
+    return {
+      ok: true,
+      value: {
+        config,
+        kv: { quotaBytes: kvQuotaBytes, guilds: kvGuilds },
+        featureOverrides: featureRows.map((r) => ({
+          guildId: r.guildId,
+          featureKey: r.featureKey,
+          enabled: r.enabled,
+        })),
+        guildNames,
+      },
+    };
+  }
 
   /**
    * Admin toggle. Disabling a plugin revokes its token immediately —
@@ -181,7 +426,7 @@ export class PluginAdmin {
     pluginId: number,
     scopes: string[],
   ): Promise<AdminOutcome<PluginScopeState>> {
-    const state = await this.registry.getScopeState(pluginId);
+    const state = await this.getScopeState(pluginId);
     if (!state) return { ok: false, refusal: { kind: "not_found" } };
     // Clamp to the requested set and de-dup; an admin can only approve
     // what the manifest declares.
@@ -215,7 +460,7 @@ export class PluginAdmin {
   async approveAllScopes(
     pluginId: number,
   ): Promise<AdminOutcome<PluginScopeState>> {
-    const state = await this.registry.getScopeState(pluginId);
+    const state = await this.getScopeState(pluginId);
     if (!state) return { ok: false, refusal: { kind: "not_found" } };
     return this.setApprovedScopes(pluginId, state.requested);
   }
@@ -423,7 +668,7 @@ export class PluginAdmin {
     actor: string | undefined,
   ): Promise<AdminOutcome<PluginGuildFeatureRow>> {
     const { pluginId, guildId, featureKey } = input;
-    const plugin = (await this.registry.list()).find((p) => p.id === pluginId);
+    const plugin = await findPluginById(pluginId);
     if (!plugin) return { ok: false, refusal: { kind: "not_found" } };
     const manifest = safeParseJson(plugin.manifestJson) as
       | PluginManifest
@@ -522,7 +767,7 @@ export class PluginAdmin {
     // register them in this guild; disabled → delete them. Idempotent
     // (a config-only save just re-confirms the current state).
     {
-      const pluginRow = await this.registry.findById(pluginId);
+      const pluginRow = await findPluginById(pluginId);
       const manifestObj = pluginRow
         ? (safeParseJson(pluginRow.manifestJson) as PluginManifest | null)
         : null;
@@ -583,7 +828,7 @@ export class PluginAdmin {
     values: Record<string, unknown>,
     actor: string | undefined,
   ): Promise<AdminOutcome<{ accepted: string[]; skipped: string[] }>> {
-    const plugin = (await this.registry.list()).find((p) => p.id === pluginId);
+    const plugin = await findPluginById(pluginId);
     if (!plugin) return { ok: false, refusal: { kind: "not_found" } };
     const manifest = safeParseJson(plugin.manifestJson) as
       | PluginManifest
@@ -636,4 +881,293 @@ function safeParseJson(json: string): unknown {
   }
 }
 
-export const pluginAdmin = new PluginAdmin(pluginAuthStore, pluginRegistry);
+// ─── Admin read assembly (A4, #51) ─────────────────────────────────
+//
+// Verbatim moves of the payload assembly the admin GET routes used to
+// do inline. Field order is meaning-bearing here: these bodies are
+// consumed by the frontend and must stay byte-identical.
+//
+// `pluginRegistry` below is the module singleton, not a constructor
+// dependency: background command-sync state is in-memory, plugin-
+// initiated runtime state the registry owns ("the queries the runtime
+// shares") — the admin list merely reports it, exactly as the route
+// used to.
+
+/**
+ * The RPC methods a plugin's manifest declares (`rpc_methods_used`).
+ * These ARE the plugin's granted scopes — surfaced read-only in the
+ * admin UI; there's no approval step. Malformed manifest → [].
+ */
+function manifestRpcMethods(manifestJson: string): string[] {
+  const m = safeParseJson(manifestJson) as {
+    rpc_methods_used?: unknown;
+  } | null;
+  if (!m || !Array.isArray(m.rpc_methods_used)) return [];
+  return m.rpc_methods_used.filter((s): s is string => typeof s === "string");
+}
+
+/** Declared GLOBAL event subscriptions (PM-8) — the requested grant set. */
+function manifestGlobalEventSubs(manifestJson: string): string[] {
+  const m = safeParseJson(manifestJson) as {
+    events_subscribed_global?: unknown;
+  } | null;
+  if (!m || !Array.isArray(m.events_subscribed_global)) return [];
+  return m.events_subscribed_global.filter(
+    (s): s is string => typeof s === "string",
+  );
+}
+
+/** One entry in the admin plugin list (GET /api/plugins). */
+function assembleAdminListEntry(p: PluginRow) {
+  return {
+    id: p.id,
+    pluginKey: p.pluginKey,
+    name: p.name,
+    version: p.version,
+    url: p.url,
+    status: p.status,
+    enabled: p.enabled,
+    lastHeartbeatAt: p.lastHeartbeatAt,
+    manifest: safeParseJson(p.manifestJson),
+    rpcMethods: manifestRpcMethods(p.manifestJson),
+    // RPC scope approval state (PM-3.1). rpcMethods are the
+    // *requested* scopes; approved is the admin-granted subset the
+    // token actually carries; pending is the still-unapproved delta.
+    approvedRpcScopes: p.approvedRpcScopes,
+    pendingRpcScopes: manifestRpcMethods(p.manifestJson).filter(
+      (m) => !p.approvedRpcScopes.includes(m),
+    ),
+    // Global event subscription grant state (PM-8). Mirrors the RPC
+    // scope model; with PLUGIN_AUTO_APPROVE=true nothing is ever
+    // pending (the index treats declared as granted).
+    approvedGlobalEventSubs: config.plugin.autoApproveScopes
+      ? manifestGlobalEventSubs(p.manifestJson)
+      : p.approvedGlobalEventSubs,
+    pendingGlobalEventSubs: config.plugin.autoApproveScopes
+      ? []
+      : manifestGlobalEventSubs(p.manifestJson).filter(
+          (e) => !p.approvedGlobalEventSubs.includes(e),
+        ),
+    // Background command-sync state (PM-7.1/7.6). null = no sync
+    // attempted since this bot process started (e.g. plugin
+    // registered before the last bot restart).
+    commandSync: pluginRegistry.getCommandSyncState(p.pluginKey),
+    // Dispatch-path health (PM-7.9.1). null = no dispatch attempted
+    // since this bot process started. Distinct from liveness: a
+    // plugin can heartbeat green while rejecting every dispatch
+    // (e.g. HMAC scheme mismatch).
+    dispatch: getDispatchHealth(p.pluginKey),
+    // SDK wire-format compat verdict (PM-7.9.3). `unknown` on a
+    // placeholder row just means "never registered" — combine with
+    // version === "0.0.0" before alarming.
+    sdkCompat: evaluateSdkCompatFromManifestJson(p.manifestJson),
+    // Unknown event-subscription verdict (#29 decisions 4/6/7),
+    // rendered on the health card next to sdkCompat. Warn-only this
+    // release, so an already-registered plugin with a doomed
+    // subscription is visible here before the reject phase lands.
+    eventSubscriptions: evaluateEventSubscriptionsFromManifestJson(
+      p.manifestJson,
+    ),
+  };
+}
+
+export type AdminPluginListEntry = ReturnType<typeof assembleAdminListEntry>;
+
+/** The by-id detail body (GET /api/plugins/:id). */
+async function assemblePluginDetail(p: PluginRow) {
+  // Surface latest health probe + metrics snapshot inline so the
+  // admin UI doesn't need a second round-trip per plugin card.
+  const { getHealth } = await import("./plugin-health-store.js");
+  const { getSnapshot } = await import("./plugin-metrics-store.js");
+  const health = await getHealth(p.pluginKey);
+  const metrics = await getSnapshot(p.pluginKey);
+  return {
+    plugin: {
+      id: p.id,
+      pluginKey: p.pluginKey,
+      name: p.name,
+      version: p.version,
+      url: p.url,
+      status: p.status,
+      enabled: p.enabled,
+      lastHeartbeatAt: p.lastHeartbeatAt,
+      manifest: safeParseJson(p.manifestJson),
+    },
+    commandSync: pluginRegistry.getCommandSyncState(p.pluginKey),
+    dispatch: getDispatchHealth(p.pluginKey),
+    sdkCompat: evaluateSdkCompatFromManifestJson(p.manifestJson),
+    eventSubscriptions: evaluateEventSubscriptionsFromManifestJson(
+      p.manifestJson,
+    ),
+    ...(health ? { health } : {}),
+    ...(metrics ? { metrics } : {}),
+  };
+}
+
+export type AdminPluginDetail = Awaited<
+  ReturnType<typeof assemblePluginDetail>
+>;
+
+/** The by-key detail body (GET /api/plugins/by-key/:pluginKey). */
+async function assemblePluginDetailByKey(p: PluginRow) {
+  const pluginCommands = await findPluginCommandsByPlugin(p.id);
+  // 軌三：featureKey=null；軌一：featureKey!=null（不在此 tab 顯示）
+  const thirdTrackCommands = pluginCommands.filter(
+    (c) => c.featureKey === null,
+  );
+  // Surface latest health + metrics inline for the overview tab.
+  // Both fields are optional — a plugin that hasn't
+  // pushed a metrics snapshot yet (just registered) or hasn't been
+  // probed yet (admin opened the page before the first 60 s poll)
+  // gets the field omitted.
+  const { getHealth } = await import("./plugin-health-store.js");
+  const { getSnapshot } = await import("./plugin-metrics-store.js");
+  const health = await getHealth(p.pluginKey);
+  const metrics = await getSnapshot(p.pluginKey);
+
+  return {
+    plugin: {
+      id: p.id,
+      pluginKey: p.pluginKey,
+      name: p.name,
+      version: p.version,
+      url: p.url,
+      status: p.status,
+      enabled: p.enabled,
+      lastHeartbeatAt: p.lastHeartbeatAt,
+      manifest: safeParseJson(p.manifestJson),
+      rpcMethods: manifestRpcMethods(p.manifestJson),
+      // RPC scope approval state (PM-3.1), same shape as the list route.
+      approvedRpcScopes: p.approvedRpcScopes,
+      pendingRpcScopes: manifestRpcMethods(p.manifestJson).filter(
+        (m) => !p.approvedRpcScopes.includes(m),
+      ),
+      // Global event subscription grant state (PM-8), same shape as list.
+      approvedGlobalEventSubs: config.plugin.autoApproveScopes
+        ? manifestGlobalEventSubs(p.manifestJson)
+        : p.approvedGlobalEventSubs,
+      pendingGlobalEventSubs: config.plugin.autoApproveScopes
+        ? []
+        : manifestGlobalEventSubs(p.manifestJson).filter(
+            (e) => !p.approvedGlobalEventSubs.includes(e),
+          ),
+      // Server-wide flag (PLUGIN_AUTO_APPROVE, default on): when set,
+      // every declared scope/global-sub is granted at register time
+      // with no operator review — the Security tab surfaces this so an
+      // empty "pending" list reads as "auto-approved", not "vetted".
+      autoApproveScopes: config.plugin.autoApproveScopes,
+      pluginCommands: thirdTrackCommands.map((c) => ({
+        id: c.id,
+        name: c.name,
+        featureKey: c.featureKey,
+        adminEnabled: c.adminEnabled,
+        manifestJson: c.manifestJson,
+      })),
+      dispatch: getDispatchHealth(p.pluginKey),
+      sdkCompat: evaluateSdkCompatFromManifestJson(p.manifestJson),
+      eventSubscriptions: evaluateEventSubscriptionsFromManifestJson(
+        p.manifestJson,
+      ),
+      ...(health ? { health } : {}),
+      ...(metrics ? { metrics } : {}),
+    },
+  };
+}
+
+export type AdminPluginDetailByKey = Awaited<
+  ReturnType<typeof assemblePluginDetailByKey>
+>;
+
+/**
+ * Build the admin config-editor payload for a plugin: the manifest's
+ * config_schema, current values (secrets masked), and the current vs
+ * last-saved config_schema_version (for the stale-config warning). Shared
+ * by GET /config and GET /settings.
+ */
+async function buildConfigPayload(plugin: PluginRow) {
+  const manifest = safeParseJson(plugin.manifestJson) as PluginManifest | null;
+  const schema = manifest?.config_schema ?? [];
+  const rows = await findConfigByPluginAndSource(plugin.id, "admin");
+  const byKey = new Map(rows.map((r) => [r.key, r]));
+  return {
+    schema,
+    // PD-4.3: current schema version vs the one the stored config was last
+    // saved under. The UI warns when stored < current (stale).
+    configSchemaVersion: manifest?.config_schema_version ?? null,
+    storedConfigSchemaVersion: plugin.configSchemaVersion,
+    values: schema.map((field) => {
+      const row = byKey.get(field.key);
+      if (!row) return { key: field.key, set: false, value: null };
+      if (field.type === "secret") {
+        return { key: field.key, set: true, value: "********" };
+      }
+      return { key: field.key, set: true, value: row.value };
+    }),
+  };
+}
+
+export type AdminConfigEditorPayload = Awaited<
+  ReturnType<typeof buildConfigPayload>
+>;
+
+/** GET /api/plugins/:id/settings — the "設定" tab's one-shot payload. */
+export interface AdminPluginSettings {
+  config: AdminConfigEditorPayload;
+  kv: {
+    quotaBytes: number;
+    guilds: Awaited<ReturnType<typeof kvUsageByPlugin>>;
+  };
+  featureOverrides: Array<{
+    guildId: string;
+    featureKey: string;
+    enabled: boolean;
+  }>;
+  guildNames: Record<string, string | null>;
+}
+
+/** One row of GET /api/plugins/guilds/:guildId/features. */
+export interface AdminGuildFeatureItem {
+  pluginId: number;
+  pluginKey: string;
+  pluginName: string;
+  featureKey: string;
+  name: string;
+  description: string | undefined;
+  icon: string | undefined;
+  configSchema: unknown;
+  surfaces: string[];
+  /** Effective on/off for this guild: per-guild row → operator default → manifest default → false. */
+  enabled: boolean;
+  /** True if there's an explicit per-guild row (i.e. the guild overrides the default). */
+  overridden: boolean;
+  /** The resolved default this guild falls back to when not overridden (operator default → manifest default → false). */
+  defaultEnabled: boolean;
+  /** The operator-level default ("All Servers"), or null when none is set — lets the UI name which tier `defaultEnabled` comes from. */
+  operatorDefault: boolean | null;
+  /** The manifest's enabled_by_default. */
+  manifestDefault: boolean;
+  config: Record<string, unknown>;
+  metrics: Record<string, unknown>;
+  pluginEnabled: boolean;
+  pluginStatus: "active" | "inactive";
+}
+
+/** One row of GET /api/plugins/feature-defaults. */
+export interface AdminFeatureDefaultItem {
+  pluginId: number;
+  pluginKey: string;
+  pluginName: string;
+  pluginEnabled: boolean;
+  pluginStatus: "active" | "inactive";
+  featureKey: string;
+  featureName: string;
+  featureDescription: string | undefined;
+  featureIcon: string | undefined;
+  manifestDefault: boolean;
+  override: boolean | null;
+  effectiveDefault: boolean;
+  enabledGuildCount: number;
+  disabledGuildCount: number;
+}
+
+export const pluginAdmin = new PluginAdmin(pluginAuthStore);

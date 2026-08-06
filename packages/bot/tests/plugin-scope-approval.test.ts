@@ -94,7 +94,7 @@ beforeEach(async () => {
   await Plugin.destroy({ where: {} });
   auth = new PluginAuthStore();
   registry = new PluginRegistry(auth);
-  admin = new PluginAdmin(auth, registry);
+  admin = new PluginAdmin(auth);
   // Restore the default; individual tests flip it as needed.
   config.plugin.autoApproveScopes = true;
 });
@@ -119,7 +119,7 @@ describe("1. auto-approve ON (default)", () => {
     );
     expect(tokenScopes(res)).toEqual(["config.get", "messages.send"]);
 
-    const state = await registry.getScopeState(res.plugin.id);
+    const state = await admin.getScopeState(res.plugin.id);
     expect(state).toEqual({
       requested: ["messages.send", "config.get"],
       approved: ["messages.send", "config.get"],
@@ -139,7 +139,7 @@ describe("2. auto-approve OFF, first register", () => {
     );
     expect(tokenScopes(res)).toEqual([]);
 
-    const state = await registry.getScopeState(res.plugin.id);
+    const state = await admin.getScopeState(res.plugin.id);
     expect(state?.approved).toEqual([]);
     expect(state?.pending).toEqual(["messages.send", "config.get"]);
   });
@@ -164,7 +164,7 @@ describe("3. approveAllScopes", () => {
     // Same token string, scopes now present — no re-register needed.
     expect(tokenScopes(res)).toEqual(["messages.send"]);
     // And it's persisted.
-    const reread = await registry.getScopeState(res.plugin.id);
+    const reread = await admin.getScopeState(res.plugin.id);
     expect(reread?.approved).toEqual(["messages.send"]);
   });
 });
@@ -185,7 +185,7 @@ describe("4. approval is sticky across re-register", () => {
     // Already-approved scope still granted; the new one is withheld.
     expect(tokenScopes(second)).toEqual(["messages.send"]);
 
-    const state = await registry.getScopeState(second.plugin.id);
+    const state = await admin.getScopeState(second.plugin.id);
     expect(state?.approved).toEqual(["messages.send"]);
     expect(state?.pending).toEqual(["messages.delete"]);
   });
@@ -206,7 +206,7 @@ describe("5. dropping a requested scope on re-register", () => {
     const second = await registry.register(makeManifest(["messages.send"]));
     expect(tokenScopes(second)).toEqual(["messages.send"]);
 
-    const state = await registry.getScopeState(second.plugin.id);
+    const state = await admin.getScopeState(second.plugin.id);
     expect(state?.approved).toEqual(["messages.send"]);
     expect(state?.requested).toEqual(["messages.send"]);
   });

@@ -756,37 +756,6 @@ export class PluginRegistry {
     }
   }
 
-  /**
-   * Admin view of a plugin's RPC scope state: what the current manifest
-   * requests, what's approved, and the still-pending delta. Returns null
-   * if the plugin doesn't exist.
-   *
-   * An admin read, so it belongs to Plugin Admin by the actor line —
-   * it is still here only because admin reads move as one batch in a
-   * later increment (see ADR 0002). Plugin Admin calls it meanwhile.
-   */
-  async getScopeState(pluginId: number): Promise<{
-    requested: string[];
-    approved: string[];
-    pending: string[];
-  } | null> {
-    const row = await findPluginById(pluginId);
-    if (!row) return null;
-    const requested = (() => {
-      try {
-        return (
-          (JSON.parse(row.manifestJson) as PluginManifest).rpc_methods_used ??
-          []
-        );
-      } catch {
-        return [];
-      }
-    })();
-    const approved = row.approvedRpcScopes;
-    const pending = requested.filter((s) => !approved.includes(s));
-    return { requested, approved, pending };
-  }
-
   async list(): Promise<PluginRow[]> {
     return findAllPlugins();
   }

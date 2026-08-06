@@ -7,20 +7,10 @@ import { requireCapability, requirePluginCapability } from "../web-core/route-gu
 import { jwtService } from "../web-core/jwt.service.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { shouldRecord } from "../bot-events/bot-event-dedup.js";
-import {
-  deleteFeatureRow,
-  findFeatureRowsByPlugin,
-} from "../feature-toggle/models/plugin-guild-feature.model.js";
-import {
-  findAllFeatureDefaults,
-  upsertFeatureDefault,
-  type PluginFeatureDefaultRow,
-} from "../feature-toggle/models/plugin-feature-default.model.js";
+import { deleteFeatureRow } from "../feature-toggle/models/plugin-guild-feature.model.js";
+import { upsertFeatureDefault } from "../feature-toggle/models/plugin-feature-default.model.js";
 import { emitPluginChange } from "./plugin-changes.js";
 import { featureReachResolver } from "../feature-toggle/feature-reach-resolver.js";
-import { findConfigByPluginAndSource } from "./models/plugin-config.model.js";
-import { kvUsageByPlugin } from "./models/plugin-kv.model.js";
-import { quotaForGuildKv } from "./plugin-kv-quota.js";
 import { mintPluginManageToken } from "./plugin-manage-token.js";
 import type { PluginManifest } from "./plugin-registry.service.js";
 import {
@@ -29,8 +19,6 @@ import {
 } from "./plugin-command-registry.service.js";
 import { getDispatchHealth } from "./plugin-dispatch-health.service.js";
 import { probePluginDispatch } from "./plugin-dispatch-probe.service.js";
-import { evaluateSdkCompatFromManifestJson } from "./plugin-sdk-compat.js";
-import { evaluateEventSubscriptionsFromManifestJson } from "./plugin-event-subscriptions.js";
 import { dispatchLifecycleToPlugin } from "./plugin-lifecycle-dispatch.service.js";
 import { recordAudit } from "../admin/admin-audit.service.js";
 import { config } from "../../config.js";
@@ -39,12 +27,8 @@ import {
   findPluginById,
   setPluginSetupSecretHash,
   upsertPluginRegistration,
-  type PluginRow,
 } from "./models/plugin.model.js";
-import {
-  findPluginCommandsByPlugin,
-  PluginCommand,
-} from "./models/plugin-command.model.js";
+import { PluginCommand } from "./models/plugin-command.model.js";
 import type { CommandReconciler } from "../command-system/reconcile.service.js";
 import { createHash, randomBytes } from "crypto";
 
@@ -151,34 +135,6 @@ function presentedBearerToken(req: FastifyRequest): string | null {
 export interface PluginRoutesOptions {
   bot?: Client;
   reconciler?: import("../command-system/reconcile.service.js").CommandReconciler;
-}
-
-/**
- * Build the admin config-editor payload for a plugin: the manifest's
- * config_schema, current values (secrets masked), and the current vs
- * last-saved config_schema_version (for the stale-config warning). Shared
- * by GET /config and GET /settings.
- */
-async function buildConfigPayload(plugin: PluginRow) {
-  const manifest = safeParse(plugin.manifestJson) as PluginManifest | null;
-  const schema = manifest?.config_schema ?? [];
-  const rows = await findConfigByPluginAndSource(plugin.id, "admin");
-  const byKey = new Map(rows.map((r) => [r.key, r]));
-  return {
-    schema,
-    // PD-4.3: current schema version vs the one the stored config was last
-    // saved under. The UI warns when stored < current (stale).
-    configSchemaVersion: manifest?.config_schema_version ?? null,
-    storedConfigSchemaVersion: plugin.configSchemaVersion,
-    values: schema.map((field) => {
-      const row = byKey.get(field.key);
-      if (!row) return { key: field.key, set: false, value: null };
-      if (field.type === "secret") {
-        return { key: field.key, set: true, value: "********" };
-      }
-      return { key: field.key, set: true, value: row.value };
-    }),
-  };
 }
 
 export async function registerPluginRoutes(
@@ -484,62 +440,15 @@ export async function registerPluginRoutes(
 
   // ─── Admin-facing ────────────────────────────────────────────────
 
-  /** GET /api/plugins — list all known plugins for the admin UI. */
+  /**
+   * GET /api/plugins — list all known plugins for the admin UI. The
+   * per-plugin assembly (sdk-compat verdict, Subscription Verdict,
+   * dispatch health, command-sync state) is a Plugin Admin operation
+   * (#51 decision 2); this handler keeps the guard and the envelope.
+   */
   server.get("/api/plugins", async (request, reply) => {
     if (!requireCapability(request, reply, "admin")) return;
-    const rows = await pluginRegistry.list();
-    return {
-      plugins: rows.map((p) => ({
-        id: p.id,
-        pluginKey: p.pluginKey,
-        name: p.name,
-        version: p.version,
-        url: p.url,
-        status: p.status,
-        enabled: p.enabled,
-        lastHeartbeatAt: p.lastHeartbeatAt,
-        manifest: safeParse(p.manifestJson),
-        rpcMethods: manifestRpcMethods(p.manifestJson),
-        // RPC scope approval state (PM-3.1). rpcMethods are the
-        // *requested* scopes; approved is the admin-granted subset the
-        // token actually carries; pending is the still-unapproved delta.
-        approvedRpcScopes: p.approvedRpcScopes,
-        pendingRpcScopes: manifestRpcMethods(p.manifestJson).filter(
-          (m) => !p.approvedRpcScopes.includes(m),
-        ),
-        // Global event subscription grant state (PM-8). Mirrors the RPC
-        // scope model; with PLUGIN_AUTO_APPROVE=true nothing is ever
-        // pending (the index treats declared as granted).
-        approvedGlobalEventSubs: config.plugin.autoApproveScopes
-          ? manifestGlobalEventSubs(p.manifestJson)
-          : p.approvedGlobalEventSubs,
-        pendingGlobalEventSubs: config.plugin.autoApproveScopes
-          ? []
-          : manifestGlobalEventSubs(p.manifestJson).filter(
-              (e) => !p.approvedGlobalEventSubs.includes(e),
-            ),
-        // Background command-sync state (PM-7.1/7.6). null = no sync
-        // attempted since this bot process started (e.g. plugin
-        // registered before the last bot restart).
-        commandSync: pluginRegistry.getCommandSyncState(p.pluginKey),
-        // Dispatch-path health (PM-7.9.1). null = no dispatch attempted
-        // since this bot process started. Distinct from liveness: a
-        // plugin can heartbeat green while rejecting every dispatch
-        // (e.g. HMAC scheme mismatch).
-        dispatch: getDispatchHealth(p.pluginKey),
-        // SDK wire-format compat verdict (PM-7.9.3). `unknown` on a
-        // placeholder row just means "never registered" — combine with
-        // version === "0.0.0" before alarming.
-        sdkCompat: evaluateSdkCompatFromManifestJson(p.manifestJson),
-        // Unknown event-subscription verdict (#29 decisions 4/6/7),
-        // rendered on the health card next to sdkCompat. Warn-only this
-        // release, so an already-registered plugin with a doomed
-        // subscription is visible here before the reject phase lands.
-        eventSubscriptions: evaluateEventSubscriptionsFromManifestJson(
-          p.manifestJson,
-        ),
-      })),
-    };
+    return { plugins: await pluginAdmin.listPlugins() };
   });
 
   /**
@@ -601,7 +510,11 @@ export async function registerPluginRoutes(
     },
   );
 
-  /** GET /api/plugins/:id — single plugin detail (manifest snapshot). */
+  /**
+   * GET /api/plugins/:id — single plugin detail (manifest snapshot).
+   * Assembly owned by Plugin Admin (`getPluginDetail`); this handler
+   * keeps the guard, the id parse, and the refusal mapping.
+   */
   server.get<{ Params: { id: string } }>(
     "/api/plugins/:id",
     async (request, reply) => {
@@ -611,39 +524,28 @@ export async function registerPluginRoutes(
         reply.code(400).send({ error: "invalid id" });
         return;
       }
-      const all = await pluginRegistry.list();
-      const p = all.find((x) => x.id === id);
-      if (!p) {
-        reply.code(404).send({ error: "plugin not found" });
-        return;
+      const outcome = await pluginAdmin.getPluginDetail(id);
+      if (!outcome.ok) {
+        switch (outcome.refusal.kind) {
+          case "not_found":
+            reply.code(404).send({ error: "plugin not found" });
+            return;
+          case "feature_not_found":
+            reply.code(404).send({
+              error: `feature '${outcome.refusal.featureKey}' not declared by plugin`,
+            });
+            return;
+          case "validation_failed":
+            reply.code(422).send({
+              error: "config validation failed",
+              fieldErrors: outcome.refusal.fieldErrors,
+            });
+            return;
+          default:
+            return unhandledRefusal(outcome.refusal);
+        }
       }
-      // Surface latest health probe + metrics snapshot inline so the
-      // admin UI doesn't need a second round-trip per plugin card.
-      const { getHealth } = await import("./plugin-health-store.js");
-      const { getSnapshot } = await import("./plugin-metrics-store.js");
-      const health = await getHealth(p.pluginKey);
-      const metrics = await getSnapshot(p.pluginKey);
-      return {
-        plugin: {
-          id: p.id,
-          pluginKey: p.pluginKey,
-          name: p.name,
-          version: p.version,
-          url: p.url,
-          status: p.status,
-          enabled: p.enabled,
-          lastHeartbeatAt: p.lastHeartbeatAt,
-          manifest: safeParse(p.manifestJson),
-        },
-        commandSync: pluginRegistry.getCommandSyncState(p.pluginKey),
-        dispatch: getDispatchHealth(p.pluginKey),
-        sdkCompat: evaluateSdkCompatFromManifestJson(p.manifestJson),
-        eventSubscriptions: evaluateEventSubscriptionsFromManifestJson(
-          p.manifestJson,
-        ),
-        ...(health ? { health } : {}),
-        ...(metrics ? { metrics } : {}),
-      };
+      return outcome.value;
     },
   );
 
@@ -667,74 +569,28 @@ export async function registerPluginRoutes(
         reply.code(400).send({ error: "pluginKey required" });
         return;
       }
-      const all = await pluginRegistry.list();
-      const p = all.find((x) => x.pluginKey === pluginKey);
-      if (!p) {
-        reply.code(404).send({ error: "plugin not found" });
-        return;
+      const outcome = await pluginAdmin.getPluginDetailByKey(pluginKey);
+      if (!outcome.ok) {
+        switch (outcome.refusal.kind) {
+          case "not_found":
+            reply.code(404).send({ error: "plugin not found" });
+            return;
+          case "feature_not_found":
+            reply.code(404).send({
+              error: `feature '${outcome.refusal.featureKey}' not declared by plugin`,
+            });
+            return;
+          case "validation_failed":
+            reply.code(422).send({
+              error: "config validation failed",
+              fieldErrors: outcome.refusal.fieldErrors,
+            });
+            return;
+          default:
+            return unhandledRefusal(outcome.refusal);
+        }
       }
-      const pluginCommands = await findPluginCommandsByPlugin(p.id);
-      // 軌三：featureKey=null；軌一：featureKey!=null（不在此 tab 顯示）
-      const thirdTrackCommands = pluginCommands.filter(
-        (c) => c.featureKey === null,
-      );
-      // Surface latest health + metrics inline for the overview tab.
-      // Both fields are optional — a plugin that hasn't
-      // pushed a metrics snapshot yet (just registered) or hasn't been
-      // probed yet (admin opened the page before the first 60 s poll)
-      // gets the field omitted.
-      const { getHealth } = await import("./plugin-health-store.js");
-      const { getSnapshot } = await import("./plugin-metrics-store.js");
-      const health = await getHealth(p.pluginKey);
-      const metrics = await getSnapshot(p.pluginKey);
-
-      return {
-        plugin: {
-          id: p.id,
-          pluginKey: p.pluginKey,
-          name: p.name,
-          version: p.version,
-          url: p.url,
-          status: p.status,
-          enabled: p.enabled,
-          lastHeartbeatAt: p.lastHeartbeatAt,
-          manifest: safeParse(p.manifestJson),
-          rpcMethods: manifestRpcMethods(p.manifestJson),
-          // RPC scope approval state (PM-3.1), same shape as the list route.
-          approvedRpcScopes: p.approvedRpcScopes,
-          pendingRpcScopes: manifestRpcMethods(p.manifestJson).filter(
-            (m) => !p.approvedRpcScopes.includes(m),
-          ),
-          // Global event subscription grant state (PM-8), same shape as list.
-          approvedGlobalEventSubs: config.plugin.autoApproveScopes
-            ? manifestGlobalEventSubs(p.manifestJson)
-            : p.approvedGlobalEventSubs,
-          pendingGlobalEventSubs: config.plugin.autoApproveScopes
-            ? []
-            : manifestGlobalEventSubs(p.manifestJson).filter(
-                (e) => !p.approvedGlobalEventSubs.includes(e),
-              ),
-          // Server-wide flag (PLUGIN_AUTO_APPROVE, default on): when set,
-          // every declared scope/global-sub is granted at register time
-          // with no operator review — the Security tab surfaces this so an
-          // empty "pending" list reads as "auto-approved", not "vetted".
-          autoApproveScopes: config.plugin.autoApproveScopes,
-          pluginCommands: thirdTrackCommands.map((c) => ({
-            id: c.id,
-            name: c.name,
-            featureKey: c.featureKey,
-            adminEnabled: c.adminEnabled,
-            manifestJson: c.manifestJson,
-          })),
-          dispatch: getDispatchHealth(p.pluginKey),
-          sdkCompat: evaluateSdkCompatFromManifestJson(p.manifestJson),
-          eventSubscriptions: evaluateEventSubscriptionsFromManifestJson(
-            p.manifestJson,
-          ),
-          ...(health ? { health } : {}),
-          ...(metrics ? { metrics } : {}),
-        },
-      };
+      return outcome.value;
     },
   );
 
@@ -822,76 +678,7 @@ export async function registerPluginRoutes(
         reply.code(400).send({ error: "guildId required" });
         return;
       }
-      const plugins = await pluginRegistry.list();
-      const items: Array<{
-        pluginId: number;
-        pluginKey: string;
-        pluginName: string;
-        featureKey: string;
-        name: string;
-        description: string | undefined;
-        icon: string | undefined;
-        configSchema: unknown;
-        surfaces: string[];
-        /** Effective on/off for this guild: per-guild row → operator default → manifest default → false. */
-        enabled: boolean;
-        /** True if there's an explicit per-guild row (i.e. the guild overrides the default). */
-        overridden: boolean;
-        /** The resolved default this guild falls back to when not overridden (operator default → manifest default → false). */
-        defaultEnabled: boolean;
-        /** The operator-level default ("All Servers"), or null when none is set — lets the UI name which tier `defaultEnabled` comes from. */
-        operatorDefault: boolean | null;
-        /** The manifest's enabled_by_default. */
-        manifestDefault: boolean;
-        config: Record<string, unknown>;
-        metrics: Record<string, unknown>;
-        pluginEnabled: boolean;
-        pluginStatus: "active" | "inactive";
-      }> = [];
-      for (const p of plugins) {
-        const manifest = safeParse(p.manifestJson) as PluginManifest | null;
-        if (!manifest) continue;
-        const resolved = await featureReachResolver.resolveGuildFeatures(
-          p.id,
-          guildId,
-          manifest,
-        );
-        for (const f of manifest.guild_features ?? []) {
-          const feature = resolved.get(f.key);
-          if (!feature) continue;
-          items.push({
-            pluginId: p.id,
-            pluginKey: p.pluginKey,
-            pluginName: p.name,
-            featureKey: f.key,
-            name: f.name,
-            description: f.description,
-            icon: f.icon,
-            configSchema: f.config_schema ?? [],
-            surfaces: f.surfaces ?? ["bot_functions_tab"],
-            enabled: feature.enabled,
-            overridden: feature.overridden,
-            defaultEnabled: feature.defaultEnabled,
-            operatorDefault: feature.operatorDefault,
-            manifestDefault: feature.manifestDefault,
-            config: feature.row
-              ? ((safeParse(feature.row.configJson) as Record<
-                  string,
-                  unknown
-                >) ?? {})
-              : {},
-            metrics: feature.row
-              ? ((safeParse(feature.row.metricsJson) as Record<
-                  string,
-                  unknown
-                >) ?? {})
-              : {},
-            pluginEnabled: p.enabled,
-            pluginStatus: p.status,
-          });
-        }
-      }
-      return { features: items };
+      return { features: await pluginAdmin.listGuildFeatures(guildId) };
     },
   );
 
@@ -1003,9 +790,7 @@ export async function registerPluginRoutes(
         reply.code(400).send({ error: "guildId + featureKey required" });
         return;
       }
-      const plugin = (await pluginRegistry.list()).find(
-        (p) => p.id === pluginId,
-      );
+      const plugin = await findPluginById(pluginId);
       if (!plugin) {
         reply.code(404).send({ error: "plugin not found" });
         return;
@@ -1102,59 +887,7 @@ export async function registerPluginRoutes(
    */
   server.get("/api/plugins/feature-defaults", async (request, reply) => {
     if (!requireCapability(request, reply, "admin")) return;
-    const plugins = await pluginRegistry.list();
-    const overrides = await findAllFeatureDefaults();
-    const overrideByKey = new Map<string, PluginFeatureDefaultRow>(
-      overrides.map((o) => [`${o.pluginId}:${o.featureKey}`, o]),
-    );
-    const items: Array<{
-      pluginId: number;
-      pluginKey: string;
-      pluginName: string;
-      pluginEnabled: boolean;
-      pluginStatus: "active" | "inactive";
-      featureKey: string;
-      featureName: string;
-      featureDescription: string | undefined;
-      featureIcon: string | undefined;
-      manifestDefault: boolean;
-      override: boolean | null;
-      effectiveDefault: boolean;
-      enabledGuildCount: number;
-      disabledGuildCount: number;
-    }> = [];
-    for (const p of plugins) {
-      const manifest = safeParse(p.manifestJson) as PluginManifest | null;
-      if (!manifest) continue;
-      const guildRows = await findFeatureRowsByPlugin(p.id);
-      for (const f of manifest.guild_features ?? []) {
-        const override = overrideByKey.get(`${p.id}:${f.key}`);
-        const manifestDefault = !!f.enabled_by_default;
-        const effective = override ? override.enabled : manifestDefault;
-        const guildRowsForFeature = guildRows.filter(
-          (r) => r.featureKey === f.key,
-        );
-        items.push({
-          pluginId: p.id,
-          pluginKey: p.pluginKey,
-          pluginName: p.name,
-          pluginEnabled: p.enabled,
-          pluginStatus: p.status,
-          featureKey: f.key,
-          featureName: f.name,
-          featureDescription: f.description,
-          featureIcon: f.icon,
-          manifestDefault,
-          override: override ? override.enabled : null,
-          effectiveDefault: effective,
-          enabledGuildCount: guildRowsForFeature.filter((r) => r.enabled)
-            .length,
-          disabledGuildCount: guildRowsForFeature.filter((r) => !r.enabled)
-            .length,
-        });
-      }
-    }
-    return { features: items };
+    return { features: await pluginAdmin.listFeatureDefaults() };
   });
 
   /**
@@ -1185,9 +918,7 @@ export async function registerPluginRoutes(
         reply.code(400).send({ error: "enabled boolean required" });
         return;
       }
-      const plugin = (await pluginRegistry.list()).find(
-        (p) => p.id === pluginId,
-      );
+      const plugin = await findPluginById(pluginId);
       if (!plugin) {
         reply.code(404).send({ error: "plugin not found" });
         return;
@@ -1320,12 +1051,28 @@ export async function registerPluginRoutes(
         reply.code(400).send({ error: "invalid plugin id" });
         return;
       }
-      const plugin = await pluginRegistry.findById(pluginId);
-      if (!plugin) {
-        reply.code(404).send({ error: "plugin not found" });
-        return;
+      const outcome = await pluginAdmin.getPluginConfig(pluginId);
+      if (!outcome.ok) {
+        switch (outcome.refusal.kind) {
+          case "not_found":
+            reply.code(404).send({ error: "plugin not found" });
+            return;
+          case "feature_not_found":
+            reply.code(404).send({
+              error: `feature '${outcome.refusal.featureKey}' not declared by plugin`,
+            });
+            return;
+          case "validation_failed":
+            reply.code(422).send({
+              error: "config validation failed",
+              fieldErrors: outcome.refusal.fieldErrors,
+            });
+            return;
+          default:
+            return unhandledRefusal(outcome.refusal);
+        }
       }
-      return buildConfigPayload(plugin);
+      return outcome.value;
     },
   );
 
@@ -1348,37 +1095,35 @@ export async function registerPluginRoutes(
         reply.code(400).send({ error: "invalid plugin id" });
         return;
       }
-      const plugin = await pluginRegistry.findById(pluginId);
-      if (!plugin) {
-        reply.code(404).send({ error: "plugin not found" });
-        return;
+      // Guild names resolve from the live discord.js cache (the bot's
+      // authoritative source — not stored in our DB), which is route-
+      // injected wiring — so it's passed in as a resolver, like the
+      // delete route's reconciler thunk.
+      const outcome = await pluginAdmin.getPluginSettings(
+        pluginId,
+        (gid) => options.bot?.guilds.cache.get(gid)?.name ?? null,
+      );
+      if (!outcome.ok) {
+        switch (outcome.refusal.kind) {
+          case "not_found":
+            reply.code(404).send({ error: "plugin not found" });
+            return;
+          case "feature_not_found":
+            reply.code(404).send({
+              error: `feature '${outcome.refusal.featureKey}' not declared by plugin`,
+            });
+            return;
+          case "validation_failed":
+            reply.code(422).send({
+              error: "config validation failed",
+              fieldErrors: outcome.refusal.fieldErrors,
+            });
+            return;
+          default:
+            return unhandledRefusal(outcome.refusal);
+        }
       }
-      const [config, kvGuilds, kvQuotaBytes, featureRows] = await Promise.all([
-        buildConfigPayload(plugin),
-        kvUsageByPlugin(pluginId),
-        quotaForGuildKv(pluginId),
-        findFeatureRowsByPlugin(pluginId),
-      ]);
-      // Resolve guild names from the live discord.js cache (the bot's
-      // authoritative source — not stored in our DB). null = the bot
-      // isn't in that guild / cache miss; the UI falls back to the id.
-      const guildNames: Record<string, string | null> = {};
-      for (const gid of new Set([
-        ...kvGuilds.map((g) => g.guildId),
-        ...featureRows.map((r) => r.guildId),
-      ])) {
-        guildNames[gid] = options.bot?.guilds.cache.get(gid)?.name ?? null;
-      }
-      return {
-        config,
-        kv: { quotaBytes: kvQuotaBytes, guilds: kvGuilds },
-        featureOverrides: featureRows.map((r) => ({
-          guildId: r.guildId,
-          featureKey: r.featureKey,
-          enabled: r.enabled,
-        })),
-        guildNames,
-      };
+      return outcome.value;
     },
   );
 
@@ -1805,26 +1550,4 @@ function safeParse(json: string): unknown {
   } catch {
     return null;
   }
-}
-
-/**
- * The RPC methods a plugin's manifest declares (`rpc_methods_used`).
- * These ARE the plugin's granted scopes — surfaced read-only in the
- * admin UI; there's no approval step. Malformed manifest → [].
- */
-function manifestRpcMethods(manifestJson: string): string[] {
-  const m = safeParse(manifestJson) as { rpc_methods_used?: unknown } | null;
-  if (!m || !Array.isArray(m.rpc_methods_used)) return [];
-  return m.rpc_methods_used.filter((s): s is string => typeof s === "string");
-}
-
-/** Declared GLOBAL event subscriptions (PM-8) — the requested grant set. */
-function manifestGlobalEventSubs(manifestJson: string): string[] {
-  const m = safeParse(manifestJson) as
-    | { events_subscribed_global?: unknown }
-    | null;
-  if (!m || !Array.isArray(m.events_subscribed_global)) return [];
-  return m.events_subscribed_global.filter(
-    (s): s is string => typeof s === "string",
-  );
 }
