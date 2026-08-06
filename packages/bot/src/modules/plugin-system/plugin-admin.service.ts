@@ -7,6 +7,8 @@ import {
   setPluginApprovedRpcScopes,
   setPluginConfigSchemaVersion,
   setPluginEnabled as setEnabledModel,
+  setPluginSetupSecretHash,
+  upsertPluginRegistration,
   type PluginRow,
 } from "./models/plugin.model.js";
 import { deleteAllCapabilities } from "./models/plugin-capability.model.js";
@@ -33,9 +35,13 @@ import { config } from "../../config.js";
 import { kvUsageByPlugin } from "./models/plugin-kv.model.js";
 import { quotaForGuildKv } from "./plugin-kv-quota.js";
 import { findConfigByPluginAndSource } from "./models/plugin-config.model.js";
-import { findPluginCommandsByPlugin } from "./models/plugin-command.model.js";
+import {
+  findPluginCommandsByPlugin,
+  PluginCommand,
+} from "./models/plugin-command.model.js";
 import {
   findAllFeatureDefaults,
+  upsertFeatureDefault,
   type PluginFeatureDefaultRow,
 } from "../feature-toggle/models/plugin-feature-default.model.js";
 import { recordAudit } from "../admin/admin-audit.service.js";
@@ -47,6 +53,7 @@ import {
 } from "./config-validator.js";
 import { encryptSecret } from "../../utils/crypto.js";
 import {
+  deleteFeatureRow,
   findFeatureRowsByPlugin,
   upsertFeatureRow,
   type PluginGuildFeatureRow,
@@ -54,6 +61,9 @@ import {
 import { featureReachResolver } from "../feature-toggle/feature-reach-resolver.js";
 import { upsertConfigKey } from "./models/plugin-config.model.js";
 import { dispatchLifecycleToPlugin } from "./plugin-lifecycle-dispatch.service.js";
+import { probePluginDispatch } from "./plugin-dispatch-probe.service.js";
+import { logger } from "../../logger.js";
+import { createHash, randomBytes } from "crypto";
 
 /**
  * Plugin Admin — the entry point for everything an operator does *to* a
@@ -85,10 +95,15 @@ import { dispatchLifecycleToPlugin } from "./plugin-lifecycle-dispatch.service.j
  * stays mechanical: each member has one canonical translation
  * (`not_found`/`feature_not_found` → 404, `validation_failed` → 422
  * with `{ error, fieldErrors }`, a shape the frontend parses and which
- * must stay byte-identical).
+ * must stay byte-identical; `conflict` → 409 `{ error: message }`;
+ * `override_not_found` → 404 `{ error: "no per-guild override to
+ * clear" }`; `not_toggleable` → 400 `{ error: message }`). Unreachable
+ * members still map to their canonical status — never to
+ * `unhandledRefusal` — per the #50 precedent for impossible arms.
  *
- * The delete teardown's refuse-an-active-plugin 409 guard still lives
- * route-side (see #49's note on {@link PluginAdmin.teardown}).
+ * A5 (#52) closed the set's last route-side hole: the delete teardown's
+ * refuse-an-active-plugin 409 guard, deferred by #49, is now the
+ * `conflict` member returned by {@link PluginAdmin.teardown} itself.
  */
 export type AdminRefusal =
   | { kind: "not_found" }
@@ -96,7 +111,13 @@ export type AdminRefusal =
   | {
       kind: "validation_failed";
       fieldErrors: FieldValidationError[];
-    };
+    }
+  /** The operation refuses because of the target's current state (delete of an active plugin). Canonical: 409. */
+  | { kind: "conflict"; message: string }
+  /** Clearing a Guild Override that doesn't exist. Canonical: 404. */
+  | { kind: "override_not_found" }
+  /** The target row exists but this operation doesn't apply to it (a feature command toggled via the third-track endpoint). Canonical: 400. */
+  | { kind: "not_toggleable"; message: string };
 
 /**
  * What a Plugin Admin operation returns: a value, or an Admin Refusal.
@@ -371,10 +392,19 @@ export class PluginAdmin {
    * Admin toggle. Disabling a plugin revokes its token immediately —
    * any in-flight RPC fails with 401. Re-enabling requires the plugin
    * to re-register (no automatic resurrection).
+   *
+   * On disable, `setEnabled` 內部呼叫 unregisterAll 刪 DB rows；但
+   * global 軌三指令的 discordCommandId=null，deleteOne 無法直接刪
+   * Discord 端 — 所以最後觸發 reconcileAll，讓 stale 清除機制從名冊
+   * diff 刪除 Discord 端指令（Batch 1 #4）。`getReconciler` is a thunk
+   * for the same reason as {@link teardown}'s: the reconciler is
+   * route-injected wiring, resolved only at the moment it's needed.
    */
   async setEnabled(
     pluginId: number,
     enabled: boolean,
+    actor: string | undefined,
+    getReconciler: () => CommandReconciler,
   ): Promise<AdminOutcome<PluginRow>> {
     const row = await setEnabledModel(pluginId, enabled);
     if (!row) return { ok: false, refusal: { kind: "not_found" } };
@@ -412,6 +442,31 @@ export class PluginAdmin {
     // Invalidate proxy/lookup cache so the next request sees the
     // new enabled / status.
     invalidatePluginByKey(row.pluginKey);
+    botEventLog.record(
+      "info",
+      "bot",
+      `Plugin ${enabled ? "enabled" : "disabled"} by admin: ${row.pluginKey}`,
+      {
+        pluginId,
+        pluginKey: row.pluginKey,
+        enabled,
+        actor,
+      },
+    );
+    if (!enabled) {
+      getReconciler()
+        .reconcileAll()
+        .catch((err: unknown) => {
+          botEventLog.record(
+            "warn",
+            "bot",
+            // Kept byte-identical through the A5 move (the log line an
+            // operator may already alert on), prefix included.
+            `plugin-routes: plugin disable 後 reconcileAll 失敗: ${err instanceof Error ? err.message : String(err)}`,
+            { pluginId },
+          );
+        });
+    }
     return { ok: true, value: row };
   }
 
@@ -425,6 +480,7 @@ export class PluginAdmin {
   async setApprovedScopes(
     pluginId: number,
     scopes: string[],
+    actor?: string,
   ): Promise<AdminOutcome<PluginScopeState>> {
     const state = await this.getScopeState(pluginId);
     if (!state) return { ok: false, refusal: { kind: "not_found" } };
@@ -447,10 +503,14 @@ export class PluginAdmin {
       { pluginId, approved },
     );
     const pending = state.requested.filter((s) => !approved.includes(s));
-    return {
-      ok: true,
-      value: { requested: state.requested, approved, pending },
-    };
+    const value = { requested: state.requested, approved, pending };
+    botEventLog.record(
+      "info",
+      "bot",
+      `Plugin RPC scopes set by admin (${approved.length} approved, ${pending.length} pending)`,
+      { pluginId, ...value, actor },
+    );
+    return { ok: true, value };
   }
 
   /**
@@ -475,6 +535,7 @@ export class PluginAdmin {
   async setApprovedGlobalEventSubs(
     pluginId: number,
     subs: string[],
+    actor?: string,
   ): Promise<AdminOutcome<PluginScopeState>> {
     const plugin = await findPluginById(pluginId);
     if (!plugin) return { ok: false, refusal: { kind: "not_found" } };
@@ -501,7 +562,14 @@ export class PluginAdmin {
       { pluginId, approved },
     );
     const pending = requested.filter((e) => !approved.includes(e));
-    return { ok: true, value: { requested, approved, pending } };
+    const value = { requested, approved, pending };
+    botEventLog.record(
+      "info",
+      "bot",
+      `Plugin global event subscriptions set by admin (${approved.length} approved, ${pending.length} pending)`,
+      { pluginId, ...value, actor },
+    );
+    return { ok: true, value };
   }
 
   /**
@@ -512,13 +580,16 @@ export class PluginAdmin {
    * drop must never block removal of a misbehaving plugin, and each
    * failing step says which one it was via the bot event log.
    *
-   * Callers' responsibilities, both deliberate:
-   *   - The refuse-an-active-plugin 409 guard stays with the route
-   *     (pre-existing behaviour, kept route-side so #49 stayed a pure
-   *     move — see the {@link AdminRefusal} comment).
-   *   - `getReconciler` is passed as a thunk because the reconciler is
-   *     route-injected wiring; it is resolved at step 3b, exactly where
-   *     the route resolved it before the move.
+   * An ACTIVE plugin is refused with the `conflict` refusal (409 at the
+   * route): the admin must stop the plugin process and wait ~75s for
+   * the heartbeat reaper to mark it inactive. #49 kept that guard
+   * route-side to stay a pure move; A5 (#52) moved it in, so the whole
+   * "can this delete happen" decision lives here.
+   *
+   * Caller's responsibility, deliberate: `getReconciler` is passed as a
+   * thunk because the reconciler is route-injected wiring; it is
+   * resolved at step 3b, exactly where the route resolved it before the
+   * move.
    */
   async teardown(
     pluginId: number,
@@ -527,6 +598,16 @@ export class PluginAdmin {
   ): Promise<AdminOutcome<void>> {
     const plugin = await findPluginById(pluginId);
     if (!plugin) return { ok: false, refusal: { kind: "not_found" } };
+    if (plugin.status === "active") {
+      return {
+        ok: false,
+        refusal: {
+          kind: "conflict",
+          message:
+            "cannot delete active plugin; stop the plugin process and wait ~75s for the heartbeat reaper to mark it inactive",
+        },
+      };
+    }
 
     // 1. Revoke in-memory token so any lingering bearer auth fails.
     this.auth.revokeByPluginId(pluginId);
@@ -870,6 +951,322 @@ export class PluginAdmin {
       },
     );
     return { ok: true, value: { accepted, skipped } };
+  }
+
+  // ─── The remaining admin routes (A5, #52) ────────────────────────
+  //
+  // The last orchestration that still lived route-side, moved verbatim
+  // so every admin route is a translation layer: request in, operation
+  // called, outcome mapped to a status code. Response bodies and log
+  // lines are byte-identical to what the routes produced inline.
+
+  /**
+   * 軌三指令 on/off toggle (PATCH /api/plugin-commands/:id/admin-
+   * enabled). Only featureKey=null third-track commands are toggleable
+   * here — featureKey!=null 的軌一指令由 guild feature toggle 管, and
+   * asking anyway is the `not_toggleable` refusal. On success the
+   * write is followed by a detached reconcile of that one command
+   * (fire-and-forget — the admin response doesn't wait on Discord).
+   */
+  async setPluginCommandAdminEnabled(
+    rowId: number,
+    enabled: boolean,
+    actor: string | undefined,
+    getReconciler: () => CommandReconciler,
+  ): Promise<AdminOutcome<void>> {
+    const row = await PluginCommand.findByPk(rowId);
+    if (!row) return { ok: false, refusal: { kind: "not_found" } };
+    const featureKey = row.getDataValue("featureKey") as string | null;
+    if (featureKey !== null) {
+      return {
+        ok: false,
+        refusal: {
+          kind: "not_toggleable",
+          message:
+            "cannot toggle feature commands via this endpoint; use guild feature toggle",
+        },
+      };
+    }
+    await row.update({ adminEnabled: enabled });
+    botEventLog.record(
+      "info",
+      "bot",
+      `plugin command adminEnabled=${enabled}: id=${rowId} name=${row.getDataValue("name")}`,
+      { rowId, enabled, actor },
+    );
+    // 非同步觸發 reconcile，不阻塞回應
+    getReconciler()
+      .reconcileForPluginCommand(rowId)
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        botEventLog.record(
+          "warn",
+          "bot",
+          `reconcileForPluginCommand(${rowId}) failed after adminEnabled toggle: ${msg}`,
+        );
+      });
+    return { ok: true, value: undefined };
+  }
+
+  /**
+   * Clear the explicit Guild Override for one feature (DELETE
+   * /api/plugins/:id/guilds/:guildId/features/:featureKey, PD-1.3):
+   * the row is removed — including its per-guild config — and the
+   * guild reverts to the operator-default → manifest-default chain.
+   * Mirrors `saveGuildFeature`'s back half for whatever effective
+   * state results: cached reach is dropped, guild-scoped commands are
+   * re-synced, and the plugin's onEnable/onDisable lifecycle fires
+   * only when the effective value actually flips. No row to clear is
+   * the `override_not_found` refusal.
+   *
+   * Returns the effective enabled value the guild reverts to.
+   */
+  async clearGuildFeatureOverride(
+    input: { pluginId: number; guildId: string; featureKey: string },
+    actor: string | undefined,
+  ): Promise<AdminOutcome<{ effective: boolean }>> {
+    const { pluginId, guildId, featureKey } = input;
+    const plugin = await findPluginById(pluginId);
+    if (!plugin) return { ok: false, refusal: { kind: "not_found" } };
+    const manifest = safeParseJson(plugin.manifestJson) as
+      | PluginManifest
+      | null;
+    const feature = manifest?.guild_features?.find((f) => f.key === featureKey);
+    if (!feature) {
+      return { ok: false, refusal: { kind: "feature_not_found", featureKey } };
+    }
+    const resolved = (
+      await featureReachResolver.resolveGuildFeatures(
+        pluginId,
+        guildId,
+        manifest!,
+      )
+    ).get(featureKey);
+    const existingRow = resolved?.row;
+    if (!resolved || !existingRow) {
+      return { ok: false, refusal: { kind: "override_not_found" } };
+    }
+    const operatorDefault = resolved.operatorDefault;
+    // What the guild reverts to once the Guild Override is gone.
+    const effective = resolved.defaultEnabled;
+    const enabledChanged = existingRow.enabled !== effective;
+    await deleteFeatureRow(pluginId, guildId, featureKey);
+    // PM-8: event dispatch + RPC gates cache this resolution —
+    // subscribers drop this (plugin, guild)'s cached reach.
+    emitPluginChange({ pluginId, guildId });
+    {
+      const pluginRow = await pluginRegistry.findById(pluginId);
+      const manifestObj = pluginRow
+        ? (safeParseJson(pluginRow.manifestJson) as PluginManifest | null)
+        : null;
+      if (pluginRow && manifestObj) {
+        await pluginCommandRegistry
+          .syncFeatureCommandsForGuild(
+            pluginRow,
+            featureKey,
+            guildId,
+            effective,
+            manifestObj,
+          )
+          .catch(() => {
+            /* logged inside the registry */
+          });
+      }
+    }
+    botEventLog.record(
+      "info",
+      "bot",
+      `plugin guild feature override cleared: ${plugin.pluginKey}/${featureKey}@${guildId} (now follows ${operatorDefault !== null ? "operator" : "manifest"} default = ${effective})`,
+      { pluginId, guildId, featureKey, effective, actor },
+    );
+    if (enabledChanged) {
+      dispatchLifecycleToPlugin(
+        pluginId,
+        effective ? "plugin.guild.enabled" : "plugin.guild.disabled",
+        guildId,
+        featureKey,
+      );
+    }
+    return { ok: true, value: { effective } };
+  }
+
+  /**
+   * Operator override of a feature's manifest enabled_by_default (PUT
+   * /api/plugins/:id/feature-defaults/:featureKey) — the Operator
+   * Default tier. Resolution for a guild is: per-guild row → this
+   * operator default → manifest default → false. Changing it therefore
+   * takes effect immediately in every guild without an explicit
+   * per-guild row: cached resolutions for the plugin are dropped, and
+   * the feature's slash commands are re-evaluated across every guild —
+   * detached, since that can be one Discord API call per guild (a
+   * failing guild is logged, never surfaced to the admin request).
+   */
+  async setFeatureDefault(
+    pluginId: number,
+    featureKey: string,
+    enabled: boolean,
+    actor: string | undefined,
+  ): Promise<AdminOutcome<PluginFeatureDefaultRow>> {
+    const plugin = await findPluginById(pluginId);
+    if (!plugin) return { ok: false, refusal: { kind: "not_found" } };
+    const manifest = safeParseJson(plugin.manifestJson) as
+      | PluginManifest
+      | null;
+    const feature = manifest?.guild_features?.find((f) => f.key === featureKey);
+    if (!manifest || !feature) {
+      return { ok: false, refusal: { kind: "feature_not_found", featureKey } };
+    }
+    const row = await upsertFeatureDefault(pluginId, featureKey, enabled);
+    // PM-8: a default change affects every guild without an explicit
+    // row — subscribers drop all cached resolutions for this plugin.
+    // (No `row`: the plugin row itself is unchanged, so event routes
+    // are unaffected.)
+    emitPluginChange({ pluginId });
+    if (plugin.enabled && plugin.status === "active") {
+      void (async () => {
+        try {
+          await pluginCommandRegistry.syncFeatureCommandsAcrossGuilds(
+            plugin,
+            manifest,
+            featureKey,
+          );
+        } catch (err) {
+          logger.warn(
+            { err, pluginId, featureKey },
+            "feature-default change: command re-sync failed",
+          );
+        }
+      })();
+    }
+    botEventLog.record(
+      "info",
+      "bot",
+      `plugin feature default ${row.enabled ? "enabled" : "disabled"}: ${plugin.pluginKey}/${featureKey}`,
+      {
+        pluginId,
+        featureKey,
+        enabled: row.enabled,
+        actor,
+      },
+    );
+    return { ok: true, value: row };
+  }
+
+  /**
+   * Manually fire the signed dispatch probe (POST /api/plugins/:id/
+   * dispatch-probe, PM-7.9.4) — the same check that runs automatically
+   * after register. Returns the verdict plus the refreshed dispatch-
+   * health window so the UI can render both without a second
+   * round-trip. Side-effect-free on the plugin (the probe payload 400s
+   * before any handler lookup).
+   *
+   * Gate: inactive plugins (no live endpoint) are skipped without
+   * traffic. DISABLED-but-active plugins ARE probed — the probe is a
+   * control-plane handshake check the admin explicitly requested
+   * (e.g. verifying the signature path BEFORE enabling), not a
+   * user-traffic dispatch, so the disabled-means-no-dispatch
+   * invariant deliberately doesn't apply here.
+   */
+  async probeDispatch(pluginId: number): Promise<
+    AdminOutcome<{
+      probe:
+        | Awaited<ReturnType<typeof probePluginDispatch>>
+        | { outcome: "skipped"; reason: string };
+      dispatch: ReturnType<typeof getDispatchHealth>;
+    }>
+  > {
+    const plugin = await pluginRegistry.findById(pluginId);
+    if (!plugin) return { ok: false, refusal: { kind: "not_found" } };
+    if (plugin.status !== "active") {
+      return {
+        ok: true,
+        value: {
+          probe: { outcome: "skipped", reason: "plugin inactive" },
+          dispatch: getDispatchHealth(plugin.pluginKey),
+        },
+      };
+    }
+    const probe = await probePluginDispatch(plugin);
+    return {
+      ok: true,
+      value: { probe, dispatch: getDispatchHealth(plugin.pluginKey) },
+    };
+  }
+
+  /**
+   * Pre-provision a per-plugin setup secret (POST /api/plugins/setup-
+   * secret). The cleartext is returned exactly once — the bot stores
+   * only the SHA-256 hash — and must be placed in the plugin's .env as
+   * KARYL_PLUGIN_SETUP_SECRET before it can register.
+   *
+   * If the pluginKey has no DB row yet, a placeholder row is
+   * auto-created (status='inactive', enabled=false) so the secret can
+   * be stored before the plugin first registers; the plugin's register
+   * call fills in the real manifest, url, and token later.
+   *
+   * Cannot refuse — an unknown key just means a placeholder — so like
+   * `listPlugins` this returns its value directly rather than an
+   * {@link AdminOutcome}. `secret` is the operator-supplied cleartext
+   * (already validated non-empty by the route) or undefined to have a
+   * 32-byte hex secret generated.
+   */
+  async provisionSetupSecret(
+    pluginKey: string,
+    secret: string | undefined,
+    actor: string | undefined,
+  ): Promise<{ pluginKey: string; setupSecret: string; created: boolean }> {
+    let pluginRow = await findPluginByKey(pluginKey);
+    let created = false;
+    if (!pluginRow) {
+      pluginRow = await upsertPluginRegistration({
+        pluginKey,
+        name: pluginKey,
+        version: "0.0.0",
+        url: "http://placeholder",
+        manifestJson: "{}",
+        tokenHash: "",
+        defaultEnabled: false,
+      });
+      created = true;
+      botEventLog.record(
+        "info",
+        "bot",
+        `Admin created placeholder plugin row for '${pluginKey}' via setup-secret`,
+        { pluginKey, actor },
+      );
+    }
+
+    const cleartext =
+      typeof secret === "string" && secret.length > 0
+        ? secret
+        : randomBytes(32).toString("hex");
+
+    const hash = createHash("sha256").update(cleartext).digest("hex");
+    await setPluginSetupSecretHash(pluginRow.id, hash);
+
+    await recordAudit(
+      actor ?? "system",
+      "plugin.setup_secret",
+      String(pluginRow.id),
+      {
+        pluginKey,
+        secretSource: secret ? "supplied" : "generated",
+        placeholderCreated: created,
+      },
+    );
+    botEventLog.record(
+      "info",
+      "bot",
+      `Per-plugin setup secret set by admin for ${pluginKey}`,
+      {
+        pluginId: pluginRow.id,
+        pluginKey,
+        actor,
+        placeholderCreated: created,
+      },
+    );
+
+    return { pluginKey, setupSecret: cleartext, created };
   }
 }
 

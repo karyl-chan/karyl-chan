@@ -7,30 +7,16 @@ import { requireCapability, requirePluginCapability } from "../web-core/route-gu
 import { jwtService } from "../web-core/jwt.service.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { shouldRecord } from "../bot-events/bot-event-dedup.js";
-import { deleteFeatureRow } from "../feature-toggle/models/plugin-guild-feature.model.js";
-import { upsertFeatureDefault } from "../feature-toggle/models/plugin-feature-default.model.js";
-import { emitPluginChange } from "./plugin-changes.js";
-import { featureReachResolver } from "../feature-toggle/feature-reach-resolver.js";
 import { mintPluginManageToken } from "./plugin-manage-token.js";
 import type { PluginManifest } from "./plugin-registry.service.js";
-import {
-  ManifestCommandError,
-  pluginCommandRegistry,
-} from "./plugin-command-registry.service.js";
-import { getDispatchHealth } from "./plugin-dispatch-health.service.js";
-import { probePluginDispatch } from "./plugin-dispatch-probe.service.js";
-import { dispatchLifecycleToPlugin } from "./plugin-lifecycle-dispatch.service.js";
-import { recordAudit } from "../admin/admin-audit.service.js";
+import { ManifestCommandError } from "./plugin-command-registry.service.js";
 import { config } from "../../config.js";
 import {
   findPluginByKey,
   findPluginById,
-  setPluginSetupSecretHash,
-  upsertPluginRegistration,
 } from "./models/plugin.model.js";
-import { PluginCommand } from "./models/plugin-command.model.js";
 import type { CommandReconciler } from "../command-system/reconcile.service.js";
-import { createHash, randomBytes } from "crypto";
+import { createHash } from "crypto";
 
 /**
  * Plugin-facing endpoints (register / heartbeat) AND admin-facing
@@ -541,6 +527,15 @@ export async function registerPluginRoutes(
               fieldErrors: outcome.refusal.fieldErrors,
             });
             return;
+          case "conflict":
+            reply.code(409).send({ error: outcome.refusal.message });
+            return;
+          case "override_not_found":
+            reply.code(404).send({ error: "no per-guild override to clear" });
+            return;
+          case "not_toggleable":
+            reply.code(400).send({ error: outcome.refusal.message });
+            return;
           default:
             return unhandledRefusal(outcome.refusal);
         }
@@ -586,6 +581,15 @@ export async function registerPluginRoutes(
               fieldErrors: outcome.refusal.fieldErrors,
             });
             return;
+          case "conflict":
+            reply.code(409).send({ error: outcome.refusal.message });
+            return;
+          case "override_not_found":
+            reply.code(404).send({ error: "no per-guild override to clear" });
+            return;
+          case "not_toggleable":
+            reply.code(400).send({ error: outcome.refusal.message });
+            return;
           default:
             return unhandledRefusal(outcome.refusal);
         }
@@ -597,11 +601,13 @@ export async function registerPluginRoutes(
   /**
    * PATCH /api/plugin-commands/:id/admin-enabled
    *
-   * 軌三指令 on/off toggle。
-   * Body: { enabled: boolean }
-   * 成功後觸發 CommandReconciler.reconcileForPluginCommand(id)（非同步，不 await）。
-   *
-   * 只能操作 featureKey=null 的軌三指令。featureKey!=null 的軌一指令由 guild feature toggle 管。
+   * 軌三指令 on/off toggle — owned by Plugin Admin
+   * (`pluginAdmin.setPluginCommandAdminEnabled`): the write, the audit
+   * line, and the detached reconcileForPluginCommand. featureKey!=null
+   * 的軌一指令由 guild feature toggle 管 — asking anyway is the
+   * `not_toggleable` refusal (400). This handler keeps the admin
+   * guard, parsing, and the refusal mapping; `not_found` here is the
+   * plugin *command* row.
    */
   server.patch<{
     Params: { id: string };
@@ -617,37 +623,41 @@ export async function registerPluginRoutes(
       reply.code(400).send({ error: "enabled boolean required" });
       return;
     }
-    const row = await PluginCommand.findByPk(rowId);
-    if (!row) {
-      reply.code(404).send({ error: "plugin command not found" });
-      return;
-    }
-    const featureKey = row.getDataValue("featureKey") as string | null;
-    if (featureKey !== null) {
-      reply.code(400).send({
-        error:
-          "cannot toggle feature commands via this endpoint; use guild feature toggle",
-      });
-      return;
-    }
-    await row.update({ adminEnabled: request.body.enabled });
-    botEventLog.record(
-      "info",
-      "bot",
-      `plugin command adminEnabled=${request.body.enabled}: id=${rowId} name=${row.getDataValue("name")}`,
-      { rowId, enabled: request.body.enabled, actor: request.authUserId },
+    const outcome = await pluginAdmin.setPluginCommandAdminEnabled(
+      rowId,
+      request.body.enabled,
+      request.authUserId,
+      getReconciler,
     );
-    // 非同步觸發 reconcile，不阻塞回應
-    getReconciler()
-      .reconcileForPluginCommand(rowId)
-      .catch((err: unknown) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        botEventLog.record(
-          "warn",
-          "bot",
-          `reconcileForPluginCommand(${rowId}) failed after adminEnabled toggle: ${msg}`,
-        );
-      });
+    if (!outcome.ok) {
+      switch (outcome.refusal.kind) {
+        case "not_found":
+          reply.code(404).send({ error: "plugin command not found" });
+          return;
+        case "feature_not_found":
+          reply.code(404).send({
+            error: `feature '${outcome.refusal.featureKey}' not declared by plugin`,
+          });
+          return;
+        case "validation_failed":
+          reply.code(422).send({
+            error: "config validation failed",
+            fieldErrors: outcome.refusal.fieldErrors,
+          });
+          return;
+        case "conflict":
+          reply.code(409).send({ error: outcome.refusal.message });
+          return;
+        case "override_not_found":
+          reply.code(404).send({ error: "no per-guild override to clear" });
+          return;
+        case "not_toggleable":
+          reply.code(400).send({ error: outcome.refusal.message });
+          return;
+        default:
+          return unhandledRefusal(outcome.refusal);
+      }
+    }
     return {
       command: {
         id: rowId,
@@ -745,6 +755,15 @@ export async function registerPluginRoutes(
               fieldErrors: outcome.refusal.fieldErrors,
             });
             return;
+          case "conflict":
+            reply.code(409).send({ error: outcome.refusal.message });
+            return;
+          case "override_not_found":
+            reply.code(404).send({ error: "no per-guild override to clear" });
+            return;
+          case "not_toggleable":
+            reply.code(400).send({ error: outcome.refusal.message });
+            return;
           default:
             return unhandledRefusal(outcome.refusal);
         }
@@ -767,12 +786,13 @@ export async function registerPluginRoutes(
   /**
    * DELETE /api/plugins/:id/guilds/:guildId/features/:featureKey
    *
-   * Clear the explicit per-guild override (PD-1.3): the row is removed
-   * — including its per-guild config — and the guild reverts to the
-   * operator-default → manifest-default chain. Mirrors the PUT route's
-   * side effects for whatever effective state results: guild-scoped
-   * commands are re-synced, and the plugin's onEnable/onDisable
-   * lifecycle fires only when the effective value actually flips.
+   * Clear the explicit per-guild override (PD-1.3) — owned by Plugin
+   * Admin (`pluginAdmin.clearGuildFeatureOverride`): the row removal,
+   * cache drop, guild-scoped command re-sync, and the onEnable/
+   * onDisable lifecycle when the effective value actually flips. This
+   * handler keeps what resolves before the operation: the admin guard
+   * and request parsing, plus the refusal mapping — a guild with no
+   * override to clear is the `override_not_found` refusal (404).
    */
   server.delete<{
     Params: { id: string; guildId: string; featureKey: string };
@@ -790,82 +810,45 @@ export async function registerPluginRoutes(
         reply.code(400).send({ error: "guildId + featureKey required" });
         return;
       }
-      const plugin = await findPluginById(pluginId);
-      if (!plugin) {
-        reply.code(404).send({ error: "plugin not found" });
-        return;
-      }
-      const manifest = safeParse(plugin.manifestJson) as PluginManifest | null;
-      const feature = manifest?.guild_features?.find(
-        (f) => f.key === featureKey,
+      const outcome = await pluginAdmin.clearGuildFeatureOverride(
+        { pluginId, guildId, featureKey },
+        request.authUserId,
       );
-      if (!feature) {
-        reply
-          .code(404)
-          .send({ error: `feature '${featureKey}' not declared by plugin` });
-        return;
-      }
-      const resolved = (
-        await featureReachResolver.resolveGuildFeatures(
-          pluginId,
-          guildId,
-          manifest!,
-        )
-      ).get(featureKey);
-      const existingRow = resolved?.row;
-      if (!resolved || !existingRow) {
-        reply
-          .code(404)
-          .send({ error: "no per-guild override to clear" });
-        return;
-      }
-      const operatorDefault = resolved.operatorDefault;
-      // What the guild reverts to once the Guild Override is gone.
-      const effective = resolved.defaultEnabled;
-      const enabledChanged = existingRow.enabled !== effective;
-      await deleteFeatureRow(pluginId, guildId, featureKey);
-      // PM-8: event dispatch + RPC gates cache this resolution —
-      // subscribers drop this (plugin, guild)'s cached reach.
-      emitPluginChange({ pluginId, guildId });
-      {
-        const pluginRow = await pluginRegistry.findById(pluginId);
-        const manifestObj = pluginRow
-          ? (safeParse(pluginRow.manifestJson) as PluginManifest | null)
-          : null;
-        if (pluginRow && manifestObj) {
-          await pluginCommandRegistry
-            .syncFeatureCommandsForGuild(
-              pluginRow,
-              featureKey,
-              guildId,
-              effective,
-              manifestObj,
-            )
-            .catch(() => {
-              /* logged inside the registry */
+      if (!outcome.ok) {
+        switch (outcome.refusal.kind) {
+          case "not_found":
+            reply.code(404).send({ error: "plugin not found" });
+            return;
+          case "feature_not_found":
+            reply.code(404).send({
+              error: `feature '${outcome.refusal.featureKey}' not declared by plugin`,
             });
+            return;
+          case "validation_failed":
+            reply.code(422).send({
+              error: "config validation failed",
+              fieldErrors: outcome.refusal.fieldErrors,
+            });
+            return;
+          case "conflict":
+            reply.code(409).send({ error: outcome.refusal.message });
+            return;
+          case "override_not_found":
+            reply.code(404).send({ error: "no per-guild override to clear" });
+            return;
+          case "not_toggleable":
+            reply.code(400).send({ error: outcome.refusal.message });
+            return;
+          default:
+            return unhandledRefusal(outcome.refusal);
         }
-      }
-      botEventLog.record(
-        "info",
-        "bot",
-        `plugin guild feature override cleared: ${plugin.pluginKey}/${featureKey}@${guildId} (now follows ${operatorDefault !== null ? "operator" : "manifest"} default = ${effective})`,
-        { pluginId, guildId, featureKey, effective, actor: request.authUserId },
-      );
-      if (enabledChanged) {
-        dispatchLifecycleToPlugin(
-          pluginId,
-          effective ? "plugin.guild.enabled" : "plugin.guild.disabled",
-          guildId,
-          featureKey,
-        );
       }
       return {
         feature: {
           pluginId,
           guildId,
           featureKey,
-          enabled: effective,
+          enabled: outcome.value.effective,
           overridden: false,
         },
       };
@@ -898,8 +881,10 @@ export async function registerPluginRoutes(
    * for a guild is: per-guild row → this operator default → manifest
    * default → false (same as built-in features). Changing this default
    * therefore takes effect immediately in every guild that doesn't have
-   * an explicit per-guild row — the slash commands are (un)registered
-   * accordingly via pluginCommandRegistry.sync.
+   * an explicit per-guild row. The write, cache drop, and detached
+   * cross-guild command re-sync are owned by Plugin Admin
+   * (`pluginAdmin.setFeatureDefault`); this handler keeps the admin
+   * guard, request parsing, and the refusal mapping.
    */
   server.put<{
     Params: { id: string; featureKey: string };
@@ -918,62 +903,42 @@ export async function registerPluginRoutes(
         reply.code(400).send({ error: "enabled boolean required" });
         return;
       }
-      const plugin = await findPluginById(pluginId);
-      if (!plugin) {
-        reply.code(404).send({ error: "plugin not found" });
-        return;
-      }
-      const manifest = safeParse(plugin.manifestJson) as PluginManifest | null;
-      const feature = manifest?.guild_features?.find(
-        (f) => f.key === featureKey,
-      );
-      if (!manifest || !feature) {
-        reply
-          .code(404)
-          .send({ error: `feature '${featureKey}' not declared by plugin` });
-        return;
-      }
-      const row = await upsertFeatureDefault(
+      const outcome = await pluginAdmin.setFeatureDefault(
         pluginId,
         featureKey,
         request.body.enabled,
+        request.authUserId,
       );
-      // PM-8: a default change affects every guild without an explicit
-      // row — subscribers drop all cached resolutions for this plugin.
-      // (No `row`: the plugin row itself is unchanged, so event routes
-      // are unaffected.)
-      emitPluginChange({ pluginId });
-      // Re-evaluate this feature's slash commands across every guild —
-      // un-overridden guilds now follow this default. Detached: this can
-      // be one Discord API call per guild, so don't make the admin wait
-      // (and don't fail the request if a guild errors — logged inside).
-      if (plugin.enabled && plugin.status === "active") {
-        void (async () => {
-          try {
-            await pluginCommandRegistry.syncFeatureCommandsAcrossGuilds(
-              plugin,
-              manifest,
-              featureKey,
-            );
-          } catch (err) {
-            request.log.warn(
-              { err, pluginId, featureKey },
-              "feature-default change: command re-sync failed",
-            );
-          }
-        })();
+      if (!outcome.ok) {
+        switch (outcome.refusal.kind) {
+          case "not_found":
+            reply.code(404).send({ error: "plugin not found" });
+            return;
+          case "feature_not_found":
+            reply.code(404).send({
+              error: `feature '${outcome.refusal.featureKey}' not declared by plugin`,
+            });
+            return;
+          case "validation_failed":
+            reply.code(422).send({
+              error: "config validation failed",
+              fieldErrors: outcome.refusal.fieldErrors,
+            });
+            return;
+          case "conflict":
+            reply.code(409).send({ error: outcome.refusal.message });
+            return;
+          case "override_not_found":
+            reply.code(404).send({ error: "no per-guild override to clear" });
+            return;
+          case "not_toggleable":
+            reply.code(400).send({ error: outcome.refusal.message });
+            return;
+          default:
+            return unhandledRefusal(outcome.refusal);
+        }
       }
-      botEventLog.record(
-        "info",
-        "bot",
-        `plugin feature default ${row.enabled ? "enabled" : "disabled"}: ${plugin.pluginKey}/${featureKey}`,
-        {
-          pluginId,
-          featureKey,
-          enabled: row.enabled,
-          actor: request.authUserId,
-        },
-      );
+      const row = outcome.value;
       return {
         default: {
           pluginId: row.pluginId,
@@ -993,18 +958,13 @@ export async function registerPluginRoutes(
   /**
    * POST /api/plugins/:id/dispatch-probe
    *
-   * Manually fire the signed dispatch probe (PM-7.9.4) — the same
-   * check that runs automatically after register. Returns the verdict
-   * plus the refreshed dispatch-health window so the UI can render
-   * both without a second round-trip. Side-effect-free on the plugin
-   * (the probe payload 400s before any handler lookup).
-   *
-   * Gate: inactive plugins (no live endpoint) are skipped without
-   * traffic. DISABLED-but-active plugins ARE probed — the probe is a
-   * control-plane handshake check the admin explicitly requested
-   * (e.g. verifying the signature path BEFORE enabling), not a
-   * user-traffic dispatch, so the disabled-means-no-dispatch
-   * invariant deliberately doesn't apply here.
+   * Manually fire the signed dispatch probe (PM-7.9.4) — the probe
+   * gate (inactive plugins skipped without traffic; DISABLED-but-
+   * active plugins ARE probed) and the verdict + refreshed dispatch-
+   * health assembly are owned by Plugin Admin
+   * (`pluginAdmin.probeDispatch`); read the gate's rationale there.
+   * This handler keeps the admin guard, the id parse, and the refusal
+   * mapping.
    */
   server.post<{ Params: { id: string } }>(
     "/api/plugins/:id/dispatch-probe",
@@ -1015,19 +975,37 @@ export async function registerPluginRoutes(
         reply.code(400).send({ error: "invalid plugin id" });
         return;
       }
-      const plugin = await pluginRegistry.findById(pluginId);
-      if (!plugin) {
-        reply.code(404).send({ error: "plugin not found" });
-        return;
+      const outcome = await pluginAdmin.probeDispatch(pluginId);
+      if (!outcome.ok) {
+        switch (outcome.refusal.kind) {
+          case "not_found":
+            reply.code(404).send({ error: "plugin not found" });
+            return;
+          case "feature_not_found":
+            reply.code(404).send({
+              error: `feature '${outcome.refusal.featureKey}' not declared by plugin`,
+            });
+            return;
+          case "validation_failed":
+            reply.code(422).send({
+              error: "config validation failed",
+              fieldErrors: outcome.refusal.fieldErrors,
+            });
+            return;
+          case "conflict":
+            reply.code(409).send({ error: outcome.refusal.message });
+            return;
+          case "override_not_found":
+            reply.code(404).send({ error: "no per-guild override to clear" });
+            return;
+          case "not_toggleable":
+            reply.code(400).send({ error: outcome.refusal.message });
+            return;
+          default:
+            return unhandledRefusal(outcome.refusal);
+        }
       }
-      if (plugin.status !== "active") {
-        return {
-          probe: { outcome: "skipped", reason: "plugin inactive" },
-          dispatch: getDispatchHealth(plugin.pluginKey),
-        };
-      }
-      const probe = await probePluginDispatch(plugin);
-      return { probe, dispatch: getDispatchHealth(plugin.pluginKey) };
+      return outcome.value;
     },
   );
 
@@ -1067,6 +1045,15 @@ export async function registerPluginRoutes(
               error: "config validation failed",
               fieldErrors: outcome.refusal.fieldErrors,
             });
+            return;
+          case "conflict":
+            reply.code(409).send({ error: outcome.refusal.message });
+            return;
+          case "override_not_found":
+            reply.code(404).send({ error: "no per-guild override to clear" });
+            return;
+          case "not_toggleable":
+            reply.code(400).send({ error: outcome.refusal.message });
             return;
           default:
             return unhandledRefusal(outcome.refusal);
@@ -1118,6 +1105,15 @@ export async function registerPluginRoutes(
               error: "config validation failed",
               fieldErrors: outcome.refusal.fieldErrors,
             });
+            return;
+          case "conflict":
+            reply.code(409).send({ error: outcome.refusal.message });
+            return;
+          case "override_not_found":
+            reply.code(404).send({ error: "no per-guild override to clear" });
+            return;
+          case "not_toggleable":
+            reply.code(400).send({ error: outcome.refusal.message });
             return;
           default:
             return unhandledRefusal(outcome.refusal);
@@ -1175,6 +1171,15 @@ export async function registerPluginRoutes(
             fieldErrors: outcome.refusal.fieldErrors,
           });
           return;
+        case "conflict":
+          reply.code(409).send({ error: outcome.refusal.message });
+          return;
+        case "override_not_found":
+          reply.code(404).send({ error: "no per-guild override to clear" });
+          return;
+        case "not_toggleable":
+          reply.code(400).send({ error: outcome.refusal.message });
+          return;
         default:
           return unhandledRefusal(outcome.refusal);
       }
@@ -1193,7 +1198,12 @@ export async function registerPluginRoutes(
         return;
       }
       const enabled = !!request.body?.enabled;
-      const outcome = await pluginAdmin.setEnabled(id, enabled);
+      const outcome = await pluginAdmin.setEnabled(
+        id,
+        enabled,
+        request.authUserId,
+        getReconciler,
+      );
       if (!outcome.ok) {
         switch (outcome.refusal.kind) {
           case "not_found":
@@ -1210,37 +1220,20 @@ export async function registerPluginRoutes(
               fieldErrors: outcome.refusal.fieldErrors,
             });
             return;
+          case "conflict":
+            reply.code(409).send({ error: outcome.refusal.message });
+            return;
+          case "override_not_found":
+            reply.code(404).send({ error: "no per-guild override to clear" });
+            return;
+          case "not_toggleable":
+            reply.code(400).send({ error: outcome.refusal.message });
+            return;
           default:
             return unhandledRefusal(outcome.refusal);
         }
       }
       const updated = outcome.value;
-      botEventLog.record(
-        "info",
-        "bot",
-        `Plugin ${enabled ? "enabled" : "disabled"} by admin: ${updated.pluginKey}`,
-        {
-          pluginId: id,
-          pluginKey: updated.pluginKey,
-          enabled,
-          actor: request.authUserId,
-        },
-      );
-      // plugin disable 時：setEnabled 內部已呼叫 unregisterAll 刪 DB rows。
-      // 但 global 軌三指令的 discordCommandId=null，deleteOne 無法直接刪 Discord 端。
-      // 觸發 reconcileAll，讓 stale 清除機制從名冊 diff 刪除 Discord 端指令（Batch 1 #4）。
-      if (!enabled) {
-        getReconciler()
-          .reconcileAll()
-          .catch((err: unknown) => {
-            botEventLog.record(
-              "warn",
-              "bot",
-              `plugin-routes: plugin disable 後 reconcileAll 失敗: ${err instanceof Error ? err.message : String(err)}`,
-              { pluginId: id },
-            );
-          });
-      }
       return {
         plugin: {
           id: updated.id,
@@ -1279,7 +1272,11 @@ export async function registerPluginRoutes(
         reply.code(400).send({ error: "approved must be a string array" });
         return;
       }
-      const outcome = await pluginAdmin.setApprovedScopes(id, approvedRaw);
+      const outcome = await pluginAdmin.setApprovedScopes(
+        id,
+        approvedRaw,
+        request.authUserId,
+      );
       if (!outcome.ok) {
         switch (outcome.refusal.kind) {
           case "not_found":
@@ -1296,18 +1293,20 @@ export async function registerPluginRoutes(
               fieldErrors: outcome.refusal.fieldErrors,
             });
             return;
+          case "conflict":
+            reply.code(409).send({ error: outcome.refusal.message });
+            return;
+          case "override_not_found":
+            reply.code(404).send({ error: "no per-guild override to clear" });
+            return;
+          case "not_toggleable":
+            reply.code(400).send({ error: outcome.refusal.message });
+            return;
           default:
             return unhandledRefusal(outcome.refusal);
         }
       }
-      const state = outcome.value;
-      botEventLog.record(
-        "info",
-        "bot",
-        `Plugin RPC scopes set by admin (${state.approved.length} approved, ${state.pending.length} pending)`,
-        { pluginId: id, ...state, actor: request.authUserId },
-      );
-      return { scopes: state };
+      return { scopes: outcome.value };
     },
   );
 
@@ -1342,6 +1341,7 @@ export async function registerPluginRoutes(
       const outcome = await pluginAdmin.setApprovedGlobalEventSubs(
         id,
         approvedRaw,
+        request.authUserId,
       );
       if (!outcome.ok) {
         switch (outcome.refusal.kind) {
@@ -1359,18 +1359,20 @@ export async function registerPluginRoutes(
               fieldErrors: outcome.refusal.fieldErrors,
             });
             return;
+          case "conflict":
+            reply.code(409).send({ error: outcome.refusal.message });
+            return;
+          case "override_not_found":
+            reply.code(404).send({ error: "no per-guild override to clear" });
+            return;
+          case "not_toggleable":
+            reply.code(400).send({ error: outcome.refusal.message });
+            return;
           default:
             return unhandledRefusal(outcome.refusal);
         }
       }
-      const state = outcome.value;
-      botEventLog.record(
-        "info",
-        "bot",
-        `Plugin global event subscriptions set by admin (${state.approved.length} approved, ${state.pending.length} pending)`,
-        { pluginId: id, ...state, actor: request.authUserId },
-      );
-      return { globalEventSubs: state };
+      return { globalEventSubs: outcome.value };
     },
   );
 
@@ -1381,14 +1383,15 @@ export async function registerPluginRoutes(
    * cannot be deleted — the admin must wait for the reaper to mark
    * them inactive first (i.e. stop the plugin container and wait ~75 s).
    *
-   * The teardown itself — token revoke, command unregister, capability
-   * purge, row destroy, reconcile, cache drops, audit — is owned by
-   * Plugin Admin (`pluginAdmin.teardown`); read it there. This handler
-   * keeps only what resolves before the operation: the admin guard, id
-   * parsing, and the refuse-an-active-plugin check.
+   * The teardown itself — the refuse-an-active-plugin check, token
+   * revoke, command unregister, capability purge, row destroy,
+   * reconcile, cache drops, audit — is owned by Plugin Admin
+   * (`pluginAdmin.teardown`); read it there. This handler keeps only
+   * what resolves before the operation: the admin guard and id
+   * parsing, plus the refusal mapping.
    *
    * Returns 204 on success.
-   * Returns 409 if status === "active".
+   * Returns 409 if status === "active" (the `conflict` refusal).
    * Returns 404 if the plugin is not found.
    *
    * Requires admin capability.
@@ -1400,18 +1403,6 @@ export async function registerPluginRoutes(
       const pluginId = Number(request.params.id);
       if (!Number.isInteger(pluginId) || pluginId <= 0) {
         reply.code(400).send({ error: "invalid id" });
-        return;
-      }
-      const plugin = await findPluginById(pluginId);
-      if (!plugin) {
-        reply.code(404).send({ error: "plugin not found" });
-        return;
-      }
-      if (plugin.status === "active") {
-        reply.code(409).send({
-          error:
-            "cannot delete active plugin; stop the plugin process and wait ~75s for the heartbeat reaper to mark it inactive",
-        });
         return;
       }
 
@@ -1435,6 +1426,15 @@ export async function registerPluginRoutes(
               error: "config validation failed",
               fieldErrors: outcome.refusal.fieldErrors,
             });
+            return;
+          case "conflict":
+            reply.code(409).send({ error: outcome.refusal.message });
+            return;
+          case "override_not_found":
+            reply.code(404).send({ error: "no per-guild override to clear" });
+            return;
+          case "not_toggleable":
+            reply.code(400).send({ error: outcome.refusal.message });
             return;
           default:
             return unhandledRefusal(outcome.refusal);
@@ -1463,6 +1463,11 @@ export async function registerPluginRoutes(
    * Returns: { pluginKey, setupSecret: "<cleartext-once>", created: boolean }
    *   created=true when a placeholder row was auto-created for the pluginKey.
    *
+   * The provisioning itself — placeholder creation, hash write, audit —
+   * is owned by Plugin Admin (`pluginAdmin.provisionSetupSecret`); it
+   * cannot refuse, so there is no outcome to map. This handler keeps
+   * the admin guard and request parsing.
+   *
    * Requires admin capability.
    */
   server.post<{
@@ -1486,61 +1491,7 @@ export async function registerPluginRoutes(
       return;
     }
 
-    let pluginRow = await findPluginByKey(key);
-    let created = false;
-    if (!pluginRow) {
-      // Auto-create a placeholder row so the secret can be stored before
-      // the plugin first registers. The plugin's register call will fill in
-      // the real manifest, url, and token via upsertPluginRegistration.
-      pluginRow = await upsertPluginRegistration({
-        pluginKey: key,
-        name: key,
-        version: "0.0.0",
-        url: "http://placeholder",
-        manifestJson: "{}",
-        tokenHash: "",
-        defaultEnabled: false,
-      });
-      created = true;
-      botEventLog.record(
-        "info",
-        "bot",
-        `Admin created placeholder plugin row for '${key}' via setup-secret`,
-        { pluginKey: key, actor: request.authUserId },
-      );
-    }
-
-    const cleartext =
-      typeof bodySecret === "string" && bodySecret.length > 0
-        ? bodySecret
-        : randomBytes(32).toString("hex");
-
-    const hash = hashSecret(cleartext);
-    await setPluginSetupSecretHash(pluginRow.id, hash);
-
-    await recordAudit(
-      request.authUserId ?? "system",
-      "plugin.setup_secret",
-      String(pluginRow.id),
-      {
-        pluginKey: key,
-        secretSource: bodySecret ? "supplied" : "generated",
-        placeholderCreated: created,
-      },
-    );
-    botEventLog.record(
-      "info",
-      "bot",
-      `Per-plugin setup secret set by admin for ${key}`,
-      {
-        pluginId: pluginRow.id,
-        pluginKey: key,
-        actor: request.authUserId,
-        placeholderCreated: created,
-      },
-    );
-
-    return { pluginKey: key, setupSecret: cleartext, created };
+    return pluginAdmin.provisionSetupSecret(key, bodySecret, request.authUserId);
   });
 }
 
