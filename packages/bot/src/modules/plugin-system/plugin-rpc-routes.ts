@@ -148,20 +148,26 @@ const KV_KEY_MAX = 200;
 const snowflakeField = { type: "string", pattern: SNOWFLAKE_PATTERN };
 const stringField = { type: "string" };
 const nonEmptyStringField = { type: "string", minLength: 1 };
+const arrayField = { type: "array" };
+const objectField = { type: "object" };
+const numberField = { type: "number" };
+const integerField = { type: "integer" };
+const booleanField = { type: "boolean" };
 
 /**
  * A field the schema names but does not constrain.
  *
- * Not every hand-rolled `typeof` in this file is a guard. Some are
- * normalisers: a wrong type is silently treated as *absent* and the
- * request carries on, often to a 200. Giving those a type would turn a
- * call that succeeds today into a 400 — a narrowing we cannot scope,
- * because `callBotRpc` takes an untyped body and we cannot enumerate
- * who passes a loose one. That tightening is worth doing, but as its
- * own release-noted behaviour change, not smuggled inside a refactor.
+ * The schema batches (#48, #53–#55) left every normaliser-shaped field
+ * unconstrained so the conversion stayed a pure refactor. #58 then
+ * deliberately tightened them: a wrong-typed optional field is now
+ * refused with a 400 naming the field, instead of being silently
+ * treated as absent.
  *
- * So the normaliser stays in the handler and the field is declared
- * without a type. Every use below cites the line it is preserving.
+ * What remains unconstrained after #58 is only the fields whose
+ * looseness is a designed contract rather than an accident — each use
+ * below cites which one it is preserving (today: `attachments`, whose
+ * whole descriptor shape is owned by `resolvePluginAttachments`, which
+ * already 400s on anything malformed).
  */
 const unconstrainedField = {};
 
@@ -466,10 +472,10 @@ function registerRpcRoutes(
   server.post<{
     Body: {
       channel_id: string;
-      content?: unknown;
-      embeds?: unknown;
-      components?: unknown;
-      allowed_mentions?: unknown;
+      content?: string;
+      embeds?: unknown[];
+      components?: unknown[];
+      allowed_mentions?: Record<string, unknown>;
       attachments?: unknown;
       reply_to?: string;
     };
@@ -482,16 +488,14 @@ function registerRpcRoutes(
           properties: {
             channel_id: nonEmptyStringField,
             reply_to: snowflakeField,
-            // Normalisers, not guards — see unconstrainedField:
-            //   content:    `typeof body.content === "string" ? … : undefined`
-            //   embeds:     `Array.isArray(body.embeds) ? … : undefined`
-            //   components: `Array.isArray(body.components) ? … : undefined`
-            content: unconstrainedField,
-            embeds: unconstrainedField,
-            components: unconstrainedField,
-            // safeAllowedMentions: `if (!raw || typeof raw !== "object")
-            // return { parse: [] }` — a non-object is absent, not a 400.
-            allowed_mentions: unconstrainedField,
+            // Tightened by #58: these were normalise-and-continue (a
+            // wrong type silently meant absent); a wrong type is now a
+            // 400 naming the field. safeAllowedMentions still sanitises
+            // the *inside* of allowed_mentions (parse-stripping).
+            content: stringField,
+            embeds: arrayField,
+            components: arrayField,
+            allowed_mentions: objectField,
             // resolvePluginAttachments owns the whole descriptor shape,
             // including the array check, and is shared with the
             // interactions family; repeating it here would only change
@@ -510,14 +514,12 @@ function registerRpcRoutes(
         return;
       }
       const body = request.body;
-      const content = typeof body.content === "string" ? body.content : undefined;
-      const embeds = Array.isArray(body.embeds) ? body.embeds : undefined;
-      const components = Array.isArray(body.components)
-        ? body.components
-        : undefined;
-      // Guard over the *normalised* values: a non-string content counts
-      // as absent here. It cannot move into the schema while content and
-      // embeds are unconstrained, because the schema sees the raw body.
+      const content = body.content;
+      const embeds = body.embeds;
+      const components = body.components;
+      // Either-or guard stays in the handler: it reads emptiness
+      // (`content: ""` counts as absent), which a per-field type cannot
+      // express.
       if (!content && !embeds) {
         reply.code(400).send({ error: "content or embeds required" });
         return;
@@ -570,9 +572,7 @@ function registerRpcRoutes(
       //   - allowed_mentions provided WITHOUT it → Discord's own
       //     default (no ping): a plugin that wrote an explicit mention
       //     allowlist (even an empty one) said exactly who to ping.
-      const pluginProvidedMentions =
-        typeof body.allowed_mentions === "object" &&
-        body.allowed_mentions !== null;
+      const pluginProvidedMentions = body.allowed_mentions !== undefined;
       if (
         replyTo &&
         !pluginProvidedMentions &&
@@ -644,9 +644,9 @@ function registerRpcRoutes(
   server.post<{
     Body: {
       user_id: string;
-      content?: unknown;
-      embeds?: unknown;
-      allowed_mentions?: unknown;
+      content?: string;
+      embeds?: unknown[];
+      allowed_mentions?: Record<string, unknown>;
     };
   }>(
     "/api/plugin/messages.send_dm",
@@ -656,14 +656,11 @@ function registerRpcRoutes(
           type: "object",
           properties: {
             user_id: nonEmptyStringField,
-            // Normalisers, not guards — see unconstrainedField:
-            //   content: `typeof body.content === "string" ? … : undefined`
-            //   embeds:  `Array.isArray(body.embeds) ? … : undefined`
-            //   allowed_mentions: safeAllowedMentions treats a non-object
-            //   as absent.
-            content: unconstrainedField,
-            embeds: unconstrainedField,
-            allowed_mentions: unconstrainedField,
+            // Tightened by #58 — wrong type is a 400 naming the field,
+            // no longer silently treated as absent.
+            content: stringField,
+            embeds: arrayField,
+            allowed_mentions: objectField,
           },
           required: ["user_id"],
         },
@@ -677,9 +674,9 @@ function registerRpcRoutes(
         return;
       }
       const body = request.body;
-      const content = typeof body.content === "string" ? body.content : undefined;
-      const embeds = Array.isArray(body.embeds) ? body.embeds : undefined;
-      // Guard over the normalised values; see messages.send.
+      const content = body.content;
+      const embeds = body.embeds;
+      // Either-or emptiness guard stays in the handler; see messages.send.
       if (!content && !embeds) {
         reply.code(400).send({ error: "content or embeds required" });
         return;
@@ -804,9 +801,9 @@ function registerRpcRoutes(
     Body: {
       channel_id: string;
       message_id: string;
-      content?: unknown;
-      embeds?: unknown;
-      components?: unknown;
+      content?: string;
+      embeds?: unknown[];
+      components?: unknown[];
     };
   }>(
     "/api/plugin/messages.edit",
@@ -817,16 +814,13 @@ function registerRpcRoutes(
           properties: {
             channel_id: stringField,
             message_id: stringField,
-            // Normalisers, not guards — see unconstrainedField. Each of
-            // these was a "copy it across only if it is the right type"
-            // test, so a wrong type left the field untouched on Discord
-            // rather than failing the call:
-            //   content:    `if (typeof body.content === "string") editPayload.content = …`
-            //   embeds:     `if (Array.isArray(body.embeds)) editPayload.embeds = …`
-            //   components: `if (Array.isArray(body.components)) editPayload.components = …`
-            content: unconstrainedField,
-            embeds: unconstrainedField,
-            components: unconstrainedField,
+            // Tightened by #58: a wrong-typed field used to leave that
+            // field untouched on Discord while the call answered 200 —
+            // now it is a 400 naming the field. Presence still decides
+            // which fields the edit touches.
+            content: stringField,
+            embeds: arrayField,
+            components: arrayField,
             // `attachments` is deliberately absent: the SDK sends it on
             // edit and this route has always ignored it.
           },
@@ -853,7 +847,7 @@ function registerRpcRoutes(
         return;
       }
       if (!(await passesGuildFeatureGate(channel, ctx, reply))) return;
-      if (Array.isArray(body.components)) {
+      if (body.components !== undefined) {
         const failure = findUnownedCustomId(ctx.pluginKey, body.components);
         if (failure) {
           reply.code(400).send({
@@ -865,9 +859,9 @@ function registerRpcRoutes(
       const editPayload: Record<string, unknown> = {
         allowed_mentions: { parse: [] },
       };
-      if (typeof body.content === "string") editPayload.content = body.content;
-      if (Array.isArray(body.embeds)) editPayload.embeds = body.embeds;
-      if (Array.isArray(body.components))
+      if (body.content !== undefined) editPayload.content = body.content;
+      if (body.embeds !== undefined) editPayload.embeds = body.embeds;
+      if (body.components !== undefined)
         editPayload.components = body.components;
       try {
         const msg = await channel.messages.fetch(body.message_id);
@@ -1210,7 +1204,7 @@ function registerRpcRoutes(
    * cap applies to the post-increment serialised value.
    */
   server.post<{
-    Body: { guild_id: string; key: string; delta?: number | null };
+    Body: { guild_id: string; key: string; delta?: number };
   }>(
     "/api/plugin/storage.kv_increment",
     {
@@ -1220,18 +1214,17 @@ function registerRpcRoutes(
           properties: {
             guild_id: nonEmptyStringField,
             key: { type: "string", minLength: 1, maxLength: KV_KEY_MAX },
-            // "null" is in the type union because the old guard read
-            // `body.delta ?? 1` before type-checking — an explicit null
-            // meant "default to 1" and answered 200. `type: "number"`
-            // alone would turn that into a 400, a narrowing.
-            delta: { type: ["number", "null"] },
+            // Tightened by #58: an explicit `delta: null` used to mean
+            // "default to 1" — an accident of the old guard reading
+            // `body.delta ?? 1` before type-checking. Now only a number
+            // (or absence) is accepted.
+            delta: numberField,
           },
           required: ["guild_id", "key"],
         },
       },
       // Two texts ajv's defaults would regress: the over-long-key
-      // message, and the delta one (ajv says `delta must be
-      // number,null`, which leaks the null-means-default trick).
+      // message, and the delta one (historical wording, kept verbatim).
       schemaErrorFormatter: preservingSchemaErrorFormatter([
         {
           instancePath: "/key",
@@ -1251,6 +1244,7 @@ function registerRpcRoutes(
       const body = request.body;
       // NaN / Infinity cannot be spelled in JSON, so `type: "number"`
       // refuses everything the old Number.isFinite check refused.
+      // `??` covers only absence now — null is refused by the schema.
       const deltaRaw = body.delta ?? 1;
       try {
         // Increment + usage read-back live in Guild-KV Accounting (#56).
@@ -1305,9 +1299,9 @@ function registerRpcRoutes(
   server.post<{
     Body: {
       guild_id: string;
-      prefix?: unknown;
-      limit?: unknown;
-      offset?: unknown;
+      prefix?: string;
+      limit?: number;
+      offset?: number;
     };
   }>(
     "/api/plugin/storage.kv_list",
@@ -1318,13 +1312,11 @@ function registerRpcRoutes(
           properties: {
             // Bare typeof at HEAD — an empty guild_id was accepted.
             guild_id: stringField,
-            // Normalisers, not guards — see unconstrainedField:
-            //   prefix: `typeof body.prefix === "string" ? … : undefined`
-            //   limit:  `typeof body.limit === "number" ? … : 100`
-            //   offset: `typeof body.offset === "number" ? … : 0`
-            prefix: unconstrainedField,
-            limit: unconstrainedField,
-            offset: unconstrainedField,
+            // Tightened by #58 — a wrong-typed option is a 400 naming
+            // the field, no longer silently defaulted.
+            prefix: stringField,
+            limit: numberField,
+            offset: numberField,
           },
           required: ["guild_id"],
         },
@@ -1334,9 +1326,9 @@ function registerRpcRoutes(
       const ctx = await requireScope(request, reply, "storage.kv_list");
       if (!ctx) return;
       const body = request.body;
-      const prefix = typeof body.prefix === "string" ? body.prefix : undefined;
-      const limit = typeof body.limit === "number" ? body.limit : 100;
-      const offset = typeof body.offset === "number" ? body.offset : 0;
+      const prefix = body.prefix;
+      const limit = body.limit ?? 100;
+      const offset = body.offset ?? 0;
       const result = await listKvKeys(ctx.pluginId, body.guild_id, {
         prefix,
         limit,
@@ -1363,9 +1355,9 @@ function registerRpcRoutes(
   server.post<{
     Body: {
       guild_id: string;
-      prefix?: unknown;
-      limit?: unknown;
-      offset?: unknown;
+      prefix?: string;
+      limit?: number;
+      offset?: number;
     };
   }>(
     "/api/plugin/storage.kv_list_values",
@@ -1374,11 +1366,11 @@ function registerRpcRoutes(
         body: {
           type: "object",
           properties: {
-            // Same shape as storage.kv_list, including the normalisers.
+            // Same shape as storage.kv_list, including the #58 tightening.
             guild_id: stringField,
-            prefix: unconstrainedField,
-            limit: unconstrainedField,
-            offset: unconstrainedField,
+            prefix: stringField,
+            limit: numberField,
+            offset: numberField,
           },
           required: ["guild_id"],
         },
@@ -1388,9 +1380,9 @@ function registerRpcRoutes(
       const ctx = await requireScope(request, reply, "storage.kv_list_values");
       if (!ctx) return;
       const body = request.body;
-      const prefix = typeof body.prefix === "string" ? body.prefix : undefined;
-      const limit = typeof body.limit === "number" ? body.limit : 100;
-      const offset = typeof body.offset === "number" ? body.offset : 0;
+      const prefix = body.prefix;
+      const limit = body.limit ?? 100;
+      const offset = body.offset ?? 0;
       const result = await listKvWithValues(ctx.pluginId, body.guild_id, {
         prefix,
         limit,
@@ -1428,11 +1420,11 @@ function registerRpcRoutes(
   server.post<{
     Body: {
       interaction_token: string;
-      content?: unknown;
-      embeds?: unknown;
-      components?: unknown;
-      ephemeral?: unknown;
-      flags?: unknown;
+      content?: string;
+      embeds?: unknown[];
+      components?: unknown[];
+      ephemeral?: boolean;
+      flags?: number;
       attachments?: unknown;
     };
   }>(
@@ -1443,19 +1435,15 @@ function registerRpcRoutes(
           type: "object",
           properties: {
             interaction_token: nonEmptyStringField,
-            // Normalisers, not guards — see unconstrainedField:
-            //   content:    `typeof body.content === "string" ? … : undefined`
-            //   embeds:     `Array.isArray(body.embeds) ? … : undefined`
-            //   components: `Array.isArray(body.components) ? … : undefined`
-            //   ephemeral:  `body.ephemeral === undefined ? null :
-            //               body.ephemeral !== false` — any non-false
-            //               value (any type) means "ephemeral".
-            //   flags:      sanitizePluginFlags treats a non-number as 0.
-            content: unconstrainedField,
-            embeds: unconstrainedField,
-            components: unconstrainedField,
-            ephemeral: unconstrainedField,
-            flags: unconstrainedField,
+            // Tightened by #58 — wrong type is a 400 naming the field.
+            // The boolean semantics stay in the handler (absent = keep
+            // the defer's ephemerality, `false` = post publicly), as
+            // does sanitizePluginFlags' allowlist mask over `flags`.
+            content: stringField,
+            embeds: arrayField,
+            components: arrayField,
+            ephemeral: booleanField,
+            flags: numberField,
             // resolvePluginAttachments owns the whole descriptor shape —
             // see messages.send.
             attachments: unconstrainedField,
@@ -1472,11 +1460,9 @@ function registerRpcRoutes(
       return;
     }
     const body = request.body;
-    const content = typeof body.content === "string" ? body.content : undefined;
-    const embeds = Array.isArray(body.embeds) ? body.embeds : undefined;
-    const components = Array.isArray(body.components)
-      ? body.components
-      : undefined;
+    const content = body.content;
+    const embeds = body.embeds;
+    const components = body.components;
     if (!content && !embeds && !components) {
       reply.code(400).send({ error: "content, embeds or components required" });
       return;
@@ -1604,11 +1590,11 @@ function registerRpcRoutes(
   server.post<{
     Body: {
       interaction_token: string;
-      content?: unknown;
-      embeds?: unknown;
-      components?: unknown;
-      ephemeral?: unknown;
-      flags?: unknown;
+      content?: string;
+      embeds?: unknown[];
+      components?: unknown[];
+      ephemeral?: boolean;
+      flags?: number;
       attachments?: unknown;
     };
   }>(
@@ -1619,18 +1605,14 @@ function registerRpcRoutes(
           type: "object",
           properties: {
             interaction_token: nonEmptyStringField,
-            // Normalisers, not guards — see unconstrainedField:
-            //   content:    `typeof body.content === "string" ? … : undefined`
-            //   embeds:     `Array.isArray(body.embeds) ? … : undefined`
-            //   components: `Array.isArray(body.components) ? … : undefined`
-            //   ephemeral:  `body.ephemeral === true` — any non-true
-            //               value (any type) means public.
-            //   flags:      sanitizePluginFlags treats a non-number as 0.
-            content: unconstrainedField,
-            embeds: unconstrainedField,
-            components: unconstrainedField,
-            ephemeral: unconstrainedField,
-            flags: unconstrainedField,
+            // Tightened by #58 — wrong type is a 400 naming the field.
+            // `ephemeral === true` (absent/false = public) and
+            // sanitizePluginFlags' allowlist mask stay in the handler.
+            content: stringField,
+            embeds: arrayField,
+            components: arrayField,
+            ephemeral: booleanField,
+            flags: numberField,
             // resolvePluginAttachments owns the whole descriptor shape —
             // see messages.send.
             attachments: unconstrainedField,
@@ -1647,11 +1629,9 @@ function registerRpcRoutes(
       return;
     }
     const body = request.body;
-    const content = typeof body.content === "string" ? body.content : undefined;
-    const embeds = Array.isArray(body.embeds) ? body.embeds : undefined;
-    const components = Array.isArray(body.components)
-      ? body.components
-      : undefined;
+    const content = body.content;
+    const embeds = body.embeds;
+    const components = body.components;
     if (!content && !embeds && !components) {
       reply.code(400).send({ error: "content, embeds or components required" });
       return;
@@ -1789,10 +1769,10 @@ function registerRpcRoutes(
     Body: {
       interaction_token: string;
       message_id: string;
-      content?: unknown;
-      embeds?: unknown;
-      components?: unknown;
-      allowed_mentions?: unknown;
+      content?: string;
+      embeds?: unknown[];
+      components?: unknown[];
+      allowed_mentions?: Record<string, unknown>;
     };
   }>(
     "/api/plugin/interactions.edit_followup",
@@ -1803,16 +1783,14 @@ function registerRpcRoutes(
           properties: {
             interaction_token: nonEmptyStringField,
             message_id: nonEmptyStringField,
-            // Normalisers, not guards — see unconstrainedField:
-            //   content:    `typeof body.content === "string" ? … : undefined`
-            //   embeds:     `Array.isArray(body.embeds) ? … : undefined`
-            //   components: `Array.isArray(body.components) ? … : undefined`
-            //   allowed_mentions: safeAllowedMentions treats a non-object
-            //   as absent.
-            content: unconstrainedField,
-            embeds: unconstrainedField,
-            components: unconstrainedField,
-            allowed_mentions: unconstrainedField,
+            // Tightened by #58 — wrong type is a 400 naming the field.
+            // Presence still decides which fields the PATCH touches;
+            // safeAllowedMentions still sanitises the inside of
+            // allowed_mentions.
+            content: stringField,
+            embeds: arrayField,
+            components: arrayField,
+            allowed_mentions: objectField,
           },
           required: ["interaction_token", "message_id"],
         },
@@ -1830,12 +1808,9 @@ function registerRpcRoutes(
       return;
     }
     const body = request.body;
-    const content =
-      typeof body.content === "string" ? body.content : undefined;
-    const embeds = Array.isArray(body.embeds) ? body.embeds : undefined;
-    const components = Array.isArray(body.components)
-      ? body.components
-      : undefined;
+    const content = body.content;
+    const embeds = body.embeds;
+    const components = body.components;
     if (components) {
       const failure = findUnownedCustomId(ctx.pluginKey, components);
       if (failure) {
@@ -1909,21 +1884,18 @@ function registerRpcRoutes(
           properties: {
             interaction_id: nonEmptyStringField,
             interaction_token: nonEmptyStringField,
-            // The old guard was `!body.modal || typeof body.modal !==
-            // "object"`, and in JS an *array* passes that — it then went
-            // to findUnownedModalCustomId like any other modal. JSON
-            // Schema's "object" excludes arrays, so the type union keeps
-            // that accepted case accepted (same trick as metrics.push).
-            // Null/false/0/"" are all refused by the type, as the falsy
-            // half of the guard refused them.
-            modal: { type: ["object", "array"] },
+            // Tightened by #58: the old guard (`!body.modal || typeof
+            // body.modal !== "object"`) let a JS *array* through — an
+            // accident of `typeof [] === "object"`, kept accepted by the
+            // schema batch. JSON Schema's "object" excludes arrays, so an
+            // array modal is now refused like every other wrong type.
+            modal: objectField,
           },
           required: ["interaction_id", "interaction_token", "modal"],
         },
       },
-      // The guard folded every modal failure mode into one message; keep
-      // it (ajv's default `modal must be object,array` leaks the array
-      // quirk).
+      // The guard folded every modal failure mode into one message;
+      // keep it.
       schemaErrorFormatter: preservingSchemaErrorFormatter([
         { instancePath: "/modal", keyword: "type", message: "modal required" },
       ]),
@@ -1989,9 +1961,9 @@ function registerRpcRoutes(
   server.post<{
     Body: {
       user_id: string;
-      kind?: unknown;
-      guild_id?: unknown;
-      ttl_ms?: unknown;
+      kind?: string;
+      guild_id?: string;
+      ttl_ms?: number;
     };
   }>(
     "/api/plugin/auth.session",
@@ -2003,17 +1975,15 @@ function registerRpcRoutes(
             // Bare non-empty typeof at HEAD — NOT snowflake-checked,
             // so no pattern here.
             user_id: nonEmptyStringField,
-            // Normalisers, not guards — see unconstrainedField:
-            //   kind:     `body.kind === "manage" ? "manage" : "session"`
-            //             — any other value (wrong type, unknown string)
-            //             silently means "session", never a 400.
-            //   guild_id: `typeof body.guild_id === "string" && length > 0
-            //             ? body.guild_id : null`
-            //   ttl_ms:   `typeof body.ttl_ms === "number" &&
-            //             Number.isFinite(…) ? body.ttl_ms : defaultTtl`
-            kind: unconstrainedField,
-            guild_id: unconstrainedField,
-            ttl_ms: unconstrainedField,
+            // Tightened by #58 — a wrong-typed value is a 400 naming
+            // the field. Deliberately type-only: an unknown *string*
+            // kind still means "session" in the handler (value
+            // validation would break pre-0.9 callers that pass the
+            // then-documented 'webui'), and an empty guild_id still
+            // normalises to a null claim.
+            kind: stringField,
+            guild_id: stringField,
+            ttl_ms: numberField,
           },
           required: ["user_id"],
         },
@@ -2038,15 +2008,11 @@ function registerRpcRoutes(
     const body = request.body;
     const userId = body.user_id;
     const kind = body.kind === "manage" ? "manage" : "session";
-    const guildId =
-      typeof body.guild_id === "string" && body.guild_id.length > 0
-        ? body.guild_id
-        : null;
+    const guildId = body.guild_id ? body.guild_id : null;
     const defaultTtl = kind === "manage" ? 15 * 60_000 : 6 * 60 * 60_000;
-    let ttlMs =
-      typeof body.ttl_ms === "number" && Number.isFinite(body.ttl_ms)
-        ? body.ttl_ms
-        : defaultTtl;
+    // NaN / Infinity cannot be spelled in JSON, so `type: "number"`
+    // refuses everything the old Number.isFinite check refused.
+    let ttlMs = body.ttl_ms ?? defaultTtl;
     ttlMs = Math.max(60_000, Math.min(ttlMs, 7 * 24 * 60 * 60_000));
 
     // Manage tokens go through the shared mint helper so the cap check
@@ -2406,7 +2372,7 @@ function registerRpcRoutes(
    * don't exceed this. Discord doesn't paginate channel lists, so
    * there is no cursor parameter.
    */
-  server.post<{ Body: { guild_id: string; types?: unknown } }>(
+  server.post<{ Body: { guild_id: string; types?: unknown[] } }>(
     "/api/plugin/channels.list",
     {
       schema: {
@@ -2415,12 +2381,12 @@ function registerRpcRoutes(
           properties: {
             // The old guard ran SNOWFLAKE_RE — accepted set unchanged.
             guild_id: snowflakeField,
-            // Normaliser, not a guard — see unconstrainedField:
-            //   `Array.isArray(body.types) && body.types.length > 0
-            //    ? new Set(body.types.filter(… typeof v === "number"))
-            //    : null` — a wrong-typed `types` means "no filter",
-            //   never a 400.
-            types: unconstrainedField,
+            // Tightened by #58: a non-array `types` used to mean "no
+            // filter"; now it is a 400 naming the field. Per-item
+            // filtering (non-number entries dropped) stays a
+            // normaliser in the handler, same split as users.get's
+            // per-item id filter.
+            types: arrayField,
           },
           required: ["guild_id"],
         },
@@ -2439,7 +2405,7 @@ function registerRpcRoutes(
         return;
       }
       const typeFilter =
-        Array.isArray(body.types) && body.types.length > 0
+        body.types !== undefined && body.types.length > 0
           ? new Set(body.types.filter((v): v is number => typeof v === "number"))
           : null;
       try {
@@ -2736,10 +2702,10 @@ function registerRpcRoutes(
     Body: {
       guild_id: string;
       channel_id: string;
-      limit?: unknown;
-      before?: unknown;
-      after?: unknown;
-      around?: unknown;
+      limit?: number;
+      before?: string;
+      after?: string;
+      around?: string;
     };
   }>(
     "/api/plugin/messages.fetch_history",
@@ -2750,17 +2716,16 @@ function registerRpcRoutes(
           properties: {
             guild_id: snowflakeField,
             channel_id: snowflakeField,
-            // Normalisers, not guards — see unconstrainedField:
-            //   limit:  `typeof body.limit === "number" && Number.isInteger(body.limit) ? clamp : 50`
-            //           (anything else falls back to 50, and an
-            //           out-of-range integer is clamped, not refused)
-            //   cursors: `if (typeof body.before === "string" &&
-            //           SNOWFLAKE_RE.test(body.before)) query.set(…)` —
-            //           a malformed cursor is dropped from the query.
-            limit: unconstrainedField,
-            before: unconstrainedField,
-            after: unconstrainedField,
-            around: unconstrainedField,
+            // Tightened by #58: a non-integer limit used to fall back
+            // to 50, and a malformed cursor was silently dropped from
+            // the query — both are now 400s naming the field. An
+            // out-of-range *integer* limit is still clamped to
+            // [1, 100] in the handler (a valid-typed value, documented
+            // Discord cap), not refused.
+            limit: integerField,
+            before: snowflakeField,
+            after: snowflakeField,
+            around: snowflakeField,
           },
           required: ["guild_id", "channel_id"],
         },
@@ -2785,19 +2750,11 @@ function registerRpcRoutes(
         return;
       }
       const limit =
-        typeof body.limit === "number" && Number.isInteger(body.limit)
-          ? Math.max(1, Math.min(100, body.limit))
-          : 50;
+        body.limit !== undefined ? Math.max(1, Math.min(100, body.limit)) : 50;
       const query = new URLSearchParams({ limit: String(limit) });
-      if (typeof body.before === "string" && SNOWFLAKE_RE.test(body.before)) {
-        query.set("before", body.before);
-      }
-      if (typeof body.after === "string" && SNOWFLAKE_RE.test(body.after)) {
-        query.set("after", body.after);
-      }
-      if (typeof body.around === "string" && SNOWFLAKE_RE.test(body.around)) {
-        query.set("around", body.around);
-      }
+      if (body.before !== undefined) query.set("before", body.before);
+      if (body.after !== undefined) query.set("after", body.after);
+      if (body.around !== undefined) query.set("around", body.around);
       try {
         // Pass `query` as an option rather than concatenating into the
         // URL: @discordjs/rest derives the rate-limit bucket from the
@@ -2834,7 +2791,7 @@ function registerRpcRoutes(
       channel_id: string;
       message_id: string;
       emoji: string;
-      user_id?: unknown;
+      user_id?: string;
     };
   }>(
     "/api/plugin/messages.remove_reaction",
@@ -2847,11 +2804,11 @@ function registerRpcRoutes(
             channel_id: snowflakeField,
             message_id: snowflakeField,
             emoji: nonEmptyStringField,
-            // Normaliser, not a guard — see unconstrainedField:
-            // `typeof body.user_id === "string" && SNOWFLAKE_RE.test(…)
-            // ? body.user_id : null`, i.e. a malformed user_id falls
-            // back to removing the bot's own reaction.
-            user_id: unconstrainedField,
+            // Tightened by #58: a malformed user_id used to silently
+            // fall back to removing the BOT'S OWN reaction — the
+            // sharpest of the silent surprises. Now a 400 naming the
+            // field; absence still means "the bot's own reaction".
+            user_id: snowflakeField,
           },
           required: ["guild_id", "channel_id", "message_id", "emoji"],
         },
@@ -2865,11 +2822,8 @@ function registerRpcRoutes(
         return;
       }
       const body = request.body;
-      // Absent (or malformed) user_id = remove the bot's own reaction.
-      const userId =
-        typeof body.user_id === "string" && SNOWFLAKE_RE.test(body.user_id)
-          ? body.user_id
-          : null;
+      // Absent user_id = remove the bot's own reaction.
+      const userId = body.user_id ?? null;
       if (!(await pluginHasGuildReach(ctx.pluginId, body.guild_id))) {
         reply.code(403).send({ error: "plugin not enabled in this guild" });
         return;
@@ -3138,13 +3092,14 @@ function registerRpcRoutes(
     "/api/plugin/metrics.push",
     {
       schema: {
-        // The old guard was `!body || typeof body !== "object"`, and in
-        // JS an *array* passes that — an array body answered 200 with an
-        // empty snapshot stored. JSON Schema's "object" excludes arrays,
-        // so the type union keeps that accepted case accepted. The
-        // snapshot's fields are all normalisers (wrong type → default)
-        // and stay unconstrained in the handler.
-        body: { type: ["object", "array"] },
+        // Tightened by #58: the old guard (`!body || typeof body !==
+        // "object"`) let an *array* body through — 200 with an empty
+        // snapshot stored, an accident of `typeof [] === "object"` the
+        // schema batch kept. JSON Schema's "object" excludes arrays, so
+        // an array body is now refused. The snapshot's inner fields are
+        // still normalisers (wrong type → default) in the handler — the
+        // shape is the SDK MetricsCollector's, versioned with it.
+        body: { type: "object" },
       },
       schemaErrorFormatter: preservingSchemaErrorFormatter([
         { instancePath: "", keyword: "type", message: "snapshot object required" },

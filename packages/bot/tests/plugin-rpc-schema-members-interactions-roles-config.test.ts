@@ -12,9 +12,11 @@
  *     byte-identical (config.set's key/value messages, send_modal's
  *     folded "modal required", members.get's array message) — those go
  *     through per-route formatter overrides;
- *  3. the normalisers are still normalisers: a wrong-typed optional
- *     field is ignored/defaulted with a 200, never refused. These tests
- *     exist so #58's deliberate tightening can't happen by accident.
+ *  3. #58's deliberate tightening: a wrong-typed optional field is now
+ *     refused with a 400 naming the field, and the leniency that
+ *     remains (members.get's per-item id filter, its bare-typeof
+ *     guild_id) is each a designed contract, pinned with the reason it
+ *     was kept.
  *
  * config.set drives the real plugin-config model against the in-memory
  * sqlite DB, same reasoning as the storage suite; everything Discord-
@@ -318,18 +320,26 @@ describe("plugin RPC schema errors — members, interactions, roles, config", ()
     expect(rest.patch).not.toHaveBeenCalled();
   });
 
-  it("interactions.respond still ignores wrong-typed content and flags", async () => {
-    const res = await post("/api/plugin/interactions.respond", {
-      interaction_token: TOKEN,
-      content: 5,
-      embeds: [{ title: "t" }],
-      flags: "not-a-number",
-    });
-    expect(res.statusCode).toBe(200);
-    const [, opts] = rest.patch.mock.calls[0]!;
-    const sent = (opts as { body: Record<string, unknown> }).body;
-    expect(sent.content).toBeUndefined();
-    expect(sent.flags).toBeUndefined();
+  it("interactions.respond refuses wrong-typed content, flags and ephemeral (#58)", async () => {
+    // Until #58 these were normalise-and-continue: a wrong-typed
+    // content was dropped (the reply went out without it), a
+    // wrong-typed flags meant 0, and any non-false ephemeral of any
+    // type meant "ephemeral".
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [{ content: 5 }, "content must be string"],
+      [{ content: "hi", flags: "not-a-number" }, "flags must be number"],
+      [{ content: "hi", ephemeral: "yes" }, "ephemeral must be boolean"],
+      [{ embeds: "not-an-array" }, "embeds must be array"],
+    ];
+    for (const [fields, message] of cases) {
+      const res = await post("/api/plugin/interactions.respond", {
+        interaction_token: TOKEN,
+        ...fields,
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toEqual({ error: message });
+    }
+    expect(rest.patch).not.toHaveBeenCalled();
   });
 
   it("interactions.respond PATCHes @original on a valid request", async () => {
@@ -351,12 +361,24 @@ describe("plugin RPC schema errors — members, interactions, roles, config", ()
     expect(res.json()).toEqual({ error: "interaction_token required" });
   });
 
-  it("interactions.followup still treats a wrong-typed ephemeral as public", async () => {
-    // `body.ephemeral === true` — the string "yes" was never ephemeral.
+  it("interactions.followup refuses a wrong-typed ephemeral (#58)", async () => {
+    // Until #58 `body.ephemeral === true` silently treated the string
+    // "yes" as public.
     const res = await post("/api/plugin/interactions.followup", {
       interaction_token: TOKEN,
       content: "hi",
       ephemeral: "yes",
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({ error: "ephemeral must be boolean" });
+    expect(rest.post).not.toHaveBeenCalled();
+  });
+
+  it("interactions.followup still treats ephemeral: false as public", async () => {
+    const res = await post("/api/plugin/interactions.followup", {
+      interaction_token: TOKEN,
+      content: "hi",
+      ephemeral: false,
     });
     expect(res.statusCode).toBe(200);
     const [, opts] = rest.post.mock.calls[0]!;
@@ -413,20 +435,24 @@ describe("plugin RPC schema errors — members, interactions, roles, config", ()
     expect(res.json()).toEqual({ error: "interaction_token required" });
   });
 
-  it("interactions.edit_followup still drops wrong-typed optional fields", async () => {
-    const res = await post("/api/plugin/interactions.edit_followup", {
-      interaction_token: TOKEN,
-      message_id: "followup-1",
-      content: 5,
-      embeds: "not-an-array",
-      allowed_mentions: "nope",
-    });
-    expect(res.statusCode).toBe(200);
-    const [, opts] = rest.patch.mock.calls[0]!;
-    const sent = (opts as { body: Record<string, unknown> }).body;
-    expect("content" in sent).toBe(false);
-    expect("embeds" in sent).toBe(false);
-    expect(sent.allowed_mentions).toEqual({ parse: [] });
+  it("interactions.edit_followup refuses wrong-typed optional fields (#58)", async () => {
+    // Until #58 each wrong-typed field was dropped from the PATCH —
+    // the field the author set never reached Discord, silently.
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [{ content: 5 }, "content must be string"],
+      [{ embeds: "not-an-array" }, "embeds must be array"],
+      [{ allowed_mentions: "nope" }, "allowed_mentions must be object"],
+    ];
+    for (const [fields, message] of cases) {
+      const res = await post("/api/plugin/interactions.edit_followup", {
+        interaction_token: TOKEN,
+        message_id: "followup-1",
+        ...fields,
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toEqual({ error: message });
+    }
+    expect(rest.patch).not.toHaveBeenCalled();
   });
 
   it("interactions.edit_followup patches on a valid request", async () => {
@@ -461,14 +487,17 @@ describe("plugin RPC schema errors — members, interactions, roles, config", ()
     expect(res.json()).toEqual({ error: "interaction_id required" });
   });
 
-  it("interactions.send_modal still accepts an array modal, as `typeof [] === 'object'` did", async () => {
+  it("interactions.send_modal refuses an array modal (#58)", async () => {
+    // Until #58 an array slipped through `typeof [] === 'object'` and
+    // was forwarded to Discord as a modal.
     const res = await post("/api/plugin/interactions.send_modal", {
       interaction_id: USER_SNOWFLAKE,
       interaction_token: TOKEN,
       modal: [],
     });
-    expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ ok: true });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({ error: "modal required" });
+    expect(rest.post).not.toHaveBeenCalled();
   });
 
   it("interactions.send_modal opens a valid modal", async () => {
@@ -503,10 +532,11 @@ describe("plugin RPC schema errors — members, interactions, roles, config", ()
   });
 
   it("members.get still accepts a non-snowflake guild_id, as the bare typeof did", async () => {
-    // Unlike members.add_role, HEAD never ran SNOWFLAKE_RE on this
-    // guild_id — upgrading it here would be a narrowing (#48 lesson).
-    // All-malformed user_ids are filtered to nothing, which returns
-    // an empty list before any guild work.
+    // KEPT after #58 on both counts: the bare-typeof guild_id is the
+    // right *type* (the tightening is about wrong-typed values), and
+    // the per-item user_ids filter is the documented batch-lookup
+    // contract — a malformed id is omitted from the result, it does
+    // not poison the batch (same ruling as users.get).
     const res = await post("/api/plugin/members.get", {
       guild_id: "not-a-snowflake",
       user_ids: [5, "also-not-an-id"],

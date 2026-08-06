@@ -12,9 +12,11 @@
  *     byte-identical (users.get's array message, auth.session's folded
  *     "user_id required" for the empty string) — those go through
  *     per-route formatter overrides;
- *  3. the normalisers are still normalisers: a wrong-typed optional
- *     field is ignored/defaulted with a 200, never refused. These tests
- *     exist so #58's deliberate tightening can't happen by accident.
+ *  3. #58's deliberate tightening: a wrong-typed optional field is now
+ *     refused with a 400 naming the field, and the leniency that
+ *     remains (users.get's per-item id filter, auth.session's
+ *     unknown-string kind) is each a designed contract, pinned with
+ *     the reason it was kept.
  *
  * Everything Discord-shaped goes through a mocked `bot.rest` /
  * `bot.users`; auth.session's mint goes through a spied `jwtService`
@@ -279,19 +281,32 @@ describe("plugin RPC schema errors — channels, users, guilds, auth", () => {
     expect(res.json()).toEqual({ error: "guild_id required" });
   });
 
-  it("channels.list still ignores a wrong-typed types filter", async () => {
-    // `Array.isArray(body.types) && …` — a string means "no filter",
-    // never a 400. Pinned so #58's tightening is a deliberate change.
+  it("channels.list refuses a wrong-typed types filter (#58)", async () => {
+    // Until #58 a non-array `types` silently meant "no filter" — the
+    // caller asked for text channels and got every channel back.
+    const res = await post("/api/plugin/channels.list", {
+      guild_id: GUILD_SNOWFLAKE,
+      types: "not-an-array",
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({ error: "types must be array" });
+    expect(rest.get).not.toHaveBeenCalled();
+  });
+
+  it("channels.list still drops non-number entries inside a types array", async () => {
+    // KEPT after #58: the per-item filter mirrors users.get's batch
+    // contract — the field-level type is enforced, entries are
+    // normalised.
     rest.get.mockResolvedValue([
       { id: "1", type: 0 },
       { id: "2", type: 2 },
     ]);
     const res = await post("/api/plugin/channels.list", {
       guild_id: GUILD_SNOWFLAKE,
-      types: "not-an-array",
+      types: [0, "2"],
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json().channels).toHaveLength(2);
+    expect(res.json().channels).toEqual([{ id: "1", type: 0 }]);
   });
 
   it("channels.list filters by a valid types array", async () => {
@@ -347,8 +362,10 @@ describe("plugin RPC schema errors — channels, users, guilds, auth", () => {
   });
 
   it("users.get still filters malformed ids instead of refusing them", async () => {
-    // Per-item snowflake filtering is a normaliser: a wrong-typed or
-    // malformed entry is dropped before the fetch, never a 400.
+    // KEPT after #58: silently filtering invalid ids from a batch is
+    // the documented lookup contract — users the bot can't resolve are
+    // omitted, they don't poison the batch (same ruling as
+    // members.get).
     const res = await post("/api/plugin/users.get", {
       user_ids: [5, "not-an-id"],
     });
@@ -397,23 +414,37 @@ describe("plugin RPC schema errors — channels, users, guilds, auth", () => {
     expect(signSpy).not.toHaveBeenCalled();
   });
 
-  it("auth.session still defaults wrong-typed kind, guild_id and ttl_ms", async () => {
-    // All three are normalisers at HEAD:
-    //   kind:     anything but the literal "manage" means "session"
-    //   guild_id: non-string / empty → null claim
-    //   ttl_ms:   non-number → the session default (6 h)
+  it("auth.session refuses wrong-typed kind, guild_id and ttl_ms (#58)", async () => {
+    // Until #58 all three were normalisers: a wrong-typed kind meant
+    // "session", a wrong-typed guild_id meant a null claim, a
+    // wrong-typed ttl_ms meant the default TTL.
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [{ kind: 5 }, "kind must be string"],
+      [{ guild_id: 7 }, "guild_id must be string"],
+      [{ ttl_ms: "soon" }, "ttl_ms must be number"],
+    ];
+    for (const [fields, message] of cases) {
+      const res = await post("/api/plugin/auth.session", {
+        user_id: USER_SNOWFLAKE,
+        ...fields,
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toEqual({ error: message });
+    }
+    expect(signSpy).not.toHaveBeenCalled();
+  });
+
+  it("auth.session still treats an unknown string kind as 'session'", async () => {
+    // KEPT after #58: type-only tightening. Value validation (an enum)
+    // would break pre-0.9 callers passing the then-documented 'webui',
+    // and the two-literal contract is the handler's to interpret.
+    // Empty guild_id likewise still normalises to a null claim.
     const res = await post("/api/plugin/auth.session", {
       user_id: USER_SNOWFLAKE,
-      kind: 5,
-      guild_id: 7,
-      ttl_ms: "soon",
+      kind: "webui",
+      guild_id: "",
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({
-      allowed: true,
-      token: "session-token",
-      expiresAt: 1234567890,
-    });
     expect(signSpy).toHaveBeenCalledWith(
       PLUGIN_KEY,
       {

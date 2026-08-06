@@ -10,9 +10,11 @@
  *  2. the refusal texts an operator's tooling may match on are
  *     byte-identical (the kv key caps, delta, the log batch cap, the
  *     snapshot guard) — those go through per-route formatter overrides;
- *  3. the normalisers are still normalisers: a wrong-typed optional
- *     field is ignored/defaulted with a 200, never refused. These tests
- *     exist so #58's deliberate tightening can't happen by accident.
+ *  3. #58's deliberate tightening: a wrong-typed optional field is now
+ *     refused with a 400 naming the field, and the leniency that
+ *     remains (the log.emit per-entry skip, the snapshot's inner
+ *     fields, empty-string ids) is each a designed contract, pinned
+ *     with the reason it was kept.
  *
  * Unlike the messages suite this one drives the real KV model against
  * the in-memory sqlite DB — the storage handlers are thin enough that
@@ -274,25 +276,37 @@ describe("plugin RPC schema errors — storage and me families", () => {
     expect(res.json()).toEqual({ error: "entries must be array" });
   });
 
-  // ── nor narrower: the normalisers are still normalisers ───────────────────
+  // ── #58: wrong-typed optional fields are refused, naming the field ────────
   //
-  // Every case below answered 200 before this change even though a field
-  // carried the wrong type. #58 will tighten some of them — deliberately,
-  // release-noted. These tests fail if that happens as a side effect.
+  // Every refusal below answered 200 until #58 even though a field
+  // carried the wrong type. The tightening is deliberate and
+  // release-noted; what stays lenient below is each a designed
+  // contract, called out where it is kept.
 
-  it("kv_increment still treats an explicit null delta as 'default to 1'", async () => {
-    // The guard read `body.delta ?? 1` before type-checking, so null
-    // meant absent. `type: "number"` alone would 400 this.
+  it("kv_increment refuses an explicit null delta", async () => {
+    // Until #58 null meant "default to 1" — an accident of the old
+    // guard reading `body.delta ?? 1` before type-checking.
     const res = await post("/api/plugin/storage.kv_increment", {
       guild_id: "g1",
       key: "n",
       delta: null,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({ error: "delta must be a finite number" });
+  });
+
+  it("kv_increment still defaults an absent delta to 1", async () => {
+    const res = await post("/api/plugin/storage.kv_increment", {
+      guild_id: "g1",
+      key: "n",
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().value).toBe(1);
   });
 
   it("kv_delete still accepts empty-string ids, as the bare typeof did", async () => {
+    // KEPT after #58: empty strings are the *right* type — the
+    // tightening is about wrong-typed values only.
     const res = await post("/api/plugin/storage.kv_delete", {
       guild_id: "",
       key: "",
@@ -301,35 +315,46 @@ describe("plugin RPC schema errors — storage and me families", () => {
     expect(res.json()).toEqual({ removed: false });
   });
 
-  it("kv_list still defaults wrong-typed prefix/limit/offset instead of refusing", async () => {
+  it("kv_list refuses wrong-typed prefix/limit/offset instead of defaulting", async () => {
+    // Until #58 a wrong-typed option silently fell back to its default
+    // (prefix → none, limit → 100, offset → 0).
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [{ prefix: 5 }, "prefix must be string"],
+      [{ limit: "1" }, "limit must be number"],
+      [{ offset: {} }, "offset must be number"],
+    ];
+    for (const [fields, message] of cases) {
+      const res = await post("/api/plugin/storage.kv_list", {
+        guild_id: "g1",
+        ...fields,
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toEqual({ error: message });
+    }
+  });
+
+  it("kv_list still defaults absent prefix/limit/offset", async () => {
     await setKv(PLUGIN_ID, "g1", "a", "1");
     await setKv(PLUGIN_ID, "g1", "b", "2");
-    // limit "1" would keep one key if it were honoured; the normaliser
-    // falls back to 100 and both come back.
-    const res = await post("/api/plugin/storage.kv_list", {
-      guild_id: "g1",
-      prefix: 5,
-      limit: "1",
-      offset: {},
-    });
+    const res = await post("/api/plugin/storage.kv_list", { guild_id: "g1" });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ keys: ["a", "b"], total: 2 });
   });
 
-  it("kv_list_values still defaults a wrong-typed limit", async () => {
-    await setKv(PLUGIN_ID, "g1", "a", "1");
+  it("kv_list_values refuses a wrong-typed limit instead of defaulting it", async () => {
     const res = await post("/api/plugin/storage.kv_list_values", {
       guild_id: "g1",
       limit: "x",
     });
-    expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({
-      entries: [{ key: "a", value: "1", bytes: 1 }],
-      total: 1,
-    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({ error: "limit must be number" });
   });
 
   it("log.emit still skips a malformed entry rather than refusing the batch", async () => {
+    // KEPT after #58: the per-entry skip is a documented batching
+    // design — one bad entry must not sink the 99 good ones shipped
+    // alongside it — not a normaliser accident. The route reports the
+    // split via `accepted`/`deduped`.
     const res = await post("/api/plugin/log.emit", {
       entries: [
         { level: "info", message: 5 },
@@ -343,6 +368,9 @@ describe("plugin RPC schema errors — storage and me families", () => {
   });
 
   it("metrics.push still defaults wrong-typed snapshot fields", async () => {
+    // KEPT after #58: the snapshot's inner shape belongs to the SDK's
+    // MetricsCollector and is versioned with it; #58's enumeration
+    // covers the body-level array quirk only.
     const res = await post("/api/plugin/metrics.push", {
       ts: "x",
       counters: "nope",
@@ -353,10 +381,12 @@ describe("plugin RPC schema errors — storage and me families", () => {
     expect(res.json()).toEqual({ ok: true });
   });
 
-  it("metrics.push still accepts an array body, as `typeof [] === 'object'` did", async () => {
+  it("metrics.push refuses an array body instead of storing an empty snapshot", async () => {
+    // Until #58 an array slipped through `typeof [] === 'object'` and
+    // answered 200 with an empty snapshot stored.
     const res = await post("/api/plugin/metrics.push", [1, 2]);
-    expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ ok: true });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({ error: "snapshot object required" });
   });
 
   it("metrics.push's series cap stayed in the handler (it reads normalised values)", async () => {

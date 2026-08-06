@@ -259,9 +259,9 @@ describe("plugin RPC schema errors", () => {
   });
 
   it("keeps the either-or guard, which stayed in the handler", async () => {
-    // `!content && !embeds` reads the *normalised* values, so it cannot
-    // become a schema while content and embeds are unconstrained. Its
-    // wording is unchanged.
+    // `!content && !embeds` reads emptiness (`content: ""` counts as
+    // absent), which a per-field type cannot express — it stays in the
+    // handler with its wording unchanged.
     const res = await post("/api/plugin/messages.send", {
       channel_id: CHANNEL_ID,
     });
@@ -331,67 +331,89 @@ describe("plugin RPC schema errors", () => {
     expect(channel._send).toHaveBeenCalledTimes(1);
   });
 
-  // ── nor narrower: the normalisers are still normalisers ───────────────────
+  // ── #58: wrong-typed optional fields are refused, naming the field ────────
   //
-  // Every field below was normalise-and-continue before this change — a
-  // wrong type was treated as absent, and the call still answered 200.
-  // Giving them a schema type would turn that into a 400, which is a
-  // behaviour change and not this ticket's. These tests exist to fail if
-  // someone later "finishes the job" without meaning to.
+  // Every field below was normalise-and-continue until #58 — a wrong
+  // type was treated as absent and the call still answered 200 (the
+  // author's field silently never reached Discord). #58 flipped that,
+  // deliberately and release-noted: a wrong-typed value is a 400 naming
+  // the field, in the family's `{ error }` body shape.
 
-  it("still ignores a wrong-typed content when embeds carry the message", async () => {
+  it("refuses a wrong-typed content even when embeds carry the message", async () => {
     const res = await post("/api/plugin/messages.send", {
       channel_id: CHANNEL_ID,
       content: 5,
       embeds: [{ title: "t" }],
     });
-    expect(res.statusCode).toBe(200);
-    const arg = channel._send.mock.calls[0]![0] as Record<string, unknown>;
-    expect(arg.content).toBeUndefined();
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({ error: "content must be string" });
+    expect(channel._send).not.toHaveBeenCalled();
   });
 
-  it("still ignores wrong-typed embeds and components", async () => {
+  it("refuses wrong-typed embeds and components", async () => {
     const res = await post("/api/plugin/messages.send", {
       channel_id: CHANNEL_ID,
       content: "hi",
       embeds: "not-an-array",
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({ error: "embeds must be array" });
+    const res2 = await post("/api/plugin/messages.send", {
+      channel_id: CHANNEL_ID,
+      content: "hi",
       components: "not-an-array",
     });
-    expect(res.statusCode).toBe(200);
-    const arg = channel._send.mock.calls[0]![0] as Record<string, unknown>;
-    expect(arg.embeds).toBeUndefined();
-    expect(arg.components).toBeUndefined();
+    expect(res2.statusCode).toBe(400);
+    expect(res2.json()).toEqual({ error: "components must be array" });
+    expect(channel._send).not.toHaveBeenCalled();
   });
 
-  it("still treats a non-object allowed_mentions as absent", async () => {
-    // A non-object used to fall through safeAllowedMentions' `!raw ||
-    // typeof raw !== "object"` branch, which also means the reply-ping
-    // default applies as if none had been sent.
+  it("refuses a wrong-typed content on messages.edit instead of leaving the field untouched", async () => {
+    const res = await post("/api/plugin/messages.edit", {
+      channel_id: CHANNEL_ID,
+      message_id: SNOWFLAKE,
+      content: 5,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({ error: "content must be string" });
+  });
+
+  it("refuses a wrong-typed content on messages.send_dm", async () => {
+    const res = await post("/api/plugin/messages.send_dm", {
+      user_id: SNOWFLAKE,
+      content: 5,
+      embeds: [{ title: "t" }],
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({ error: "content must be string" });
+  });
+
+  it("refuses a non-object allowed_mentions", async () => {
     const res = await post("/api/plugin/messages.send", {
       channel_id: CHANNEL_ID,
       content: "hi",
       reply_to: SNOWFLAKE,
       allowed_mentions: "nope",
     });
-    expect(res.statusCode).toBe(200);
-    const arg = channel._send.mock.calls[0]![0] as {
-      allowedMentions: Record<string, unknown>;
-    };
-    expect(arg.allowedMentions.repliedUser).toBe(true);
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({ error: "allowed_mentions must be object" });
+    expect(channel._send).not.toHaveBeenCalled();
   });
 
-  it("still falls back to limit 50 when fetch_history's limit is not an integer", async () => {
+  it("refuses a non-integer fetch_history limit instead of defaulting to 50", async () => {
     const res = await post("/api/plugin/messages.fetch_history", {
       guild_id: GUILD_SNOWFLAKE,
       channel_id: SNOWFLAKE,
       limit: "10",
     });
-    expect(res.statusCode).toBe(200);
-    const [, opts] = rest.get.mock.calls[0]!;
-    expect((opts as { query: URLSearchParams }).query.get("limit")).toBe("50");
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({ error: "limit must be integer" });
+    expect(rest.get).not.toHaveBeenCalled();
   });
 
   it("still clamps an out-of-range fetch_history limit rather than refusing it", async () => {
+    // KEPT after #58: an out-of-range *integer* is a valid-typed value;
+    // clamping to Discord's documented [1, 100] window stays.
     const res = await post("/api/plugin/messages.fetch_history", {
       guild_id: GUILD_SNOWFLAKE,
       channel_id: SNOWFLAKE,
@@ -402,26 +424,39 @@ describe("plugin RPC schema errors", () => {
     expect((opts as { query: URLSearchParams }).query.get("limit")).toBe("100");
   });
 
-  it("still drops a malformed fetch_history cursor from the query", async () => {
+  it("refuses a malformed fetch_history cursor instead of dropping it", async () => {
     const res = await post("/api/plugin/messages.fetch_history", {
       guild_id: GUILD_SNOWFLAKE,
       channel_id: SNOWFLAKE,
       before: "not-an-id",
     });
-    expect(res.statusCode).toBe(200);
-    const [, opts] = rest.get.mock.calls[0]!;
-    expect((opts as { query: URLSearchParams }).query.has("before")).toBe(
-      false,
-    );
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({ error: "before must be a Discord id" });
+    expect(rest.get).not.toHaveBeenCalled();
   });
 
-  it("still falls back to the bot's own reaction on a malformed user_id", async () => {
+  it("refuses a malformed remove_reaction user_id instead of removing the bot's own", async () => {
+    // The old fallback silently removed the BOT'S reaction when the
+    // caller's user_id was malformed — the sharpest silent surprise
+    // #58 removed.
     const res = await post("/api/plugin/messages.remove_reaction", {
       guild_id: GUILD_SNOWFLAKE,
       channel_id: SNOWFLAKE,
       message_id: SNOWFLAKE,
       emoji: "👍",
       user_id: "not-an-id",
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({ error: "user_id must be a Discord id" });
+    expect(rest.delete).not.toHaveBeenCalled();
+  });
+
+  it("still removes the bot's own reaction when user_id is absent", async () => {
+    const res = await post("/api/plugin/messages.remove_reaction", {
+      guild_id: GUILD_SNOWFLAKE,
+      channel_id: SNOWFLAKE,
+      message_id: SNOWFLAKE,
+      emoji: "👍",
     });
     expect(res.statusCode).toBe(200);
     const [route] = rest.delete.mock.calls[0]!;
