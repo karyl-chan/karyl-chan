@@ -2091,23 +2091,55 @@ function registerRpcRoutes(
    */
   server.post<{
     Body: {
-      user_id?: unknown;
+      user_id: string;
       kind?: unknown;
       guild_id?: unknown;
       ttl_ms?: unknown;
     };
-  }>("/api/plugin/auth.session", async (request, reply) => {
+  }>(
+    "/api/plugin/auth.session",
+    {
+      schema: {
+        body: {
+          type: "object",
+          properties: {
+            // Bare non-empty typeof at HEAD — NOT snowflake-checked,
+            // so no pattern here.
+            user_id: nonEmptyStringField,
+            // Normalisers, not guards — see unconstrainedField:
+            //   kind:     `body.kind === "manage" ? "manage" : "session"`
+            //             — any other value (wrong type, unknown string)
+            //             silently means "session", never a 400.
+            //   guild_id: `typeof body.guild_id === "string" && length > 0
+            //             ? body.guild_id : null`
+            //   ttl_ms:   `typeof body.ttl_ms === "number" &&
+            //             Number.isFinite(…) ? body.ttl_ms : defaultTtl`
+            kind: unconstrainedField,
+            guild_id: unconstrainedField,
+            ttl_ms: unconstrainedField,
+          },
+          required: ["user_id"],
+        },
+      },
+      // The old guard folded missing/wrong-typed/empty user_id into one
+      // "user_id required". Missing keeps that text via the family
+      // formatter and wrong-typed sharpens to "user_id must be string"
+      // (the #48 precedent), but ajv's own minLength wording ("must NOT
+      // have fewer than 1 characters") is a plain clarity regression —
+      // the empty-string case keeps the old text verbatim.
+      schemaErrorFormatter: preservingSchemaErrorFormatter([
+        {
+          instancePath: "/user_id",
+          keyword: "minLength",
+          message: "user_id required",
+        },
+      ]),
+    },
+    async (request, reply) => {
     const ctx = await requireScope(request, reply, "auth.session");
     if (!ctx) return;
-    const body = request.body ?? {};
-    const userId =
-      typeof body.user_id === "string" && body.user_id.length > 0
-        ? body.user_id
-        : null;
-    if (!userId) {
-      reply.code(400).send({ error: "user_id required" });
-      return;
-    }
+    const body = request.body;
+    const userId = body.user_id;
     const kind = body.kind === "manage" ? "manage" : "session";
     const guildId =
       typeof body.guild_id === "string" && body.guild_id.length > 0
@@ -2299,8 +2331,35 @@ function registerRpcRoutes(
    * Use `members.get` instead whenever a guild_id is available — it
    * surfaces the per-guild nickname + per-guild avatar override.
    */
-  server.post<{ Body: { user_ids?: unknown } }>(
+  server.post<{ Body: { user_ids: unknown[] } }>(
     "/api/plugin/users.get",
+    {
+      schema: {
+        body: {
+          type: "object",
+          properties: {
+            // The array check was a guard (`!Array.isArray` → 400); the
+            // per-item snowflake filtering below is a normaliser and
+            // stays in the handler, so `items` is deliberately
+            // unconstrained — same split as members.get.
+            user_ids: { type: "array" },
+          },
+          required: ["user_ids"],
+        },
+      },
+      // Same trade as members.get: the wrong-typed case keeps its old
+      // text verbatim; the *missing* case (which the old `!Array.isArray`
+      // also caught, with the same message) sharpens to the family's
+      // "user_ids required" — a body-level `required` override can't be
+      // scoped to one property.
+      schemaErrorFormatter: preservingSchemaErrorFormatter([
+        {
+          instancePath: "/user_ids",
+          keyword: "type",
+          message: "user_ids must be an array",
+        },
+      ]),
+    },
     async (request, reply) => {
       const ctx = await requireScope(request, reply, "users.get");
       if (!ctx) return;
@@ -2308,11 +2367,7 @@ function registerRpcRoutes(
         reply.code(503).send({ error: "bot client unavailable" });
         return;
       }
-      const body = request.body ?? {};
-      if (!Array.isArray(body.user_ids)) {
-        reply.code(400).send({ error: "user_ids must be an array" });
-        return;
-      }
+      const body = request.body;
       const userIds = [
         ...new Set(
           body.user_ids.filter(
@@ -2395,8 +2450,21 @@ function registerRpcRoutes(
    * legitimately want different fields (config UI needs type+name,
    * an audit display wants topic+NSFW, etc.).
    */
-  server.post<{ Body: { guild_id?: unknown; channel_id?: unknown } }>(
+  server.post<{ Body: { guild_id: string; channel_id: string } }>(
     "/api/plugin/channels.get",
+    {
+      schema: {
+        body: {
+          type: "object",
+          // Both old guards ran SNOWFLAKE_RE — accepted set unchanged.
+          properties: {
+            guild_id: snowflakeField,
+            channel_id: snowflakeField,
+          },
+          required: ["guild_id", "channel_id"],
+        },
+      },
+    },
     async (request, reply) => {
       const ctx = await requireScope(request, reply, "channels.get");
       if (!ctx) return;
@@ -2404,18 +2472,7 @@ function registerRpcRoutes(
         reply.code(503).send({ error: "bot client unavailable" });
         return;
       }
-      const body = request.body ?? {};
-      if (typeof body.guild_id !== "string" || !SNOWFLAKE_RE.test(body.guild_id)) {
-        reply.code(400).send({ error: "guild_id required" });
-        return;
-      }
-      if (
-        typeof body.channel_id !== "string" ||
-        !SNOWFLAKE_RE.test(body.channel_id)
-      ) {
-        reply.code(400).send({ error: "channel_id required" });
-        return;
-      }
+      const body = request.body;
       if (!(await pluginHasGuildReach(ctx.pluginId, body.guild_id))) {
         reply.code(403).send({ error: "plugin not enabled in this guild" });
         return;
@@ -2452,8 +2509,26 @@ function registerRpcRoutes(
    * don't exceed this. Discord doesn't paginate channel lists, so
    * there is no cursor parameter.
    */
-  server.post<{ Body: { guild_id?: unknown; types?: unknown } }>(
+  server.post<{ Body: { guild_id: string; types?: unknown } }>(
     "/api/plugin/channels.list",
+    {
+      schema: {
+        body: {
+          type: "object",
+          properties: {
+            // The old guard ran SNOWFLAKE_RE — accepted set unchanged.
+            guild_id: snowflakeField,
+            // Normaliser, not a guard — see unconstrainedField:
+            //   `Array.isArray(body.types) && body.types.length > 0
+            //    ? new Set(body.types.filter(… typeof v === "number"))
+            //    : null` — a wrong-typed `types` means "no filter",
+            //   never a 400.
+            types: unconstrainedField,
+          },
+          required: ["guild_id"],
+        },
+      },
+    },
     async (request, reply) => {
       const ctx = await requireScope(request, reply, "channels.list");
       if (!ctx) return;
@@ -2461,11 +2536,7 @@ function registerRpcRoutes(
         reply.code(503).send({ error: "bot client unavailable" });
         return;
       }
-      const body = request.body ?? {};
-      if (typeof body.guild_id !== "string" || !SNOWFLAKE_RE.test(body.guild_id)) {
-        reply.code(400).send({ error: "guild_id required" });
-        return;
-      }
+      const body = request.body;
       if (!(await pluginHasGuildReach(ctx.pluginId, body.guild_id))) {
         reply.code(403).send({ error: "plugin not enabled in this guild" });
         return;
@@ -2947,8 +3018,18 @@ function registerRpcRoutes(
    * Body:    { guild_id: string }
    * Returns: { guild: APIGuild }
    */
-  server.post<{ Body: { guild_id?: unknown } }>(
+  server.post<{ Body: { guild_id: string } }>(
     "/api/plugin/guilds.get",
+    {
+      schema: {
+        body: {
+          type: "object",
+          // The old guard ran SNOWFLAKE_RE — accepted set unchanged.
+          properties: { guild_id: snowflakeField },
+          required: ["guild_id"],
+        },
+      },
+    },
     async (request, reply) => {
       const ctx = await requireScope(request, reply, "guilds.get");
       if (!ctx) return;
@@ -2956,11 +3037,7 @@ function registerRpcRoutes(
         reply.code(503).send({ error: "bot client unavailable" });
         return;
       }
-      const body = request.body ?? {};
-      if (typeof body.guild_id !== "string" || !SNOWFLAKE_RE.test(body.guild_id)) {
-        reply.code(400).send({ error: "guild_id required" });
-        return;
-      }
+      const body = request.body;
       if (!(await pluginHasGuildReach(ctx.pluginId, body.guild_id))) {
         reply.code(403).send({ error: "plugin not enabled in this guild" });
         return;
