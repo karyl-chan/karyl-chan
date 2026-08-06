@@ -127,3 +127,69 @@ export function clearPluginDeferState(interactionToken: string): void {
 export function _resetPluginDeferStateForTests(): void {
   deferStates.clear();
 }
+
+/**
+ * How a plugin's `interactions.respond` call must reach Discord, decided
+ * from the recorded defer state. This module already owned the state and
+ * its lifecycle (the dispatchers record, the respond route reads and
+ * clears); #56 moves the *decision derived from it* here too, so the
+ * defer → respond transition table has one owner and the route keeps
+ * only the REST transport.
+ */
+export type PluginRespondPlan =
+  /**
+   * PATCH `@original`. Two cases collapse here:
+   *   - kind='update' (component clicks): the bot called deferUpdate —
+   *     no "thinking…" placeholder exists, @original IS the user's
+   *     message hosting the clicked component. Straight PATCH; the
+   *     mismatch logic must never run because its DELETE would nuke
+   *     the user's own message.
+   *   - kind='reply' with matching ephemerality: the happy path.
+   *     `flags` is read-only on edit so Ephemeral (set at defer) stays.
+   */
+  | { action: "patch-original" }
+  /**
+   * kind='reply' and the plugin wants the OPPOSITE ephemerality of the
+   * defer. Ephemerality is locked at defer time, so: POST a follow-up
+   * with the desired ephemerality (`ephemeral` here), then best-effort
+   * DELETE `@original` so the user sees one message of the right kind.
+   */
+  | { action: "followup-then-delete-original"; ephemeral: boolean };
+
+/**
+ * Resolve the respond route's plan for an interaction token.
+ *
+ * kind='reply' has four cases (defer=E/P × want=E/P): matching pairs
+ * PATCH @original; mismatches follow up + delete. `requestedEphemeral`
+ * carries the raw body field: `undefined` means "whatever the defer
+ * was" (never a mismatch), and any other non-`false` value — any type —
+ * means "ephemeral", preserving the historical truthiness rule.
+ *
+ * Null defer state (TTL eviction, restart, pre-tracker interactions)
+ * falls back to `{kind:'reply', ephemeral:true}` — the dispatcher's
+ * default. Matches old behaviour for commands; for components it would
+ * force the wrong path, but the component dispatcher records state in
+ * the same tick as deferUpdate so the only path to null-for-a-component
+ * is the bot restarting mid-interaction, which is rare.
+ *
+ * Read-only: the caller consumes the state via `clearPluginDeferState`
+ * only after Discord accepted the call, so a failed respond can retry
+ * against the same state.
+ */
+export function planPluginRespond(
+  interactionToken: string,
+  requestedEphemeral: unknown,
+): PluginRespondPlan {
+  const deferState = readPluginDeferState(interactionToken) ?? {
+    kind: "reply" as const,
+    ephemeral: true,
+  };
+  if (deferState.kind === "update") return { action: "patch-original" };
+  const wantsEphemeral =
+    requestedEphemeral === undefined ? null : requestedEphemeral !== false;
+  const effectiveEphemeral = wantsEphemeral ?? deferState.ephemeral;
+  if (effectiveEphemeral === deferState.ephemeral) {
+    return { action: "patch-original" };
+  }
+  return { action: "followup-then-delete-original", ephemeral: effectiveEphemeral };
+}

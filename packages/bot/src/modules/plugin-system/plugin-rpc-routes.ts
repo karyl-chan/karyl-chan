@@ -10,17 +10,17 @@ import { ChannelType, Routes, MessageFlags } from "discord.js";
 import { RateLimiter } from "../../utils/rate-limiter.js";
 import { findPluginById } from "./models/plugin.model.js";
 import { parsePluginManifest } from "./plugin-dispatch-util.js";
-import { KV_VALUE_MAX_BYTES, quotaForGuildKv } from "./plugin-kv-quota.js";
+import {
+  guildKvUsage,
+  incrementGuildKv,
+  writeGuildKv,
+} from "./plugin-kv-accounting.js";
 import { mintPluginManageToken } from "./plugin-manage-token.js";
 import {
   deleteKv,
   getKv,
-  incrementKv,
   listKvKeys,
   listKvWithValues,
-  setKv,
-  sumGuildBytes,
-  withGuildKvLock,
 } from "./models/plugin-kv.model.js";
 import {
   deleteConfigKey,
@@ -31,10 +31,9 @@ import { decryptSecret } from "../../utils/crypto.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { shouldRecord } from "../bot-events/bot-event-dedup.js";
 import { featureReachResolver } from "../feature-toggle/feature-reach-resolver.js";
-import type { PluginManifest } from "./plugin-registry.service.js";
 import { jwtService } from "../web-core/jwt.service.js";
 import { discordErrorStatus } from "../web-core/discord-error.js";
-import { assertPluginTarget, HostPolicyError } from "../../utils/host-policy.js";
+import { assertPluginTarget } from "../../utils/host-policy.js";
 import {
   describeOwnershipFailure,
   findUnownedCustomId,
@@ -42,7 +41,7 @@ import {
 } from "./plugin-component-ownership.js";
 import {
   clearPluginDeferState,
-  readPluginDeferState,
+  planPluginRespond,
 } from "./plugin-defer-state.js";
 import { maybeForwardGuildRpc } from "./shard-forward-routes.js";
 import {
@@ -1177,55 +1176,19 @@ function registerRpcRoutes(
       const ctx = await requireScope(request, reply, "storage.kv_set");
       if (!ctx) return;
       const body = request.body;
-      // The per-row byte cap stays in the handler: it measures the
-      // *serialised* UTF-8 byte length, which a JSON Schema string
-      // constraint (characters, not bytes) cannot express.
-      const incomingBytes = Buffer.byteLength(body.value, "utf8");
-      if (incomingBytes > KV_VALUE_MAX_BYTES) {
-        reply.code(413).send({
-          error: `value exceeds per-row hard cap (${KV_VALUE_MAX_BYTES}B)`,
-        });
-        return;
-      }
-      // Quota check: sum existing bytes minus what this key already
-      // holds (we're overwriting, so subtract it from the budget).
-      // The read+write runs under a per-(plugin,guild) mutex so two
-      // concurrent sets to different keys can't both observe a stale
-      // total and slip past the quota — previously the lack of
-      // serialisation let a plugin double-write past its quota.
-      const guildId = body.guild_id;
-      const key = body.key;
-      const value = body.value;
-      const reply413 = (msg: string): void => {
-        reply.code(413).send({ error: msg });
-      };
-      const result = await withGuildKvLock<{
-        ok: boolean;
-        bytes?: number;
-        total_bytes?: number;
-        quota_bytes?: number;
-        error?: string;
-      }>(ctx.pluginId, guildId, async () => {
-        const quota = await quotaForGuildKv(ctx.pluginId);
-        const currentTotal = await sumGuildBytes(ctx.pluginId, guildId);
-        const existing = await getKv(ctx.pluginId, guildId, key);
-        const projected = currentTotal - (existing?.bytes ?? 0) + incomingBytes;
-        if (projected > quota) {
-          return {
-            ok: false,
-            error: `would exceed plugin guild_kv quota (${projected}B / ${quota}B)`,
-          };
-        }
-        const row = await setKv(ctx.pluginId, guildId, key, value);
-        return {
-          ok: true,
-          bytes: row.bytes,
-          total_bytes: currentTotal - (existing?.bytes ?? 0) + row.bytes,
-          quota_bytes: quota,
-        };
-      });
+      // Quota accounting — per-row cap, budget projection under the
+      // per-(plugin,guild) mutex, write, usage report — lives in
+      // Guild-KV Accounting (#56). Both refusals (the hard cap and the
+      // quota projection) are 413s with the accounting's message; the
+      // route keeps transport only.
+      const result = await writeGuildKv(
+        ctx.pluginId,
+        body.guild_id,
+        body.key,
+        body.value,
+      );
       if (!result.ok) {
-        reply413(result.error!);
+        reply.code(413).send({ error: result.error });
         return;
       }
       return result;
@@ -1290,20 +1253,13 @@ function registerRpcRoutes(
       // refuses everything the old Number.isFinite check refused.
       const deltaRaw = body.delta ?? 1;
       try {
-        const result = await incrementKv(
+        // Increment + usage read-back live in Guild-KV Accounting (#56).
+        return await incrementGuildKv(
           ctx.pluginId,
           body.guild_id,
           body.key,
           deltaRaw,
         );
-        const totalBytes = await sumGuildBytes(ctx.pluginId, body.guild_id);
-        const quotaBytes = await quotaForGuildKv(ctx.pluginId);
-        return {
-          value: result.value,
-          bytes: result.row.bytes,
-          total_bytes: totalBytes,
-          quota_bytes: quotaBytes,
-        };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         // Existing-value-not-numeric is the caller's bug, not the bot's
@@ -1545,41 +1501,21 @@ function registerRpcRoutes(
       reply.code(400).send({ error: `attachment error: ${m}` });
       return;
     }
-    // Route on defer state.
-    //
-    // kind='update' (component clicks): the bot called deferUpdate — no
-    // "thinking…" placeholder exists, @original IS the user's message
-    // hosting the clicked component. Straight PATCH. Mismatch logic
-    // would DELETE the user's own message; bug we explicitly guard
-    // against here.
-    //
-    // kind='reply' (commands & modals, the only deferReply callers):
-    // ephemerality is locked at defer time. Four cases:
-    //
-    //   defer=E, want=E  → PATCH @original                    (happy)
-    //   defer=P, want=P  → PATCH @original                    (happy)
-    //   defer=E, want=P  → POST public follow-up + DELETE @original
-    //   defer=P, want=E  → POST ephemeral follow-up + DELETE @original
-    //
-    // null defer state (TTL eviction, restart, pre-tracker interactions)
-    // falls back to {kind:'reply', ephemeral:true} — the dispatcher's
-    // default. Matches old behaviour for commands; for components it
-    // would force the wrong path, but the component dispatcher now
-    // records state in the same tick as deferUpdate so the only path
-    // to null-for-a-component is the bot restarting mid-interaction,
-    // which is rare.
-    const deferState = readPluginDeferState(body.interaction_token) ?? {
-      kind: "reply" as const,
-      ephemeral: true,
-    };
+    // The defer → respond transition table (which PATCH/POST/DELETE
+    // sequence the recorded defer state demands) lives with the state
+    // in plugin-defer-state (#56); this handler keeps the transport.
+    // State is consumed (cleared) only after Discord accepts the call,
+    // so a failed respond can retry against the same state.
+    const plan = planPluginRespond(body.interaction_token, body.ephemeral);
     const extraFlags = sanitizePluginFlags(body.flags);
 
     try {
-      // Components: straight PATCH. ephemeral / flags can't change the
-      // parent message's visibility (it's a regular message in a
-      // channel, not an interaction reply). SuppressEmbeds /
-      // SuppressNotifications still honoured.
-      if (deferState.kind === "update") {
+      if (plan.action === "patch-original") {
+        // PATCH @original — component updates and matching-ephemerality
+        // replies. flags is read-only on edit so Ephemeral (set at
+        // defer) stays; Discord still honours SuppressEmbeds /
+        // SuppressNotifications when included here, which is what the
+        // plugin actually wants to set.
         const editFlags = extraFlags || undefined;
         await bot.rest.patch(
           Routes.webhookMessage(
@@ -1609,52 +1545,13 @@ function registerRpcRoutes(
         return { ok: true };
       }
 
-      // kind='reply': handle defer/want match vs mismatch.
-      const wantsEphemeral =
-        body.ephemeral === undefined ? null : body.ephemeral !== false;
-      const effectiveEphemeral = wantsEphemeral ?? deferState.ephemeral;
-      const mismatch = effectiveEphemeral !== deferState.ephemeral;
-
-      if (!mismatch) {
-        // Happy path: PATCH @original. flags is read-only on edit so
-        // Ephemeral (set at defer) stays. Discord still honours
-        // SuppressEmbeds / SuppressNotifications when included here,
-        // which is what the plugin actually wants to set.
-        const editFlags = extraFlags || undefined;
-        await bot.rest.patch(
-          Routes.webhookMessage(
-            bot.application.id,
-            body.interaction_token,
-            "@original",
-          ),
-          {
-            body: {
-              content,
-              embeds,
-              components,
-              flags: editFlags,
-              allowed_mentions: { parse: [] },
-            },
-            ...(attachments.length > 0
-              ? {
-                  files: attachments.map((a) => ({
-                    name: a.name,
-                    data: a.data,
-                  })),
-                }
-              : {}),
-          },
-        );
-        clearPluginDeferState(body.interaction_token);
-        return { ok: true };
-      }
-
-      // Mismatch: POST follow-up with the desired ephemerality, then
-      // DELETE @original so the user sees a single message of the
-      // right kind. follow-up's `flags` field IS honoured (this is a
-      // brand-new message, not an edit), so Ephemeral works here.
+      // Ephemerality mismatch: POST follow-up with the desired
+      // ephemerality, then DELETE @original so the user sees a single
+      // message of the right kind. follow-up's `flags` field IS
+      // honoured (this is a brand-new message, not an edit), so
+      // Ephemeral works here.
       const followupFlags =
-        (effectiveEphemeral ? MessageFlags.Ephemeral : 0) | extraFlags;
+        (plan.ephemeral ? MessageFlags.Ephemeral : 0) | extraFlags;
       await bot.rest.post(
         Routes.webhook(bot.application.id, body.interaction_token),
         {
@@ -3134,9 +3031,7 @@ function registerRpcRoutes(
     async (request, reply) => {
       const ctx = await requireScope(request, reply, "me.kv_usage");
       if (!ctx) return;
-      const used = await sumGuildBytes(ctx.pluginId, request.body.guild_id);
-      const quota = await quotaForGuildKv(ctx.pluginId);
-      return { used_bytes: used, quota_bytes: quota };
+      return await guildKvUsage(ctx.pluginId, request.body.guild_id);
     },
   );
 
