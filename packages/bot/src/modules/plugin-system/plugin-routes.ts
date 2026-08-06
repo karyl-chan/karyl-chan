@@ -1,12 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { Client } from "discord.js";
-import {
-  ManifestError,
-  pluginRegistry,
-  purgePluginCapabilityGrants,
-} from "./plugin-registry.service.js";
+import { ManifestError, pluginRegistry } from "./plugin-registry.service.js";
 import { pluginAdmin, unhandledRefusal } from "./plugin-admin.service.js";
-import { deleteAllCapabilities } from "./models/plugin-capability.model.js";
 import { pluginAuthStore, PluginAuthStore } from "./plugin-auth.service.js";
 import { requireCapability, requirePluginCapability } from "../web-core/route-guards.js";
 import { jwtService } from "../web-core/jwt.service.js";
@@ -37,20 +32,14 @@ import {
   ManifestCommandError,
   pluginCommandRegistry,
 } from "./plugin-command-registry.service.js";
-import { dropDispatchPoolForPlugin } from "./plugin-event-bridge.service.js";
-import {
-  getDispatchHealth,
-  clearDispatchHealth,
-} from "./plugin-dispatch-health.service.js";
+import { getDispatchHealth } from "./plugin-dispatch-health.service.js";
 import { probePluginDispatch } from "./plugin-dispatch-probe.service.js";
 import { evaluateSdkCompatFromManifestJson } from "./plugin-sdk-compat.js";
 import { evaluateEventSubscriptionsFromManifestJson } from "./plugin-event-subscriptions.js";
-import { invalidatePluginById } from "./plugin-lookup-cache.js";
 import { dispatchLifecycleToPlugin } from "./plugin-lifecycle-dispatch.service.js";
 import { recordAudit } from "../admin/admin-audit.service.js";
 import { config } from "../../config.js";
 import {
-  deletePlugin,
   findPluginByKey,
   findPluginById,
   setPluginConfigSchemaVersion,
@@ -1832,11 +1821,11 @@ export async function registerPluginRoutes(
    * cannot be deleted — the admin must wait for the reaper to mark
    * them inactive first (i.e. stop the plugin container and wait ~75 s).
    *
-   * Side-effects on success:
-   *   1. Revokes the in-memory auth token.
-   *   2. Unregisters all Discord commands.
-   *   3. Destroys the DB row (cascade wipes kv/config/features/commands).
-   *   4. Rebuilds the event bridge index.
+   * The teardown itself — token revoke, command unregister, capability
+   * purge, row destroy, reconcile, cache drops, audit — is owned by
+   * Plugin Admin (`pluginAdmin.teardown`); read it there. This handler
+   * keeps only what resolves before the operation: the admin guard, id
+   * parsing, and the refuse-an-active-plugin check.
    *
    * Returns 204 on success.
    * Returns 409 if status === "active".
@@ -1866,96 +1855,20 @@ export async function registerPluginRoutes(
         return;
       }
 
-      // 1. Revoke in-memory token so any lingering bearer auth fails.
-      pluginAuthStore.revokeByPluginId(pluginId);
-
-      // 2. Unregister Discord commands (best-effort; logs internally).
-      // unregisterAll 刪 DB rows + feature 半部 Discord 指令（discordCommandId 有值）。
-      // global 軌三指令（discordCommandId=null）無法由 deleteOne 直接刪，
-      // 由後續 reconcileAll 透過 stale 清除機制從名冊 diff 刪除 Discord 端（Batch 1 #4）。
-      await pluginCommandRegistry.unregisterAll(pluginId).catch(() => {
-        /* logged inside unregisterAll */
-      });
-
-      // 2b. Purge this plugin's RBAC capability grants from every role
-      // (and drop its plugin_capabilities rows). ON DELETE CASCADE would
-      // clear the rows anyway, but the `plugin:<key>:*` tokens stored in
-      // admin_role_capabilities are plain strings with no FK, so they
-      // must be removed explicitly — otherwise they'd linger and re-bind
-      // if a plugin with the same key is ever registered again.
-      try {
-        const capKeys = await deleteAllCapabilities(pluginId);
-        await purgePluginCapabilityGrants(plugin.pluginKey, capKeys);
-      } catch (err) {
-        botEventLog.record(
-          "warn",
-          "bot",
-          `plugin-routes: capability cleanup failed during delete of ${plugin.pluginKey}: ${err instanceof Error ? err.message : String(err)}`,
-          { pluginId },
-        );
-      }
-
-      // 3. Destroy the DB row. ON DELETE CASCADE wipes related tables.
-      await deletePlugin(pluginId);
-
-      // 3b. reconcileAll：讓 reconciler stale 清除機制刪除 Discord 端 global 指令。
-      // deletePlugin 後 desired set 不含此 plugin 的指令，reconciler diff 會發現名冊有但
-      // desired set 沒，自動刪 Discord 端。非同步觸發，不阻擋 204 回應。
-      getReconciler()
-        .reconcileAll()
-        .catch((err: unknown) => {
-          botEventLog.record(
-            "warn",
-            "bot",
-            `plugin-routes: plugin delete 後 reconcileAll 失敗: ${err instanceof Error ? err.message : String(err)}`,
-            { pluginId },
-          );
-        });
-
-      // 4. Drop the deleted plugin from the event-dispatch index
-      //    (O(1) instead of a full rebuild), the proxy/lookup cache,
-      //    and the dispatch pool (so a previously-tripped breaker
-      //    doesn't survive a same-URL re-register).
-      emitPluginChange({ pluginId, row: null });
-      invalidatePluginById(pluginId);
-      dropDispatchPoolForPlugin(plugin.pluginKey);
-      clearDispatchHealth(plugin.pluginKey);
-
-      // 4b. Clear the health + metrics snapshots keyed by pluginKey. Same
-      // rationale as the dispatch-pool drop above: a plugin re-registered
-      // under the same key must not inherit the deleted plugin's stale
-      // health/metrics (which live up to the store's freshness TTL), and
-      // orphaned entries shouldn't linger across delete churn. Best-effort
-      // — a store error must not block the delete (the DB row is gone).
-      try {
-        const { clearHealth } = await import("./plugin-health-store.js");
-        const { clearSnapshot } = await import("./plugin-metrics-store.js");
-        await Promise.all([
-          clearHealth(plugin.pluginKey),
-          clearSnapshot(plugin.pluginKey),
-        ]);
-      } catch (err) {
-        botEventLog.record(
-          "warn",
-          "bot",
-          `plugin-routes: health/metrics cleanup failed during delete of ${plugin.pluginKey}: ${err instanceof Error ? err.message : String(err)}`,
-          { pluginId },
-        );
-      }
-
-      // Audit + operation log.
-      await recordAudit(
-        request.authUserId ?? "system",
-        "plugin.delete",
-        String(pluginId),
-        { pluginKey: plugin.pluginKey },
+      const outcome = await pluginAdmin.teardown(
+        pluginId,
+        request.authUserId,
+        getReconciler,
       );
-      botEventLog.record(
-        "warn",
-        "bot",
-        `Plugin deleted by admin: ${plugin.pluginKey} (id=${pluginId})`,
-        { pluginId, pluginKey: plugin.pluginKey, actor: request.authUserId },
-      );
+      if (!outcome.ok) {
+        switch (outcome.refusal) {
+          case "not_found":
+            reply.code(404).send({ error: "plugin not found" });
+            return;
+          default:
+            return unhandledRefusal(outcome.refusal);
+        }
+      }
 
       reply.code(204).send();
     },

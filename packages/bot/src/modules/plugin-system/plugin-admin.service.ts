@@ -1,10 +1,12 @@
 import {
+  deletePlugin,
   findPluginById,
   setPluginApprovedGlobalEventSubs,
   setPluginApprovedRpcScopes,
   setPluginEnabled as setEnabledModel,
   type PluginRow,
 } from "./models/plugin.model.js";
+import { deleteAllCapabilities } from "./models/plugin-capability.model.js";
 import { pluginAuthStore, PluginAuthStore } from "./plugin-auth.service.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { emitPluginChange } from "./plugin-changes.js";
@@ -13,7 +15,15 @@ import {
   invalidatePluginById,
 } from "./plugin-lookup-cache.js";
 import { pluginCommandRegistry } from "./plugin-command-registry.service.js";
-import { pluginRegistry, PluginRegistry } from "./plugin-registry.service.js";
+import {
+  pluginRegistry,
+  PluginRegistry,
+  purgePluginCapabilityGrants,
+} from "./plugin-registry.service.js";
+import { dropDispatchPoolForPlugin } from "./plugin-event-bridge.service.js";
+import { clearDispatchHealth } from "./plugin-dispatch-health.service.js";
+import { recordAudit } from "../admin/admin-audit.service.js";
+import type { CommandReconciler } from "../command-system/reconcile.service.js";
 import type { PluginManifest } from "@karyl-chan/plugin-wire";
 
 /**
@@ -36,12 +46,15 @@ import type { PluginManifest } from "@karyl-chan/plugin-wire";
  * operations moved in the first increment (#47) can only fail by naming a
  * plugin that does not exist: their auth guard and their request parsing
  * both resolve *before* the operation is reached, so neither produces a
- * refusal (glossary: Admin Refusal). Later increments add members — the
- * delete teardown refuses an active plugin (conflict), and the config
- * writes refuse a payload that fails validation. Collapsing this to
- * `null` or an exception now would cost the compiler's exhaustiveness
- * check on every route that maps one, which is the whole reason the
- * convention exists.
+ * refusal (glossary: Admin Refusal). The delete teardown (#49) also
+ * refuses only a missing plugin — its refuse-an-active-plugin 409 guard
+ * predates the move and stayed with the route, so that increment could
+ * remain a pure move; folding it in as a `conflict` member is a call for
+ * a later increment, not a fait accompli. The next member arrives with
+ * A3: the config writes refuse a payload that fails validation.
+ * Collapsing this to `null` or an exception now would cost the
+ * compiler's exhaustiveness check on every route that maps one, which is
+ * the whole reason the convention exists.
  */
 export type AdminRefusal = "not_found";
 
@@ -220,6 +233,121 @@ export class PluginAdmin {
     );
     const pending = requested.filter((e) => !approved.includes(e));
     return { ok: true, value: { requested, approved, pending } };
+  }
+
+  /**
+   * The delete teardown (#49) — the one place to read to learn what
+   * deleting a plugin does. Seven ordered steps (1, 2, 2b, 3, 3b, 4,
+   * 4b below), four of them drops of caches that don't own their own
+   * invalidation. Best-effort steps stay best-effort: a failing cache
+   * drop must never block removal of a misbehaving plugin, and each
+   * failing step says which one it was via the bot event log.
+   *
+   * Callers' responsibilities, both deliberate:
+   *   - The refuse-an-active-plugin 409 guard stays with the route
+   *     (pre-existing behaviour, kept route-side so #49 stayed a pure
+   *     move — see the {@link AdminRefusal} comment).
+   *   - `getReconciler` is passed as a thunk because the reconciler is
+   *     route-injected wiring; it is resolved at step 3b, exactly where
+   *     the route resolved it before the move.
+   */
+  async teardown(
+    pluginId: number,
+    actor: string | undefined,
+    getReconciler: () => CommandReconciler,
+  ): Promise<AdminOutcome<void>> {
+    const plugin = await findPluginById(pluginId);
+    if (!plugin) return { ok: false, refusal: "not_found" };
+
+    // 1. Revoke in-memory token so any lingering bearer auth fails.
+    this.auth.revokeByPluginId(pluginId);
+
+    // 2. Unregister Discord commands (best-effort; logs internally).
+    // unregisterAll 刪 DB rows + feature 半部 Discord 指令（discordCommandId 有值）。
+    // global 軌三指令（discordCommandId=null）無法由 deleteOne 直接刪，
+    // 由後續 reconcileAll 透過 stale 清除機制從名冊 diff 刪除 Discord 端（Batch 1 #4）。
+    await pluginCommandRegistry.unregisterAll(pluginId).catch(() => {
+      /* logged inside unregisterAll */
+    });
+
+    // 2b. Purge this plugin's RBAC capability grants from every role
+    // (and drop its plugin_capabilities rows). ON DELETE CASCADE would
+    // clear the rows anyway, but the `plugin:<key>:*` tokens stored in
+    // admin_role_capabilities are plain strings with no FK, so they
+    // must be removed explicitly — otherwise they'd linger and re-bind
+    // if a plugin with the same key is ever registered again.
+    try {
+      const capKeys = await deleteAllCapabilities(pluginId);
+      await purgePluginCapabilityGrants(plugin.pluginKey, capKeys);
+    } catch (err) {
+      botEventLog.record(
+        "warn",
+        "bot",
+        `plugin-admin: capability cleanup failed during delete of ${plugin.pluginKey}: ${err instanceof Error ? err.message : String(err)}`,
+        { pluginId },
+      );
+    }
+
+    // 3. Destroy the DB row. ON DELETE CASCADE wipes related tables.
+    await deletePlugin(pluginId);
+
+    // 3b. reconcileAll：讓 reconciler stale 清除機制刪除 Discord 端 global 指令。
+    // deletePlugin 後 desired set 不含此 plugin 的指令，reconciler diff 會發現名冊有但
+    // desired set 沒，自動刪 Discord 端。非同步觸發，不阻擋 204 回應。
+    getReconciler()
+      .reconcileAll()
+      .catch((err: unknown) => {
+        botEventLog.record(
+          "warn",
+          "bot",
+          `plugin-admin: plugin delete 後 reconcileAll 失敗: ${err instanceof Error ? err.message : String(err)}`,
+          { pluginId },
+        );
+      });
+
+    // 4. Drop the deleted plugin from the event-dispatch index
+    //    (O(1) instead of a full rebuild), the proxy/lookup cache,
+    //    and the dispatch pool (so a previously-tripped breaker
+    //    doesn't survive a same-URL re-register).
+    emitPluginChange({ pluginId, row: null });
+    invalidatePluginById(pluginId);
+    dropDispatchPoolForPlugin(plugin.pluginKey);
+    clearDispatchHealth(plugin.pluginKey);
+
+    // 4b. Clear the health + metrics snapshots keyed by pluginKey. Same
+    // rationale as the dispatch-pool drop above: a plugin re-registered
+    // under the same key must not inherit the deleted plugin's stale
+    // health/metrics (which live up to the store's freshness TTL), and
+    // orphaned entries shouldn't linger across delete churn. Best-effort
+    // — a store error must not block the delete (the DB row is gone).
+    try {
+      const { clearHealth } = await import("./plugin-health-store.js");
+      const { clearSnapshot } = await import("./plugin-metrics-store.js");
+      await Promise.all([
+        clearHealth(plugin.pluginKey),
+        clearSnapshot(plugin.pluginKey),
+      ]);
+    } catch (err) {
+      botEventLog.record(
+        "warn",
+        "bot",
+        `plugin-admin: health/metrics cleanup failed during delete of ${plugin.pluginKey}: ${err instanceof Error ? err.message : String(err)}`,
+        { pluginId },
+      );
+    }
+
+    // Audit + operation log.
+    await recordAudit(actor ?? "system", "plugin.delete", String(pluginId), {
+      pluginKey: plugin.pluginKey,
+    });
+    botEventLog.record(
+      "warn",
+      "bot",
+      `Plugin deleted by admin: ${plugin.pluginKey} (id=${pluginId})`,
+      { pluginId, pluginKey: plugin.pluginKey, actor },
+    );
+
+    return { ok: true, value: undefined };
   }
 }
 
