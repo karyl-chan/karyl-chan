@@ -1,5 +1,10 @@
 import type { Client } from "discord.js";
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type {
+  FastifyInstance,
+  FastifyReply,
+  FastifyRequest,
+  FastifySchemaValidationError,
+} from "fastify";
 import { config } from "../../config.js";
 import { ChannelType, Routes, MessageFlags } from "discord.js";
 import { RateLimiter } from "../../utils/rate-limiter.js";
@@ -41,6 +46,7 @@ import {
 } from "./plugin-defer-state.js";
 import { maybeForwardGuildRpc } from "./shard-forward-routes.js";
 import {
+  formatPluginRpcSchemaError,
   installPluginRpcSchemaErrors,
   SNOWFLAKE_PATTERN,
 } from "./plugin-rpc-schema.js";
@@ -159,6 +165,43 @@ const nonEmptyStringField = { type: "string", minLength: 1 };
  * without a type. Every use below cites the line it is preserving.
  */
 const unconstrainedField = {};
+
+/**
+ * Route-level schema error formatter that byte-preserves specific
+ * historical refusal texts, delegating everything else to the family
+ * formatter.
+ *
+ * The family formatter's default rendering is fine where a message
+ * merely sharpens ("guild_id required" → "guild_id must be string"),
+ * which is the #48 precedent. But a few of the storage/me guards carry
+ * a message an operator's tooling may match on and ajv's default
+ * wording for the same keyword is a plain regression in clarity
+ * (`must NOT have more than 200 characters`), so those keep their old
+ * text verbatim. Each override matches ajv's first reported error by
+ * (instancePath, keyword).
+ */
+function preservingSchemaErrorFormatter(
+  overrides: ReadonlyArray<{
+    instancePath: string;
+    keyword: string;
+    message: string;
+  }>,
+) {
+  return (
+    errors: FastifySchemaValidationError[],
+    dataVar: string,
+  ): Error => {
+    const first = errors[0];
+    if (first) {
+      const hit = overrides.find(
+        (o) =>
+          o.instancePath === first.instancePath && o.keyword === first.keyword,
+      );
+      if (hit) return new Error(hit.message);
+    }
+    return formatPluginRpcSchemaError(errors, dataVar);
+  };
+}
 
 function rejectForbidden(reply: FastifyReply, scope: string): void {
   reply.code(403).send({ error: `plugin token missing scope '${scope}'` });
@@ -1054,99 +1097,124 @@ function registerRpcRoutes(
 
   // ─── storage.kv_get ───────────────────────────────────────────────
   server.post<{
-    Body: { guild_id?: unknown; key?: unknown };
-  }>("/api/plugin/storage.kv_get", async (request, reply) => {
-    const ctx = await requireScope(request, reply, "storage.kv_get");
-    if (!ctx) return;
-    const body = request.body ?? {};
-    if (typeof body.guild_id !== "string" || body.guild_id.length === 0) {
-      reply.code(400).send({ error: "guild_id required" });
-      return;
-    }
-    if (typeof body.key !== "string" || body.key.length === 0) {
-      reply.code(400).send({ error: "key required" });
-      return;
-    }
-    const row = await getKv(ctx.pluginId, body.guild_id, body.key);
-    if (!row) {
-      return { found: false, value: null };
-    }
-    return { found: true, value: row.value, bytes: row.bytes };
-  });
+    Body: { guild_id: string; key: string };
+  }>(
+    "/api/plugin/storage.kv_get",
+    {
+      schema: {
+        body: {
+          type: "object",
+          properties: {
+            guild_id: nonEmptyStringField,
+            key: nonEmptyStringField,
+          },
+          required: ["guild_id", "key"],
+        },
+      },
+    },
+    async (request, reply) => {
+      const ctx = await requireScope(request, reply, "storage.kv_get");
+      if (!ctx) return;
+      const body = request.body;
+      const row = await getKv(ctx.pluginId, body.guild_id, body.key);
+      if (!row) {
+        return { found: false, value: null };
+      }
+      return { found: true, value: row.value, bytes: row.bytes };
+    },
+  );
 
   // ─── storage.kv_set ───────────────────────────────────────────────
   server.post<{
-    Body: { guild_id?: unknown; key?: unknown; value?: unknown };
-  }>("/api/plugin/storage.kv_set", async (request, reply) => {
-    const ctx = await requireScope(request, reply, "storage.kv_set");
-    if (!ctx) return;
-    const body = request.body ?? {};
-    if (typeof body.guild_id !== "string" || body.guild_id.length === 0) {
-      reply.code(400).send({ error: "guild_id required" });
-      return;
-    }
-    if (
-      typeof body.key !== "string" ||
-      body.key.length === 0 ||
-      body.key.length > KV_KEY_MAX
-    ) {
-      reply.code(400).send({ error: `key required (max ${KV_KEY_MAX} chars)` });
-      return;
-    }
-    if (typeof body.value !== "string") {
-      reply.code(400).send({ error: "value must be a string" });
-      return;
-    }
-    const incomingBytes = Buffer.byteLength(body.value, "utf8");
-    if (incomingBytes > KV_VALUE_MAX_BYTES) {
-      reply.code(413).send({
-        error: `value exceeds per-row hard cap (${KV_VALUE_MAX_BYTES}B)`,
-      });
-      return;
-    }
-    // Quota check: sum existing bytes minus what this key already
-    // holds (we're overwriting, so subtract it from the budget).
-    // The read+write runs under a per-(plugin,guild) mutex so two
-    // concurrent sets to different keys can't both observe a stale
-    // total and slip past the quota — previously the lack of
-    // serialisation let a plugin double-write past its quota.
-    const guildId = body.guild_id;
-    const key = body.key;
-    const value = body.value;
-    const reply413 = (msg: string): void => {
-      reply.code(413).send({ error: msg });
-    };
-    const result = await withGuildKvLock<{
-      ok: boolean;
-      bytes?: number;
-      total_bytes?: number;
-      quota_bytes?: number;
-      error?: string;
-    }>(ctx.pluginId, guildId, async () => {
-      const quota = await quotaForGuildKv(ctx.pluginId);
-      const currentTotal = await sumGuildBytes(ctx.pluginId, guildId);
-      const existing = await getKv(ctx.pluginId, guildId, key);
-      const projected = currentTotal - (existing?.bytes ?? 0) + incomingBytes;
-      if (projected > quota) {
-        return {
-          ok: false,
-          error: `would exceed plugin guild_kv quota (${projected}B / ${quota}B)`,
-        };
+    Body: { guild_id: string; key: string; value: string };
+  }>(
+    "/api/plugin/storage.kv_set",
+    {
+      schema: {
+        body: {
+          type: "object",
+          properties: {
+            guild_id: nonEmptyStringField,
+            key: { type: "string", minLength: 1, maxLength: KV_KEY_MAX },
+            value: stringField,
+          },
+          required: ["guild_id", "key", "value"],
+        },
+      },
+      // The old guard folded empty and over-long keys into one message;
+      // an over-long key must keep it verbatim (ajv's own maxLength text
+      // is "must NOT have more than 200 characters").
+      schemaErrorFormatter: preservingSchemaErrorFormatter([
+        {
+          instancePath: "/key",
+          keyword: "maxLength",
+          message: `key required (max ${KV_KEY_MAX} chars)`,
+        },
+        {
+          instancePath: "/key",
+          keyword: "minLength",
+          message: `key required (max ${KV_KEY_MAX} chars)`,
+        },
+      ]),
+    },
+    async (request, reply) => {
+      const ctx = await requireScope(request, reply, "storage.kv_set");
+      if (!ctx) return;
+      const body = request.body;
+      // The per-row byte cap stays in the handler: it measures the
+      // *serialised* UTF-8 byte length, which a JSON Schema string
+      // constraint (characters, not bytes) cannot express.
+      const incomingBytes = Buffer.byteLength(body.value, "utf8");
+      if (incomingBytes > KV_VALUE_MAX_BYTES) {
+        reply.code(413).send({
+          error: `value exceeds per-row hard cap (${KV_VALUE_MAX_BYTES}B)`,
+        });
+        return;
       }
-      const row = await setKv(ctx.pluginId, guildId, key, value);
-      return {
-        ok: true,
-        bytes: row.bytes,
-        total_bytes: currentTotal - (existing?.bytes ?? 0) + row.bytes,
-        quota_bytes: quota,
+      // Quota check: sum existing bytes minus what this key already
+      // holds (we're overwriting, so subtract it from the budget).
+      // The read+write runs under a per-(plugin,guild) mutex so two
+      // concurrent sets to different keys can't both observe a stale
+      // total and slip past the quota — previously the lack of
+      // serialisation let a plugin double-write past its quota.
+      const guildId = body.guild_id;
+      const key = body.key;
+      const value = body.value;
+      const reply413 = (msg: string): void => {
+        reply.code(413).send({ error: msg });
       };
-    });
-    if (!result.ok) {
-      reply413(result.error!);
-      return;
-    }
-    return result;
-  });
+      const result = await withGuildKvLock<{
+        ok: boolean;
+        bytes?: number;
+        total_bytes?: number;
+        quota_bytes?: number;
+        error?: string;
+      }>(ctx.pluginId, guildId, async () => {
+        const quota = await quotaForGuildKv(ctx.pluginId);
+        const currentTotal = await sumGuildBytes(ctx.pluginId, guildId);
+        const existing = await getKv(ctx.pluginId, guildId, key);
+        const projected = currentTotal - (existing?.bytes ?? 0) + incomingBytes;
+        if (projected > quota) {
+          return {
+            ok: false,
+            error: `would exceed plugin guild_kv quota (${projected}B / ${quota}B)`,
+          };
+        }
+        const row = await setKv(ctx.pluginId, guildId, key, value);
+        return {
+          ok: true,
+          bytes: row.bytes,
+          total_bytes: currentTotal - (existing?.bytes ?? 0) + row.bytes,
+          quota_bytes: quota,
+        };
+      });
+      if (!result.ok) {
+        reply413(result.error!);
+        return;
+      }
+      return result;
+    },
+  );
 
   // ─── storage.kv_increment ─────────────────────────────────────────
   /**
@@ -1163,96 +1231,148 @@ function registerRpcRoutes(
    * cap applies to the post-increment serialised value.
    */
   server.post<{
-    Body: { guild_id?: unknown; key?: unknown; delta?: unknown };
-  }>("/api/plugin/storage.kv_increment", async (request, reply) => {
-    const ctx = await requireScope(request, reply, "storage.kv_increment");
-    if (!ctx) return;
-    const body = request.body ?? {};
-    if (typeof body.guild_id !== "string" || body.guild_id.length === 0) {
-      reply.code(400).send({ error: "guild_id required" });
-      return;
-    }
-    if (typeof body.key !== "string" || body.key.length === 0) {
-      reply.code(400).send({ error: "key required" });
-      return;
-    }
-    if (body.key.length > KV_KEY_MAX) {
-      reply.code(400).send({ error: `key exceeds ${KV_KEY_MAX} chars` });
-      return;
-    }
-    const deltaRaw = body.delta ?? 1;
-    if (typeof deltaRaw !== "number" || !Number.isFinite(deltaRaw)) {
-      reply.code(400).send({ error: "delta must be a finite number" });
-      return;
-    }
-    try {
-      const result = await incrementKv(
-        ctx.pluginId,
-        body.guild_id,
-        body.key,
-        deltaRaw,
-      );
-      const totalBytes = await sumGuildBytes(ctx.pluginId, body.guild_id);
-      const quotaBytes = await quotaForGuildKv(ctx.pluginId);
-      return {
-        value: result.value,
-        bytes: result.row.bytes,
-        total_bytes: totalBytes,
-        quota_bytes: quotaBytes,
-      };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      // Existing-value-not-numeric is the caller's bug, not the bot's
-      // — surface it as 422 so the plugin's logs blame the right side.
-      if (msg.includes("not a finite number")) {
-        reply.code(422).send({ error: msg });
-        return;
+    Body: { guild_id: string; key: string; delta?: number | null };
+  }>(
+    "/api/plugin/storage.kv_increment",
+    {
+      schema: {
+        body: {
+          type: "object",
+          properties: {
+            guild_id: nonEmptyStringField,
+            key: { type: "string", minLength: 1, maxLength: KV_KEY_MAX },
+            // "null" is in the type union because the old guard read
+            // `body.delta ?? 1` before type-checking — an explicit null
+            // meant "default to 1" and answered 200. `type: "number"`
+            // alone would turn that into a 400, a narrowing.
+            delta: { type: ["number", "null"] },
+          },
+          required: ["guild_id", "key"],
+        },
+      },
+      // Two texts ajv's defaults would regress: the over-long-key
+      // message, and the delta one (ajv says `delta must be
+      // number,null`, which leaks the null-means-default trick).
+      schemaErrorFormatter: preservingSchemaErrorFormatter([
+        {
+          instancePath: "/key",
+          keyword: "maxLength",
+          message: `key exceeds ${KV_KEY_MAX} chars`,
+        },
+        {
+          instancePath: "/delta",
+          keyword: "type",
+          message: "delta must be a finite number",
+        },
+      ]),
+    },
+    async (request, reply) => {
+      const ctx = await requireScope(request, reply, "storage.kv_increment");
+      if (!ctx) return;
+      const body = request.body;
+      // NaN / Infinity cannot be spelled in JSON, so `type: "number"`
+      // refuses everything the old Number.isFinite check refused.
+      const deltaRaw = body.delta ?? 1;
+      try {
+        const result = await incrementKv(
+          ctx.pluginId,
+          body.guild_id,
+          body.key,
+          deltaRaw,
+        );
+        const totalBytes = await sumGuildBytes(ctx.pluginId, body.guild_id);
+        const quotaBytes = await quotaForGuildKv(ctx.pluginId);
+        return {
+          value: result.value,
+          bytes: result.row.bytes,
+          total_bytes: totalBytes,
+          quota_bytes: quotaBytes,
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        // Existing-value-not-numeric is the caller's bug, not the bot's
+        // — surface it as 422 so the plugin's logs blame the right side.
+        if (msg.includes("not a finite number")) {
+          reply.code(422).send({ error: msg });
+          return;
+        }
+        reply.code(500).send({ error: `kv_increment failed: ${msg}` });
       }
-      reply.code(500).send({ error: `kv_increment failed: ${msg}` });
-    }
-  });
+    },
+  );
 
   // ─── storage.kv_delete ────────────────────────────────────────────
   server.post<{
-    Body: { guild_id?: unknown; key?: unknown };
-  }>("/api/plugin/storage.kv_delete", async (request, reply) => {
-    const ctx = await requireScope(request, reply, "storage.kv_delete");
-    if (!ctx) return;
-    const body = request.body ?? {};
-    if (typeof body.guild_id !== "string" || typeof body.key !== "string") {
-      reply.code(400).send({ error: "guild_id + key required" });
-      return;
-    }
-    const removed = await deleteKv(ctx.pluginId, body.guild_id, body.key);
-    return { removed };
-  });
+    Body: { guild_id: string; key: string };
+  }>(
+    "/api/plugin/storage.kv_delete",
+    {
+      schema: {
+        body: {
+          type: "object",
+          properties: {
+            // No minLength on either: the old guard was a bare typeof,
+            // so empty strings were accepted (and deleted nothing).
+            guild_id: stringField,
+            key: stringField,
+          },
+          required: ["guild_id", "key"],
+        },
+      },
+    },
+    async (request, reply) => {
+      const ctx = await requireScope(request, reply, "storage.kv_delete");
+      if (!ctx) return;
+      const body = request.body;
+      const removed = await deleteKv(ctx.pluginId, body.guild_id, body.key);
+      return { removed };
+    },
+  );
 
   // ─── storage.kv_list ──────────────────────────────────────────────
   server.post<{
     Body: {
-      guild_id?: unknown;
+      guild_id: string;
       prefix?: unknown;
       limit?: unknown;
       offset?: unknown;
     };
-  }>("/api/plugin/storage.kv_list", async (request, reply) => {
-    const ctx = await requireScope(request, reply, "storage.kv_list");
-    if (!ctx) return;
-    const body = request.body ?? {};
-    if (typeof body.guild_id !== "string") {
-      reply.code(400).send({ error: "guild_id required" });
-      return;
-    }
-    const prefix = typeof body.prefix === "string" ? body.prefix : undefined;
-    const limit = typeof body.limit === "number" ? body.limit : 100;
-    const offset = typeof body.offset === "number" ? body.offset : 0;
-    const result = await listKvKeys(ctx.pluginId, body.guild_id, {
-      prefix,
-      limit,
-      offset,
-    });
-    return { keys: result.keys, total: result.total };
-  });
+  }>(
+    "/api/plugin/storage.kv_list",
+    {
+      schema: {
+        body: {
+          type: "object",
+          properties: {
+            // Bare typeof at HEAD — an empty guild_id was accepted.
+            guild_id: stringField,
+            // Normalisers, not guards — see unconstrainedField:
+            //   prefix: `typeof body.prefix === "string" ? … : undefined`
+            //   limit:  `typeof body.limit === "number" ? … : 100`
+            //   offset: `typeof body.offset === "number" ? … : 0`
+            prefix: unconstrainedField,
+            limit: unconstrainedField,
+            offset: unconstrainedField,
+          },
+          required: ["guild_id"],
+        },
+      },
+    },
+    async (request, reply) => {
+      const ctx = await requireScope(request, reply, "storage.kv_list");
+      if (!ctx) return;
+      const body = request.body;
+      const prefix = typeof body.prefix === "string" ? body.prefix : undefined;
+      const limit = typeof body.limit === "number" ? body.limit : 100;
+      const offset = typeof body.offset === "number" ? body.offset : 0;
+      const result = await listKvKeys(ctx.pluginId, body.guild_id, {
+        prefix,
+        limit,
+        offset,
+      });
+      return { keys: result.keys, total: result.total };
+    },
+  );
 
   // ─── storage.kv_list_values ───────────────────────────────────────
   /**
@@ -1270,29 +1390,43 @@ function registerRpcRoutes(
    */
   server.post<{
     Body: {
-      guild_id?: unknown;
+      guild_id: string;
       prefix?: unknown;
       limit?: unknown;
       offset?: unknown;
     };
-  }>("/api/plugin/storage.kv_list_values", async (request, reply) => {
-    const ctx = await requireScope(request, reply, "storage.kv_list_values");
-    if (!ctx) return;
-    const body = request.body ?? {};
-    if (typeof body.guild_id !== "string") {
-      reply.code(400).send({ error: "guild_id required" });
-      return;
-    }
-    const prefix = typeof body.prefix === "string" ? body.prefix : undefined;
-    const limit = typeof body.limit === "number" ? body.limit : 100;
-    const offset = typeof body.offset === "number" ? body.offset : 0;
-    const result = await listKvWithValues(ctx.pluginId, body.guild_id, {
-      prefix,
-      limit,
-      offset,
-    });
-    return { entries: result.entries, total: result.total };
-  });
+  }>(
+    "/api/plugin/storage.kv_list_values",
+    {
+      schema: {
+        body: {
+          type: "object",
+          properties: {
+            // Same shape as storage.kv_list, including the normalisers.
+            guild_id: stringField,
+            prefix: unconstrainedField,
+            limit: unconstrainedField,
+            offset: unconstrainedField,
+          },
+          required: ["guild_id"],
+        },
+      },
+    },
+    async (request, reply) => {
+      const ctx = await requireScope(request, reply, "storage.kv_list_values");
+      if (!ctx) return;
+      const body = request.body;
+      const prefix = typeof body.prefix === "string" ? body.prefix : undefined;
+      const limit = typeof body.limit === "number" ? body.limit : 100;
+      const offset = typeof body.offset === "number" ? body.offset : 0;
+      const result = await listKvWithValues(ctx.pluginId, body.guild_id, {
+        prefix,
+        limit,
+        offset,
+      });
+      return { entries: result.entries, total: result.total };
+    },
+  );
 
   // ─── interactions.respond ─────────────────────────────────────────
   /**
@@ -2780,17 +2914,23 @@ function registerRpcRoutes(
    * without having to issue a sentinel kv_set. Useful for admin UIs
    * showing storage headroom.
    */
-  server.post<{ Body: { guild_id?: unknown } }>(
+  server.post<{ Body: { guild_id: string } }>(
     "/api/plugin/me/kv_usage",
+    {
+      schema: {
+        body: {
+          type: "object",
+          // The old guard ran SNOWFLAKE_RE — the same pattern the
+          // schema fragment compiles — so the accepted set is unchanged.
+          properties: { guild_id: snowflakeField },
+          required: ["guild_id"],
+        },
+      },
+    },
     async (request, reply) => {
       const ctx = await requireScope(request, reply, "me.kv_usage");
       if (!ctx) return;
-      const body = request.body ?? {};
-      if (typeof body.guild_id !== "string" || !SNOWFLAKE_RE.test(body.guild_id)) {
-        reply.code(400).send({ error: "guild_id required" });
-        return;
-      }
-      const used = await sumGuildBytes(ctx.pluginId, body.guild_id);
+      const used = await sumGuildBytes(ctx.pluginId, request.body.guild_id);
       const quota = await quotaForGuildKv(ctx.pluginId);
       return { used_bytes: used, quota_bytes: quota };
     },
@@ -2808,25 +2948,38 @@ function registerRpcRoutes(
    * with the plugin's key tagged on the context. Used for the admin
    * UI event timeline.
    */
-  server.post<{ Body: { entries?: unknown } }>(
+  server.post<{ Body: { entries: unknown[] } }>(
     "/api/plugin/log.emit",
+    {
+      schema: {
+        body: {
+          type: "object",
+          properties: {
+            // maxItems is the defensive cap that lived in the handler —
+            // a runaway plugin could otherwise drive a 100k entry POST
+            // and saturate the bot's event-log write path. Per-entry
+            // shape stays unvalidated here: a malformed entry is
+            // *skipped* (normalise-and-continue), never a 400.
+            entries: { type: "array", maxItems: 100 },
+          },
+          required: ["entries"],
+        },
+      },
+      // The cap's refusal text predates the formatter; keep it.
+      schemaErrorFormatter: preservingSchemaErrorFormatter([
+        {
+          instancePath: "/entries",
+          keyword: "maxItems",
+          message: "max 100 entries per batch",
+        },
+      ]),
+    },
     async (request, reply) => {
       const ctx = await requireScope(request, reply, "me.log");
       if (!ctx) return;
-      const body = request.body ?? {};
-      if (!Array.isArray(body.entries)) {
-        reply.code(400).send({ error: "entries array required" });
-        return;
-      }
-      // Defensive cap — a runaway plugin could otherwise drive a 100k
-      // entry POST and saturate the bot's event-log write path.
-      if (body.entries.length > 100) {
-        reply.code(400).send({ error: "max 100 entries per batch" });
-        return;
-      }
       let accepted = 0;
       let deduped = 0;
-      for (const raw of body.entries) {
+      for (const raw of request.body.entries) {
         if (!raw || typeof raw !== "object") continue;
         const e = raw as Record<string, unknown>;
         const level = e.level;
@@ -2884,15 +3037,24 @@ function registerRpcRoutes(
    */
   server.post<{ Body: unknown }>(
     "/api/plugin/metrics.push",
+    {
+      schema: {
+        // The old guard was `!body || typeof body !== "object"`, and in
+        // JS an *array* passes that — an array body answered 200 with an
+        // empty snapshot stored. JSON Schema's "object" excludes arrays,
+        // so the type union keeps that accepted case accepted. The
+        // snapshot's fields are all normalisers (wrong type → default)
+        // and stay unconstrained in the handler.
+        body: { type: ["object", "array"] },
+      },
+      schemaErrorFormatter: preservingSchemaErrorFormatter([
+        { instancePath: "", keyword: "type", message: "snapshot object required" },
+      ]),
+    },
     async (request, reply) => {
       const ctx = await requireScope(request, reply, "me.metrics");
       if (!ctx) return;
-      const body = request.body;
-      if (!body || typeof body !== "object") {
-        reply.code(400).send({ error: "snapshot object required" });
-        return;
-      }
-      const snap = body as Record<string, unknown>;
+      const snap = request.body as Record<string, unknown>;
       const ts = typeof snap.ts === "number" ? snap.ts : Date.now();
       const counters = Array.isArray(snap.counters) ? snap.counters : [];
       const gauges = Array.isArray(snap.gauges) ? snap.gauges : [];
