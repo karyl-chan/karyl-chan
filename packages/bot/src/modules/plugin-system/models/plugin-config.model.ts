@@ -122,5 +122,16 @@ export const deleteConfigKey = async (
   return true;
 };
 
+/**
+ * Purge every config row (both sources) for a deleted plugin. No FK
+ * backs `pluginId`, so the delete teardown calls this explicitly —
+ * see PluginAdmin.teardown (#59). Returns the number of rows removed.
+ */
+export const deleteConfigByPlugin = async (
+  pluginId: number,
+): Promise<number> => {
+  return PluginConfig.destroy({ where: { pluginId } });
+};
+
 // configSchemaVersion now lives on the plugins row (one value per plugin)
 // via setPluginConfigSchemaVersion in plugin.model.ts — see migration 009.

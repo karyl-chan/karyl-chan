@@ -36,9 +36,14 @@ import { kvUsageByPlugin } from "./models/plugin-kv.model.js";
 import { quotaForGuildKv } from "./plugin-kv-quota.js";
 import { findConfigByPluginAndSource } from "./models/plugin-config.model.js";
 import {
+  deletePluginCommandsByPlugin,
   findPluginCommandsByPlugin,
   PluginCommand,
 } from "./models/plugin-command.model.js";
+import { deleteConfigByPlugin } from "./models/plugin-config.model.js";
+import { deleteKvByPlugin } from "./models/plugin-kv.model.js";
+import { deleteFeatureRowsByPlugin } from "../feature-toggle/models/plugin-guild-feature.model.js";
+import { deleteFeatureDefaultsByPlugin } from "../feature-toggle/models/plugin-feature-default.model.js";
 import {
   findAllFeatureDefaults,
   upsertFeatureDefault,
@@ -574,9 +579,12 @@ export class PluginAdmin {
 
   /**
    * The delete teardown (#49) — the one place to read to learn what
-   * deleting a plugin does. Seven ordered steps (1, 2, 2b, 3, 3b, 4,
-   * 4b below), four of them drops of caches that don't own their own
-   * invalidation. Best-effort steps stay best-effort: a failing cache
+   * deleting a plugin does. Eight ordered steps (1, 2, 2b, 2c, 3, 3b,
+   * 4, 4b below), four of them drops of caches that don't own their
+   * own invalidation. Since #59 the child-table rows are deleted
+   * explicitly in 2c — nothing cascades from the plugins row (no FK
+   * exists anywhere in this schema slice, despite what older comments
+   * claimed). Best-effort steps stay best-effort: a failing cache
    * drop must never block removal of a misbehaving plugin, and each
    * failing step says which one it was via the bot event log.
    *
@@ -621,11 +629,11 @@ export class PluginAdmin {
     });
 
     // 2b. Purge this plugin's RBAC capability grants from every role
-    // (and drop its plugin_capabilities rows). ON DELETE CASCADE would
-    // clear the rows anyway, but the `plugin:<key>:*` tokens stored in
-    // admin_role_capabilities are plain strings with no FK, so they
-    // must be removed explicitly — otherwise they'd linger and re-bind
-    // if a plugin with the same key is ever registered again.
+    // (and drop its plugin_capabilities rows). Both halves must be
+    // explicit: nothing cascades (see 2c), and the `plugin:<key>:*`
+    // tokens stored in admin_role_capabilities are plain strings that
+    // would otherwise linger and re-bind if a plugin with the same key
+    // is ever registered again.
     try {
       const capKeys = await deleteAllCapabilities(pluginId);
       await purgePluginCapabilityGrants(plugin.pluginKey, capKeys);
@@ -638,7 +646,44 @@ export class PluginAdmin {
       );
     }
 
-    // 3. Destroy the DB row. ON DELETE CASCADE wipes related tables.
+    // 2c. Purge the plugin's child rows explicitly (#59). NOTHING
+    // cascades: no plugin child model declares an FK `references`, and
+    // the `sequelize.sync` DDL carries no ON DELETE CASCADE — a comment
+    // here used to claim otherwise, and a plugin_configs row demonstrably
+    // survived its plugin's delete. Same precedent as the capability
+    // purge in 2b, extended to every remaining child table. Best-effort
+    // per table: orphans are hygiene, not correctness (plugin ids are
+    // fresh, so a leaked row can never re-bind), and a failing child
+    // purge must never block removal of a misbehaving plugin. The
+    // plugin_commands sweep repeats what unregisterAll's DB half does in
+    // step 2 — deliberately, so the rows still go when Discord is down
+    // and step 2 bailed early.
+    await Promise.all(
+      (
+        [
+          ["plugin_configs", () => deleteConfigByPlugin(pluginId)],
+          ["plugin_kv", () => deleteKvByPlugin(pluginId)],
+          ["plugin_guild_features", () => deleteFeatureRowsByPlugin(pluginId)],
+          [
+            "plugin_feature_defaults",
+            () => deleteFeatureDefaultsByPlugin(pluginId),
+          ],
+          ["plugin_commands", () => deletePluginCommandsByPlugin(pluginId)],
+        ] as const
+      ).map(([table, purge]) =>
+        purge().catch((err: unknown) => {
+          botEventLog.record(
+            "warn",
+            "bot",
+            `plugin-admin: ${table} cleanup failed during delete of ${plugin.pluginKey}: ${err instanceof Error ? err.message : String(err)}`,
+            { pluginId },
+          );
+        }),
+      ),
+    );
+
+    // 3. Destroy the plugins row itself. Nothing cascades from it (see
+    // 2c) — every child table is purged explicitly above.
     await deletePlugin(pluginId);
 
     // 3b. reconcileAll：讓 reconciler stale 清除機制刪除 Discord 端 global 指令。

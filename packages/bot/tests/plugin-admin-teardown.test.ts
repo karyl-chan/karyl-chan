@@ -6,7 +6,10 @@
  *
  *   - after DELETE the row is gone (re-GET → 404) and the records the
  *     teardown explicitly cleans are gone (plugin_capabilities rows,
- *     `plugin:<key>:*` grants in admin_role_capabilities)
+ *     `plugin:<key>:*` grants in admin_role_capabilities, and — since
+ *     #59 — every other child table: plugin_configs, plugin_kv,
+ *     plugin_guild_features, plugin_feature_defaults, plugin_commands;
+ *     nothing cascades, so each is deleted explicitly)
  *   - a dispatch after the delete no longer reaches the plugin (a real
  *     local HTTP server plays the plugin; the positive control proves
  *     the harness would see a delivery)
@@ -65,6 +68,11 @@ import {
   PluginCapability,
   findCapabilitiesByPlugin,
 } from "../src/modules/plugin-system/models/plugin-capability.model.js";
+import { PluginConfig } from "../src/modules/plugin-system/models/plugin-config.model.js";
+import { PluginKv } from "../src/modules/plugin-system/models/plugin-kv.model.js";
+import { PluginCommand } from "../src/modules/plugin-system/models/plugin-command.model.js";
+import { PluginGuildFeature } from "../src/modules/feature-toggle/models/plugin-guild-feature.model.js";
+import { PluginFeatureDefault } from "../src/modules/feature-toggle/models/plugin-feature-default.model.js";
 import { AdminRole } from "../src/modules/admin/models/admin-role.model.js";
 import { AdminRoleCapability } from "../src/modules/admin/models/admin-role-capability.model.js";
 import { makePluginCapabilityToken } from "../src/modules/admin/admin-capabilities.js";
@@ -188,6 +196,11 @@ beforeEach(async () => {
   await AdminRoleCapability.destroy({ where: {} });
   await AdminRole.destroy({ where: {} });
   await PluginCapability.destroy({ where: {} });
+  await PluginConfig.destroy({ where: {} });
+  await PluginKv.destroy({ where: {} });
+  await PluginCommand.destroy({ where: {} });
+  await PluginGuildFeature.destroy({ where: {} });
+  await PluginFeatureDefault.destroy({ where: {} });
   await Plugin.destroy({ where: {} });
   await rebuildEventIndex();
   __resetDispatchHealthForTests();
@@ -243,6 +256,99 @@ describe("DELETE /api/plugins/:id (Plugin Admin teardown)", () => {
     expect(remaining).not.toContain(doomedToken);
     // Another plugin's grant is untouched.
     expect(remaining).toContain("plugin:other-plugin:panel.view");
+  });
+
+  it("deletes the plugin's rows in every child table, and only its own (#59)", async () => {
+    const id = await seedPlugin();
+    await deactivate(id);
+    // A second plugin's child rows play the innocent bystander. No FK
+    // exists, so the rows don't need a real plugins row behind them —
+    // which is exactly the bug's shape.
+    const otherId = id + 1000;
+    const seedChildren = async (pid: number, tag: string) => {
+      await PluginConfig.create({
+        pluginId: pid,
+        key: `k-${tag}`,
+        value: "v",
+        source: "admin",
+      });
+      await PluginKv.create({
+        pluginId: pid,
+        guildId: "g1",
+        key: `kv-${tag}`,
+        value: "v",
+        bytes: 1,
+      });
+      await PluginGuildFeature.create({
+        pluginId: pid,
+        guildId: "g1",
+        featureKey: `f-${tag}`,
+        enabled: true,
+      });
+      await PluginFeatureDefault.create({
+        pluginId: pid,
+        featureKey: `f-${tag}`,
+        enabled: true,
+      });
+      await PluginCommand.create({
+        pluginId: pid,
+        guildId: null,
+        name: `cmd-${tag}`,
+        discordCommandId: null,
+        featureKey: null,
+        manifestJson: "{}",
+      });
+    };
+    await seedChildren(id, "doomed");
+    await seedChildren(otherId, "other");
+
+    expect(await deletePluginOverHttp(id)).toBe(204);
+
+    // Before #59 every one of these rows survived the delete (no FK,
+    // no cascade — the old comments lied). Now the teardown deletes
+    // them explicitly.
+    const childTables = [
+      PluginConfig,
+      PluginKv,
+      PluginGuildFeature,
+      PluginFeatureDefault,
+      PluginCommand,
+    ] as const;
+    for (const model of childTables) {
+      expect(await model.count({ where: { pluginId: id } })).toBe(0);
+      // The bystander plugin's rows are untouched.
+      expect(await model.count({ where: { pluginId: otherId } })).toBe(1);
+    }
+  });
+
+  it("a failing child-row purge is best-effort: the delete still lands", async () => {
+    const id = await seedPlugin();
+    await deactivate(id);
+    await PluginKv.create({
+      pluginId: id,
+      guildId: "g1",
+      key: "kv",
+      value: "v",
+      bytes: 1,
+    });
+    await PluginConfig.create({
+      pluginId: id,
+      key: "k",
+      value: "v",
+      source: "admin",
+    });
+    const destroySpy = vi
+      .spyOn(PluginKv, "destroy")
+      .mockRejectedValueOnce(new Error("sqlite is grumpy"));
+    try {
+      expect(await deletePluginOverHttp(id)).toBe(204);
+    } finally {
+      destroySpy.mockRestore();
+    }
+    // The plugin row and the OTHER child purges still went through —
+    // one failing table never blocks the rest of the teardown.
+    expect(await findPluginById(id)).toBeNull();
+    expect(await PluginConfig.count({ where: { pluginId: id } })).toBe(0);
   });
 
   it("a dispatch after the delete no longer reaches the plugin", async () => {

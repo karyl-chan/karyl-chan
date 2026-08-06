@@ -171,6 +171,17 @@ export const deleteFeatureRow = async (
   return n > 0;
 };
 
+/**
+ * Purge every per-guild feature row for a deleted plugin. No FK backs
+ * `pluginId`, so the delete teardown calls this explicitly — see
+ * PluginAdmin.teardown (#59). Returns the number of rows removed.
+ */
+export const deleteFeatureRowsByPlugin = async (
+  pluginId: number,
+): Promise<number> => {
+  return PluginGuildFeature.destroy({ where: { pluginId } });
+};
+
 export const updateMetricsJson = async (
   pluginId: number,
   guildId: string,

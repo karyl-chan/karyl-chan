@@ -364,12 +364,15 @@ export const setPluginEnabled = async (
  * Hard-delete a plugin row by id. Returns true if a row was deleted,
  * false if the id was not found.
  *
- * The DB schema sets ON DELETE CASCADE on all related tables
- * (plugin_kv, plugin_configs, plugin_commands, plugin_guild_features,
- * plugin_feature_defaults), so the single destroy call is sufficient
- * to clean up all child rows. The caller is responsible for revoking
- * the in-memory auth token and unregistering Discord commands before
- * calling this.
+ * This removes the plugins row and NOTHING else: no child table
+ * declares an FK against it and the schema carries no ON DELETE
+ * CASCADE (a doc here used to claim otherwise — disproven in #49,
+ * fixed in #59). Child rows (plugin_kv, plugin_configs,
+ * plugin_commands, plugin_guild_features, plugin_feature_defaults,
+ * plugin_capabilities) must be deleted explicitly by the caller —
+ * PluginAdmin.teardown is the one place that does the full job, and
+ * the reason admin deletes must go through it rather than calling
+ * this directly.
  */
 export const deletePlugin = async (id: number): Promise<boolean> => {
   const row = await Plugin.findByPk(id);

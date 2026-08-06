@@ -85,6 +85,17 @@ export const findAllFeatureDefaults = async (): Promise<
   return rows.map(rowOf);
 };
 
+/**
+ * Purge every operator-default row for a deleted plugin. No FK backs
+ * `pluginId`, so the delete teardown calls this explicitly — see
+ * PluginAdmin.teardown (#59). Returns the number of rows removed.
+ */
+export const deleteFeatureDefaultsByPlugin = async (
+  pluginId: number,
+): Promise<number> => {
+  return PluginFeatureDefault.destroy({ where: { pluginId } });
+};
+
 export const upsertFeatureDefault = async (
   pluginId: number,
   featureKey: string,
