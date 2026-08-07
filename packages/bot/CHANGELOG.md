@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.12.0](https://github.com/karyl-chan/karyl-chan/compare/bot-v1.11.0...bot-v1.12.0) (2026-08-07)
+
+
+### Features
+
+* **bot:** refuse wrong-typed RPC fields instead of silently dropping them ([61c0047](https://github.com/karyl-chan/karyl-chan/commit/61c0047dcd1263215a33a14736a60e3744b4d4b1))
+* **bot:** warn on unknown event subscriptions at register (phase 1) ([#42](https://github.com/karyl-chan/karyl-chan/issues/42)) ([c8fc89f](https://github.com/karyl-chan/karyl-chan/commit/c8fc89fbd167bb19edcb54e2017a0f10c929eecd))
+* **plugin-sdk:** declare sub_command_group + member.permissions on dispatch payloads ([#33](https://github.com/karyl-chan/karyl-chan/issues/33)) ([997cc5f](https://github.com/karyl-chan/karyl-chan/commit/997cc5f8aa8c1e353dcfb65612a1dcf65b796e4c))
+
+
+### Bug Fixes
+
+* **bot:** plugin delete no longer orphans child rows ([56afcbd](https://github.com/karyl-chan/karyl-chan/commit/56afcbd1d66f8ab5878c1f6b87bfc43bb6ca52de))
+
 ## [1.11.0](https://github.com/karyl-chan/karyl-chan/compare/bot-v1.10.0...bot-v1.11.0) (2026-07-05)
 
 
