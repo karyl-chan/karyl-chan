@@ -312,7 +312,7 @@ describe("syncFeatureCommandsAcrossGuilds() re-applies the same tiers", () => {
   });
 });
 
-describe("syncFeatureCommandsForNewGuild() resolves without the top tier", () => {
+describe("syncFeatureCommandsForNewGuild() resolves the full Precedence Tiers", () => {
   it("prefers the Operator Default over the Manifest Default", async () => {
     const bot = makeFakeBot(["g1"]);
     setPluginCommandBotClient(bot);
@@ -345,14 +345,15 @@ describe("syncFeatureCommandsForNewGuild() resolves without the top tier", () =>
     expect(await registered(plugin.id)).toEqual(["g1/on"]);
   });
 
-  it("ignores a stale Guild Override left over from a previous membership", async () => {
+  it("honours a Guild Override surviving a previous membership (#61: re-join keeps your settings)", async () => {
     const bot = makeFakeBot(["g1"]);
     setPluginCommandBotClient(bot);
     const manifest = makeManifest([{ key: "f", enabled_by_default: true }]);
     const plugin = await makePluginRow(manifest);
-    // The bot left g1 once and rejoined; the old row survived. The join
-    // path deliberately does not read Guild Overrides, so the feature
-    // comes back on the default.
+    // The bot left g1 once and rejoined; the old row survived. Ruling
+    // on #61: the override counts — re-join means "your settings
+    // survived", and the join path and sync() must agree so the
+    // command can never flip-flop.
     await upsertFeatureRow({
       pluginId: plugin.id,
       guildId: "g1",
@@ -363,13 +364,32 @@ describe("syncFeatureCommandsForNewGuild() resolves without the top tier", () =>
     await pluginCommandRegistry.syncFeatureCommandsForNewGuild({
       id: "g1",
     } as unknown as Guild);
-    expect(await registered(plugin.id)).toEqual(["g1/f"]);
+    expect(await registered(plugin.id)).toEqual([]);
 
-    // …and the next full sync, which DOES read the top tier, takes it
-    // back off. Pre-existing asymmetry between the two paths; pinned
-    // here so a future change to either one is a deliberate one.
+    // The next full sync agrees — nothing appears, nothing vanishes.
     await pluginCommandRegistry.sync(plugin, manifest);
     expect(await registered(plugin.id)).toEqual([]);
+  });
+
+  it("honours a surviving enabled-override over a default-off manifest (#61 mirror)", async () => {
+    const bot = makeFakeBot(["g1"]);
+    setPluginCommandBotClient(bot);
+    const manifest = makeManifest([{ key: "f", enabled_by_default: false }]);
+    const plugin = await makePluginRow(manifest);
+    await upsertFeatureRow({
+      pluginId: plugin.id,
+      guildId: "g1",
+      featureKey: "f",
+      enabled: true,
+    });
+
+    await pluginCommandRegistry.syncFeatureCommandsForNewGuild({
+      id: "g1",
+    } as unknown as Guild);
+    expect(await registered(plugin.id)).toEqual(["g1/f"]);
+
+    await pluginCommandRegistry.sync(plugin, manifest);
+    expect(await registered(plugin.id)).toEqual(["g1/f"]);
   });
 
   it("skips plugins that are disabled or inactive", async () => {

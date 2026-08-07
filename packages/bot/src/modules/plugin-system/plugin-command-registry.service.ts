@@ -19,7 +19,10 @@ import {
   upsertPluginCommand,
   type PluginCommandRow,
 } from "./models/plugin-command.model.js";
-import { findFeatureRowsByPlugin } from "../feature-toggle/models/plugin-guild-feature.model.js";
+import {
+  findFeatureRowsByPlugin,
+  findFeatureRowsByPluginGuild,
+} from "../feature-toggle/models/plugin-guild-feature.model.js";
 import { findFeatureDefaultsByPlugin } from "../feature-toggle/models/plugin-feature-default.model.js";
 import { resolvePrecedenceTiers } from "../feature-toggle/feature-reach-resolver.js";
 import { findAllPlugins, type PluginRow } from "./models/plugin.model.js";
@@ -675,9 +678,12 @@ export class PluginCommandRegistry {
 
   /**
    * When the bot joins a guild: register the feature commands of every
-   * active plugin whose feature resolves "on" in that brand-new guild
-   * (the Guild Override tier is skipped → operator default / manifest
-   * default decides). Mirrors syncInProcessCommandsForGuild for
+   * active plugin whose feature resolves "on" in that guild, through
+   * the full Precedence Tiers. A Guild Override surviving a previous
+   * membership counts (#61): re-join means "your settings survived",
+   * and this path must agree with sync() so a command registered here
+   * is never taken back off by the next reconcile — the flip-flop that
+   * ruling exists to kill. Mirrors syncInProcessCommandsForGuild for
    * built-in features.
    */
   async syncFeatureCommandsForNewGuild(guild: Guild): Promise<void> {
@@ -692,18 +698,21 @@ export class PluginCommandRegistry {
         continue;
       }
       const opDefaults = await findFeatureDefaultsByPlugin(plugin.id);
+      const overrides = await findFeatureRowsByPluginGuild(
+        plugin.id,
+        guild.id,
+      );
       for (const feature of manifest.guild_features ?? []) {
         const cmds = feature.commands ?? [];
         if (cmds.length === 0) continue;
         const opDefault = opDefaults.find(
           (d) => d.featureKey === feature.key,
         )?.enabled;
-        // Top tier deliberately empty: a guild the bot just joined has
-        // no Guild Override to read. (A row surviving an earlier
-        // membership is not consulted here — the next sync() applies
-        // it.) Same rule, one tier short of its input.
+        const override = overrides.find(
+          (r) => r.featureKey === feature.key,
+        )?.enabled;
         const enabled = resolvePrecedenceTiers(
-          undefined,
+          override,
           opDefault,
           !!feature.enabled_by_default,
         );
