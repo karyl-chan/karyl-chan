@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.13.0...plugin-sdk-v0.14.0) (2026-08-07)
+
+
+### Features
+
+* **plugin-sdk:** declare the payload fields the bot already sends ([0a2b996](https://github.com/karyl-chan/karyl-chan/commit/0a2b996585bb6e12cfad5ca43a2be29ed1fdfbcd))
+
 ## [0.13.0](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.12.1...plugin-sdk-v0.13.0) (2026-07-29)
 
 
