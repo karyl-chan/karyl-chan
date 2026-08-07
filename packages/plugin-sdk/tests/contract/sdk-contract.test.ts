@@ -188,6 +188,7 @@ const samplePayloads: Record<
       interaction_id: "1",
       command_name: "c",
       sub_command_name: null,
+      sub_command_group: null,
       options: [],
       focused: { name: "f", value: "", type: 3 },
       guild_id: null,
@@ -212,6 +213,7 @@ const samplePayloads: Record<
     const top: Required<ComponentPayload> = {
       interaction_id: "1",
       interaction_token: "t",
+      application_id: "a",
       custom_id: "kc:p:x",
       component_type: 2,
       selected_values: [],
@@ -238,6 +240,7 @@ const samplePayloads: Record<
     const top: Required<ModalPayload> = {
       interaction_id: "1",
       interaction_token: "t",
+      application_id: "a",
       custom_id: "kc:p:m",
       guild_id: null,
       channel_id: null,
@@ -261,24 +264,12 @@ const samplePayloads: Record<
  * between the SDK's declared key set and the fixture's field list.
  */
 const KNOWN_PAYLOAD_GAPS: Record<string, readonly string[]> = {
-  // The bot has sent `sub_command_group` on the autocomplete body since
-  // the dispatch service was written (plugin-interaction-dispatch.service.ts),
-  // but `AutocompletePayload` never declared it — so an autocomplete
-  // handler can't see which subcommand group it is completing for.
-  // Additive SDK fix; tracked, not silently dropped.
-  "autocomplete.top": ["sub_command_group"],
   // `AutocompletePayload.user` optimistically declares optional
   // `username` / `global_name`; the bot deliberately sends only
   // `user.id` on that path (Discord's 3 s budget leaves no room for a
   // member/capability resolution). Both are optional SDK-side, so
   // nothing breaks — the type is just wider than the wire.
   "autocomplete.user": ["username", "global_name"],
-  // The bot puts `application_id` on the component and modal bodies (it
-  // is what `interactions.send_modal` needs for its REST call), exactly
-  // as it does for the command body — but only `InteractionPayload`
-  // declares it. Additive SDK fix.
-  "component.top": ["application_id"],
-  "modal.top": ["application_id"],
 };
 
 function symmetricDiff(

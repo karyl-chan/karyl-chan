@@ -113,6 +113,8 @@ export interface InteractionPayload {
 export interface ComponentPayload {
   interaction_id: string;
   interaction_token: string;
+  /** Bot application id — needed for `interactions.send_modal` REST call. */
+  application_id: string;
   custom_id: string;
   /** Numeric `ComponentType` of the interacted component (Button=2, *Select=3/5-8). */
   component_type?: number;
@@ -141,6 +143,10 @@ export interface AutocompletePayload {
   interaction_id: string;
   command_name: string;
   sub_command_name: string | null;
+  /** Subcommand-group name for grouped subcommands (`/cmd group sub`);
+   *  null for top-level or single-level-subcommand invocations. The bot
+   *  has been sending this since the dispatch service was written. */
+  sub_command_group: string | null;
   options: Array<{ name: string; type: number; value?: unknown }>;
   focused: { name: string; value: string; type: number };
   guild_id: string | null;
@@ -153,6 +159,8 @@ export interface AutocompletePayload {
 export interface ModalPayload {
   interaction_id: string;
   interaction_token: string;
+  /** Bot application id — needed for `interactions.send_modal` REST call. */
+  application_id: string;
   custom_id: string;
   guild_id: string | null;
   channel_id: string | null;
