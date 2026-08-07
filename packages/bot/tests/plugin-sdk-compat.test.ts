@@ -9,25 +9,34 @@
  * so a floor bump doesn't need this file edited.
  */
 import { describe, it, expect } from "vitest";
-import { COMPAT_FLOOR } from "@karyl-chan/plugin-wire";
+import { COMPAT_FLOOR, compareSemver } from "@karyl-chan/plugin-wire";
 import {
-  compareSdkVersions,
   evaluateSdkCompat,
   evaluateSdkCompatFromManifestJson,
 } from "../src/modules/plugin-system/plugin-sdk-compat.js";
 
-describe("compareSdkVersions", () => {
+// The comparison is wire-owned since #60 (the bot's local copy was
+// deleted). These cases are the ones the bot's verdict depends on —
+// kept here as a parity lock on the wire helper from the bot's side.
+describe("compareSemver (wire-owned, backs the verdict)", () => {
   it("orders core versions numerically, not lexically", () => {
-    expect(compareSdkVersions("0.9.0", "0.10.0")).toBeLessThan(0);
-    expect(compareSdkVersions("0.10.0", "0.9.0")).toBeGreaterThan(0);
-    expect(compareSdkVersions("0.10.0", "0.10.0")).toBe(0);
-    expect(compareSdkVersions("1.0.0", "0.99.99")).toBeGreaterThan(0);
-    expect(compareSdkVersions("0.10.1", "0.10.0")).toBeGreaterThan(0);
+    expect(compareSemver("0.9.0", "0.10.0")).toBeLessThan(0);
+    expect(compareSemver("0.10.0", "0.9.0")).toBeGreaterThan(0);
+    expect(compareSemver("0.10.0", "0.10.0")).toBe(0);
+    expect(compareSemver("1.0.0", "0.99.99")).toBeGreaterThan(0);
+    expect(compareSemver("0.10.1", "0.10.0")).toBeGreaterThan(0);
   });
 
   it("sorts a prerelease below its release", () => {
-    expect(compareSdkVersions("0.10.0-beta.1", "0.10.0")).toBeLessThan(0);
-    expect(compareSdkVersions("0.10.0", "0.10.0-rc.2")).toBeGreaterThan(0);
+    expect(compareSemver("0.10.0-beta.1", "0.10.0")).toBeLessThan(0);
+    expect(compareSemver("0.10.0", "0.10.0-rc.2")).toBeGreaterThan(0);
+  });
+
+  it("orders numeric prerelease identifiers numerically, not lexically", () => {
+    // The deleted bot-local comparison treated the prerelease tail as a
+    // plain string and got this backwards ("rc.10" < "rc.9").
+    expect(compareSemver("1.0.0-rc.9", "1.0.0-rc.10")).toBeLessThan(0);
+    expect(compareSemver("1.0.0-rc.10", "1.0.0-rc.9")).toBeGreaterThan(0);
   });
 });
 
