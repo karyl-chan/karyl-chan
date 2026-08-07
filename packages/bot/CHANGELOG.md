@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.1](https://github.com/karyl-chan/karyl-chan/compare/bot-v1.12.0...bot-v1.12.1) (2026-08-07)
+
+
+### Bug Fixes
+
+* **bot:** a Guild Override survives a re-join — the new-guild path reads the full Precedence Tiers ([#61](https://github.com/karyl-chan/karyl-chan/issues/61)) ([88fad9c](https://github.com/karyl-chan/karyl-chan/commit/88fad9cc634db9406b6d9803dda2ee471a4d5194))
+
 ## [1.12.0](https://github.com/karyl-chan/karyl-chan/compare/bot-v1.11.0...bot-v1.12.0) (2026-08-07)
 
 
