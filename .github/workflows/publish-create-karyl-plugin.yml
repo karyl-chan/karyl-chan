@@ -15,6 +15,12 @@ on:
     tags:
       - 'create-karyl-plugin-v*'
   workflow_dispatch:
+    inputs:
+      bootstrap:
+        description: Use the one-time NPM_BOOTSTRAP_TOKEN for the first public version
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -62,8 +68,27 @@ jobs:
           echo "Timed out waiting for @karyl-chan/plugin-sdk@${sdk_version}" >&2
           exit 1
 
-      # --provenance attaches the registry-verifiable GitHub Actions build
-      # attestation.
-      - name: Publish
+      # Normal releases have no token in their environment. npm exchanges the
+      # GitHub OIDC identity for a short-lived credential configured on the
+      # package's Trusted Publisher settings.
+      - name: Publish with Trusted Publisher
+        if: ${{ !inputs.bootstrap }}
         working-directory: packages/create-karyl-plugin
         run: npm publish --access public --provenance
+
+      # An unscoped npm package cannot configure a Trusted Publisher until an
+      # npm user has created it. This explicit manual-only path is for that one
+      # first version. Delete the repository secret and revoke the token as soon
+      # as the package exists; tag-triggered releases never select this step.
+      - name: Publish first version with bootstrap token
+        if: ${{ inputs.bootstrap }}
+        working-directory: packages/create-karyl-plugin
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
+        shell: bash
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "NPM_BOOTSTRAP_TOKEN is required when bootstrap=true" >&2
+            exit 1
+          fi
+          npm publish --access public --provenance

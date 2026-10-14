@@ -62,3 +62,38 @@ Publishing is handled by release-please and npm Trusted Publishers. The
 OIDC provenance and no long-lived npm token. The workflow waits until the
 same-version SDK is visible on npm before publishing the initializer, so the
 generated range is installable as soon as the initializer becomes public.
+
+### One-time first publish
+
+An unscoped npm package belongs to the npm user who first publishes it, so its
+Trusted Publisher cannot be configured until that first version exists. The
+workflow has an explicit manual-only bootstrap path for this circular setup:
+
+1. The npm maintainer creates a short-lived granular token that can publish a
+   new public package and stores it as the `NPM_BOOTSTRAP_TOKEN` repository
+   secret. Never put the token in an issue, command argument, or workflow file.
+2. A repository maintainer dispatches the workflow from the release commit:
+
+   ```bash
+   gh workflow run publish-create-karyl-plugin.yml \
+     --repo karyl-chan/karyl-chan \
+     --ref main \
+     -f bootstrap=true
+   ```
+
+3. After the package is public, configure its npm Trusted Publisher with:
+   GitHub Actions, owner `karyl-chan`, repository `karyl-chan`, workflow
+   `publish-create-karyl-plugin.yml`, no environment, and direct publish
+   permission.
+4. Delete the repository secret and revoke the granular token immediately:
+
+   ```bash
+   gh secret delete NPM_BOOTSTRAP_TOKEN --repo karyl-chan/karyl-chan
+   ```
+
+5. The next release must pass the normal `bootstrap=false` path to prove OIDC
+   publishing before the release setup is considered complete.
+
+The bootstrap path still runs on GitHub-hosted infrastructure with
+`--provenance`; it changes authentication for one version, not the artifact or
+attestation checks. Tag-triggered releases never select the bootstrap step.
