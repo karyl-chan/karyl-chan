@@ -13,6 +13,7 @@
  */
 
 import type { RedisStreamsLike } from "./streams-consumer.js";
+import type { EventTransportCapabilities } from "@karyl-chan/plugin-wire";
 
 /**
  * Is the Streams event transport enabled for this plugin process?
@@ -23,6 +24,40 @@ export function streamsTransportEnabled(): boolean {
   const bus = (process.env.EVENT_BUS ?? "").trim().toLowerCase();
   const url = (process.env.REDIS_URL ?? "").trim();
   return bus === "redis-streams" && url.length > 0;
+}
+
+/**
+ * Detect the transports this process can really start before registration.
+ * Importing ioredis here verifies the optional peer dependency without
+ * opening a connection; the bot can therefore reject an unusable Streams
+ * selection before issuing credentials or marking the replica ready.
+ */
+export async function detectEventTransportCapabilities(): Promise<EventTransportCapabilities> {
+  const capabilities: EventTransportCapabilities = { available: ["http"] };
+  const bus = (process.env.EVENT_BUS ?? "").trim().toLowerCase();
+  const url = (process.env.REDIS_URL ?? "").trim();
+
+  if (bus !== "redis-streams") {
+    capabilities.unavailable = {
+      "redis-streams": "EVENT_BUS must be set to redis-streams",
+    };
+    return capabilities;
+  }
+  if (!url) {
+    capabilities.unavailable = {
+      "redis-streams": "REDIS_URL is not set",
+    };
+    return capabilities;
+  }
+  try {
+    await import("ioredis");
+    capabilities.available.push("redis-streams");
+  } catch {
+    capabilities.unavailable = {
+      "redis-streams": "the optional ioredis dependency is not installed",
+    };
+  }
+  return capabilities;
 }
 
 let client: RedisStreamsLike | null = null;

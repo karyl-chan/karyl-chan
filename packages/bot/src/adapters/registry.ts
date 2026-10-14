@@ -51,6 +51,7 @@ import { RedisDistributedLock } from "./redis/distributed-lock.js";
 import { RedisRateLimitStoreFactory } from "./redis/rate-limit-store.js";
 import { RedisSessionStore } from "./redis/session-store.js";
 import { RedisStreamsPluginEventBus } from "./redis/plugin-event-bus.js";
+import type { EventTransport } from "@karyl-chan/plugin-wire";
 
 interface AdapterCache {
   pluginMetricsStore?: PluginMetricsStore;
@@ -205,18 +206,28 @@ export function getServiceDiscovery(): ServiceDiscovery {
  */
 export function getPluginEventBus(): PluginEventBus | null {
   if (cache.pluginEventBus) return cache.pluginEventBus;
-  const choice = envChoice("EVENT_BUS");
-  if (choice === "" || choice === "http" || choice === "inprocess") {
+  const choice = configuredPluginEventTransport();
+  if (choice === "http") {
     // The legacy HTTP path lives inside plugin-event-bridge directly,
     // so the bus pointer stays null and that module's existing logic
     // runs unchanged.
     return null;
   }
-  if (choice === "redis-streams") {
-    cache.pluginEventBus = new RedisStreamsPluginEventBus();
-    return cache.pluginEventBus;
+  cache.pluginEventBus = new RedisStreamsPluginEventBus();
+  return cache.pluginEventBus;
+}
+
+/**
+ * The bot's authoritative event transport selection. Kept separate from
+ * adapter construction so registration can negotiate without opening Redis.
+ */
+export function configuredPluginEventTransport(): EventTransport {
+  const choice = envChoice("EVENT_BUS");
+  if (choice === "" || choice === "http" || choice === "inprocess") {
+    return "http";
   }
-  unknownImpl("EVENT_BUS", choice);
+  if (choice === "redis-streams") return "redis-streams";
+  return unknownImpl("EVENT_BUS", choice);
 }
 
 /**

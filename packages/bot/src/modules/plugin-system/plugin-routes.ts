@@ -17,6 +17,7 @@ import { config } from "../../config.js";
 import { findPluginByKey, findPluginById } from "./models/plugin.model.js";
 import type { CommandReconciler } from "../command-system/reconcile.service.js";
 import { createHash } from "crypto";
+import { EventTransportNegotiationError } from "./plugin-event-transport.js";
 
 /**
  * Plugin-facing endpoints (register / heartbeat) AND admin-facing
@@ -153,6 +154,7 @@ export async function registerPluginRoutes(
     Body: {
       manifest?: unknown;
       lifecycle?: { readiness?: unknown };
+      eventTransports?: unknown;
     };
   }>("/api/plugins/register", async (request, reply) => {
     const presented = presentedSetupSecret(request);
@@ -262,6 +264,9 @@ export async function registerPluginRoutes(
         request.body?.lifecycle?.readiness === "v1" ? "v1" : undefined;
       const result = await pluginRegistry.register(request.body?.manifest, {
         ...(readinessProtocol ? { readinessProtocol } : {}),
+        ...(request.body?.eventTransports !== undefined
+          ? { eventTransports: request.body.eventTransports }
+          : {}),
       });
       // publicBaseUrl is the browser-reachable URL for this plugin's
       // WebUI, served via the bot's reverse proxy at
@@ -312,8 +317,25 @@ export async function registerPluginRoutes(
         // information, not a failure — the plugin is registered.
         // Declared in CONTRACT_FIXTURES.register.optionalResponseFields.
         eventSubscriptions: result.eventSubscriptions,
+        eventTransport: result.eventTransport,
       };
     } catch (err) {
+      if (err instanceof EventTransportNegotiationError) {
+        request.log.error(
+          {
+            pluginKey: manifestPluginId,
+            selectedTransport: err.selected,
+            code: err.code,
+          },
+          err.message,
+        );
+        reply.code(409).send({
+          error: err.message,
+          code: err.code,
+          selectedTransport: err.selected,
+        });
+        return;
+      }
       if (err instanceof ManifestError) {
         reply.code(400).send({ error: err.message });
         return;

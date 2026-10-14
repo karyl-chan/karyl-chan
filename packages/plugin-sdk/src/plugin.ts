@@ -909,17 +909,21 @@ export function definePlugin(config: PluginConfig): PluginInstance {
       );
 
       if (setupSecret && setupSecret.trim().length > 0) {
+        const { detectEventTransportCapabilities } =
+          await import("./redis-streams-client.js");
+        const eventTransports = await detectEventTransportCapabilities();
         client = startPluginClient({
           botUrl,
           setupSecret,
           manifest,
           pluginUrl,
+          eventTransports,
           logger: {
             info: (msg, meta) => server.log.info(meta ?? {}, msg),
             warn: (msg, meta) => server.log.warn(meta ?? {}, msg),
             error: (msg, meta) => server.log.error(meta ?? {}, msg),
           },
-          onFirstRegister: async () => {
+          onFirstRegister: async (eventTransport) => {
             // First successful register: token + HMAC key + public base
             // URL are now available. Build the PluginContext and fire
             // onStart. Note: subsequent re-registers don't re-fire
@@ -968,16 +972,33 @@ export function definePlugin(config: PluginConfig): PluginInstance {
                 throw err;
               }
             }
-            // Start the Streams consumer only after onStart has completed,
-            // so another ready replica cannot publish work that this process
-            // consumes while its own initialization is still in progress.
-            // HTTP-only plugins skip the ioredis import entirely. Started
-            // once — a 401 re-register doesn't re-fire onFirstRegister.
-            if (hasEventHandlers) {
-              try {
-                const { streamsTransportEnabled, getStreamsClient } =
-                  await import("./redis-streams-client.js");
-                if (streamsTransportEnabled()) {
+            metricsCollector.start();
+            botEventEmitter.start();
+          },
+          onEventTransportSelected: async (eventTransport) => {
+            // Re-apply the bot's authoritative selection on every register.
+            // This matters when a bot restart also changes EVENT_BUS: onStart
+            // remains once-per-process, while the transport can safely switch
+            // before this replica announces ready to the restarted bot.
+            if (eventTransport.selected === "http") {
+              if (streamsConsumer) {
+                await streamsConsumer.stop();
+                streamsConsumer = null;
+              }
+            } else if (eventTransport.consumerRequired) {
+              if (!hasEventHandlers) {
+                throw new PluginReadinessError(
+                  "bot requires a Redis Streams consumer, but this plugin manifest subscribes to events without any eventHandlers",
+                  "failed",
+                );
+              }
+              if (!streamsConsumer) {
+                // Start only after onStart completed, so the consumer cannot
+                // handle work while application initialization is in flight.
+                // HTTP-only selections never import or connect to ioredis.
+                try {
+                  const { getStreamsClient } =
+                    await import("./redis-streams-client.js");
                   const { StreamsConsumer } =
                     await import("./streams-consumer.js");
                   const redis = await getStreamsClient();
@@ -1013,17 +1034,22 @@ export function definePlugin(config: PluginConfig): PluginInstance {
                   await consumer.ensureGroups();
                   consumer.start();
                   streamsConsumer = consumer;
+                } catch (err) {
+                  server.log.error(
+                    { err },
+                    "failed to start redis-streams consumer — events will not be received over Streams",
+                  );
+                  throw err;
                 }
-              } catch (err) {
-                server.log.error(
-                  { err },
-                  "failed to start redis-streams consumer — events will not be received over Streams",
-                );
-                throw err;
               }
             }
-            metricsCollector.start();
-            botEventEmitter.start();
+            server.log.info(
+              {
+                eventTransport: eventTransport.selected,
+                eventConsumerRequired: eventTransport.consumerRequired,
+              },
+              "event transport selected by bot",
+            );
           },
         });
       } else {

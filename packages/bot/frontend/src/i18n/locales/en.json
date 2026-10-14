@@ -1137,6 +1137,11 @@
                     "author": "Author",
                     "homepage": "Homepage"
                 },
+                "eventTransport": {
+                    "title": "Event transport",
+                    "configured": "Bot selection",
+                    "noReplica": "No live replica has reported transport state since this bot started."
+                },
                 "behaviors": {
                     "intro": "The behaviors below are declared by this plugin. You can enable or disable each behavior here; disabled behaviors will not be registered as Discord slash commands by the reconciler.",
                     "empty": "This plugin declares no behaviors",

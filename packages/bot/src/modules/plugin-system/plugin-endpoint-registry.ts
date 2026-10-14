@@ -27,10 +27,27 @@
  * default path) see byte-for-byte current behaviour.
  */
 
+import type { EventTransport } from "@karyl-chan/plugin-wire";
+
+export type EventConsumerState =
+  | "not_applicable"
+  | "initializing"
+  | "ready"
+  | "misconfigured";
+
 export interface EndpointEntry {
   url: string;
   lastSeenMs: number;
-  state: "initializing" | "ready";
+  state: "initializing" | "ready" | "failed";
+  eventTransport?: EventTransport;
+  eventConsumerState?: EventConsumerState;
+  transportError?: string;
+}
+
+export interface EndpointTransportMetadata {
+  eventTransport: EventTransport;
+  eventConsumerState: EventConsumerState;
+  transportError?: string;
 }
 
 export interface PluginEndpointRegistryOptions {
@@ -57,13 +74,35 @@ export class PluginEndpointRegistry {
    * is what every heartbeat does). Adding a never-seen url grows the
    * live set (a new replica appeared).
    */
-  touch(pluginKey: string, url: string): void {
-    this.upsert(pluginKey, url, "ready");
+  touch(
+    pluginKey: string,
+    url: string,
+    transport?: EndpointTransportMetadata,
+  ): void {
+    this.upsert(pluginKey, url, "ready", transport);
   }
 
   /** Register a readiness-aware replica without making it dispatchable. */
-  initialize(pluginKey: string, url: string): void {
-    this.upsert(pluginKey, url, "initializing");
+  initialize(
+    pluginKey: string,
+    url: string,
+    transport?: EndpointTransportMetadata,
+  ): void {
+    this.upsert(pluginKey, url, "initializing", transport);
+  }
+
+  /** Keep an actionable, TTL-bounded diagnostic for a refused replica. */
+  recordTransportFailure(
+    pluginKey: string,
+    url: string,
+    eventTransport: EventTransport,
+    error: string,
+  ): void {
+    this.upsert(pluginKey, url, "failed", {
+      eventTransport,
+      eventConsumerState: "misconfigured",
+      transportError: error,
+    });
   }
 
   /** Refresh liveness without changing this replica's readiness state. */
@@ -90,6 +129,9 @@ export class PluginEndpointRegistry {
     const current = this.byKey.get(pluginKey)?.get(normalized);
     if (!current) return false;
     current.state = "ready";
+    if (current.eventConsumerState === "initializing") {
+      current.eventConsumerState = "ready";
+    }
     current.lastSeenMs = this.now();
     return true;
   }
@@ -98,6 +140,7 @@ export class PluginEndpointRegistry {
     pluginKey: string,
     url: string,
     state: EndpointEntry["state"],
+    transport?: EndpointTransportMetadata,
   ): void {
     const normalized = normalizeUrl(url);
     if (!normalized) return;
@@ -106,7 +149,20 @@ export class PluginEndpointRegistry {
       inner = new Map();
       this.byKey.set(pluginKey, inner);
     }
-    inner.set(normalized, { url: normalized, lastSeenMs: this.now(), state });
+    const current = inner.get(normalized);
+    const next: EndpointEntry = {
+      ...current,
+      url: normalized,
+      lastSeenMs: this.now(),
+      state,
+      ...(transport ?? {}),
+    };
+    // A successful re-registration must clear the diagnostic retained from a
+    // previous failed negotiation for the same replica URL.
+    if (transport && transport.transportError === undefined) {
+      delete next.transportError;
+    }
+    inner.set(normalized, next);
   }
 
   /**
@@ -161,6 +217,14 @@ export class PluginEndpointRegistry {
     }
     if (inner.size === 0) this.byKey.delete(pluginKey);
     return live;
+  }
+
+  /** Live per-replica lifecycle + event transport diagnostics for Admin. */
+  diagnostics(pluginKey: string): EndpointEntry[] {
+    this.allEndpoints(pluginKey); // prune expired entries first
+    return [...(this.byKey.get(pluginKey)?.values() ?? [])].map((entry) => ({
+      ...entry,
+    }));
   }
 
   /** Prefer the DB row's URL when it is ready; otherwise use a ready sibling. */

@@ -1137,6 +1137,11 @@
                     "author": "作者",
                     "homepage": "首頁"
                 },
+                "eventTransport": {
+                    "title": "事件傳輸",
+                    "configured": "Bot 選擇",
+                    "noReplica": "Bot 本次啟動後，尚無存活 replica 回報傳輸狀態。"
+                },
                 "behaviors": {
                     "intro": "以下是此 Plugin 宣告的 behaviors。可在此頁啟用或停用各個 behavior；停用後 reconciler 不會將其 slash 指令登記至 Discord。",
                     "empty": "此 Plugin 未宣告任何 Behavior",

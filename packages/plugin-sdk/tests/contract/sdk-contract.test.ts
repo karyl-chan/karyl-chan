@@ -22,7 +22,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { CONTRACT_FIXTURES as fixtures } from "@karyl-chan/plugin-wire";
+import {
+  CONTRACT_FIXTURES as fixtures,
+  EVENT_TRANSPORTS,
+} from "@karyl-chan/plugin-wire";
 import {
   REPLAY_WINDOW_SECONDS,
   SIGNATURE_HEADER,
@@ -114,6 +117,15 @@ describe("contract: streams key conventions", () => {
       assert.equal(pluginDlqKeyFor(s.pluginKey), s.dlqKey);
     });
   }
+});
+
+describe("contract: register event transport negotiation", () => {
+  it("SDK transport values match the register contract", () => {
+    assert.deepEqual(
+      [...EVENT_TRANSPORTS],
+      [...fixtures.register.eventTransports],
+    );
+  });
 });
 
 describe("contract: canonical event names", () => {

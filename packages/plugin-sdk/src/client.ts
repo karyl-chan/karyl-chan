@@ -1,4 +1,8 @@
 import type { PluginManifest } from "./manifest.js";
+import type {
+  EventTransportCapabilities,
+  EventTransportSelection,
+} from "@karyl-chan/plugin-wire";
 import type { Logger } from "./types.js";
 import {
   PluginReadinessError,
@@ -28,6 +32,8 @@ export interface PluginClientOptions {
    */
   pluginUrl?: string;
   logger?: Logger;
+  /** Event transports this replica proved it can start. */
+  eventTransports?: EventTransportCapabilities;
   /**
    * Per-call timeouts for the lifecycle fetches. A bot whose register
    * handler wedges (e.g. blocked on a rate-limited Discord call) must
@@ -50,7 +56,17 @@ export interface PluginClientOptions {
    * Errors thrown here fail readiness, stop lifecycle activity, and trigger
    * a best-effort deregister for this endpoint.
    */
-  onFirstRegister?: () => void | Promise<void>;
+  onFirstRegister?: (
+    registration: EventTransportSelection,
+  ) => void | Promise<void>;
+  /**
+   * Apply the bot-selected event transport after every successful register,
+   * including a re-register after token loss. This runs after
+   * `onFirstRegister` on the first handshake and before `/ready` each time.
+   */
+  onEventTransportSelected?: (
+    registration: EventTransportSelection,
+  ) => void | Promise<void>;
 }
 
 export interface PluginClient {
@@ -123,6 +139,7 @@ export function startPluginClient(opts: PluginClientOptions): PluginClient {
   let dispatchHmacKey: string | null = null;
   let sessionVerifyPublicKey: string | null = null;
   let publicBaseUrl: string | undefined = undefined;
+  let selectedEventTransport: EventTransportSelection | null = null;
   let heartbeatTimer: NodeJS.Timeout | null = null;
   let stopped = false;
   let fatalInitializationFailure = false;
@@ -219,12 +236,38 @@ export function startPluginClient(opts: PluginClientOptions): PluginClient {
         body: JSON.stringify({
           manifest: opts.manifest,
           lifecycle: { readiness: "v1" },
+          eventTransports: opts.eventTransports ?? { available: ["http"] },
         }),
         signal: AbortSignal.timeout(timeoutsMs.register),
       });
       consecutiveRegisterTimeouts = 0;
       if (!res.ok) {
         const text = await res.text().catch(() => "");
+        let rejection: { code?: unknown; error?: unknown } | null = null;
+        try {
+          rejection = JSON.parse(text) as { code?: unknown; error?: unknown };
+        } catch {
+          // Non-JSON errors keep the normal retry behaviour below.
+        }
+        if (
+          res.status === 409 &&
+          rejection?.code === "event_transport_unavailable"
+        ) {
+          const message =
+            typeof rejection.error === "string"
+              ? rejection.error
+              : "bot selected an event transport this plugin replica cannot start";
+          const error = new PluginReadinessError(message, "failed");
+          fatalInitializationFailure = true;
+          transition("failed");
+          clearHeartbeat();
+          rejectReadiness(error);
+          log.error(`registration failed permanently: ${message}`, {
+            status: res.status,
+            code: rejection.code,
+          });
+          return false;
+        }
         log.warn(
           `register rejected by bot: ${res.status} ${text.slice(0, 200)}`,
           { status: res.status },
@@ -239,6 +282,7 @@ export function startPluginClient(opts: PluginClientOptions): PluginClient {
         publicBaseUrl?: string;
         heartbeat?: { path?: string; interval_seconds?: number };
         readiness?: { required?: boolean; path?: string };
+        eventTransport?: EventTransportSelection;
       };
       if (typeof data.token !== "string" || data.token.length === 0) {
         log.error("register response missing token");
@@ -266,6 +310,12 @@ export function startPluginClient(opts: PluginClientOptions): PluginClient {
         publicBaseUrl = undefined;
       }
       const intervalSec = data.heartbeat?.interval_seconds ?? 30;
+      selectedEventTransport = data.eventTransport ?? {
+        // Compatibility with bots predating negotiation: their event path was
+        // HTTP by default. Never infer a selection from this process's env.
+        selected: "http",
+        consumerRequired: false,
+      };
       log.info("registered with bot", {
         pluginKey: data.plugin?.pluginKey,
         botPluginId: data.plugin?.id,
@@ -276,7 +326,7 @@ export function startPluginClient(opts: PluginClientOptions): PluginClient {
       if (!firstRegisterFired && typeof opts.onFirstRegister === "function") {
         firstRegisterFired = true;
         try {
-          await opts.onFirstRegister();
+          await opts.onFirstRegister(selectedEventTransport);
           initializationComplete = true;
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -293,6 +343,21 @@ export function startPluginClient(opts: PluginClientOptions): PluginClient {
         initializationComplete = true;
       }
       if (!initializationComplete) return false;
+
+      if (typeof opts.onEventTransportSelected === "function") {
+        try {
+          await opts.onEventTransportSelected(selectedEventTransport);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          log.error(`event transport startup failed: ${msg}`);
+          fatalInitializationFailure = true;
+          transition("failed");
+          clearHeartbeat();
+          rejectReadiness(err);
+          await deregister();
+          return false;
+        }
+      }
 
       // New bots require an authenticated second phase. Old bots omit this
       // field and preserve the pre-readiness registration behaviour, which

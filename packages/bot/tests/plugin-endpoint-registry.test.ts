@@ -31,6 +31,48 @@ describe("PluginEndpointRegistry", () => {
     expect(reg.endpoints("radio")).toEqual(["http://radio-a:3000"]);
   });
 
+  it("surfaces Streams consumer startup and readiness per replica", () => {
+    const clock = fakeClock();
+    const reg = new PluginEndpointRegistry({ ttlMs: 75_000, now: clock.now });
+    reg.initialize("radio", "http://radio-a:3000", {
+      eventTransport: "redis-streams",
+      eventConsumerState: "initializing",
+    });
+    expect(reg.diagnostics("radio")[0]).toMatchObject({
+      state: "initializing",
+      eventTransport: "redis-streams",
+      eventConsumerState: "initializing",
+    });
+    reg.markReady("radio", "http://radio-a:3000");
+    expect(reg.diagnostics("radio")[0]).toMatchObject({
+      state: "ready",
+      eventConsumerState: "ready",
+    });
+  });
+
+  it("keeps transport misconfiguration distinct from handler failure", () => {
+    const clock = fakeClock();
+    const reg = new PluginEndpointRegistry({ ttlMs: 75_000, now: clock.now });
+    reg.recordTransportFailure(
+      "radio",
+      "http://radio-a:3000",
+      "redis-streams",
+      "REDIS_URL is not set",
+    );
+    expect(reg.endpoints("radio")).toEqual([]);
+    expect(reg.diagnostics("radio")[0]).toMatchObject({
+      state: "failed",
+      eventConsumerState: "misconfigured",
+      transportError: "REDIS_URL is not set",
+    });
+
+    reg.initialize("radio", "http://radio-a:3000", {
+      eventTransport: "redis-streams",
+      eventConsumerState: "initializing",
+    });
+    expect(reg.diagnostics("radio")[0]).not.toHaveProperty("transportError");
+  });
+
   it("an initializing replica cannot poison a ready sibling", () => {
     const clock = fakeClock();
     const reg = new PluginEndpointRegistry({ ttlMs: 75_000, now: clock.now });

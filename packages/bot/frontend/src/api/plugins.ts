@@ -115,6 +115,25 @@ export interface PluginRecord {
    * decisions 4/6/7) — sits next to sdkCompat on the health card.
    */
   eventSubscriptions?: PluginEventSubscriptionCheck;
+  /** Bot-selected event transport and per-replica consumer lifecycle. */
+  eventTransport?: PluginEventTransportState;
+}
+
+export interface PluginEventTransportState {
+  configured: "http" | "redis-streams";
+  status: "ready" | "initializing" | "misconfigured" | "unknown";
+  replicas: Array<{
+    url: string;
+    lifecycleState: "initializing" | "ready" | "failed";
+    transport: "http" | "redis-streams" | null;
+    consumerState:
+      | "not_applicable"
+      | "initializing"
+      | "ready"
+      | "misconfigured"
+      | "unknown";
+    error?: string;
+  }>;
 }
 
 export interface PluginCommandSyncState {

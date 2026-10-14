@@ -449,6 +449,7 @@ describe("contract: register response envelope", () => {
       payload: {
         manifest: contractManifest(),
         lifecycle: { readiness: "v1" },
+        [fixtures.register.capabilityField]: { available: ["http"] },
       },
     });
     expect(res.statusCode).toBe(200);
@@ -497,6 +498,13 @@ describe("contract: register response envelope", () => {
   it("the response's heartbeat path is the contract's heartbeat endpoint", () => {
     const heartbeat = body.heartbeat as { path?: string } | undefined;
     expect(heartbeat?.path).toBe(fixtures.register.heartbeatEndpoint);
+  });
+
+  it("returns the bot-selected event transport in the contract field", () => {
+    expect(body[fixtures.register.selectionField]).toEqual({
+      selected: "http",
+      consumerRequired: false,
+    });
   });
 
   it("the heartbeat endpoint the response advertises is actually served", () => {

@@ -45,6 +45,10 @@ services:
       BOT_OWNER_IDS: ${BOT_OWNER_IDS:?set BOT_OWNER_IDS}
       NODE_ENV: production
       WEB_BASE_URL: http://localhost:3000
+      # Keep this unset for HTTP event delivery. For durable delivery set
+      # both bot and plugin to redis-streams as shown below.
+      EVENT_BUS: ${EVENT_BUS:-}
+      REDIS_URL: ${REDIS_URL:-}
     volumes:
       - ./data:/usr/src/app/data # SQLite lives here — this mount IS your bot state
     healthcheck:
@@ -76,6 +80,8 @@ services:
       PLUGIN_URL: http://my-plugin:3000
       # Minted by the bot admin — see "Setup secret" below.
       KARYL_PLUGIN_SETUP_SECRET: ${KARYL_PLUGIN_SETUP_SECRET:?mint via admin UI first}
+      EVENT_BUS: ${EVENT_BUS:-}
+      REDIS_URL: ${REDIS_URL:-}
     depends_on:
       karyl-chan:
         condition: service_healthy
@@ -94,6 +100,44 @@ services:
       retries: 5
       start_period: 15s
 ```
+
+For durable, at-least-once event delivery, add a persistent Redis service,
+install `ioredis` in every event-subscribing plugin, and set the same values
+for the bot and those plugins:
+
+```yaml
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+
+  karyl-chan:
+    environment:
+      EVENT_BUS: redis-streams
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_started
+
+  my-plugin:
+    environment:
+      EVENT_BUS: redis-streams
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_started
+
+volumes:
+  redis-data:
+```
+
+Do not enable Streams on only one side. The register handshake now detects
+that split configuration and keeps the plugin not-ready instead of silently
+losing events. The Admin plugin detail shows the configured transport and each
+replica's consumer state. See [Event delivery and DLQ operations](event-delivery.md)
+before enabling Streams in production.
 
 ## Setup secret — minted by the bot, not invented by you
 
@@ -144,6 +188,7 @@ failed or got rate-limited.
 | Register answers `400`                                                 | Manifest problem — common ones: a command missing `scope` / `integrationTypes` / `contexts` (V-06/07/08, all mandatory), or a command name colliding with a reserved/other plugin's command    | The 400 body carries the exact reason; fix the manifest                                                                                    |
 | Plugin-side RPC answers `403`                                          | Scope not declared/approved (note: scope names are snake_case wire-side, e.g. `me.enabled_guilds`), or the plugin simply isn't **enabled** yet — every RPC is gated on the admin enable switch | The 403 body says which; check `rpcMethodsUsed` and the admin enable toggle                                                                |
 | Register answers `429`                                                 | Register loop — the bot throttles per-plugin registers (10/min)                                                                                                                                | Stop the restart loop; the SDK backs off by itself, just wait                                                                              |
+| Register answers `409 event_transport_unavailable`                     | The bot selected a transport this event-subscribing replica cannot start, or a legacy SDK registered against a Streams bot                                                                     | Read the response/Admin transport diagnostic; align `EVENT_BUS` and `REDIS_URL`, install `ioredis`, and rebuild with the current SDK       |
 | Plugin log: `register timed out after 30000ms` (3× escalates to error) | Bot-side register handler wedged or unreachable                                                                                                                                                | Bot log: an `/api/plugins/register` "incoming request" with no completion; bot event log warns after 10s                                   |
 | Commands visible in Discord but every use fails fast                   | Plugin restarted and hasn't completed its register handshake — it refuses dispatches (503) until then                                                                                          | Plugin log: `dispatch refused: register handshake not completed`; bot event log names the same state; it self-heals when register succeeds |
 | `/health` is 200 but `/health/ready` is 503                            | The process is alive but is registering, initializing, failed, or intentionally serving dark                                                                                                   | Read `/health/detail` and inspect `lifecycleState`; await `started.whenReady()` in startup diagnostics                                     |

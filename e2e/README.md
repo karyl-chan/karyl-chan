@@ -24,11 +24,13 @@ nothing here can turn the default CI run red.
 
 ## Prerequisites
 
-The harness imports the two services' **compiled** output, so build them
-first:
+The harness imports the two services' **compiled** output. The `e2e` script
+builds the bot and emits the SDK's internal consumer into its ignored
+`dist-test` tree automatically, so no manual prebuild is required. To prepare
+them separately while debugging:
 
 ```sh
-pnpm --filter @karyl-chan/plugin-sdk build
+pnpm --filter @karyl-chan/plugin-sdk exec tsc -p tsconfig.test.json
 pnpm --filter @karyl-chan/bot build
 ```
 

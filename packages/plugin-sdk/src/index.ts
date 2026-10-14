@@ -192,7 +192,12 @@ export {
 // The vocabulary lives in @karyl-chan/plugin-wire (vendored into dist at
 // build time); re-exported here so plugin authors import it unchanged.
 export { Events, isCanonicalEvent } from "@karyl-chan/plugin-wire";
-export type { EventName } from "@karyl-chan/plugin-wire";
+export type {
+  EventName,
+  EventTransport,
+  EventTransportCapabilities,
+  EventTransportSelection,
+} from "@karyl-chan/plugin-wire";
 
 // Redis Streams event transport (PR-1). The SDK wires the consumer
 // automatically inside `definePlugin` when `EVENT_BUS=redis-streams` +
