@@ -122,6 +122,10 @@ test("release and CI automation continuously cover the initializer", async () =>
       components: ["plugin-sdk", "create-karyl-plugin"],
     },
   );
+  assert.equal(
+    releaseConfig["group-pull-request-title-pattern"],
+    "chore${scope}: release ${component} libraries",
+  );
   assert.deepEqual(
     releaseConfig.packages["packages/create-karyl-plugin"],
     {
@@ -167,6 +171,11 @@ test("release and CI automation continuously cover the initializer", async () =>
   assert.match(publishWorkflow, /npm publish --access public --provenance/);
   assert.match(publishWorkflow, /--provenance/);
   assert.match(publishWorkflow, /npm view "@karyl-chan\/plugin-sdk@\$\{sdk_version\}"/);
+  assert.match(publishWorkflow, /bootstrap:\s*[\s\S]*default: false/);
+  assert.match(publishWorkflow, /if: \$\{\{ !inputs\.bootstrap \}\}/);
+  assert.match(publishWorkflow, /if: \$\{\{ inputs\.bootstrap \}\}/);
+  assert.match(publishWorkflow, /secrets\.NPM_BOOTSTRAP_TOKEN/);
+  assert.match(publishWorkflow, /NPM_BOOTSTRAP_TOKEN is required/);
 
   await access(new URL("../CHANGELOG.md", import.meta.url));
 });

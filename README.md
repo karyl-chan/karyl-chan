@@ -59,16 +59,17 @@ Merging a release PR:
 1. Commits a `chore` to `main` that bumps the package's `package.json` and
    updates its `CHANGELOG.md`.
 2. Creates a GitHub release and a tag of the form `bot-v<x.y.z>`,
-   `plugin-sdk-v<x.y.z>`, or `ui-v<x.y.z>`.
+   `plugin-sdk-v<x.y.z>`, `create-karyl-plugin-v<x.y.z>`, or `ui-v<x.y.z>`.
 3. Triggers the package's publish workflow.
 
 | Workflow | Trigger | Output |
 |----------|---------|--------|
-| `.github/workflows/release-please.yml` | push to `main` | release PR per package (bot, plugin-sdk, ui) |
+| `.github/workflows/release-please.yml` | push to `main` | release PR per package; plugin-sdk and create-karyl-plugin release in lockstep |
 | `.github/workflows/publish-bot-image.yml` | push to `main` → `:edge`; tag `bot-v*` → `:<version>` + `:latest` | `ghcr.io/<owner>/karyl-chan-bot` (`:latest` only moves on a real release) |
-| `.github/workflows/publish-plugin-sdk.yml` | tag `plugin-sdk-v*` | `@karyl-chan/plugin-sdk` on GitHub Packages npm |
-| `.github/workflows/publish-ui.yml` | tag `ui-v*` | `@karyl-chan/ui` on GitHub Packages npm |
-| `.github/workflows/ci.yml` | push / pull request | build + test (matrix: bot, plugin-sdk, voice; the bot job also builds the frontend) |
+| `.github/workflows/publish-plugin-sdk.yml` | tag `plugin-sdk-v*` | `@karyl-chan/plugin-sdk` on the public npm registry |
+| `.github/workflows/publish-create-karyl-plugin.yml` | tag `create-karyl-plugin-v*` | `create-karyl-plugin` on the public npm registry |
+| `.github/workflows/publish-ui.yml` | tag `ui-v*` | `@karyl-chan/ui` on the public npm registry |
+| `.github/workflows/ci.yml` | push / pull request | package tests, Plugin Platform E2E, packed scaffold golden path, and Docker smoke |
 
 Commit messages must follow conventional commits to drive release-please
 decisions: `feat:` → minor, `fix:` → patch, footer `BREAKING CHANGE:` → major.
