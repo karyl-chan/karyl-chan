@@ -14,10 +14,10 @@ import { existsSync } from "node:fs";
 import { dirname, join, resolve, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// Bump on each plugin-sdk release so freshly-scaffolded plugins pin a
-// compatible SDK. The SDK is pre-release; a caret range tracks patch +
-// minor until it reaches 1.0 and the compat policy formalises (PM-6).
-export const SDK_VERSION = "^0.9.0";
+// This range is intentionally guarded against packages/plugin-sdk/package.json
+// by the scaffold unit suite. Every SDK release must update and release the
+// initializer in the same change, so newly generated projects cannot drift.
+export const SDK_VERSION = "^0.14.0"; // x-release-please-version
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TEMPLATE_DIR = join(HERE, "template");
@@ -46,12 +46,10 @@ export function toDisplayName(key) {
     .join(" ");
 }
 
-// npm strips `.gitignore` (renamed to .npmignore) and `.npmrc` from
-// published tarballs, so the template stores them underscore-prefixed and
-// we restore the dot on copy.
+// npm strips `.gitignore` (renamed to .npmignore) from published tarballs,
+// so the template stores it underscore-prefixed and we restore the dot.
 const RENAME_ON_COPY = {
   _gitignore: ".gitignore",
-  _npmrc: ".npmrc",
 };
 
 function applyPlaceholders(text, vars) {
@@ -140,12 +138,18 @@ async function main() {
     console.log("Next steps:");
     console.log(`  cd ${rel}`);
     console.log("  npm install");
-    console.log("  cp .env.example .env   # fill in BOT_URL + setup secret");
-    console.log("  npm run dev\n");
     console.log(
-      "Register the setup secret in the bot admin UI (Plugins → Security)",
+      "  In bot admin: Plugins → Add plugin → generate a setup secret",
     );
-    console.log("before the plugin can register. See the generated README.\n");
+    console.log("  cp .env.example .env   # paste the setup secret");
+    console.log("  npm run dev");
+    console.log(
+      "  In bot admin: approve requested scopes if required, then enable",
+    );
+    console.log(`  Invoke /${out.key}-ping in Discord\n`);
+    console.log(
+      "Without a setup secret the HTTP server stays live in dark mode; see the generated README.\n",
+    );
   } catch (err) {
     console.error(`create-karyl-plugin: ${err.message}`);
     process.exit(1);

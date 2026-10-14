@@ -6,9 +6,8 @@ Scaffold a new [karyl-chan](https://github.com/karyl-chan/karyl-chan) plugin
 ## Usage
 
 ```bash
-# Published (once on a registry):
 pnpm create karyl-plugin my-plugin
-# or npm:
+# or
 npm create karyl-plugin@latest my-plugin
 
 # From a checkout of this monorepo:
@@ -24,8 +23,9 @@ Flags:
 | `--name "<name>"` | title-cased key | Human-readable plugin name. |
 
 The generated plugin registers one command, `/<key>-ping`, that replies
-`pong 🏓`. Its own README walks through installing, wiring a setup secret,
-and `npm run dev`.
+`pong 🏓`. It installs entirely from the public npm registry; no GitHub PAT
+or scope-specific `.npmrc` is required. Its README walks through the full
+register, approval, enable, and invoke journey.
 
 ## What it generates
 
@@ -35,12 +35,30 @@ my-plugin/
   tsconfig.json
   .env.example        # BOT_URL, KARYL_PLUGIN_SETUP_SECRET, PLUGIN_URL, PORT
   .gitignore
-  .npmrc              # @karyl-chan → GitHub Packages
   README.md
   src/
     plugin.ts         # definePlugin + one definePluginCommand
     index.ts          # plugin.start()
 ```
 
-The SDK version pinned in the generated `package.json` is the `SDK_VERSION`
-constant in `index.js` — bump it on each plugin-sdk release.
+## Supported release contract
+
+The plugin SDK and initializer are a release-please `linked-versions` group.
+They share one version and one release PR; release-please also rewrites the
+annotated `SDK_VERSION` line. The unit suite independently checks the package
+versions and emitted range. A release cannot pass CI if any of those drift.
+This is the deliberate coordination rule: fresh projects never silently lag
+behind the current supported SDK.
+
+Both packages are packed and exercised in the
+`create-karyl-plugin-golden-path` CI job. That job invokes the packed CLI in
+a clean directory, installs the packed candidate SDK without npm
+credentials, typechecks and builds the result, then probes its dark-mode
+liveness and readiness routes.
+
+Publishing is handled by release-please and npm Trusted Publishers. The
+`create-karyl-plugin-v*` tag dispatches
+`.github/workflows/publish-create-karyl-plugin.yml`, which publishes with
+OIDC provenance and no long-lived npm token. The workflow waits until the
+same-version SDK is visible on npm before publishing the initializer, so the
+generated range is installable as soon as the initializer becomes public.

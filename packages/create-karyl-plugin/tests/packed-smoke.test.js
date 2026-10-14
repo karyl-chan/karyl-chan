@@ -1,0 +1,236 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  access,
+  copyFile,
+  mkdtemp,
+  mkdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { createServer } from "node:net";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { spawn } from "node:child_process";
+
+const packageDir = dirname(dirname(fileURLToPath(import.meta.url)));
+const repoRoot = dirname(dirname(packageDir));
+const sdkDir = join(repoRoot, "packages", "plugin-sdk");
+const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+
+function run(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      env: options.env,
+      shell: process.platform === "win32",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) resolve({ stdout, stderr });
+      else {
+        reject(
+          new Error(
+            `${command} ${args.join(" ")} exited ${code}\n${stdout}\n${stderr}`,
+          ),
+        );
+      }
+    });
+  });
+}
+
+async function pack(packagePath, outputDir, env) {
+  const result = await run(
+    npmCommand,
+    ["pack", packagePath, "--json", "--pack-destination", outputDir],
+    { cwd: outputDir, env },
+  );
+  const packed = JSON.parse(result.stdout);
+  assert.equal(packed.length, 1);
+  return join(outputDir, packed[0].filename);
+}
+
+async function reservePort() {
+  const server = createServer();
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  await new Promise((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+  return address.port;
+}
+
+async function waitForHttp(url, child, logs) {
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null) {
+      throw new Error(`generated plugin exited before health probe\n${logs()}`);
+    }
+    try {
+      return await fetch(url, { signal: AbortSignal.timeout(500) });
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+  throw new Error(`timed out waiting for ${url}\n${logs()}`);
+}
+
+test(
+  "packed initializer produces an installable, buildable dark-mode plugin",
+  { timeout: 180_000 },
+  async () => {
+    const scratch = await mkdtemp(join(tmpdir(), "create-karyl-plugin-pack-"));
+    let child;
+    try {
+      await access(join(sdkDir, "dist", "index.js"));
+      const artifacts = join(scratch, "artifacts");
+      await mkdir(artifacts);
+      const userConfig = join(scratch, "empty-user-npmrc");
+      const globalConfig = join(scratch, "empty-global-npmrc");
+      await writeFile(userConfig, "registry=https://registry.npmjs.org/\n");
+      await writeFile(globalConfig, "registry=https://registry.npmjs.org/\n");
+      const cleanNpmEnv = {
+        ...process.env,
+        NPM_CONFIG_USERCONFIG: userConfig,
+        NPM_CONFIG_GLOBALCONFIG: globalConfig,
+        NPM_CONFIG_CACHE: join(scratch, "npm-cache"),
+        NPM_CONFIG_AUDIT: "false",
+        NPM_CONFIG_FUND: "false",
+      };
+      for (const key of Object.keys(cleanNpmEnv)) {
+        if (
+          key === "NODE_AUTH_TOKEN" ||
+          key === "NPM_TOKEN" ||
+          (/^npm_config_/i.test(key) && /(auth|token)/i.test(key))
+        ) {
+          delete cleanNpmEnv[key];
+        }
+      }
+
+      const sdkTarball = await pack(sdkDir, artifacts, cleanNpmEnv);
+      const initializerTarball = await pack(
+        packageDir,
+        artifacts,
+        cleanNpmEnv,
+      );
+      const generatedDir = join(scratch, "generated-plugin");
+
+      await run(
+        npmCommand,
+        [
+          "exec",
+          "--yes",
+          `--package=${initializerTarball}`,
+          "--",
+          "create-karyl-plugin",
+          generatedDir,
+        ],
+        { cwd: scratch, env: cleanNpmEnv },
+      );
+
+      await assert.rejects(access(join(generatedDir, ".npmrc")));
+      const candidateName = "candidate-plugin-sdk.tgz";
+      await copyFile(sdkTarball, join(generatedDir, candidateName));
+      const generatedPackagePath = join(generatedDir, "package.json");
+      const generatedPackage = JSON.parse(
+        await readFile(generatedPackagePath, "utf8"),
+      );
+      generatedPackage.dependencies["@karyl-chan/plugin-sdk"] =
+        `file:./${candidateName}`;
+      await writeFile(
+        generatedPackagePath,
+        `${JSON.stringify(generatedPackage, null, 2)}\n`,
+      );
+
+      await run(npmCommand, ["install", "--ignore-scripts"], {
+        cwd: generatedDir,
+        env: cleanNpmEnv,
+      });
+      const candidateSdkPackage = JSON.parse(
+        await readFile(join(sdkDir, "package.json"), "utf8"),
+      );
+      const installedSdkPackage = JSON.parse(
+        await readFile(
+          join(
+            generatedDir,
+            "node_modules",
+            "@karyl-chan",
+            "plugin-sdk",
+            "package.json",
+          ),
+          "utf8",
+        ),
+      );
+      assert.equal(installedSdkPackage.version, candidateSdkPackage.version);
+      await run(npmCommand, ["run", "typecheck"], {
+        cwd: generatedDir,
+        env: cleanNpmEnv,
+      });
+      await run(npmCommand, ["run", "build"], {
+        cwd: generatedDir,
+        env: cleanNpmEnv,
+      });
+
+      const port = await reservePort();
+      const runtimeEnv = {
+        ...cleanNpmEnv,
+        HOST: "127.0.0.1",
+        PORT: String(port),
+        BOT_URL: "http://127.0.0.1:1",
+        PLUGIN_URL: `http://127.0.0.1:${port}`,
+      };
+      delete runtimeEnv.KARYL_PLUGIN_SETUP_SECRET;
+      let stdout = "";
+      let stderr = "";
+      child = spawn(process.execPath, [join(generatedDir, "dist", "index.js")], {
+        cwd: generatedDir,
+        env: runtimeEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      child.stdout.on("data", (chunk) => {
+        stdout += chunk;
+      });
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk;
+      });
+      const logs = () => `${stdout}\n${stderr}`;
+
+      const live = await waitForHttp(
+        `http://127.0.0.1:${port}/health`,
+        child,
+        logs,
+      );
+      assert.equal(live.status, 200);
+      assert.deepEqual(await live.json(), { status: "ok" });
+
+      const ready = await fetch(`http://127.0.0.1:${port}/health/ready`);
+      assert.equal(ready.status, 503);
+      assert.deepEqual(await ready.json(), {
+        status: "not_ready",
+        state: "serving_dark",
+      });
+      assert.equal(child.exitCode, null, logs());
+    } finally {
+      if (child?.exitCode === null) {
+        child.kill();
+        await new Promise((resolve) => child.once("close", resolve));
+      }
+      await rm(scratch, { recursive: true, force: true });
+    }
+  },
+);

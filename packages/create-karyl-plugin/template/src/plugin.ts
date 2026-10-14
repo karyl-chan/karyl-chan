@@ -11,6 +11,13 @@ const pingCommand = definePluginCommand({
   contexts: ["Guild"],
   handler: async (ctx) => {
     ctx.log.info("ping invoked");
+    // Use the typed facade for bot calls, for example:
+    // if (ctx.channelId) {
+    //   await ctx.discord.messages.send({
+    //     channelId: ctx.channelId,
+    //     content: "ping was invoked",
+    //   });
+    // }
     return "pong 🏓";
   },
 });
