@@ -162,6 +162,9 @@ test("release and CI automation continuously cover the initializer", async () =>
   );
   assert.match(publishWorkflow, /create-karyl-plugin-v\*/);
   assert.match(publishWorkflow, /id-token: write/);
+  assert.match(publishWorkflow, /npm install --global npm@11\.6\.1/);
+  assert.match(publishWorkflow, /working-directory: packages\/create-karyl-plugin/);
+  assert.match(publishWorkflow, /npm publish --access public --provenance/);
   assert.match(publishWorkflow, /--provenance/);
   assert.match(publishWorkflow, /npm view "@karyl-chan\/plugin-sdk@\$\{sdk_version\}"/);
 

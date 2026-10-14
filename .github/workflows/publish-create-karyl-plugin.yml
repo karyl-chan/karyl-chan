@@ -33,6 +33,9 @@ jobs:
           cache: pnpm
           registry-url: https://registry.npmjs.org
 
+      # npm Trusted Publishing requires npm >=11.5.1. Node 22 runners may
+      # still bundle npm 10, so pin a known-compatible CLI explicitly.
+      - run: npm install --global npm@11.6.1
       - run: pnpm install --frozen-lockfile
       - name: Verify release artifacts
         run: |
@@ -59,7 +62,8 @@ jobs:
           echo "Timed out waiting for @karyl-chan/plugin-sdk@${sdk_version}" >&2
           exit 1
 
-      # --no-git-checks permits a detached tag checkout. --provenance attaches
-      # the registry-verifiable GitHub Actions build attestation.
+      # --provenance attaches the registry-verifiable GitHub Actions build
+      # attestation.
       - name: Publish
-        run: pnpm --filter create-karyl-plugin publish --no-git-checks --provenance
+        working-directory: packages/create-karyl-plugin
+        run: npm publish --access public --provenance

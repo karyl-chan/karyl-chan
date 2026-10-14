@@ -39,13 +39,15 @@ jobs:
           cache: pnpm
           registry-url: https://registry.npmjs.org
 
+      # npm Trusted Publishing requires npm >=11.5.1. Node 22 runners may
+      # still bundle npm 10, so pin a known-compatible CLI explicitly.
+      - run: npm install --global npm@11.6.1
       - run: pnpm install --frozen-lockfile
 
       - run: pnpm --filter @karyl-chan/plugin-sdk build
 
-      # --no-git-checks: the tag commit is checked out detached, which
-      # pnpm publish would otherwise reject.
       # --provenance: attaches a SLSA build-provenance attestation
       # (verified-publisher badge on npm); requires id-token: write.
       - name: Publish
-        run: pnpm --filter @karyl-chan/plugin-sdk publish --no-git-checks --provenance
+        working-directory: packages/plugin-sdk
+        run: npm publish --access public --provenance
