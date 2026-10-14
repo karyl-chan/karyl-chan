@@ -6,7 +6,7 @@
   "description": "Cross-service E2E and recovery gate for the karyl-chan Plugin Platform.",
   "scripts": {
     "build": "tsc",
-    "build:required": "pnpm --workspace-root exec tsc -p packages/plugin-wire/tsconfig.json && pnpm --dir ../packages/plugin-sdk exec tsup src/index.ts --format esm --target es2022 --out-dir dist --clean --no-config --no-splitting && pnpm --workspace-root exec tsc -p packages/plugin-sdk/tsconfig.test.json && pnpm --workspace-root exec tsc -p packages/bot/tsconfig.json && tsc",
+    "build:required": "node scripts/build-required.mjs",
     "e2e": "pnpm run build:required && node --test \"dist/**/*.e2e.js\"",
     "chaos": "pnpm run build:required && node --test \"dist/**/*.chaos.js\"",
     "test:runner": "node --test scripts/*.test.mjs",
