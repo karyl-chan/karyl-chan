@@ -30,6 +30,7 @@
 export interface EndpointEntry {
   url: string;
   lastSeenMs: number;
+  state: "initializing" | "ready";
 }
 
 export interface PluginEndpointRegistryOptions {
@@ -57,6 +58,16 @@ export class PluginEndpointRegistry {
    * live set (a new replica appeared).
    */
   touch(pluginKey: string, url: string): void {
+    this.upsert(pluginKey, url, "ready");
+  }
+
+  /** Register a readiness-aware replica without making it dispatchable. */
+  initialize(pluginKey: string, url: string): void {
+    this.upsert(pluginKey, url, "initializing");
+  }
+
+  /** Refresh liveness without changing this replica's readiness state. */
+  heartbeat(pluginKey: string, url: string): void {
     const normalized = normalizeUrl(url);
     if (!normalized) return;
     let inner = this.byKey.get(pluginKey);
@@ -64,7 +75,38 @@ export class PluginEndpointRegistry {
       inner = new Map();
       this.byKey.set(pluginKey, inner);
     }
-    inner.set(normalized, { url: normalized, lastSeenMs: this.now() });
+    const current = inner.get(normalized);
+    inner.set(normalized, {
+      url: normalized,
+      lastSeenMs: this.now(),
+      state: current?.state ?? "initializing",
+    });
+  }
+
+  /** Complete the two-phase registration for exactly one replica. */
+  markReady(pluginKey: string, url: string): boolean {
+    const normalized = normalizeUrl(url);
+    if (!normalized) return false;
+    const current = this.byKey.get(pluginKey)?.get(normalized);
+    if (!current) return false;
+    current.state = "ready";
+    current.lastSeenMs = this.now();
+    return true;
+  }
+
+  private upsert(
+    pluginKey: string,
+    url: string,
+    state: EndpointEntry["state"],
+  ): void {
+    const normalized = normalizeUrl(url);
+    if (!normalized) return;
+    let inner = this.byKey.get(pluginKey);
+    if (!inner) {
+      inner = new Map();
+      this.byKey.set(pluginKey, inner);
+    }
+    inner.set(normalized, { url: normalized, lastSeenMs: this.now(), state });
   }
 
   /**
@@ -87,7 +129,7 @@ export class PluginEndpointRegistry {
   }
 
   /**
-   * Live (non-expired) endpoint urls for a pluginKey, in stable
+   * Ready and live (non-expired) endpoint urls for a pluginKey, in stable
    * insertion order so callers that round-robin get a deterministic
    * sequence. Expired entries are pruned lazily on read.
    */
@@ -98,13 +140,34 @@ export class PluginEndpointRegistry {
     const live: string[] = [];
     for (const [url, entry] of inner) {
       if (entry.lastSeenMs >= cutoff) {
-        live.push(url);
+        if (entry.state === "ready") live.push(url);
       } else {
         inner.delete(url);
       }
     }
     if (inner.size === 0) this.byKey.delete(pluginKey);
     return live;
+  }
+
+  /** All live endpoints, including initializing replicas. */
+  allEndpoints(pluginKey: string): string[] {
+    const inner = this.byKey.get(pluginKey);
+    if (!inner) return [];
+    const cutoff = this.now() - this.ttlMs;
+    const live: string[] = [];
+    for (const [url, entry] of inner) {
+      if (entry.lastSeenMs >= cutoff) live.push(url);
+      else inner.delete(url);
+    }
+    if (inner.size === 0) this.byKey.delete(pluginKey);
+    return live;
+  }
+
+  /** Prefer the DB row's URL when it is ready; otherwise use a ready sibling. */
+  readyEndpoint(pluginKey: string, preferredUrl: string): string | null {
+    const ready = this.endpoints(pluginKey);
+    const preferred = normalizeUrl(preferredUrl);
+    return ready.includes(preferred) ? preferred : (ready[0] ?? null);
   }
 
   /**

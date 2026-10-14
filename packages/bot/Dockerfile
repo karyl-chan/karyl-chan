@@ -13,8 +13,17 @@
 # have no matching prebuilt → node-pre-gyp falls back to source build,
 # which fails on arm64 due to a known bug in opus's bundled NEON
 # intrinsics (celt_inner_prod_neon used without declaration). Bullseye
-# LTS support runs to 2026-08; revisit base + encoder choice before then.
-FROM node:22-bullseye-slim AS base
+# LTS support ended in 2026-08. The official Node image keeps immutable
+# snapshot.debian.org entries beside the now-broken live Bullseye entries;
+# enable those snapshots so package installs remain reproducible. Revisit the
+# base + encoder choice when @discordjs/opus can build on newer glibc/arm64.
+FROM node:22-bullseye-slim AS bullseye
+RUN sed -i \
+    -e 's|^# deb http://snapshot|deb [check-valid-until=no] http://snapshot|' \
+    -e 's|^deb http://deb.debian.org|# deb http://deb.debian.org|' \
+    /etc/apt/sources.list
+
+FROM bullseye AS base
 RUN corepack enable
 WORKDIR /repo
 # Workspace + package manifests only. Copied before the source tree so
@@ -96,7 +105,7 @@ RUN set -e; \
     cd "$SQLITE3_DIR" && rm -rf build && node "$NODE_GYP" rebuild 2>&1 | tail -8
 
 
-FROM node:22-bullseye-slim AS runtime
+FROM bullseye AS runtime
 
 WORKDIR /usr/src/app
 

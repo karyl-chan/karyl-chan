@@ -135,6 +135,7 @@ export async function dispatchModalToPlugin(
   if (!gate.ok) {
     const content = {
       plugin_offline: "⚠ 此 modal 所屬的 plugin 目前離線或已被停用。",
+      plugin_not_ready: "⚠ 此 modal 所屬的 plugin 正在初始化，請稍後再試。",
       manifest_invalid: "⚠ 此 plugin 的 manifest 損壞,無法派送。",
       // Feature Reach. Precedence Tiers resolution (row → operator default
       // → manifest enabled_by_default) so manifests defaulting features to

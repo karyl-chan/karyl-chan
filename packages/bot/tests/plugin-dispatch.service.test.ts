@@ -16,10 +16,13 @@ vi.hoisted(() => {
 const preflightMock = vi.hoisted(() =>
   vi.fn<() => Promise<{ ok: true } | { ok: false; reason: string }>>(),
 );
-vi.mock("../src/modules/plugin-system/plugin-dispatch-util.js", async (orig) => {
-  const real = (await orig()) as Record<string, unknown>;
-  return { ...real, preflightPluginTarget: preflightMock };
-});
+vi.mock(
+  "../src/modules/plugin-system/plugin-dispatch-util.js",
+  async (orig) => {
+    const real = (await orig()) as Record<string, unknown>;
+    return { ...real, preflightPluginTarget: preflightMock };
+  },
+);
 
 import {
   createPluginDispatcher,
@@ -42,7 +45,12 @@ function makePlugin(overrides: Partial<PluginRow> = {}): PluginRow {
     url: "http://alpha.invalid",
     manifestJson: JSON.stringify({
       schema_version: "1",
-      plugin: { id: "alpha", name: "alpha", version: "1.0.0", url: "http://alpha.invalid" },
+      plugin: {
+        id: "alpha",
+        name: "alpha",
+        version: "1.0.0",
+        url: "http://alpha.invalid",
+      },
     }),
     status: "active",
     tokenHash: null,
@@ -69,11 +77,19 @@ const reachNo = {
 };
 
 function fakeFetchOk(status = 204, body: string | null = null): typeof fetch {
-  return vi.fn(async () => new Response(body, { status })) as unknown as typeof fetch;
+  return vi.fn(
+    async () => new Response(body, { status }),
+  ) as unknown as typeof fetch;
 }
 
-function makeDispatcher(deps: Parameters<typeof createPluginDispatcher>[0] = {}): PluginDispatcher {
-  return createPluginDispatcher({ reach: reachYes, ...deps });
+function makeDispatcher(
+  deps: Parameters<typeof createPluginDispatcher>[0] = {},
+): PluginDispatcher {
+  return createPluginDispatcher({
+    reach: reachYes,
+    resolveReadyEndpoint: (_key, preferred) => preferred,
+    ...deps,
+  });
 }
 
 beforeEach(() => {
@@ -83,57 +99,132 @@ beforeEach(() => {
 });
 
 describe("gate", () => {
+  it("skips every dispatch kind when no replica is ready", async () => {
+    const d = makeDispatcher({ resolveReadyEndpoint: () => null });
+    for (const kind of [
+      "command",
+      "autocomplete",
+      "component",
+      "modal",
+      "lifecycle",
+      "event",
+    ] as const) {
+      const result = await d.gate({
+        kind,
+        plugin: makePlugin(),
+        guildId: kind === "event" ? null : undefined,
+        scopes: kind === "event" ? ["global"] : undefined,
+      });
+      expect(result).toEqual({ ok: false, reason: "plugin_not_ready" });
+    }
+  });
+
   it("skips a disabled or non-active plugin", async () => {
     const d = makeDispatcher();
-    const off = await d.gate({ kind: "command", plugin: makePlugin({ enabled: false }) });
+    const off = await d.gate({
+      kind: "command",
+      plugin: makePlugin({ enabled: false }),
+    });
     expect(off).toEqual({ ok: false, reason: "plugin_offline" });
-    const inactive = await d.gate({ kind: "command", plugin: makePlugin({ status: "inactive" }) });
+    const inactive = await d.gate({
+      kind: "command",
+      plugin: makePlugin({ status: "inactive" }),
+    });
     expect(inactive).toEqual({ ok: false, reason: "plugin_offline" });
   });
 
   it("skips an unparseable manifest for manifest-requiring kinds", async () => {
     const d = makeDispatcher();
-    const res = await d.gate({ kind: "command", plugin: makePlugin({ manifestJson: "{nope" }) });
+    const res = await d.gate({
+      kind: "command",
+      plugin: makePlugin({ manifestJson: "{nope" }),
+    });
     expect(res).toEqual({ ok: false, reason: "manifest_invalid" });
   });
 
   it("component/modal any-feature reach: denied only when a guild is present and reach says no", async () => {
     const denied = makeDispatcher({ reach: reachNo });
-    const inGuild = await denied.gate({ kind: "component", plugin: makePlugin(), guildId: "g1" });
+    const inGuild = await denied.gate({
+      kind: "component",
+      plugin: makePlugin(),
+      guildId: "g1",
+    });
     expect(inGuild).toEqual({ ok: false, reason: "reach_denied" });
     // No guild (DM) → the gate does not consult reach at all.
-    const dm = await denied.gate({ kind: "component", plugin: makePlugin(), guildId: null });
+    const dm = await denied.gate({
+      kind: "component",
+      plugin: makePlugin(),
+      guildId: null,
+    });
     expect(dm.ok).toBe(true);
   });
 
   it("skips when the dispatch HMAC key is missing", async () => {
     const d = makeDispatcher();
-    const res = await d.gate({ kind: "modal", plugin: makePlugin({ dispatchHmacKey: null }), guildId: null });
+    const res = await d.gate({
+      kind: "modal",
+      plugin: makePlugin({ dispatchHmacKey: null }),
+      guildId: null,
+    });
     expect(res).toEqual({ ok: false, reason: "no_dispatch_key" });
   });
 
   it("event per-scope reach: global passes, feature scope needs guild + reach, DM never matches a feature scope", async () => {
     const d = makeDispatcher({ reach: reachNo });
-    const global = await d.gate({ kind: "event", plugin: makePlugin(), guildId: null, scopes: ["global"] });
+    const global = await d.gate({
+      kind: "event",
+      plugin: makePlugin(),
+      guildId: null,
+      scopes: ["global"],
+    });
     expect(global.ok).toBe(true);
     const featDenied = await d.gate({
-      kind: "event", plugin: makePlugin(), guildId: "g1", scopes: [{ featureKey: "f" }],
+      kind: "event",
+      plugin: makePlugin(),
+      guildId: "g1",
+      scopes: [{ featureKey: "f" }],
     });
     expect(featDenied).toEqual({ ok: false, reason: "reach_denied" });
-    const dm = await d.gate({ kind: "event", plugin: makePlugin(), guildId: null, scopes: [{ featureKey: "f" }] });
+    const dm = await d.gate({
+      kind: "event",
+      plugin: makePlugin(),
+      guildId: null,
+      scopes: [{ featureKey: "f" }],
+    });
     expect(dm).toEqual({ ok: false, reason: "reach_denied" });
   });
 
   it("event kind gates without a parseable manifest when a global scope grants delivery", async () => {
     const d = makeDispatcher();
     const res = await d.gate({
-      kind: "event", plugin: makePlugin({ manifestJson: "{nope" }), guildId: null, scopes: ["global"],
+      kind: "event",
+      plugin: makePlugin({ manifestJson: "{nope" }),
+      guildId: null,
+      scopes: ["global"],
     });
     expect(res.ok).toBe(true);
   });
 });
 
 describe("deliver — direct transport", () => {
+  it("routes to a ready sibling instead of an initializing preferred replica", async () => {
+    const fetchImpl = fakeFetchOk(204);
+    const d = makeDispatcher({
+      fetchImpl,
+      resolveReadyEndpoint: () => "http://alpha-ready.invalid",
+    });
+    await d.deliver({
+      kind: "command",
+      plugin: makePlugin({ url: "http://alpha-initializing.invalid" }),
+      label: "ping",
+      endpointVars: { command_name: "ping" },
+      payload: { body: () => "{}" },
+    });
+    expect(
+      (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0],
+    ).toBe("http://alpha-ready.invalid/commands/ping");
+  });
+
   it("POSTs signed JSON and records ok health without reading the body", async () => {
     const fetchImpl = fakeFetchOk(204);
     const d = makeDispatcher({ fetchImpl });
@@ -145,19 +236,31 @@ describe("deliver — direct transport", () => {
       payload: { body: () => JSON.stringify({ hi: 1 }) },
     });
     expect(outcome).toEqual({ status: "ok", httpStatus: 204 });
-    const call = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+    const call = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock
+      .calls[0] as [string, RequestInit];
     expect(call[0]).toBe("http://alpha.invalid/commands/ping");
     expect(call[1].redirect).toBe("manual");
     const headers = call[1].headers as Record<string, string>;
     expect(headers["Content-Type"]).toBe("application/json");
-    expect(Object.keys(headers).some((h) => h.toLowerCase().includes("signature"))).toBe(true);
+    expect(
+      Object.keys(headers).some((h) => h.toLowerCase().includes("signature")),
+    ).toBe(true);
     const health = getDispatchHealth("alpha");
     expect(health?.okCount).toBe(1);
-    expect(health?.recent[0]).toMatchObject({ ok: true, source: "command", status: 204 });
+    expect(health?.recent[0]).toMatchObject({
+      ok: true,
+      source: "command",
+      status: 204,
+    });
   });
 
   it("autocomplete reads the response body as JSON", async () => {
-    const d = makeDispatcher({ fetchImpl: fakeFetchOk(200, JSON.stringify({ choices: [{ name: "a", value: "a" }] })) });
+    const d = makeDispatcher({
+      fetchImpl: fakeFetchOk(
+        200,
+        JSON.stringify({ choices: [{ name: "a", value: "a" }] }),
+      ),
+    });
     const outcome = await d.deliver({
       kind: "autocomplete",
       plugin: makePlugin(),
@@ -166,42 +269,73 @@ describe("deliver — direct transport", () => {
       payload: { body: () => "{}" },
     });
     expect(outcome.status).toBe("ok");
-    expect((outcome as { body?: unknown }).body).toEqual({ choices: [{ name: "a", value: "a" }] });
+    expect((outcome as { body?: unknown }).body).toEqual({
+      choices: [{ name: "a", value: "a" }],
+    });
   });
 
   it("maps a non-2xx response to http_error with the failure classification", async () => {
     const d = makeDispatcher({ fetchImpl: fakeFetchOk(401, "bad sig") });
     const outcome = await d.deliver({
-      kind: "component", plugin: makePlugin(), label: "kc:alpha:x",
+      kind: "component",
+      plugin: makePlugin(),
+      label: "kc:alpha:x",
       payload: { body: () => "{}" },
     });
     expect(outcome).toMatchObject({
-      status: "failed", reason: "http_error", httpStatus: 401, detail: "bad sig", failureClass: "rejected_401",
+      status: "failed",
+      reason: "http_error",
+      httpStatus: 401,
+      detail: "bad sig",
+      failureClass: "rejected_401",
     });
     expect(getDispatchHealth("alpha")?.recent[0]).toMatchObject({
-      ok: false, source: "component", status: 401, failureClass: "rejected_401",
+      ok: false,
+      source: "component",
+      status: 401,
+      failureClass: "rejected_401",
     });
   });
 
   it("maps a thrown fetch to network failure and records health", async () => {
-    const boom = vi.fn(async () => { throw new Error("ECONNREFUSED"); }) as unknown as typeof fetch;
+    const boom = vi.fn(async () => {
+      throw new Error("ECONNREFUSED");
+    }) as unknown as typeof fetch;
     const d = makeDispatcher({ fetchImpl: boom });
     const outcome = await d.deliver({
-      kind: "modal", plugin: makePlugin(), label: "kc:alpha:m",
+      kind: "modal",
+      plugin: makePlugin(),
+      label: "kc:alpha:m",
       payload: { body: () => "{}" },
     });
-    expect(outcome).toMatchObject({ status: "failed", reason: "network", detail: "ECONNREFUSED" });
-    expect(getDispatchHealth("alpha")?.recent[0]).toMatchObject({ ok: false, failureClass: "network" });
+    expect(outcome).toMatchObject({
+      status: "failed",
+      reason: "network",
+      detail: "ECONNREFUSED",
+    });
+    expect(getDispatchHealth("alpha")?.recent[0]).toMatchObject({
+      ok: false,
+      failureClass: "network",
+    });
   });
 
   it("records unreachable on an unresolvable endpoint URL", async () => {
     const d = makeDispatcher({ fetchImpl: fakeFetchOk() });
     const outcome = await d.deliver({
-      kind: "command", plugin: makePlugin({ url: "not a url" }), label: "ping",
-      endpointVars: { command_name: "ping" }, payload: { body: () => "{}" },
+      kind: "command",
+      plugin: makePlugin({ url: "not a url" }),
+      label: "ping",
+      endpointVars: { command_name: "ping" },
+      payload: { body: () => "{}" },
     });
-    expect(outcome).toMatchObject({ status: "failed", reason: "unresolvable_endpoint" });
-    expect(getDispatchHealth("alpha")?.recent[0]).toMatchObject({ ok: false, failureClass: "unreachable" });
+    expect(outcome).toMatchObject({
+      status: "failed",
+      reason: "unresolvable_endpoint",
+    });
+    expect(getDispatchHealth("alpha")?.recent[0]).toMatchObject({
+      ok: false,
+      failureClass: "unreachable",
+    });
   });
 
   it("records unreachable when the SSRF preflight refuses", async () => {
@@ -209,19 +343,31 @@ describe("deliver — direct transport", () => {
     const fetchImpl = fakeFetchOk();
     const d = makeDispatcher({ fetchImpl });
     const outcome = await d.deliver({
-      kind: "command", plugin: makePlugin(), label: "ping",
-      endpointVars: { command_name: "ping" }, payload: { body: () => "{}" },
+      kind: "command",
+      plugin: makePlugin(),
+      label: "ping",
+      endpointVars: { command_name: "ping" },
+      payload: { body: () => "{}" },
     });
-    expect(outcome).toMatchObject({ status: "failed", reason: "preflight_denied", detail: "private address" });
+    expect(outcome).toMatchObject({
+      status: "failed",
+      reason: "preflight_denied",
+      detail: "private address",
+    });
     expect(fetchImpl).not.toHaveBeenCalled();
-    expect(getDispatchHealth("alpha")?.recent[0]).toMatchObject({ ok: false, failureClass: "unreachable" });
+    expect(getDispatchHealth("alpha")?.recent[0]).toMatchObject({
+      ok: false,
+      failureClass: "unreachable",
+    });
   });
 
   it("lifecycle skips silently (no health) when the plugin declares no lifecycle endpoint", async () => {
     const fetchImpl = fakeFetchOk();
     const d = makeDispatcher({ fetchImpl });
     const outcome = await d.deliver({
-      kind: "lifecycle", plugin: makePlugin(), label: "plugin.guild.enabled",
+      kind: "lifecycle",
+      plugin: makePlugin(),
+      label: "plugin.guild.enabled",
       payload: { data: { guild_id: "g1", feature_key: "f" } },
     });
     expect(outcome).toEqual({ status: "skipped", reason: "no_endpoint" });
@@ -235,16 +381,24 @@ describe("deliver — direct transport", () => {
     const plugin = makePlugin({
       manifestJson: JSON.stringify({
         schema_version: "1",
-        plugin: { id: "alpha", name: "alpha", version: "1.0.0", url: "http://alpha.invalid" },
+        plugin: {
+          id: "alpha",
+          name: "alpha",
+          version: "1.0.0",
+          url: "http://alpha.invalid",
+        },
         endpoints: { plugin_lifecycle: "/_kc/lifecycle" },
       }),
     });
     const outcome = await d.deliver({
-      kind: "lifecycle", plugin, label: "plugin.guild.enabled",
+      kind: "lifecycle",
+      plugin,
+      label: "plugin.guild.enabled",
       payload: { data: { guild_id: "g1", feature_key: "f" } },
     });
     expect(outcome).toEqual({ status: "ok", httpStatus: 200 });
-    const call = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+    const call = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock
+      .calls[0] as [string, RequestInit];
     expect(call[0]).toBe("http://alpha.invalid/_kc/lifecycle");
     expect(JSON.parse(call[1].body as string)).toEqual({
       type: "plugin.guild.enabled",
@@ -254,58 +408,106 @@ describe("deliver — direct transport", () => {
 });
 
 describe("deliver — event kind (pooled + bus transports)", () => {
-  function fakePool(outcome: Awaited<ReturnType<PluginDispatchPool["post"]>>): PluginDispatchPool {
-    return { post: vi.fn(async () => outcome) } as unknown as PluginDispatchPool;
+  function fakePool(
+    outcome: Awaited<ReturnType<PluginDispatchPool["post"]>>,
+  ): PluginDispatchPool {
+    return {
+      post: vi.fn(async () => outcome),
+    } as unknown as PluginDispatchPool;
   }
 
   it("posts through the pool with signature + traceparent headers", async () => {
     const pool = fakePool({ ok: true, status: 204, bodyText: "" });
     const d = makeDispatcher({ pool });
     const outcome = await d.deliver({
-      kind: "event", plugin: makePlugin(), label: "guild.message_create",
+      kind: "event",
+      plugin: makePlugin(),
+      label: "guild.message_create",
       payload: { data: { hi: 1 } },
     });
     expect(outcome).toEqual({ status: "ok", httpStatus: 204 });
-    const call = (pool.post as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as
-      [string, string, Record<string, string>, string];
+    const call = (pool.post as unknown as ReturnType<typeof vi.fn>).mock
+      .calls[0] as [string, string, Record<string, string>, string];
     expect(call[0]).toBe("alpha");
     expect(call[1]).toBe("http://alpha.invalid/events");
     expect(call[2]["traceparent"]).toMatch(/^00-/);
-    expect(JSON.parse(call[3])).toEqual({ type: "guild.message_create", data: { hi: 1 } });
-    expect(getDispatchHealth("alpha")?.recent[0]).toMatchObject({ ok: true, source: "event", status: 204 });
+    expect(JSON.parse(call[3])).toEqual({
+      type: "guild.message_create",
+      data: { hi: 1 },
+    });
+    expect(getDispatchHealth("alpha")?.recent[0]).toMatchObject({
+      ok: true,
+      source: "event",
+      status: 204,
+    });
   });
 
   it("does not record health for breaker_open / shed short-circuits", async () => {
-    const d = makeDispatcher({ pool: fakePool({ ok: false, reason: "breaker_open", message: "circuit breaker open" }) });
-    const outcome = await d.deliver({
-      kind: "event", plugin: makePlugin(), label: "guild.message_create", payload: { data: {} },
+    const d = makeDispatcher({
+      pool: fakePool({
+        ok: false,
+        reason: "breaker_open",
+        message: "circuit breaker open",
+      }),
     });
-    expect(outcome).toMatchObject({ status: "failed", reason: "breaker_open", detail: "circuit breaker open" });
+    const outcome = await d.deliver({
+      kind: "event",
+      plugin: makePlugin(),
+      label: "guild.message_create",
+      payload: { data: {} },
+    });
+    expect(outcome).toMatchObject({
+      status: "failed",
+      reason: "breaker_open",
+      detail: "circuit breaker open",
+    });
     expect(getDispatchHealth("alpha")).toBeNull();
   });
 
   it("records pooled http failures into dispatch health", async () => {
-    const d = makeDispatcher({ pool: fakePool({ ok: false, reason: "http_error", status: 500, message: "HTTP 500" }) });
-    const outcome = await d.deliver({
-      kind: "event", plugin: makePlugin(), label: "guild.message_create", payload: { data: {} },
+    const d = makeDispatcher({
+      pool: fakePool({
+        ok: false,
+        reason: "http_error",
+        status: 500,
+        message: "HTTP 500",
+      }),
     });
-    expect(outcome).toMatchObject({ status: "failed", reason: "http_error", httpStatus: 500 });
+    const outcome = await d.deliver({
+      kind: "event",
+      plugin: makePlugin(),
+      label: "guild.message_create",
+      payload: { data: {} },
+    });
+    expect(outcome).toMatchObject({
+      status: "failed",
+      reason: "http_error",
+      httpStatus: 500,
+    });
     expect(getDispatchHealth("alpha")?.recent[0]).toMatchObject({
-      ok: false, source: "event", status: 500, failureClass: "http_error",
+      ok: false,
+      source: "event",
+      status: 500,
+      failureClass: "http_error",
     });
   });
 
   it("routes to the bus before the signing-key and manifest checks", async () => {
     const sent: unknown[][] = [];
     const bus: PluginEventBus = {
-      dispatchToPlugin: (...args: unknown[]) => { sent.push(args); },
+      dispatchToPlugin: (...args: unknown[]) => {
+        sent.push(args);
+      },
     } as PluginEventBus;
     const pool = fakePool({ ok: true, status: 204, bodyText: "" });
     const d = makeDispatcher({ pool, getEventBus: () => bus });
     // No dispatch key AND an unparseable manifest — the bus must still deliver.
     const plugin = makePlugin({ dispatchHmacKey: null, manifestJson: "{nope" });
     const outcome = await d.deliver({
-      kind: "event", plugin, label: "guild.message_create", payload: { data: { hi: 1 } },
+      kind: "event",
+      plugin,
+      label: "guild.message_create",
+      payload: { data: { hi: 1 } },
     });
     expect(outcome).toEqual({ status: "ok" });
     expect(sent).toEqual([[1, "alpha", "guild.message_create", { hi: 1 }]]);
@@ -316,7 +518,10 @@ describe("deliver — event kind (pooled + bus transports)", () => {
     const pool = fakePool({ ok: true, status: 204, bodyText: "" });
     const d = makeDispatcher({ pool });
     const outcome = await d.deliver({
-      kind: "event", plugin: makePlugin({ dispatchHmacKey: null }), label: "e", payload: { data: {} },
+      kind: "event",
+      plugin: makePlugin({ dispatchHmacKey: null }),
+      label: "e",
+      payload: { data: {} },
     });
     expect(outcome).toEqual({ status: "skipped", reason: "no_dispatch_key" });
     expect(pool.post).not.toHaveBeenCalled();
@@ -329,8 +534,11 @@ describe("dispatch (gate + deliver)", () => {
     const fetchImpl = fakeFetchOk();
     const d = makeDispatcher({ fetchImpl });
     const outcome = await d.dispatch({
-      kind: "command", plugin: makePlugin({ enabled: false }), label: "ping",
-      endpointVars: { command_name: "ping" }, payload: { body: () => "{}" },
+      kind: "command",
+      plugin: makePlugin({ enabled: false }),
+      label: "ping",
+      endpointVars: { command_name: "ping" },
+      payload: { body: () => "{}" },
     });
     expect(outcome).toEqual({ status: "skipped", reason: "plugin_offline" });
     expect(fetchImpl).not.toHaveBeenCalled();
@@ -341,8 +549,11 @@ describe("dispatch (gate + deliver)", () => {
     const build = vi.fn(() => "{}");
     const d = makeDispatcher({ fetchImpl: fakeFetchOk() });
     await d.dispatch({
-      kind: "command", plugin: makePlugin(), label: "ping",
-      endpointVars: { command_name: "ping" }, payload: { body: build },
+      kind: "command",
+      plugin: makePlugin(),
+      label: "ping",
+      endpointVars: { command_name: "ping" },
+      payload: { body: build },
     });
     expect(build).not.toHaveBeenCalled();
   });

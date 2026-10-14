@@ -5,7 +5,12 @@ import { plugin } from "./plugin.js";
 // the heartbeat loop. Reads PORT / HOST / BOT_URL / PLUGIN_URL /
 // KARYL_PLUGIN_SETUP_SECRET from the environment (see .env.example).
 async function main(): Promise<void> {
-  await plugin.start();
+  const started = await plugin.start();
+  // start() means the HTTP listener is available. whenReady() is the
+  // stronger platform guarantee: registration, transport startup, onStart,
+  // and the bot-side ready transition have all completed.
+  await started.whenReady();
+  console.log("__PLUGIN_KEY__ is ready for dispatch");
 }
 
 main().catch((err) => {

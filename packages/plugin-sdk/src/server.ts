@@ -29,6 +29,7 @@ import type {
   APIEmbed,
 } from "./types.js";
 import type { HealthReport } from "./context.js";
+import type { PluginLifecycleState } from "./lifecycle.js";
 import { createPluginRpc } from "./rpc/index.js";
 
 export interface PluginServerOptions {
@@ -43,6 +44,8 @@ export interface PluginServerOptions {
   getToken: () => string | null;
   getDispatchHmacKey?: () => string | null;
   getPublicBaseUrl?: () => string | undefined;
+  /** Current lifecycle state, used by readiness probes and dispatch guards. */
+  getLifecycleState?: () => PluginLifecycleState;
   /**
    * Called by the SDK-mounted `/health/detail` route on each probe.
    * Returns the report verbatim (the producer wrapper in `plugin.ts`
@@ -433,7 +436,9 @@ export async function callBotRpc(
     // Retries only run for 503 / 429 / network. 429 → rate_limited;
     // 503 falls through as a transient http_status (operator-visible).
     const reason: BotRpcErrorReason =
-      lastHttpStatus === 429 ? "rate_limited" : classifyHttpStatus(lastHttpStatus);
+      lastHttpStatus === 429
+        ? "rate_limited"
+        : classifyHttpStatus(lastHttpStatus);
     throw new BotRpcError(
       reason,
       `bot rpc HTTP ${lastHttpStatus} after ${MAX_RPC_RETRIES + 1} attempts: ${lastHttpText.slice(0, 200)}`,
@@ -441,7 +446,9 @@ export async function callBotRpc(
     );
   }
   const msg =
-    lastNetworkErr instanceof Error ? lastNetworkErr.message : String(lastNetworkErr);
+    lastNetworkErr instanceof Error
+      ? lastNetworkErr.message
+      : String(lastNetworkErr);
   log.error(
     { err: lastNetworkErr, path, attempts: MAX_RPC_RETRIES + 1 },
     "bot rpc network retries exhausted",
@@ -628,7 +635,9 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
   >(
     (opts.pluginCommands ?? [])
       .filter(
-        (cmd): cmd is PluginCommandDefinition & {
+        (
+          cmd,
+        ): cmd is PluginCommandDefinition & {
           autocomplete: NonNullable<PluginCommandDefinition["autocomplete"]>;
         } => typeof cmd.autocomplete === "function",
       )
@@ -654,12 +663,35 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
       error: "dispatch HMAC key not available; plugin must re-register",
     });
   };
+  const refuseNotReady = (
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ): FastifyReply | null => {
+    const state = opts.getLifecycleState?.() ?? "ready";
+    if (state === "ready") return null;
+    request.log.warn(
+      { path: request.url, lifecycleState: state },
+      "dispatch refused: plugin initialization is not ready",
+    );
+    return reply.code(503).send({
+      error: "plugin is not ready for dispatch",
+      state,
+    });
+  };
   server.addContentTypeParser(
     "application/json",
     { parseAs: "string" },
     (_req, body, done) => done(null, body),
   );
   server.get("/health", async () => ({ status: "ok" }));
+
+  server.get("/health/ready", async (_request, reply) => {
+    const state = opts.getLifecycleState?.() ?? "ready";
+    if (state !== "ready") {
+      return reply.code(503).send({ status: "not_ready", state });
+    }
+    return { status: "ready", state };
+  });
 
   // Rich health probe. The bot polls /health/detail every 60 s and on
   // demand from the admin UI. When no `healthCheck` is configured in
@@ -668,10 +700,22 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
   // and surfaced as `{ status: "unhealthy", message }` — this route
   // itself never throws to the bot.
   server.get("/health/detail", async () => {
-    if (!opts.getHealthReport) {
-      return { status: "healthy" as const, checkedAt: Date.now() };
-    }
-    return await opts.getHealthReport();
+    const state = opts.getLifecycleState?.() ?? "ready";
+    const report = opts.getHealthReport
+      ? await opts.getHealthReport()
+      : { status: "healthy" as const, checkedAt: Date.now() };
+    if (state === "ready") return { ...report, lifecycleState: state };
+    return {
+      ...report,
+      status:
+        state === "failed" ? ("unhealthy" as const) : ("degraded" as const),
+      message:
+        report.message ??
+        (state === "serving_dark"
+          ? "setup secret is not configured; plugin is serving dark"
+          : `plugin lifecycle is ${state}`),
+      lifecycleState: state,
+    };
   });
 
   // Discord-side event dispatch. Only mounted when the plugin declared
@@ -693,6 +737,8 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
         const rawBody = typeof request.body === "string" ? request.body : "";
         const auth = verifyDispatchAuth(request, rawBody, signingKey);
         if (!auth.ok) return reply.code(401).send({ error: auth.reason });
+        const notReady = refuseNotReady(request, reply);
+        if (notReady) return notReady;
         let payload: { type: unknown; data?: unknown };
         try {
           payload = JSON.parse(rawBody);
@@ -709,10 +755,7 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
         try {
           await opts.dispatchEvent!(payload.type, payload.data ?? {});
         } catch (err) {
-          server.log.error(
-            { err, type: payload.type },
-            "event handler threw",
-          );
+          server.log.error({ err, type: payload.type }, "event handler threw");
         }
       },
     );
@@ -730,6 +773,8 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
         const rawBody = typeof request.body === "string" ? request.body : "";
         const auth = verifyDispatchAuth(request, rawBody, signingKey);
         if (!auth.ok) return reply.code(401).send({ error: auth.reason });
+        const notReady = refuseNotReady(request, reply);
+        if (notReady) return notReady;
         let payload: { type: unknown; data?: unknown };
         try {
           payload = JSON.parse(rawBody);
@@ -746,10 +791,7 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
           // (the toggle has already happened on the bot side). Log
           // and 200 — operators see the throw in admin event log via
           // the plugin's botEventLog flushing.
-          server.log.error(
-            { err, type: payload.type },
-            "lifecycle hook threw",
-          );
+          server.log.error({ err, type: payload.type }, "lifecycle hook threw");
         }
         return { ok: true };
       },
@@ -768,6 +810,8 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
       const rawBody = typeof request.body === "string" ? request.body : "";
       const auth = verifyDispatchAuth(request, rawBody, signingKey);
       if (!auth.ok) return reply.code(401).send({ error: auth.reason });
+      const notReady = refuseNotReady(request, reply);
+      if (notReady) return notReady;
 
       let payload: InteractionPayload;
       try {
@@ -987,6 +1031,8 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
       const rawBody = typeof request.body === "string" ? request.body : "";
       const auth = verifyDispatchAuth(request, rawBody, signingKey);
       if (!auth.ok) return reply.code(401).send({ error: auth.reason });
+      const notReady = refuseNotReady(request, reply);
+      if (notReady) return notReady;
 
       let payload: ComponentPayload;
       try {
@@ -1001,7 +1047,9 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
         typeof payload.custom_id !== "string" ||
         typeof payload.message_id !== "string"
       ) {
-        return reply.code(400).send({ error: "missing custom_id / message_id" });
+        return reply
+          .code(400)
+          .send({ error: "missing custom_id / message_id" });
       }
 
       const token = opts.getToken();
@@ -1140,6 +1188,8 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
       const rawBody = typeof request.body === "string" ? request.body : "";
       const auth = verifyDispatchAuth(request, rawBody, signingKey);
       if (!auth.ok) return reply.code(401).send({ error: auth.reason });
+      const notReady = refuseNotReady(request, reply);
+      if (notReady) return notReady;
 
       let payload: AutocompletePayload;
       try {
@@ -1212,6 +1262,8 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
       const rawBody = typeof request.body === "string" ? request.body : "";
       const auth = verifyDispatchAuth(request, rawBody, signingKey);
       if (!auth.ok) return reply.code(401).send({ error: auth.reason });
+      const notReady = refuseNotReady(request, reply);
+      if (notReady) return notReady;
 
       let payload: ModalPayload;
       try {

@@ -96,6 +96,7 @@ import {
   __resetDispatchHealthForTests,
 } from "../src/modules/plugin-system/plugin-dispatch-health.service.js";
 import { pluginCommandRegistry } from "../src/modules/plugin-system/plugin-command-registry.service.js";
+import { pluginEndpointRegistry } from "../src/modules/plugin-system/plugin-endpoint-registry.js";
 
 let server: import("fastify").FastifyInstance;
 let pluginServer: Server;
@@ -132,6 +133,7 @@ async function seedPlugin(): Promise<number> {
     { dispatchHmacKey: "test-hmac-key" },
     { where: { id: row.id } },
   );
+  pluginEndpointRegistry.touch(PLUGIN_KEY, pluginUrl);
   await rebuildEventIndex();
   return row.id;
 }
@@ -174,9 +176,8 @@ beforeAll(async () => {
   pluginUrl = `http://127.0.0.1:${addr.port}`;
 
   const fastify = (await import("fastify")).default;
-  const { registerPluginRoutes } = await import(
-    "../src/modules/plugin-system/plugin-routes.js"
-  );
+  const { registerPluginRoutes } =
+    await import("../src/modules/plugin-system/plugin-routes.js");
   server = fastify({ logger: false });
   server.addHook("onRequest", (req, _reply, done) => {
     (req as unknown as { authUserId: string }).authUserId = "admin-user";
@@ -202,6 +203,7 @@ beforeEach(async () => {
   await PluginGuildFeature.destroy({ where: {} });
   await PluginFeatureDefault.destroy({ where: {} });
   await Plugin.destroy({ where: {} });
+  pluginEndpointRegistry.removeAll(PLUGIN_KEY);
   await rebuildEventIndex();
   __resetDispatchHealthForTests();
   received.length = 0;

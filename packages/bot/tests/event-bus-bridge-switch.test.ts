@@ -8,7 +8,15 @@
  * path). The subscription gate must still apply on both transports.
  */
 
-import { vi, describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
+import {
+  vi,
+  describe,
+  it,
+  expect,
+  beforeAll,
+  beforeEach,
+  afterEach,
+} from "vitest";
 
 vi.hoisted(() => {
   process.env.SQLITE_DB_PATH = ":memory:";
@@ -25,6 +33,7 @@ import {
   setRedisClientForTests,
   type RedisLike,
 } from "../src/adapters/redis/client.js";
+import { pluginEndpointRegistry } from "../src/modules/plugin-system/plugin-endpoint-registry.js";
 import type { PluginManifest } from "@karyl-chan/plugin-wire";
 
 interface XaddCall {
@@ -108,6 +117,7 @@ async function seedSubscriber(): Promise<void> {
     dispatchHmacKey: "k",
     lastHeartbeatAt: null,
   } as Record<string, unknown>);
+  pluginEndpointRegistry.touch("alpha", "http://plugin.invalid");
   await rebuildEventIndex();
 }
 
@@ -117,6 +127,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await Plugin.destroy({ where: {}, truncate: true });
+  pluginEndpointRegistry.removeAll("alpha");
   // The dispatcher resolves the bus through the adapters registry on
   // every fan-out, so resetting the registry is all the isolation needed.
   __resetAdaptersForTests();

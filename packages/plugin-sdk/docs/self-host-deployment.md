@@ -22,7 +22,7 @@ get wrong the first time.
 4. After the first successful register, **enable the plugin** (and its
    guild feature) in the admin UI. Registration alone does not enable it.
 5. Iterating? Rebuild **only the plugin service**. Don't `docker compose
-   up --build` the whole stack for a plugin-only change.
+up --build` the whole stack for a plugin-only change.
 
 ## Compose template
 
@@ -41,17 +41,23 @@ services:
       - "3000:3000"
     environment:
       BOT_TOKEN: ${BOT_TOKEN:?set BOT_TOKEN}
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY}   # openssl rand -hex 32
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY} # openssl rand -hex 32
       BOT_OWNER_IDS: ${BOT_OWNER_IDS:?set BOT_OWNER_IDS}
       NODE_ENV: production
       WEB_BASE_URL: http://localhost:3000
     volumes:
-      - ./data:/usr/src/app/data    # SQLite lives here — this mount IS your bot state
+      - ./data:/usr/src/app/data # SQLite lives here — this mount IS your bot state
     healthcheck:
       # /api/health/ready = web up AND db up AND Discord gateway ready
       # (see "Readiness semantics" below). Plugins that depends_on this
       # healthcheck never register against a half-booted bot.
-      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/api/health/ready', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('http').get('http://127.0.0.1:3000/api/health/ready', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))",
+        ]
       interval: 10s
       timeout: 10s
       retries: 10
@@ -74,7 +80,15 @@ services:
       karyl-chan:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      # Plugin readiness is stricter than liveness: it stays 503 until
+      # registration, transport startup, onStart, and POST /ready complete.
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('http').get('http://127.0.0.1:3000/health/ready', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -110,10 +124,13 @@ failed or got rate-limited.
 
 ## Readiness semantics
 
-| Endpoint | Meaning |
-|---|---|
-| `/api/health/live` (alias `/api/health`) | process answers HTTP |
-| `/api/health/ready` | web **and** DB (live roundtrip) **and** Discord gateway ready, **and** not draining |
+| Endpoint                                 | Meaning                                                                                                 |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `/api/health/live` (alias `/api/health`) | process answers HTTP                                                                                    |
+| `/api/health/ready`                      | web **and** DB (live roundtrip) **and** Discord gateway ready, **and** not draining                     |
+| plugin `/health`                         | plugin process liveness only; remains 200 while initializing or failed so diagnostics stay reachable    |
+| plugin `/health/ready`                   | 200 only after registration, event transport startup, `onStart`, and the authenticated ready transition |
+| plugin `/health/detail`                  | rich health plus `lifecycleState`; non-ready states are never overall healthy                           |
 
 `ready` is the signal sibling containers should `depends_on`. In
 `BOT_SKIP_DISCORD=true` dev mode there is no gateway; `ready` then turns
@@ -121,17 +138,18 @@ failed or got rate-limited.
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Check |
-|---|---|---|
-| Register answers `401 invalid setup secret` | Secret never minted for this plugin key, or key mismatch with `definePlugin` | Bot event log: `Plugin registration rejected (...)`; compare keys exactly |
-| Register answers `400` | Manifest problem — common ones: a command missing `scope` / `integrationTypes` / `contexts` (V-06/07/08, all mandatory), or a command name colliding with a reserved/other plugin's command | The 400 body carries the exact reason; fix the manifest |
-| Plugin-side RPC answers `403` | Scope not declared/approved (note: scope names are snake_case wire-side, e.g. `me.enabled_guilds`), or the plugin simply isn't **enabled** yet — every RPC is gated on the admin enable switch | The 403 body says which; check `rpcMethodsUsed` and the admin enable toggle |
-| Register answers `429` | Register loop — the bot throttles per-plugin registers (10/min) | Stop the restart loop; the SDK backs off by itself, just wait |
-| Plugin log: `register timed out after 30000ms` (3× escalates to error) | Bot-side register handler wedged or unreachable | Bot log: an `/api/plugins/register` "incoming request" with no completion; bot event log warns after 10s |
-| Commands visible in Discord but every use fails fast | Plugin restarted and hasn't completed its register handshake — it refuses dispatches (503) until then | Plugin log: `dispatch refused: register handshake not completed`; bot event log names the same state; it self-heals when register succeeds |
-| Discord shows "互動失敗" / no response at all | Plugin handler crashed or timed out mid-command | Plugin log around the `/commands/<name>` POST |
-| Commands never appear in Discord | Plugin or guild feature not enabled; or command sync failed/rate-limited | Admin plugin card: enable toggles + `commandSync` badge |
-| Everything worked, then broke after `docker compose down && up` | Bot state lives in the `./data` mount — if you deleted it, the setup secret and registration are gone | Re-mint the secret, re-register |
+| Symptom                                                                | Likely cause                                                                                                                                                                                   | Check                                                                                                                                      |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Register answers `401 invalid setup secret`                            | Secret never minted for this plugin key, or key mismatch with `definePlugin`                                                                                                                   | Bot event log: `Plugin registration rejected (...)`; compare keys exactly                                                                  |
+| Register answers `400`                                                 | Manifest problem — common ones: a command missing `scope` / `integrationTypes` / `contexts` (V-06/07/08, all mandatory), or a command name colliding with a reserved/other plugin's command    | The 400 body carries the exact reason; fix the manifest                                                                                    |
+| Plugin-side RPC answers `403`                                          | Scope not declared/approved (note: scope names are snake_case wire-side, e.g. `me.enabled_guilds`), or the plugin simply isn't **enabled** yet — every RPC is gated on the admin enable switch | The 403 body says which; check `rpcMethodsUsed` and the admin enable toggle                                                                |
+| Register answers `429`                                                 | Register loop — the bot throttles per-plugin registers (10/min)                                                                                                                                | Stop the restart loop; the SDK backs off by itself, just wait                                                                              |
+| Plugin log: `register timed out after 30000ms` (3× escalates to error) | Bot-side register handler wedged or unreachable                                                                                                                                                | Bot log: an `/api/plugins/register` "incoming request" with no completion; bot event log warns after 10s                                   |
+| Commands visible in Discord but every use fails fast                   | Plugin restarted and hasn't completed its register handshake — it refuses dispatches (503) until then                                                                                          | Plugin log: `dispatch refused: register handshake not completed`; bot event log names the same state; it self-heals when register succeeds |
+| `/health` is 200 but `/health/ready` is 503                            | The process is alive but is registering, initializing, failed, or intentionally serving dark                                                                                                   | Read `/health/detail` and inspect `lifecycleState`; await `started.whenReady()` in startup diagnostics                                     |
+| Discord shows "互動失敗" / no response at all                          | Plugin handler crashed or timed out mid-command                                                                                                                                                | Plugin log around the `/commands/<name>` POST                                                                                              |
+| Commands never appear in Discord                                       | Plugin or guild feature not enabled; or command sync failed/rate-limited                                                                                                                       | Admin plugin card: enable toggles + `commandSync` badge                                                                                    |
+| Everything worked, then broke after `docker compose down && up`        | Bot state lives in the `./data` mount — if you deleted it, the setup secret and registration are gone                                                                                          | Re-mint the secret, re-register                                                                                                            |
 
 ## Iterating on your plugin
 

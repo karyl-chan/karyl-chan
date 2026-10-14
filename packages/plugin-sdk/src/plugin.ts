@@ -18,6 +18,10 @@ import type { Voice } from "./rpc/voice.js";
 import type { Me } from "./rpc/me.js";
 import type { Kv } from "./rpc/kv.js";
 import type { Auth } from "./rpc/auth.js";
+import {
+  PluginReadinessError,
+  type PluginLifecycleState,
+} from "./lifecycle.js";
 
 /**
  * Handler for one Discord-side event the plugin subscribed to.
@@ -109,6 +113,13 @@ export interface StartedPlugin {
    * routes.
    */
   getDispatchHmacKey(): string | null;
+  /** Current lifecycle state for this plugin process. */
+  lifecycleState(): PluginLifecycleState;
+  /**
+   * Wait until initialization and the bot-side ready transition complete.
+   * Registration retries remain in the background while the bot is down.
+   */
+  whenReady(): Promise<void>;
 }
 
 /** Options passed to plugin.start() — all optional; fall back to env vars. */
@@ -184,7 +195,9 @@ export interface PluginCommandDefinition {
    */
   autocomplete?: (
     ctx: AutocompleteContext,
-  ) => Promise<APIApplicationCommandOptionChoice[]> | APIApplicationCommandOptionChoice[];
+  ) =>
+    | Promise<APIApplicationCommandOptionChoice[]>
+    | APIApplicationCommandOptionChoice[];
 }
 
 /**
@@ -392,7 +405,9 @@ export interface PluginConfig {
    * requires the bot to be reachable — e.g. seeding initial state via
    * `ctx.botRpc`, registering metrics, emitting a "plugin online" event.
    *
-   * If `onStart` throws, `start()` rejects and the plugin process exits.
+   * If `onStart` throws, `StartedPlugin.whenReady()` rejects with that error;
+   * the listening server remains available for liveness/diagnostics but all
+   * dispatch routes fail closed.
    */
   onStart?: (ctx: PluginContext) => void | Promise<void>;
 
@@ -514,7 +529,9 @@ export function definePluginComponent(
     );
   }
   if (typeof def.handler !== "function") {
-    throw new Error(`definePluginComponent: '${def.id}'.handler must be a function`);
+    throw new Error(
+      `definePluginComponent: '${def.id}'.handler must be a function`,
+    );
   }
   return def;
 }
@@ -553,7 +570,9 @@ export function definePluginModal(
     );
   }
   if (typeof def.handler !== "function") {
-    throw new Error(`definePluginModal: '${def.id}'.handler must be a function`);
+    throw new Error(
+      `definePluginModal: '${def.id}'.handler must be a function`,
+    );
   }
   return def;
 }
@@ -717,9 +736,8 @@ export function definePlugin(config: PluginConfig): PluginInstance {
     async start(opts?: StartOptions): Promise<StartedPlugin> {
       // Defer imports so SDK users that only use the type layer don't
       // pay the Fastify startup cost at import time.
-      const { createPluginServer, callBotRpc, BotRpcError } = await import(
-        "./server.js"
-      );
+      const { createPluginServer, callBotRpc, BotRpcError } =
+        await import("./server.js");
       const { startPluginClient } = await import("./client.js");
       const { buildManifest } = await import("./manifest-builder.js");
       const { MetricsCollector } = await import("./metrics-collector.js");
@@ -742,6 +760,7 @@ export function definePlugin(config: PluginConfig): PluginInstance {
       ).replace(/\/+$/, "");
 
       let client: ReturnType<typeof startPluginClient> | null = null;
+      let localLifecycleState: PluginLifecycleState = "listening";
       // Optional Redis Streams consumer — only constructed when the
       // transport is enabled (EVENT_BUS=redis-streams + REDIS_URL) and
       // the plugin actually subscribes to events. Lives across the
@@ -785,6 +804,8 @@ export function definePlugin(config: PluginConfig): PluginInstance {
         getToken: () => client?.token() ?? null,
         getDispatchHmacKey: () => client?.getDispatchHmacKey() ?? null,
         getPublicBaseUrl: () => client?.getPublicBaseUrl(),
+        getLifecycleState: () =>
+          client?.lifecycleState() ?? localLifecycleState,
         // Wire health + lifecycle dispatch into the SDK server. The
         // server.ts side mounts /health/detail and /_kc/lifecycle and
         // calls these back when the bot probes / dispatches.
@@ -815,7 +836,7 @@ export function definePlugin(config: PluginConfig): PluginInstance {
           const guildId =
             (data as { guild_id?: unknown }).guild_id !== undefined &&
             typeof (data as { guild_id?: unknown }).guild_id === "string"
-              ? ((data as { guild_id: string }).guild_id)
+              ? (data as { guild_id: string }).guild_id
               : "";
           if (eventType === "plugin.guild.enabled" && config.onEnable) {
             await config.onEnable(ctx, guildId);
@@ -936,21 +957,29 @@ export function definePlugin(config: PluginConfig): PluginInstance {
               kv: rpcFacade.kv,
               auth: rpcFacade.auth,
             };
-            metricsCollector.start();
-            botEventEmitter.start();
-            // Start the Streams consumer now that `ctx` exists, so a
-            // handler never fires against a null context. Gated on the
-            // transport flag + at least one event handler; HTTP-only
-            // plugins skip the ioredis import entirely. Started once —
-            // a 401 re-register doesn't re-fire onFirstRegister.
+            if (config.onStart) {
+              try {
+                await config.onStart(ctx);
+              } catch (err) {
+                server.log.error(
+                  { err },
+                  "onStart hook threw — plugin remains unavailable",
+                );
+                throw err;
+              }
+            }
+            // Start the Streams consumer only after onStart has completed,
+            // so another ready replica cannot publish work that this process
+            // consumes while its own initialization is still in progress.
+            // HTTP-only plugins skip the ioredis import entirely. Started
+            // once — a 401 re-register doesn't re-fire onFirstRegister.
             if (hasEventHandlers) {
               try {
                 const { streamsTransportEnabled, getStreamsClient } =
                   await import("./redis-streams-client.js");
                 if (streamsTransportEnabled()) {
-                  const { StreamsConsumer } = await import(
-                    "./streams-consumer.js"
-                  );
+                  const { StreamsConsumer } =
+                    await import("./streams-consumer.js");
                   const redis = await getStreamsClient();
                   const consumer = new StreamsConsumer({
                     redis,
@@ -990,22 +1019,15 @@ export function definePlugin(config: PluginConfig): PluginInstance {
                   { err },
                   "failed to start redis-streams consumer — events will not be received over Streams",
                 );
-              }
-            }
-            if (config.onStart) {
-              try {
-                await config.onStart(ctx);
-              } catch (err) {
-                server.log.error(
-                  { err },
-                  "onStart hook threw — plugin may be in an inconsistent state",
-                );
                 throw err;
               }
             }
+            metricsCollector.start();
+            botEventEmitter.start();
           },
         });
       } else {
+        localLifecycleState = "serving_dark";
         server.log.warn(
           "KARYL_PLUGIN_SETUP_SECRET not set — will not register with bot",
         );
@@ -1030,6 +1052,7 @@ export function definePlugin(config: PluginConfig): PluginInstance {
       const started: StartedPlugin = {
         server,
         async stop(): Promise<void> {
+          localLifecycleState = "stopping";
           if (config.onStop && ctx) {
             try {
               await config.onStop(ctx);
@@ -1047,9 +1070,8 @@ export function definePlugin(config: PluginConfig): PluginInstance {
           // closes cleanly.
           if (streamsConsumer) {
             await streamsConsumer.stop().catch(() => {});
-            const { closeStreamsClient } = await import(
-              "./redis-streams-client.js"
-            );
+            const { closeStreamsClient } =
+              await import("./redis-streams-client.js");
             await closeStreamsClient().catch(() => {});
           }
           // Best-effort graceful deregister BEFORE stopping the client
@@ -1072,9 +1094,7 @@ export function definePlugin(config: PluginConfig): PluginInstance {
         },
         address(): string {
           return (
-            server
-              .addresses()
-              .map((a) => `http://${a.address}:${a.port}`)[0] ??
+            server.addresses().map((a) => `http://${a.address}:${a.port}`)[0] ??
             `http://${host}:${port}`
           );
         },
@@ -1092,6 +1112,18 @@ export function definePlugin(config: PluginConfig): PluginInstance {
         },
         getDispatchHmacKey() {
           return client?.getDispatchHmacKey() ?? null;
+        },
+        lifecycleState() {
+          return client?.lifecycleState() ?? localLifecycleState;
+        },
+        whenReady() {
+          if (client) return client.whenReady();
+          return Promise.reject(
+            new PluginReadinessError(
+              "plugin cannot become ready without KARYL_PLUGIN_SETUP_SECRET",
+              localLifecycleState,
+            ),
+          );
         },
       };
 

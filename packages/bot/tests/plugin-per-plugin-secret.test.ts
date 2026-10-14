@@ -69,6 +69,8 @@ import {
   upsertPluginRegistration,
   findPluginByKey,
 } from "../src/modules/plugin-system/models/plugin.model.js";
+import { pluginEndpointRegistry } from "../src/modules/plugin-system/plugin-endpoint-registry.js";
+import { pluginAuthStore } from "../src/modules/plugin-system/plugin-auth.service.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -428,5 +430,104 @@ describe("6. re-registration preserves dispatch_hmac_key", () => {
     };
 
     expect(secondBody.dispatchHmacKey).toBe(firstBody.dispatchHmacKey);
+  });
+});
+
+describe("7. readiness-v1 two-phase registration", () => {
+  it("keeps the replica non-dispatchable until its authenticated ready call", async () => {
+    const pluginKey = "readiness-v1-plugin";
+    const pluginSecret = "readiness-secret";
+    const manifest = makeManifest(pluginKey);
+    pluginEndpointRegistry.removeAll(pluginKey);
+
+    await server.inject({
+      method: "POST",
+      url: "/api/plugins/setup-secret",
+      payload: { pluginKey, secret: pluginSecret },
+    });
+    const register = await server.inject({
+      method: "POST",
+      url: "/api/plugins/register",
+      headers: { "x-plugin-setup-secret": pluginSecret },
+      payload: {
+        manifest,
+        lifecycle: { readiness: "v1" },
+      },
+    });
+    expect(register.statusCode).toBe(200);
+    expect(register.json().readiness).toEqual({
+      required: true,
+      path: "/api/plugins/ready",
+    });
+    expect(pluginEndpointRegistry.endpoints(pluginKey)).toEqual([]);
+    expect(pluginEndpointRegistry.allEndpoints(pluginKey)).toEqual([
+      "http://localhost:9999",
+    ]);
+
+    const ready = await server.inject({
+      method: "POST",
+      url: "/api/plugins/ready",
+      headers: { authorization: `Bearer ${register.json().token}` },
+      payload: { url: "http://localhost:9999" },
+    });
+    expect(ready.statusCode).toBe(200);
+    expect(ready.json()).toEqual({ ok: true, state: "ready" });
+    expect(pluginEndpointRegistry.endpoints(pluginKey)).toEqual([
+      "http://localhost:9999",
+    ]);
+  });
+
+  it("keeps distinct replica tokens valid and rejects a token marking its sibling ready", async () => {
+    const pluginKey = "readiness-replicas";
+    const pluginSecret = "replica-secret";
+    pluginEndpointRegistry.removeAll(pluginKey);
+    await server.inject({
+      method: "POST",
+      url: "/api/plugins/setup-secret",
+      payload: { pluginKey, secret: pluginSecret },
+    });
+
+    const registerReplica = (url: string) =>
+      server.inject({
+        method: "POST",
+        url: "/api/plugins/register",
+        headers: { "x-plugin-setup-secret": pluginSecret },
+        payload: {
+          manifest: {
+            ...makeManifest(pluginKey),
+            plugin: { ...makeManifest(pluginKey).plugin, url },
+          },
+          lifecycle: { readiness: "v1" },
+        },
+      });
+    const first = await registerReplica("http://replica-a:3000");
+    const second = await registerReplica("http://replica-b:3000");
+    const firstToken = first.json().token as string;
+    const secondToken = second.json().token as string;
+    expect(pluginAuthStore.verify(firstToken)?.endpointUrl).toBe(
+      "http://replica-a:3000",
+    );
+    expect(pluginAuthStore.verify(secondToken)?.endpointUrl).toBe(
+      "http://replica-b:3000",
+    );
+
+    const wrongReplica = await server.inject({
+      method: "POST",
+      url: "/api/plugins/ready",
+      headers: { authorization: `Bearer ${firstToken}` },
+      payload: { url: "http://replica-b:3000" },
+    });
+    expect(wrongReplica.statusCode).toBe(409);
+
+    const firstReady = await server.inject({
+      method: "POST",
+      url: "/api/plugins/ready",
+      headers: { authorization: `Bearer ${firstToken}` },
+      payload: { url: "http://replica-a:3000" },
+    });
+    expect(firstReady.statusCode).toBe(200);
+    expect(pluginEndpointRegistry.endpoints(pluginKey)).toEqual([
+      "http://replica-a:3000",
+    ]);
   });
 });

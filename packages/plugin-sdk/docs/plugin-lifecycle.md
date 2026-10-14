@@ -13,41 +13,52 @@ stateDiagram-v2
     Listening --> Serving_dark: no KARYL_PLUGIN_SETUP_SECRET
     Listening --> Registering: setup secret present
 
-    Registering --> Active: register OK (token + HMAC key issued)
+    Registering --> Initializing: register OK (token + HMAC key issued)
     Registering --> Registering: backoff retry (network / 5xx)
 
-    Active --> Active: heartbeat every 30s
-    Active --> Registering: bot returns 401 (token lost) → re-register
+    Initializing --> Ready: transport + onStart OK; POST /ready acknowledged
+    Initializing --> Failed: transport or onStart throws
+    Failed --> Stopped: stop()
 
-    Active --> Reaped: no heartbeat for 75s (bot marks inactive)
-    Reaped --> Active: next heartbeat revives
+    Ready --> Ready: heartbeat every 30s
+    Ready --> Registering: bot returns 401 (token lost) → re-register
 
-    Active --> Stopped: SIGTERM / SIGINT / stop()
+    Ready --> Reaped: no heartbeat for 75s (bot marks inactive)
+    Reaped --> Registering: bot lost token; register + ready again
+
+    Ready --> Stopped: SIGTERM / SIGINT / stop()
     Serving_dark --> Stopped: SIGTERM / SIGINT / stop()
     Stopped --> [*]
 
-    Active --> Deregistered: graceful deregister
+    Ready --> Deregistered: graceful deregister
     Deregistered --> [*]
 ```
 
 ## States
 
-| State | Meaning |
-|-------|---------|
-| **Listening** | HTTP server up (`onReady` ran). SDK routes mounted. |
-| **Serving dark** | Listening but never registered — `KARYL_PLUGIN_SETUP_SECRET` unset. Useful while building the HTTP surface; the bot doesn't know the plugin exists, so no commands/events flow. |
-| **Registering** | Sending the manifest to `POST /api/plugins/register`. Exponential-backoff retry on transient failure. |
-| **Active** | Registered. The bot has issued a token (scoped to the approved RPC methods) + a dispatch HMAC key, synced commands to Discord, and routes events/interactions here. `onStart(ctx)` fired once. Heartbeating every ~30 s. |
-| **Reaped** | The bot's reaper marked the plugin inactive after ~75 s with no heartbeat (≈ 2 missed beats). Events stop dispatching. The next successful heartbeat revives it. |
-| **Stopped** | Graceful shutdown — `onStop(ctx)` ran, HTTP server + lifecycle client closed. |
-| **Deregistered** | The plugin (or an admin) explicitly removed the registration; the bot drops its row, token, and Discord commands. |
+| State            | Meaning                                                                                                                                                                                              |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Listening**    | HTTP server up (`onReady` ran). SDK routes mounted.                                                                                                                                                  |
+| **Serving dark** | Listening but never registered — `KARYL_PLUGIN_SETUP_SECRET` unset. Useful while building the HTTP surface; the bot doesn't know the plugin exists, so no commands/events flow.                      |
+| **Registering**  | Sending the manifest to `POST /api/plugins/register`. Exponential-backoff retry on transient failure.                                                                                                |
+| **Initializing** | Credentials exist, but the endpoint is excluded from every Dispatch Kind. The SDK completes `onStart(ctx)` and required event-transport startup. `/health/ready` is 503.                               |
+| **Ready**        | Initialization completed and the bot acknowledged the authenticated ready transition. Only now may the bot route events/interactions here. Heartbeating every ~30 s.                                 |
+| **Failed**       | Transport startup or `onStart` threw. Readiness rejects with the original error, heartbeat stops, the SDK best-effort deregisters, and dispatch remains 503. Liveness stays available for diagnosis. |
+| **Reaped**       | The bot's reaper marked the plugin inactive after ~75 s with no heartbeat (≈ 2 missed beats). Events stop dispatching. The next successful heartbeat revives it.                                     |
+| **Stopped**      | Graceful shutdown — `onStop(ctx)` ran, HTTP server + lifecycle client closed.                                                                                                                        |
+| **Deregistered** | The plugin (or an admin) explicitly removed the registration; the bot drops its row, token, and Discord commands.                                                                                    |
 
 ## Key transitions
 
-- **start() → Active.** The SDK builds the manifest (auto-stamps
-  `sdk_version`, auto-derives `rpcMethodsUsed`), registers, and on the
-  first success fires `onStart(ctx)` with a fully-populated context (token,
-  HMAC key, public base URL all available).
+- **start() → listening; whenReady() → Ready.** `start()` intentionally
+  returns after the HTTP listener is bound, even while the bot is down and
+  registration retries. Await `started.whenReady()` when a caller needs the
+  stronger guarantee that transport startup, `onStart(ctx)`, and the bot-side
+  ready transition all completed.
+- **Register ≠ ready.** Registration issues credentials and records this
+  replica as `initializing`. A signed dispatch still receives 503 until the
+  authenticated ready transition completes; an invalid signature receives
+  401 before the readiness check.
 - **Token loss → re-register.** If any bot call returns `401` (e.g. the
   bot restarted and lost the in-memory token), the SDK transparently
   re-registers. Handlers don't see this.
@@ -60,7 +71,15 @@ stateDiagram-v2
 - **enable / disable.** When an operator toggles a guild feature, the bot
   POSTs `/_kc/lifecycle` and the SDK invokes `onEnable(ctx, guildId)` /
   `onDisable(ctx, guildId)`. This is orthogonal to register/heartbeat —
-  the plugin stays Active throughout.
+  the plugin stays Ready throughout.
+
+## Health contract
+
+| Endpoint             | Contract                                                                                                              |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `GET /health`        | Liveness only. Returns 200 while the HTTP process can answer, including `initializing`, `failed`, and `serving_dark`. |
+| `GET /health/ready`  | Returns 200 only in `ready`; otherwise 503 with `{ status: "not_ready", state }`.                                     |
+| `GET /health/detail` | Includes `lifecycleState`. Non-ready lifecycle states cannot report an overall green status.                          |
 
 ## Idempotency expectations
 

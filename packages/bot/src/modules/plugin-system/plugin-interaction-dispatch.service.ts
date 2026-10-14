@@ -327,6 +327,14 @@ export async function dispatchInteractionToPlugin(
             })
             .catch(() => {});
           break;
+        case "plugin_not_ready":
+          await interaction
+            .reply({
+              content: "⚠ 此 plugin 正在初始化，請稍後再試。",
+              ephemeral: true,
+            })
+            .catch(() => {});
+          break;
         case "manifest_invalid":
           await interaction
             .reply({

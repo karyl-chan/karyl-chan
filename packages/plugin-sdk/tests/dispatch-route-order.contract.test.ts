@@ -126,4 +126,100 @@ describe("dispatch probe route-order contract", () => {
       await server.close();
     }
   });
+
+  it("authenticates first, then refuses a valid dispatch until ready", async () => {
+    let state: "initializing" | "ready" = "initializing";
+    const server = createPluginServer({
+      pluginKey: "probe-contract",
+      botUrl: "http://bot.invalid",
+      getToken: () => "token",
+      getDispatchHmacKey: () => KEY,
+      getLifecycleState: () => state,
+      pluginCommands: [],
+    });
+    try {
+      const bad = await server.inject({
+        method: "POST",
+        url: PROBE_PATH,
+        payload: PROBE_BODY,
+        headers: signedHeaders(PROBE_PATH, PROBE_BODY, "x".repeat(64)),
+      });
+      assert.equal(bad.statusCode, 401, "bad HMAC must fail before readiness");
+
+      const initializing = await server.inject({
+        method: "POST",
+        url: PROBE_PATH,
+        payload: PROBE_BODY,
+        headers: signedHeaders(PROBE_PATH, PROBE_BODY),
+      });
+      assert.equal(initializing.statusCode, 503);
+      assert.deepEqual(initializing.json(), {
+        error: "plugin is not ready for dispatch",
+        state: "initializing",
+      });
+
+      state = "ready";
+      const ready = await server.inject({
+        method: "POST",
+        url: PROBE_PATH,
+        payload: PROBE_BODY,
+        headers: signedHeaders(PROBE_PATH, PROBE_BODY),
+      });
+      assert.equal(ready.statusCode, 400);
+      assert.match(ready.body, /missing user\.id/);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("keeps liveness green while readiness and detail expose lifecycle state", async () => {
+    let state: "failed" | "ready" | "serving_dark" = "failed";
+    const server = createPluginServer({
+      pluginKey: "probe-contract",
+      botUrl: "http://bot.invalid",
+      getToken: () => "token",
+      getDispatchHmacKey: () => KEY,
+      getLifecycleState: () => state,
+      pluginCommands: [],
+    });
+    try {
+      const live = await server.inject({ method: "GET", url: "/health" });
+      assert.equal(live.statusCode, 200);
+
+      const notReady = await server.inject({
+        method: "GET",
+        url: "/health/ready",
+      });
+      assert.equal(notReady.statusCode, 503);
+      assert.equal(notReady.json().state, "failed");
+
+      const detail = await server.inject({
+        method: "GET",
+        url: "/health/detail",
+      });
+      assert.equal(detail.statusCode, 200);
+      assert.equal(detail.json().status, "unhealthy");
+      assert.equal(detail.json().lifecycleState, "failed");
+
+      state = "serving_dark";
+      const dark = await server.inject({
+        method: "GET",
+        url: "/health/detail",
+      });
+      assert.equal(dark.statusCode, 200);
+      assert.equal(dark.json().status, "degraded");
+      assert.equal(dark.json().lifecycleState, "serving_dark");
+      assert.match(dark.json().message, /setup secret is not configured/);
+
+      state = "ready";
+      const ready = await server.inject({
+        method: "GET",
+        url: "/health/ready",
+      });
+      assert.equal(ready.statusCode, 200);
+      assert.equal(ready.json().state, "ready");
+    } finally {
+      await server.close();
+    }
+  });
 });

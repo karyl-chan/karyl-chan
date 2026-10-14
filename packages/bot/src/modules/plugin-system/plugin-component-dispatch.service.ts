@@ -1,7 +1,4 @@
-import type {
-  ButtonInteraction,
-  AnySelectMenuInteraction,
-} from "discord.js";
+import type { ButtonInteraction, AnySelectMenuInteraction } from "discord.js";
 import { findPluginByKey, type PluginRow } from "./models/plugin.model.js";
 import { resolveUserCapabilities } from "../admin/authorized-user.service.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
@@ -41,7 +38,9 @@ import { pluginDispatcher } from "./plugin-dispatch.service.js";
  * custom_id isn't a `kc:` token (so the dispatcher falls through to the
  * in-process registry, which is free to use its own prefixes).
  */
-function parsePluginComponentId(customId: string): { pluginKey: string } | null {
+function parsePluginComponentId(
+  customId: string,
+): { pluginKey: string } | null {
   if (!customId.startsWith("kc:")) return null;
   const rest = customId.slice(3);
   const sep = rest.indexOf(":");
@@ -130,6 +129,7 @@ export async function dispatchComponentToPlugin(
   if (!gate.ok) {
     const content = {
       plugin_offline: "⚠ 此按鈕所屬的 plugin 目前離線或已被停用。",
+      plugin_not_ready: "⚠ 此按鈕所屬的 plugin 正在初始化，請稍後再試。",
       manifest_invalid: "⚠ 此 plugin 的 manifest 損壞,無法派送。",
       // Feature Reach — once an admin disables every feature of this
       // plugin in guild G, older buttons on existing messages must
@@ -179,7 +179,10 @@ export async function dispatchComponentToPlugin(
         { pluginId: plugin.id },
       );
       await interaction
-        .followUp({ content: "⚠ 無法解析 plugin 的元件端點。", ephemeral: true })
+        .followUp({
+          content: "⚠ 無法解析 plugin 的元件端點。",
+          ephemeral: true,
+        })
         .catch(() => {});
       break;
     case "preflight_denied":
@@ -218,7 +221,10 @@ export async function dispatchComponentToPlugin(
         { pluginId: plugin.id },
       );
       await interaction
-        .followUp({ content: `⚠ 無法連接 plugin: ${outcome.detail}`, ephemeral: true })
+        .followUp({
+          content: `⚠ 無法連接 plugin: ${outcome.detail}`,
+          ephemeral: true,
+        })
         .catch(() => {});
   }
   return true;

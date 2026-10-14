@@ -106,6 +106,7 @@ import {
   upsertPluginCommand,
 } from "../src/modules/plugin-system/models/plugin-command.model.js";
 import { registerThrottle } from "../src/modules/plugin-system/plugin-routes.js";
+import { pluginEndpointRegistry } from "../src/modules/plugin-system/plugin-endpoint-registry.js";
 import {
   rebuildEventIndex,
   getEventIndexSize,
@@ -286,6 +287,7 @@ function contractManifest(
 async function seedPluginRow(): Promise<void> {
   await Plugin.destroy({ where: {} });
   await PluginCommand.destroy({ where: {} });
+  pluginEndpointRegistry.removeAll(PLUGIN_KEY);
   // Registering the same pluginKey several times across these suites is
   // well inside the 10/min budget, but reset so adding a suite later
   // can't turn a green run into a 429.
@@ -304,6 +306,7 @@ async function seedPluginRow(): Promise<void> {
     dispatchHmacKey: DISPATCH_KEY,
     lastHeartbeatAt: null,
   } as unknown as Record<string, unknown>);
+  pluginEndpointRegistry.touch(PLUGIN_KEY, PLUGIN_URL);
 }
 
 let server: FastifyInstance;
@@ -443,15 +446,26 @@ describe("contract: register response envelope", () => {
       method: "POST",
       url: fixtures.register.endpoint,
       headers: { [fixtures.register.setupSecretHeader]: SETUP_SECRET },
-      payload: { manifest: contractManifest() },
+      payload: {
+        manifest: contractManifest(),
+        lifecycle: { readiness: "v1" },
+      },
     });
     expect(res.statusCode).toBe(200);
     body = res.json() as Record<string, unknown>;
+    const ready = await server.inject({
+      method: "POST",
+      url: fixtures.register.readinessEndpoint,
+      headers: { authorization: `Bearer ${String(body.token)}` },
+      payload: { url: PLUGIN_URL },
+    });
+    expect(ready.statusCode).toBe(200);
   });
 
   it("the contract endpoint is what actually serves register", () => {
-    expect(server.hasRoute({ method: "POST", url: fixtures.register.endpoint }))
-      .toBe(true);
+    expect(
+      server.hasRoute({ method: "POST", url: fixtures.register.endpoint }),
+    ).toBe(true);
   });
 
   for (const field of fixtures.register.requiredResponseFields) {
@@ -464,9 +478,9 @@ describe("contract: register response envelope", () => {
 
   for (const field of fixtures.register.optionalResponseFields) {
     it(`response carries the declared optional field '${field}'`, () => {
-      // Every optional field is unconditional in the handler except
-      // publicBaseUrl, which needs WEB_BASE_URL — set in vi.hoisted so
-      // the whole declared set is observable here.
+      // publicBaseUrl needs WEB_BASE_URL (set in vi.hoisted), while
+      // readiness needs the v1 lifecycle offer above. This request makes
+      // the whole declared set observable.
       expect(Object.hasOwn(body, field)).toBe(true);
     });
   }
@@ -490,6 +504,17 @@ describe("contract: register response envelope", () => {
       server.hasRoute({
         method: "POST",
         url: fixtures.register.heartbeatEndpoint,
+      }),
+    ).toBe(true);
+  });
+
+  it("the readiness endpoint the response advertises is the contract route", () => {
+    const readiness = body.readiness as { path?: string } | undefined;
+    expect(readiness?.path).toBe(fixtures.register.readinessEndpoint);
+    expect(
+      server.hasRoute({
+        method: "POST",
+        url: fixtures.register.readinessEndpoint,
       }),
     ).toBe(true);
   });
@@ -568,6 +593,7 @@ describe("contract: event/lifecycle dispatch envelope", () => {
   it("the lifecycle POST body has exactly the contract's envelope keys", async () => {
     const fetchImpl = okFetch();
     const d: PluginDispatcher = createPluginDispatcher({
+      resolveReadyEndpoint: (_key, preferred) => preferred,
       reach: reachOpen,
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
@@ -589,12 +615,15 @@ describe("contract: event/lifecycle dispatch envelope", () => {
   it("the event POST body has exactly the contract's envelope keys", async () => {
     const posted: string[] = [];
     const pool = {
-      post: vi.fn(async (_key: string, _url: string, _h: unknown, b: string) => {
-        posted.push(b);
-        return { ok: true, status: 204, bodyText: "" };
-      }),
+      post: vi.fn(
+        async (_key: string, _url: string, _h: unknown, b: string) => {
+          posted.push(b);
+          return { ok: true, status: 204, bodyText: "" };
+        },
+      ),
     } as unknown as PluginDispatchPool;
     const d = createPluginDispatcher({
+      resolveReadyEndpoint: (_key, preferred) => preferred,
       reach: reachOpen,
       pool,
       // No out-of-process bus, so the event kind takes the HTTP path
@@ -785,7 +814,9 @@ describe("contract: interaction dispatch payloads (field-level)", () => {
       fakeSlashInteraction() as never,
     );
     expect(claimed).toBe(true);
-    expect(capturedUrl(fetchSpy)).toBe(`${PLUGIN_URL}/commands/${COMMAND_NAME}`);
+    expect(capturedUrl(fetchSpy)).toBe(
+      `${PLUGIN_URL}/commands/${COMMAND_NAME}`,
+    );
 
     const body = capturedBody(fetchSpy);
     assertPayloadMatchesContract("command", body);
@@ -856,7 +887,9 @@ describe("contract: interaction dispatch payloads (field-level)", () => {
   });
 
   it("modal payload carries every contract field", async () => {
-    const claimed = await dispatchModalToPlugin(fakeModalInteraction() as never);
+    const claimed = await dispatchModalToPlugin(
+      fakeModalInteraction() as never,
+    );
     expect(claimed).toBe(true);
     expect(capturedUrl(fetchSpy)).toBe(`${PLUGIN_URL}/modals/feedback`);
 

@@ -301,7 +301,10 @@ export class PluginRegistry {
    * land in `commandSyncStates` + botEventLog. Callers (register) get
    * their HTTP response without waiting on any Discord REST call.
    */
-  private scheduleCommandSync(plugin: PluginRow, manifest: PluginManifest): void {
+  private scheduleCommandSync(
+    plugin: PluginRow,
+    manifest: PluginManifest,
+  ): void {
     const key = plugin.pluginKey;
     const inFlight = this.commandSyncRuns.get(key);
     if (inFlight) {
@@ -401,7 +404,10 @@ export class PluginRegistry {
    * off, newly-requested scopes stay pending until an admin approves
    * them and only the previously-approved subset is granted meanwhile.
    */
-  async register(rawManifest: unknown): Promise<RegisterResult> {
+  async register(
+    rawManifest: unknown,
+    options: { readinessProtocol?: "v1" } = {},
+  ): Promise<RegisterResult> {
     const v = await validateManifest(rawManifest);
     if (!v.ok) {
       throw new ManifestError(v.error);
@@ -483,6 +489,7 @@ export class PluginRegistry {
       pluginId: -1,
       pluginKey: manifest.plugin.id,
       scopes: approvedScopes,
+      endpointUrl: manifest.plugin.url,
     });
     const persisted = await upsertPluginRegistration({
       pluginKey: manifest.plugin.id,
@@ -501,6 +508,7 @@ export class PluginRegistry {
       pluginId: persisted.id,
       pluginKey: manifest.plugin.id,
       scopes: approvedScopes,
+      endpointUrl: manifest.plugin.url,
     });
     // Persist the real hash in place of the placeholder.
     persisted.tokenHash = real.tokenHash;
@@ -610,7 +618,15 @@ export class PluginRegistry {
     // the same url the DB row already carries; with replicas>1 each
     // replica's distinct url accumulates here under one pluginKey, each
     // with its own TTL, so a stopped replica ages out independently.
-    pluginEndpointRegistry.touch(manifest.plugin.id, manifest.plugin.url);
+    if (options.readinessProtocol === "v1") {
+      pluginEndpointRegistry.initialize(
+        manifest.plugin.id,
+        manifest.plugin.url,
+      );
+    } else {
+      // Rolling-upgrade compatibility for SDKs predating readiness-v1.
+      pluginEndpointRegistry.touch(manifest.plugin.id, manifest.plugin.url);
+    }
     // Invalidate the proxy/lookup cache so the fresh row is read on
     // the next request (e.g. URL change on re-register).
     invalidatePluginByKey(manifest.plugin.id);
@@ -651,7 +667,9 @@ export class PluginRegistry {
     // Probe the dispatch HMAC path a few seconds after the plugin has
     // its credentials (PM-7.9.4) — a scheme mismatch shows up in the
     // admin UI immediately instead of on the first user command.
-    scheduleRegisterProbe(manifest.plugin.id);
+    if (options.readinessProtocol !== "v1") {
+      scheduleRegisterProbe(manifest.plugin.id);
+    }
 
     return {
       plugin: persisted,
@@ -660,6 +678,27 @@ export class PluginRegistry {
       dispatchHmacKey: dispatchHmacKeyCleartext,
       eventSubscriptions,
     };
+  }
+
+  /** Mark exactly one authenticated replica dispatchable. */
+  async ready(pluginId: number, endpointUrl: string): Promise<boolean> {
+    const row = await findPluginById(pluginId);
+    if (!row) return false;
+    const becameReady = pluginEndpointRegistry.markReady(
+      row.pluginKey,
+      endpointUrl,
+    );
+    if (!becameReady) return false;
+    invalidatePluginByKey(row.pluginKey);
+    dropDispatchPoolForPlugin(row.pluginKey);
+    scheduleRegisterProbe(row.pluginKey);
+    botEventLog.record(
+      "info",
+      "bot",
+      `Plugin replica ready: ${row.pluginKey}`,
+      { pluginId, pluginKey: row.pluginKey, endpointUrl },
+    );
+    return true;
   }
 
   /**
@@ -690,7 +729,7 @@ export class PluginRegistry {
         typeof advertisedUrl === "string" && advertisedUrl.length > 0
           ? advertisedUrl
           : touched.row.url;
-      pluginEndpointRegistry.touch(touched.row.pluginKey, url);
+      pluginEndpointRegistry.heartbeat(touched.row.pluginKey, url);
     }
     if (touched?.revived) {
       emitPluginChange({ pluginId, row: touched.row });
@@ -733,7 +772,7 @@ export class PluginRegistry {
     }
     // If other replicas are still alive, keep the plugin active — only
     // this bearer is retired.
-    const remaining = pluginEndpointRegistry.endpoints(row.pluginKey);
+    const remaining = pluginEndpointRegistry.allEndpoints(row.pluginKey);
     if (remaining.length > 0) {
       this.auth.revokeToken(token);
       return;

@@ -40,23 +40,23 @@ The SDK encapsulates the boilerplate every plugin needs:
 ## Quick start
 
 ```ts
-import { definePlugin, definePluginCommand } from '@karyl-chan/plugin-sdk';
-import { randomUUID } from 'node:crypto';
+import { definePlugin, definePluginCommand } from "@karyl-chan/plugin-sdk";
+import { randomUUID } from "node:crypto";
 
 export default function buildPlugin() {
   return definePlugin({
-    key: 'karyl-example',
-    name: 'Karyl Example',
-    version: '0.1.0',
-    description: 'Pure-logic example commands.',
+    key: "karyl-example",
+    name: "Karyl Example",
+    version: "0.1.0",
+    description: "Pure-logic example commands.",
     pluginCommands: [
       definePluginCommand({
-        name: 'uuid',
-        description: 'Generate a v4 UUID',
-        scope: 'guild',
-        integrationTypes: ['guild_install'],
-        contexts: ['Guild', 'BotDM', 'PrivateChannel'],
-        handler: async (_ctx) => '🔑 `' + randomUUID() + '`',
+        name: "uuid",
+        description: "Generate a v4 UUID",
+        scope: "guild",
+        integrationTypes: ["guild_install"],
+        contexts: ["Guild", "BotDM", "PrivateChannel"],
+        handler: async (_ctx) => "🔑 `" + randomUUID() + "`",
       }),
     ],
   });
@@ -64,6 +64,7 @@ export default function buildPlugin() {
 
 // index.ts
 const started = await buildPlugin().start();
+await started.whenReady(); // initialization + bot-side ready transition
 // Reads PORT, HOST, BOT_URL, PLUGIN_URL, KARYL_PLUGIN_SETUP_SECRET from env.
 // Or pass overrides: await buildPlugin().start({ port: 3000, botUrl: 'http://…' });
 ```
@@ -71,21 +72,21 @@ const started = await buildPlugin().start();
 `definePlugin` accepts these top-level fields (all optional except
 `key` / `name` / `version`):
 
-| Field | Purpose |
-|-------|---------|
-| `pluginCommands` | Top-level slash commands. |
-| `guildFeatures` | Feature-gated command groups, each with its own enable toggle. |
-| `components` | Button + select-menu handlers. |
-| `modals` | Modal-submit handlers. |
-| `capabilities` | Custom capability tokens (`plugin:<key>:<cap>`). |
-| `eventHandlers` | Discord-side event handlers (`Events.GuildMessageCreate`, …). |
-| `storage` | `{ guildKv: true }` opts the plugin into per-guild KV. |
-| `rpcMethodsUsed` | Extra `/api/plugin/*` scopes the auto-deriver can't see. |
-| `onReady(server)` | Mount custom Fastify routes (e.g. a WebUI). |
-| `onStart(ctx)` | Background-task hook; ctx lives the whole process. |
-| `onStop(ctx)` | Graceful shutdown counterpart. |
-| `onEnable / onDisable(ctx, guildId)` | Per-guild lifecycle. |
-| `healthCheck(ctx)` | Custom `/health/detail` producer. |
+| Field                                | Purpose                                                        |
+| ------------------------------------ | -------------------------------------------------------------- |
+| `pluginCommands`                     | Top-level slash commands.                                      |
+| `guildFeatures`                      | Feature-gated command groups, each with its own enable toggle. |
+| `components`                         | Button + select-menu handlers.                                 |
+| `modals`                             | Modal-submit handlers.                                         |
+| `capabilities`                       | Custom capability tokens (`plugin:<key>:<cap>`).               |
+| `eventHandlers`                      | Discord-side event handlers (`Events.GuildMessageCreate`, …).  |
+| `storage`                            | `{ guildKv: true }` opts the plugin into per-guild KV.         |
+| `rpcMethodsUsed`                     | Extra `/api/plugin/*` scopes the auto-deriver can't see.       |
+| `onReady(server)`                    | Mount custom Fastify routes (e.g. a WebUI).                    |
+| `onStart(ctx)`                       | Background-task hook; ctx lives the whole process.             |
+| `onStop(ctx)`                        | Graceful shutdown counterpart.                                 |
+| `onEnable / onDisable(ctx, guildId)` | Per-guild lifecycle.                                           |
+| `healthCheck(ctx)`                   | Custom `/health/detail` producer.                              |
 
 ---
 
@@ -96,8 +97,10 @@ const started = await buildPlugin().start();
 1. Builds a Fastify instance (`logger: true`).
 2. Mounts the SDK's HMAC-verified routes (auto-mounted only when the
    relevant declaration exists):
-   - `GET /health` and `GET /health/detail` — liveness + rich
-     `HealthReport` for the bot's 60-s poll
+   - `GET /health` — process liveness
+   - `GET /health/ready` — 200 only after initialization and the bot-side
+     ready transition
+   - `GET /health/detail` — rich `HealthReport` plus `lifecycleState`
    - `POST /commands/:name` (always when at least one command is declared)
    - `POST /commands/:name/autocomplete` (when any command has `autocomplete`)
    - `POST /components` (when `components` is non-empty)
@@ -107,12 +110,18 @@ const started = await buildPlugin().start();
 3. Runs the `onReady(server)` hook, then calls `listen()` on `PORT` / `HOST`.
 4. If `KARYL_PLUGIN_SETUP_SECRET` is set: builds the manifest (auto-stamped
    with `sdk_version` and auto-derived `rpcMethodsUsed`) and starts the
-   lifecycle client (register + heartbeat, exponential-backoff retry,
+   lifecycle client (two-phase register/ready + heartbeat, exponential-backoff retry,
    automatic re-register on `401`).
-5. On the first successful register: fires the `onStart(ctx)` hook with a
-   fully populated `PluginContext`.
-6. Registers `SIGTERM` / `SIGINT` for graceful shutdown.
-7. Returns a `StartedPlugin` with these handles (the typed RPC accessors
+5. On the first successful register: records this replica as
+   `initializing`, starts the configured event transport, and fires
+   `onStart(ctx)` with a fully populated `PluginContext`.
+6. After initialization succeeds: performs an authenticated ready transition;
+   only then can any Dispatch Kind reach this replica. A thrown initializer
+   rejects `started.whenReady()`, stops heartbeat, deregisters best-effort,
+   and leaves health/diagnostics listening but non-ready.
+7. Registers `SIGTERM` / `SIGINT` for graceful shutdown.
+8. Returns a `StartedPlugin` immediately after listen; registration may still
+   be retrying. It exposes these handles (the typed RPC accessors
    are only useful after the first successful register):
    - `server` — the Fastify instance.
    - `address()` — the listening address.
@@ -124,29 +133,33 @@ const started = await buildPlugin().start();
    - `getPublicBaseUrl()` — bot-proxied public URL of this plugin's WebUI.
    - `getDispatchHmacKey()` — per-plugin HMAC key (rarely needed; the
      SDK verifies inbound dispatches itself).
+   - `lifecycleState()` — `listening` / `registering` / `initializing` /
+     `ready` / `failed` / `serving_dark` / `stopping`.
+   - `whenReady()` — waitable readiness guarantee; rejects with the original
+     initializer error.
 
 ### Lifecycle hooks
 
-| Hook | When | Receives | Notes |
-|------|------|----------|-------|
-| `onReady(server)` | After SDK mounts its routes, before `listen()` | Fastify instance | Add custom routes here. |
-| `onStart(ctx)` | After first successful register | `PluginContext` | Once per process. Capture `ctx` for background timers. |
-| `onStop(ctx)` | On SIGTERM / SIGINT or `started.stop()` | `PluginContext` | Tear down timers, drain queues, flush state. |
-| `onEnable(ctx, guildId)` | Operator enables a feature in a guild | `PluginContext` + guildId | Triggered via `/_kc/lifecycle`. |
-| `onDisable(ctx, guildId)` | Operator disables a feature | `PluginContext` + guildId | Same dispatch path as `onEnable`. |
-| `healthCheck(ctx)` | Bot polls `/health/detail` (~60 s) | `PluginContext` | Should complete inside ~2 s; bot times out at 3 s. |
+| Hook                      | When                                           | Receives                  | Notes                                                                                                 |
+| ------------------------- | ---------------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `onReady(server)`         | After SDK mounts its routes, before `listen()` | Fastify instance          | Add custom routes here.                                                                               |
+| `onStart(ctx)`            | After credentials, before ready                | `PluginContext`           | Once per process. Capture `ctx` for background timers. A throw fails readiness and prevents dispatch. |
+| `onStop(ctx)`             | On SIGTERM / SIGINT or `started.stop()`        | `PluginContext`           | Tear down timers, drain queues, flush state.                                                          |
+| `onEnable(ctx, guildId)`  | Operator enables a feature in a guild          | `PluginContext` + guildId | Triggered via `/_kc/lifecycle`.                                                                       |
+| `onDisable(ctx, guildId)` | Operator disables a feature                    | `PluginContext` + guildId | Same dispatch path as `onEnable`.                                                                     |
+| `healthCheck(ctx)`        | Bot polls `/health/detail` (~60 s)             | `PluginContext`           | Should complete inside ~2 s; bot times out at 3 s.                                                    |
 
 ---
 
 ## Environment variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `3000` | Listen port. |
-| `HOST` | `0.0.0.0` | Listen host. |
-| `BOT_URL` | `http://karyl-chan:3000` | Bot base URL. |
-| `PLUGIN_URL` | `http://{key}:3000` | This plugin's URL (sent to the bot in the manifest; the bot dispatches here). **Set this explicitly in production** — the default assumes the docker hostname equals `config.key`. |
-| `KARYL_PLUGIN_SETUP_SECRET` | — | Per-plugin setup secret. An admin pre-provisions it via `POST /api/plugins/setup-secret`. When unset, the plugin serves dispatch but never registers. |
+| Variable                    | Default                  | Description                                                                                                                                                                        |
+| --------------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PORT`                      | `3000`                   | Listen port.                                                                                                                                                                       |
+| `HOST`                      | `0.0.0.0`                | Listen host.                                                                                                                                                                       |
+| `BOT_URL`                   | `http://karyl-chan:3000` | Bot base URL.                                                                                                                                                                      |
+| `PLUGIN_URL`                | `http://{key}:3000`      | This plugin's URL (sent to the bot in the manifest; the bot dispatches here). **Set this explicitly in production** — the default assumes the docker hostname equals `config.key`. |
+| `KARYL_PLUGIN_SETUP_SECRET` | —                        | Per-plugin setup secret. An admin pre-provisions it via `POST /api/plugins/setup-secret`. When unset, the plugin serves dispatch but never registers.                              |
 
 ---
 
@@ -188,18 +201,18 @@ interface CommandContext {
   pluginKey: string;
   commandName: string;
   subCommandName: string | null;
-  options: Record<string, unknown>;  // parsed { name: value }
+  options: Record<string, unknown>; // parsed { name: value }
   guildId: string | null;
   channelId: string | null;
   userId: string;
-  userDisplayName: string;           // global → username → id fallback
-  capabilities: string[];            // bot-resolved subset for this dispatch
+  userDisplayName: string; // global → username → id fallback
+  capabilities: string[]; // bot-resolved subset for this dispatch
   hasCapability(capKey: string): boolean;
   interactionId: string;
   interactionToken: string;
   log: Logger;
-  publicBaseUrl?: string;            // see "publicBaseUrl" section
-  botRpc(path: string, body?: unknown): Promise<unknown>;  // escape hatch
+  publicBaseUrl?: string; // see "publicBaseUrl" section
+  botRpc(path: string, body?: unknown): Promise<unknown>; // escape hatch
   // Typed RPC facade
   discord: Discord;
   voice: Voice;
@@ -231,25 +244,25 @@ objects with `ephemeral` omitted inherit the command's
 import {
   definePluginCommand,
   ApplicationCommandOptionType,
-} from '@karyl-chan/plugin-sdk';
+} from "@karyl-chan/plugin-sdk";
 
 definePluginCommand({
-  name: 'remind-add',
-  description: 'Schedule a reminder.',
-  scope: 'guild',
-  integrationTypes: ['guild_install'],
-  contexts: ['Guild'],
+  name: "remind-add",
+  description: "Schedule a reminder.",
+  scope: "guild",
+  integrationTypes: ["guild_install"],
+  contexts: ["Guild"],
   options: [
     {
       type: ApplicationCommandOptionType.String,
-      name: 'when',
-      description: 'Duration like 10m, 2h, 1d.',
+      name: "when",
+      description: "Duration like 10m, 2h, 1d.",
       required: true,
     },
     {
       type: ApplicationCommandOptionType.String,
-      name: 'what',
-      description: 'What should I remind you about?',
+      name: "what",
+      description: "What should I remind you about?",
       required: true,
     },
   ],
@@ -271,8 +284,8 @@ translation, and retry/error narrowing:
 
 ```ts
 // discord — messages, members, interactions
-await ctx.discord.messages.send({ channelId, content: 'hi' });
-await ctx.discord.interactions.respond({ interactionToken, content: 'ack' });
+await ctx.discord.messages.send({ channelId, content: "hi" });
+await ctx.discord.interactions.respond({ interactionToken, content: "ack" });
 
 // voice
 await ctx.voice.play({ guildId, url });
@@ -282,15 +295,19 @@ const guildIds = await ctx.me.enabledGuilds();
 const { usedBytes, quotaBytes } = await ctx.me.kvUsage({ guildId });
 
 // kv — per-guild typed key-value store with built-in JSON codec
-interface Reminder { id: string; dueAtMs: number; text: string }
+interface Reminder {
+  id: string;
+  dueAtMs: number;
+  text: string;
+}
 const kv = ctx.kv.guild<Reminder>(guildId);
 await kv.set(`r:${row.id}`, row);
-const { entries } = await kv.listValues({ prefix: 'r:' });
+const { entries } = await kv.listValues({ prefix: "r:" });
 
 // auth — WebUI session token
 const session = await ctx.auth.mintSession({
   userId: ctx.userId,
-  kind: 'session',      // or 'manage' (requires plugin:<key>:manage)
+  kind: "session", // or 'manage' (requires plugin:<key>:manage)
   guildId: ctx.guildId,
 });
 ```
@@ -306,19 +323,19 @@ Every typed method (and `ctx.botRpc`) throws `BotRpcError` on failure
 with a discriminated `reason`:
 
 ```ts
-import { BotRpcError } from '@karyl-chan/plugin-sdk';
+import { BotRpcError } from "@karyl-chan/plugin-sdk";
 
 try {
   await ctx.kv.guild(guildId).set(key, value);
 } catch (err) {
   if (err instanceof BotRpcError) {
     switch (err.reason) {
-      case 'quota_exceeded': /* per-guild KV quota busted */
-      case 'forbidden':      /* scope missing or feature not enabled */
-      case 'rate_limited':   /* 429 after SDK exhausted retries */
-      case 'network':        /* DNS / connection / abort */
-      case 'no_token':       /* plugin not yet registered */
-      case 'http_status':    /* every other 4xx/5xx */
+      case "quota_exceeded": /* per-guild KV quota busted */
+      case "forbidden": /* scope missing or feature not enabled */
+      case "rate_limited": /* 429 after SDK exhausted retries */
+      case "network": /* DNS / connection / abort */
+      case "no_token": /* plugin not yet registered */
+      case "http_status": /* every other 4xx/5xx */
     }
   }
 }
@@ -338,25 +355,29 @@ compounds backoff and swamps the bot during real outages.
 Per-guild key-value store, JSON-serialised, with quota enforcement.
 
 ```ts
-import type { GuildKv } from '@karyl-chan/plugin-sdk';
+import type { GuildKv } from "@karyl-chan/plugin-sdk";
 
-interface Reminder { id: string; dueAtMs: number; text: string }
+interface Reminder {
+  id: string;
+  dueAtMs: number;
+  text: string;
+}
 
 const kv: GuildKv<Reminder> = ctx.kv.guild<Reminder>(guildId);
 
-await kv.set(`r:${row.id}`, row);           // JSON.stringify under the hood
-const row = await kv.get(`r:${id}`);        // returns Reminder | null
-const { entries, total } = await kv.listValues({ prefix: 'r:', limit: 50 });
-await kv.delete(`r:${id}`);                 // returns true when row existed
-const { value: next } = await kv.increment('counter'); // atomic numeric increment
+await kv.set(`r:${row.id}`, row); // JSON.stringify under the hood
+const row = await kv.get(`r:${id}`); // returns Reminder | null
+const { entries, total } = await kv.listValues({ prefix: "r:", limit: 50 });
+await kv.delete(`r:${id}`); // returns true when row existed
+const { value: next } = await kv.increment("counter"); // atomic numeric increment
 const { usedBytes, quotaBytes } = await kv.usage();
 ```
 
 Hard caps (importable as constants):
 
-| Constant | Value | Meaning |
-|----------|-------|---------|
-| `KV_KEY_MAX` | `200` | Max key length in characters. |
+| Constant             | Value    | Meaning                            |
+| -------------------- | -------- | ---------------------------------- |
+| `KV_KEY_MAX`         | `200`    | Max key length in characters.      |
 | `KV_VALUE_MAX_BYTES` | `65_536` | Max serialised value size per row. |
 
 Per-guild quota is configurable in the manifest:
@@ -387,13 +408,13 @@ into 403s from `requireScope` on the bot side after switching from
 
 Auto-injected when present:
 
-| Declarative signal | Scopes added |
-|--------------------|--------------|
-| ≥1 command / component / modal | `interactions.respond`, `interactions.followup` |
-| ≥1 `modal:true` or `modals[]` | `interactions.send_modal` |
-| `storage.guildKv: true` | `storage.kv_{get,set,list,list_values,delete,increment}`, `me.kv_usage` |
-| `onStart` / `onStop` present | `me.enabled_guilds` |
-| Always | `me.log`, `me.metrics` |
+| Declarative signal             | Scopes added                                                            |
+| ------------------------------ | ----------------------------------------------------------------------- |
+| ≥1 command / component / modal | `interactions.respond`, `interactions.followup`                         |
+| ≥1 `modal:true` or `modals[]`  | `interactions.send_modal`                                               |
+| `storage.guildKv: true`        | `storage.kv_{get,set,list,list_values,delete,increment}`, `me.kv_usage` |
+| `onStart` / `onStop` present   | `me.enabled_guilds`                                                     |
+| Always                         | `me.log`, `me.metrics`                                                  |
 
 The explicit `rpcMethodsUsed` array stays the documented escape hatch
 for any scope the auto-rules don't cover (e.g. `voice.*`, `channels.*`,
@@ -409,14 +430,14 @@ capturing it lets `setInterval` / queue consumers / cron jobs reach
 the typed facade and metrics surface without any extra plumbing.
 
 ```ts
-import { definePlugin, type PluginContext } from '@karyl-chan/plugin-sdk';
+import { definePlugin, type PluginContext } from "@karyl-chan/plugin-sdk";
 
 let stopTimer: (() => void) | null = null;
 
 export default definePlugin({
-  key: 'karyl-digest',
-  name: 'Daily Digest',
-  version: '0.1.0',
+  key: "karyl-digest",
+  name: "Daily Digest",
+  version: "0.1.0",
 
   async onStart(ctx: PluginContext) {
     let stopped = false;
@@ -428,13 +449,15 @@ export default definePlugin({
           await runOnce(ctx, guildId);
         }
       } catch (err) {
-        ctx.log.warn('digest tick failed', { err: String(err) });
+        ctx.log.warn("digest tick failed", { err: String(err) });
       } finally {
         if (!stopped) setTimeout(tick, 60_000);
       }
     };
     setTimeout(tick, 60_000);
-    stopTimer = () => { stopped = true; };
+    stopTimer = () => {
+      stopped = true;
+    };
   },
 
   async onStop(_ctx) {
@@ -461,15 +484,26 @@ dispatches by event type. Use the `Events` constant so a typo can't
 silently subscribe to nothing:
 
 ```ts
-import { definePlugin, Events, type EventHandler } from '@karyl-chan/plugin-sdk';
+import {
+  definePlugin,
+  Events,
+  type EventHandler,
+} from "@karyl-chan/plugin-sdk";
 
 definePlugin({
   // …
   eventHandlers: {
     [Events.GuildMessageCreate]: async (ctx, data) => {
-      const msg = data as { channel_id: string; content?: string; author: { id: string } };
-      if (msg.content === '!ping') {
-        await ctx.discord.messages.send({ channelId: msg.channel_id, content: 'pong' });
+      const msg = data as {
+        channel_id: string;
+        content?: string;
+        author: { id: string };
+      };
+      if (msg.content === "!ping") {
+        await ctx.discord.messages.send({
+          channelId: msg.channel_id,
+          content: "pong",
+        });
       }
     },
   },
@@ -478,12 +512,12 @@ definePlugin({
 
 Canonical event names today (additive over time):
 
-| Constant | Wire name | When |
-|----------|-----------|------|
-| `Events.GuildMessageCreate` | `guild.message_create` | Non-bot message in a guild text channel. |
-| `Events.DmMessageCreate` | `dm.message_create` | Non-bot DM to the bot. |
-| `Events.GuildMessageReactionAdd` | `guild.message_reaction_add` | Reaction added to a guild message. |
-| `Events.GuildMessageReactionRemove` | `guild.message_reaction_remove` | Reaction removed from a guild message. |
+| Constant                            | Wire name                       | When                                     |
+| ----------------------------------- | ------------------------------- | ---------------------------------------- |
+| `Events.GuildMessageCreate`         | `guild.message_create`          | Non-bot message in a guild text channel. |
+| `Events.DmMessageCreate`            | `dm.message_create`             | Non-bot DM to the bot.                   |
+| `Events.GuildMessageReactionAdd`    | `guild.message_reaction_add`    | Reaction added to a guild message.       |
+| `Events.GuildMessageReactionRemove` | `guild.message_reaction_remove` | Reaction removed from a guild message.   |
 
 The handler keys are merged into `events_subscribed_global` in the
 manifest automatically, and `endpoints.events = "/events"` is set so the
@@ -521,7 +555,7 @@ it in two places:
 - `CommandContext.publicBaseUrl?: string` — available inside every command
   handler; use it to build browser-facing links.
 
-The value is `undefined` until the first successful register *and* only when
+The value is `undefined` until the first successful register _and_ only when
 the bot has `WEB_BASE_URL` set. Handle the fallback with a plugin-side env
 variable or a hardcoded default. `publicBaseUrl` supersedes any manually-set
 public-URL env variable when the plugin is accessed through the bot proxy.
@@ -535,31 +569,34 @@ When a plugin hands a user a browser link, it mints a `plugin-session` JWT:
 ```ts
 const session = await ctx.auth.mintSession({
   userId: ctx.userId,
-  kind: 'session',       // 'manage' for admin surfaces
+  kind: "session", // 'manage' for admin surfaces
   guildId: ctx.guildId ?? undefined,
 });
 if (!session.allowed) {
-  return { content: 'No permission.', ephemeral: true };
+  return { content: "No permission.", ephemeral: true };
 }
 // session.token + session.expiresAt
 ```
 
 The two `kind` values:
 
-| Kind | Capability gate | Default TTL |
-|------|-----------------|-------------|
-| `'session'` | None (the slash command is permission-gated). | 6 h |
-| `'manage'` | Requires `admin` OR `plugin:<key>:manage` on the user. | 15 min |
+| Kind        | Capability gate                                        | Default TTL |
+| ----------- | ------------------------------------------------------ | ----------- |
+| `'session'` | None (the slash command is permission-gated).          | 6 h         |
+| `'manage'`  | Requires `admin` OR `plugin:<key>:manage` on the user. | 15 min      |
 
 The plugin puts the token in the link. On the WebUI side, verify it offline:
 
 ```ts
-import { verifyPluginSession, hasPluginCapability } from '@karyl-chan/plugin-sdk';
+import {
+  verifyPluginSession,
+  hasPluginCapability,
+} from "@karyl-chan/plugin-sdk";
 
 const claims = verifyPluginSession(token, getSessionVerifyPublicKey());
 // claims: { userId, guildId, capabilities } | null
 if (!claims) return reply.code(401).send();
-if (!hasPluginCapability(claims.capabilities, pluginKey, 'webui.access')) {
+if (!hasPluginCapability(claims.capabilities, pluginKey, "webui.access")) {
   return reply.code(403).send();
 }
 ```
@@ -616,7 +653,7 @@ Stable surface (no breaking changes within a major):
 6. Manifest schema — additive only.
 7. HMAC wire format (header names, canonical string, ±300 s window).
 8. `BotRpcError.reason` values may grow but never shrink.
-9. SDK-mounted route paths (`/health`, `/health/detail`,
+9. SDK-mounted route paths (`/health`, `/health/ready`, `/health/detail`,
    `/commands/:name`, `…/autocomplete`, `/components`,
    `/modals/:modalId`, `/_kc/lifecycle`, `/events`).
 10. `Events.*` constants — wire names never change once published.
