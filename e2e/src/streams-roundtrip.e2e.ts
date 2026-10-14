@@ -14,12 +14,9 @@
  * a live broker — the one thing pure unit tests with a Map-backed stub
  * cannot prove.
  *
- * GATED behind TEST_E2E_REDIS_URL so it never runs in the normal suite
- * (this dir is also outside the pnpm workspace, so `pnpm -r test` skips
- * it entirely). To run, see e2e/README.md.
- *
- * Status: harness is correct + gated + documented. NOT executed in this
- * environment (no Redis/docker available here).
+ * GATED behind TEST_E2E_REDIS_URL so it never runs in the service-free
+ * package unit suite. The dedicated `plugin-platform-e2e` CI job sets the
+ * gate and rejects any required scenario that reports SKIP/TODO.
  *
  * Implementation note: the two cross-package modules are pulled in via
  * dynamic `import()` with local structural types, NOT static imports.
@@ -116,7 +113,10 @@ async function loadSdkConsumer(): Promise<{
     StreamsConsumer: ConsumerCtor;
     groupNameFor: (pluginKey: string) => string;
   };
-  return { StreamsConsumer: mod.StreamsConsumer, groupNameFor: mod.groupNameFor };
+  return {
+    StreamsConsumer: mod.StreamsConsumer,
+    groupNameFor: mod.groupNameFor,
+  };
 }
 
 async function makeRedis(): Promise<RedisClient> {

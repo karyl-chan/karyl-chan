@@ -235,8 +235,13 @@ describe("admin auth + builtin feature E2E (PM-2.2, paths 1+2)", { skip: !DB_URL
     if (bot && bot.exitCode === null) {
       const exited = new Promise<void>((resolve) => bot?.once("exit", () => resolve()));
       bot.kill("SIGTERM");
-      const timeout = new Promise<"timeout">((r) => setTimeout(() => r("timeout"), 15_000));
+      let watchdog: NodeJS.Timeout;
+      const timeout = new Promise<"timeout">((resolve) => {
+        watchdog = setTimeout(() => resolve("timeout"), 15_000);
+        watchdog.unref();
+      });
       const result = await Promise.race([exited.then(() => "exited" as const), timeout]);
+      clearTimeout(watchdog!);
       if (result === "timeout") {
         bot.kill("SIGKILL");
         throw new Error(

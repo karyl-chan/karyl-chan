@@ -1,15 +1,12 @@
-# Minimal topology for the karyl-chan cross-service E2E / chaos harness.
+# Local services for the karyl-chan cross-service E2E / recovery gate.
+# The required runner uses Redis + Postgres and spawns host bot/plugin
+# processes itself. The optional containerized bot remains available for
+# manual topology debugging under the `full` profile.
 #
-# The current harness (streams-roundtrip.e2e.ts) only needs Redis — it
-# drives the bot producer and SDK consumer in-process against a real
-# broker. The bot + plugin + postgres services below are scaffolded for
-# the fuller WebUI / RPC round-trip and the chaos scenarios (kill a
-# service, partition the network); bring them up only when a scenario
-# needs them.
-#
-#   docker compose -f e2e/docker-compose.e2e.yml up -d redis
-#   TEST_E2E_REDIS_URL=redis://localhost:6390 pnpm --dir e2e e2e
-#   docker compose -f e2e/docker-compose.e2e.yml down -v
+#   docker compose -f e2e/docker-compose.e2e.yml --profile full up -d redis postgres
+#   # set TEST_E2E_REQUIRED, TEST_CHAOS, TEST_E2E_DB_URL, TEST_E2E_REDIS_URL
+#   pnpm --dir e2e required
+#   docker compose -f e2e/docker-compose.e2e.yml --profile full down
 
 services:
   redis:
@@ -38,7 +35,7 @@ services:
 
   # The bot, run WITHOUT a Discord login (BOT_SKIP_DISCORD=true) so the
   # HTTP surface (plugin register + RPC routes + WebUI) comes up for the
-  # RPC/WebUI round-trip and chaos scenarios without real Discord creds.
+  # manual RPC/WebUI debugging without real Discord credentials.
   # Built from the in-repo Dockerfile. Enable with `--profile full`.
   bot:
     profiles: ["full"]
