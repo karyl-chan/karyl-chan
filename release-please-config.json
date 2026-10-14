@@ -5,6 +5,7 @@
   "include-component-in-tag": true,
   "separate-pull-requests": true,
   "pull-request-title-pattern": "chore${scope}: release ${component} ${version}",
+  "group-pull-request-title-pattern": "chore${scope}: release ${component} libraries",
   "plugins": [
     {
       "type": "linked-versions",
