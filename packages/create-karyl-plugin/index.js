@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 // This range is intentionally guarded against packages/plugin-sdk/package.json
 // by the scaffold unit suite. Every SDK release must update and release the
 // initializer in the same change, so newly generated projects cannot drift.
-export const SDK_VERSION = "^0.14.0"; // x-release-please-version
+export const SDK_VERSION = "^0.15.0"; // x-release-please-version
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TEMPLATE_DIR = join(HERE, "template");
