@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.15.0](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.14.0...plugin-sdk-v0.15.0) (2026-10-14)
+
+
+### Features
+
+* **create-karyl-plugin:** prove public golden path ([#77](https://github.com/karyl-chan/karyl-chan/issues/77)) ([3455a01](https://github.com/karyl-chan/karyl-chan/commit/3455a01c2e7a0ac1627f067b2a7da3ba7d0550d2))
+
+
+### Bug Fixes
+
+* **plugin-platform:** negotiate event transport ([#75](https://github.com/karyl-chan/karyl-chan/issues/75)) ([8d204cf](https://github.com/karyl-chan/karyl-chan/commit/8d204cfa60d143b97213d326696e72db0e6d6252))
+* **plugin-sdk:** fail closed until plugin readiness ([#71](https://github.com/karyl-chan/karyl-chan/issues/71)) ([9d171f3](https://github.com/karyl-chan/karyl-chan/commit/9d171f3fef6d0cd8c8b0260d942e2e442d36bc1e))
+
 ## [0.14.0](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.13.0...plugin-sdk-v0.14.0) (2026-08-07)
 
 
