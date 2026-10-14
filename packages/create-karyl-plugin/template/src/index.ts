@@ -6,6 +6,12 @@ import { plugin } from "./plugin.js";
 // KARYL_PLUGIN_SETUP_SECRET from the environment (see .env.example).
 async function main(): Promise<void> {
   const started = await plugin.start();
+  if (started.lifecycleState() === "serving_dark") {
+    console.log(
+      "__PLUGIN_KEY__ is serving dark: /health is live; /health/ready remains not-ready until a setup secret is configured",
+    );
+    return;
+  }
   // start() means the HTTP listener is available. whenReady() is the
   // stronger platform guarantee: registration, transport startup, onStart,
   // and the bot-side ready transition have all completed.

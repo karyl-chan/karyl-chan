@@ -1,0 +1,69 @@
+name: Publish create-karyl-plugin
+
+# Publishes create-karyl-plugin to the public npm registry. Release-please
+# creates `create-karyl-plugin-v<semver>` tags and explicitly dispatches this
+# workflow because GITHUB_TOKEN-created tags do not trigger other workflows.
+#
+# Authentication uses npm Trusted Publishers (OIDC), not NPM_TOKEN. Configure
+# the package on npmjs.com with this exact publisher identity:
+#   provider: GitHub Actions
+#   repository: karyl-chan/karyl-chan
+#   workflow: publish-create-karyl-plugin.yml
+#   environment: (none)
+on:
+  push:
+    tags:
+      - 'create-karyl-plugin-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      # npm Trusted Publishing requires npm >=11.5.1. Node 22 runners may
+      # still bundle npm 10, so pin a known-compatible CLI explicitly.
+      - run: npm install --global npm@11.6.1
+      - run: pnpm install --frozen-lockfile
+      - name: Verify release artifacts
+        run: |
+          pnpm --dir packages/create-karyl-plugin test
+          pnpm --filter "@karyl-chan/plugin-sdk..." build
+          pnpm --dir packages/create-karyl-plugin test:packed
+
+      # Linked release tags are dispatched independently. Do not expose an
+      # initializer that emits an SDK range the registry cannot resolve yet.
+      - name: Wait for matching plugin SDK on npm
+        shell: bash
+        run: |
+          sdk_version=$(node -p "require('./packages/plugin-sdk/package.json').version")
+          for attempt in {1..30}; do
+            published=$(npm view "@karyl-chan/plugin-sdk@${sdk_version}" version \
+              --registry=https://registry.npmjs.org 2>/dev/null || true)
+            if [ "$published" = "$sdk_version" ]; then
+              echo "@karyl-chan/plugin-sdk@${sdk_version} is public"
+              exit 0
+            fi
+            echo "Waiting for @karyl-chan/plugin-sdk@${sdk_version} (${attempt}/30)"
+            sleep 10
+          done
+          echo "Timed out waiting for @karyl-chan/plugin-sdk@${sdk_version}" >&2
+          exit 1
+
+      # --provenance attaches the registry-verifiable GitHub Actions build
+      # attestation.
+      - name: Publish
+        working-directory: packages/create-karyl-plugin
+        run: npm publish --access public --provenance

@@ -1,10 +1,12 @@
 name: release-please
 
 # Runs on every push to main. release-please scans conventional commits
-# and maintains one "release PR" per package (bot, plugin-sdk, ui).
+# and maintains one release PR per package (bot, plugin-sdk,
+# create-karyl-plugin, ui).
 # Merging such a PR bumps the package.json version, updates CHANGELOG,
-# then tags `bot-v<x.y.z>` / `plugin-sdk-v<x.y.z>` / `ui-v<x.y.z>` and
-# creates a GitHub release.
+# then tags `bot-v<x.y.z>` / `plugin-sdk-v<x.y.z>` /
+# `create-karyl-plugin-v<x.y.z>` / `ui-v<x.y.z>` and creates a GitHub
+# release.
 #
 # The publish-bot-image.yml / publish-plugin-sdk.yml / publish-ui.yml
 # workflows trigger on those tags — BUT GitHub deliberately suppresses
@@ -38,6 +40,8 @@ jobs:
     outputs:
       plugin-sdk-released: ${{ steps.release.outputs['packages/plugin-sdk--release_created'] }}
       plugin-sdk-tag: ${{ steps.release.outputs['packages/plugin-sdk--tag_name'] }}
+      create-karyl-plugin-released: ${{ steps.release.outputs['packages/create-karyl-plugin--release_created'] }}
+      create-karyl-plugin-tag: ${{ steps.release.outputs['packages/create-karyl-plugin--tag_name'] }}
       bot-released: ${{ steps.release.outputs['packages/bot--release_created'] }}
       bot-tag: ${{ steps.release.outputs['packages/bot--tag_name'] }}
       ui-released: ${{ steps.release.outputs['packages/ui--release_created'] }}
@@ -65,6 +69,21 @@ jobs:
           gh workflow run publish-plugin-sdk.yml \
             --repo ${{ github.repository }} \
             --ref ${{ needs.release-please.outputs.plugin-sdk-tag }}
+
+  publish-create-karyl-plugin:
+    needs: release-please
+    if: needs.release-please.outputs.create-karyl-plugin-released == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch publish-create-karyl-plugin
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run publish-create-karyl-plugin.yml \
+            --repo ${{ github.repository }} \
+            --ref ${{ needs.release-please.outputs.create-karyl-plugin-tag }}
 
   publish-bot:
     needs: release-please

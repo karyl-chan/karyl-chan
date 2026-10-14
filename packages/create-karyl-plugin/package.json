@@ -1,18 +1,28 @@
 {
   "name": "create-karyl-plugin",
-  "version": "0.1.0",
+  "version": "0.14.0",
   "description": "Scaffold a new karyl-chan plugin — a minimal hello-world that responds to a slash command.",
   "type": "module",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/karyl-chan/karyl-chan.git",
+    "directory": "packages/create-karyl-plugin"
+  },
   "bin": {
     "create-karyl-plugin": "index.js"
   },
   "files": [
+    "CHANGELOG.md",
     "index.js",
     "template"
   ],
   "scripts": {
-    "test": "node --test \"tests/*.test.js\""
+    "test": "node --test \"tests/scaffold.test.js\"",
+    "test:packed": "node --test \"tests/packed-smoke.test.js\""
   },
   "engines": {
     "node": ">=22"
