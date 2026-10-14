@@ -522,9 +522,17 @@ Canonical event names today (additive over time):
 The handler keys are merged into `events_subscribed_global` in the
 manifest automatically, and `endpoints.events = "/events"` is set so the
 bot dispatches here. Plugins do **not** mount their own `/events` route
-or implement HMAC verification — the SDK owns both. Future transport
-swaps (HTTP → Redis Streams, batching) happen inside the SDK without
-changing handlers.
+or implement HMAC verification — the SDK owns both.
+
+At registration the SDK advertises the transports this replica can really
+start and the bot returns the one authoritative selection. HTTP is always
+available. Redis Streams is advertised only when `EVENT_BUS=redis-streams`,
+`REDIS_URL` is non-empty, and the optional `ioredis` peer dependency can be
+loaded. A mismatch is a permanent registration failure: the replica stays
+not-ready and the response explains the missing configuration or dependency.
+The author-facing handler API remains unchanged. See
+[Event delivery and DLQ operations](docs/event-delivery.md) for delivery
+semantics and the operator runbook.
 
 The manifest builder warns at build time if any subscribed event name
 isn't in `Events.*` — that catches dead subscriptions like the raw
@@ -663,8 +671,9 @@ Allowed non-breaking evolution:
 - New methods on `ctx.discord.*` / `ctx.voice.*` / `ctx.me.*` /
   `ctx.kv.*` / `ctx.auth.*` (or a new namespace).
 - New optional fields on `PluginConfig` / contexts / manifest.
-- Internal transport swaps (e.g. event dispatch HTTP → Redis Streams) —
-  the plugin author's surface is unchanged.
+- Bot-selected event transport changes (HTTP ↔ Redis Streams) — the SDK
+  negotiates capability during registration and the plugin author's handler
+  surface is unchanged.
 - Additional `BotRpcError.reason` values.
 - Additional inbound retry on transient bot states.
 - Additional canonical events on `Events.*`.

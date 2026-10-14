@@ -111,7 +111,7 @@ async function loadSdkConsumer(): Promise<{
   groupNameFor: (pluginKey: string) => string;
 }> {
   const mod = (await dynImport(
-    "packages/plugin-sdk/dist/streams-consumer.js",
+    "packages/plugin-sdk/dist-test/src/streams-consumer.js",
   )) as {
     StreamsConsumer: ConsumerCtor;
     groupNameFor: (pluginKey: string) => string;

@@ -47,6 +47,12 @@ import {
 import { Op } from "sequelize";
 import { withBusyRetry } from "../../db.js";
 import { randomBytes } from "crypto";
+import type { EventTransportSelection } from "@karyl-chan/plugin-wire";
+import { configuredPluginEventTransport } from "../../adapters/registry.js";
+import {
+  EventTransportNegotiationError,
+  negotiateEventTransport,
+} from "./plugin-event-transport.js";
 
 const log = moduleLogger("plugin-registry");
 
@@ -249,6 +255,8 @@ export interface RegisterResult {
    * subscription in their own startup log, not only in the admin UI.
    */
   eventSubscriptions: EventSubscriptionCheck;
+  /** Register-time event transport selected by the bot. */
+  eventTransport: EventTransportSelection;
 }
 
 /**
@@ -406,13 +414,54 @@ export class PluginRegistry {
    */
   async register(
     rawManifest: unknown,
-    options: { readinessProtocol?: "v1" } = {},
+    options: {
+      readinessProtocol?: "v1";
+      eventTransports?: unknown;
+    } = {},
   ): Promise<RegisterResult> {
     const v = await validateManifest(rawManifest);
     if (!v.ok) {
       throw new ManifestError(v.error);
     }
     const manifest = v.manifest;
+
+    // ── Event transport negotiation ───────────────────────────────
+    // The bot owns the selection; the replica proves it can start that
+    // selection. This gate runs before token issue/persistence, so a mismatch
+    // cannot look active or consume credentials.
+    let eventTransport: EventTransportSelection;
+    try {
+      eventTransport = negotiateEventTransport(
+        manifest,
+        options.eventTransports,
+        configuredPluginEventTransport(),
+      );
+      if (
+        eventTransport.consumerRequired &&
+        options.readinessProtocol !== "v1"
+      ) {
+        throw new EventTransportNegotiationError(
+          "Redis Streams event delivery requires lifecycle readiness v1 so the bot can wait for the consumer group before dispatching. Rebuild with the current @karyl-chan/plugin-sdk.",
+          eventTransport.selected,
+        );
+      }
+    } catch (error) {
+      if (error instanceof EventTransportNegotiationError) {
+        pluginEndpointRegistry.recordTransportFailure(
+          manifest.plugin.id,
+          manifest.plugin.url,
+          error.selected,
+          error.message,
+        );
+        botEventLog.record("error", "bot", error.message, {
+          pluginKey: manifest.plugin.id,
+          endpointUrl: manifest.plugin.url,
+          selectedTransport: error.selected,
+          failureClass: "event_transport_misconfigured",
+        });
+      }
+      throw error;
+    }
 
     // ── Unknown event subscriptions (#29 decisions 4/6/7) ──────────
     // Host policy, not a Protocol Rule: whether a name is one this
@@ -622,10 +671,19 @@ export class PluginRegistry {
       pluginEndpointRegistry.initialize(
         manifest.plugin.id,
         manifest.plugin.url,
+        {
+          eventTransport: eventTransport.selected,
+          eventConsumerState: eventTransport.consumerRequired
+            ? "initializing"
+            : "not_applicable",
+        },
       );
     } else {
       // Rolling-upgrade compatibility for SDKs predating readiness-v1.
-      pluginEndpointRegistry.touch(manifest.plugin.id, manifest.plugin.url);
+      pluginEndpointRegistry.touch(manifest.plugin.id, manifest.plugin.url, {
+        eventTransport: eventTransport.selected,
+        eventConsumerState: "not_applicable",
+      });
     }
     // Invalidate the proxy/lookup cache so the fresh row is read on
     // the next request (e.g. URL change on re-register).
@@ -677,6 +735,7 @@ export class PluginRegistry {
       token: real.token,
       dispatchHmacKey: dispatchHmacKeyCleartext,
       eventSubscriptions,
+      eventTransport,
     };
   }
 

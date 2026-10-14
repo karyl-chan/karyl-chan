@@ -69,6 +69,8 @@ import { dispatchLifecycleToPlugin } from "./plugin-lifecycle-dispatch.service.j
 import { probePluginDispatch } from "./plugin-dispatch-probe.service.js";
 import { logger } from "../../logger.js";
 import { createHash, randomBytes } from "crypto";
+import { configuredPluginEventTransport } from "../../adapters/registry.js";
+import { pluginEndpointRegistry } from "./plugin-endpoint-registry.js";
 
 /**
  * Plugin Admin — the entry point for everything an operator does *to* a
@@ -1441,6 +1443,7 @@ async function assemblePluginDetail(p: PluginRow) {
     eventSubscriptions: evaluateEventSubscriptionsFromManifestJson(
       p.manifestJson,
     ),
+    eventTransport: adminEventTransportState(p.pluginKey),
     ...(health ? { health } : {}),
     ...(metrics ? { metrics } : {}),
   };
@@ -1510,9 +1513,38 @@ async function assemblePluginDetailByKey(p: PluginRow) {
       eventSubscriptions: evaluateEventSubscriptionsFromManifestJson(
         p.manifestJson,
       ),
+      eventTransport: adminEventTransportState(p.pluginKey),
       ...(health ? { health } : {}),
       ...(metrics ? { metrics } : {}),
     },
+  };
+}
+
+/** Bot selection plus per-replica consumer lifecycle for Plugin Admin. */
+function adminEventTransportState(pluginKey: string) {
+  const replicas = pluginEndpointRegistry.diagnostics(pluginKey).map((entry) => ({
+    url: entry.url,
+    lifecycleState: entry.state,
+    transport: entry.eventTransport ?? null,
+    consumerState: entry.eventConsumerState ?? "unknown",
+    ...(entry.transportError ? { error: entry.transportError } : {}),
+  }));
+  const status = replicas.some((replica) => replica.consumerState === "misconfigured")
+    ? "misconfigured"
+    : replicas.some((replica) => replica.consumerState === "initializing")
+      ? "initializing"
+      : replicas.some(
+            (replica) =>
+              replica.lifecycleState === "ready" &&
+              (replica.consumerState === "ready" ||
+                replica.consumerState === "not_applicable"),
+          )
+        ? "ready"
+        : "unknown";
+  return {
+    configured: configuredPluginEventTransport(),
+    status,
+    replicas,
   };
 }
 

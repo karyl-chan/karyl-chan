@@ -452,9 +452,14 @@ describe("7. readiness-v1 two-phase registration", () => {
       payload: {
         manifest,
         lifecycle: { readiness: "v1" },
+        eventTransports: { available: ["http"] },
       },
     });
     expect(register.statusCode).toBe(200);
+    expect(register.json().eventTransport).toEqual({
+      selected: "http",
+      consumerRequired: false,
+    });
     expect(register.json().readiness).toEqual({
       required: true,
       path: "/api/plugins/ready",
@@ -529,5 +534,179 @@ describe("7. readiness-v1 two-phase registration", () => {
     expect(pluginEndpointRegistry.endpoints(pluginKey)).toEqual([
       "http://replica-a:3000",
     ]);
+  });
+});
+
+describe("8. event transport negotiation", () => {
+  const originalEventBus = process.env.EVENT_BUS;
+
+  afterEach(() => {
+    if (originalEventBus === undefined) delete process.env.EVENT_BUS;
+    else process.env.EVENT_BUS = originalEventBus;
+    pluginEndpointRegistry.removeAll("transport-mismatch");
+    pluginEndpointRegistry.removeAll("transport-streams");
+    pluginEndpointRegistry.removeAll("transport-legacy");
+    pluginEndpointRegistry.removeAll("transport-legacy-http");
+    pluginEndpointRegistry.removeAll("transport-http");
+  });
+
+  async function provision(pluginKey: string, secret: string) {
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/plugins/setup-secret",
+      payload: { pluginKey, secret },
+    });
+    expect(response.statusCode).toBe(200);
+  }
+
+  function eventManifest(pluginKey: string) {
+    return {
+      ...makeManifest(pluginKey),
+      events_subscribed_global: ["guild.message_create"],
+    };
+  }
+
+  it("selects HTTP for a matching current SDK event subscriber", async () => {
+    process.env.EVENT_BUS = "http";
+    const pluginKey = "transport-http";
+    const secret = "transport-http-secret";
+    await provision(pluginKey, secret);
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/plugins/register",
+      headers: { "x-plugin-setup-secret": secret },
+      payload: {
+        manifest: eventManifest(pluginKey),
+        lifecycle: { readiness: "v1" },
+        eventTransports: { available: ["http"] },
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().eventTransport).toEqual({
+      selected: "http",
+      consumerRequired: false,
+    });
+  });
+
+  it("accepts the legacy register envelope in HTTP mode", async () => {
+    process.env.EVENT_BUS = "http";
+    const pluginKey = "transport-legacy-http";
+    const secret = "transport-legacy-http-secret";
+    await provision(pluginKey, secret);
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/plugins/register",
+      headers: { "x-plugin-setup-secret": secret },
+      payload: { manifest: eventManifest(pluginKey) },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().eventTransport).toEqual({
+      selected: "http",
+      consumerRequired: false,
+    });
+    expect(pluginEndpointRegistry.diagnostics(pluginKey)[0]).toMatchObject({
+      state: "ready",
+      eventTransport: "http",
+      eventConsumerState: "not_applicable",
+    });
+  });
+
+  it("fails closed with an actionable diagnostic when Streams is unavailable", async () => {
+    process.env.EVENT_BUS = "redis-streams";
+    const pluginKey = "transport-mismatch";
+    const secret = "transport-mismatch-secret";
+    await provision(pluginKey, secret);
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/plugins/register",
+      headers: { "x-plugin-setup-secret": secret },
+      payload: {
+        manifest: eventManifest(pluginKey),
+        lifecycle: { readiness: "v1" },
+        eventTransports: {
+          available: ["http"],
+          unavailable: { "redis-streams": "REDIS_URL is not set" },
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({
+      code: "event_transport_unavailable",
+      selectedTransport: "redis-streams",
+    });
+    expect(response.json().error).toContain("REDIS_URL is not set");
+    expect(response.json()).not.toHaveProperty("token");
+    expect(pluginEndpointRegistry.endpoints(pluginKey)).toEqual([]);
+    expect(pluginEndpointRegistry.diagnostics(pluginKey)[0]).toMatchObject({
+      state: "failed",
+      eventTransport: "redis-streams",
+      eventConsumerState: "misconfigured",
+      transportError: expect.stringContaining("REDIS_URL is not set"),
+    });
+  });
+
+  it("selects Streams and marks the consumer ready only after /ready", async () => {
+    process.env.EVENT_BUS = "redis-streams";
+    const pluginKey = "transport-streams";
+    const secret = "transport-streams-secret";
+    await provision(pluginKey, secret);
+
+    const register = await server.inject({
+      method: "POST",
+      url: "/api/plugins/register",
+      headers: { "x-plugin-setup-secret": secret },
+      payload: {
+        manifest: eventManifest(pluginKey),
+        lifecycle: { readiness: "v1" },
+        eventTransports: { available: ["http", "redis-streams"] },
+      },
+    });
+
+    expect(register.statusCode).toBe(200);
+    expect(register.json().eventTransport).toEqual({
+      selected: "redis-streams",
+      consumerRequired: true,
+    });
+    expect(pluginEndpointRegistry.diagnostics(pluginKey)[0]).toMatchObject({
+      state: "initializing",
+      eventTransport: "redis-streams",
+      eventConsumerState: "initializing",
+    });
+
+    const ready = await server.inject({
+      method: "POST",
+      url: "/api/plugins/ready",
+      headers: { authorization: `Bearer ${register.json().token}` },
+      payload: { url: "http://localhost:9999" },
+    });
+    expect(ready.statusCode).toBe(200);
+    expect(pluginEndpointRegistry.diagnostics(pluginKey)[0]).toMatchObject({
+      state: "ready",
+      eventConsumerState: "ready",
+    });
+  });
+
+  it("refuses an event-subscribing legacy SDK when the bot requires Streams", async () => {
+    process.env.EVENT_BUS = "redis-streams";
+    const pluginKey = "transport-legacy";
+    const secret = "transport-legacy-secret";
+    await provision(pluginKey, secret);
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/plugins/register",
+      headers: { "x-plugin-setup-secret": secret },
+      payload: { manifest: eventManifest(pluginKey) },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().code).toBe("event_transport_unavailable");
+    expect(response.json().error).toContain("legacy SDK");
   });
 });

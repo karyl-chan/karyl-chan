@@ -6,7 +6,7 @@
   "description": "Cross-service E2E + chaos harness for karyl-chan. A workspace member only so `pnpm install` resolves its devDeps; it exposes NO `test` script, so `pnpm -r test` never runs it. Every scenario is gated behind an env flag and skips/no-ops by default.",
   "scripts": {
     "build": "tsc",
-    "e2e": "tsc && node --test \"dist/**/*.e2e.js\"",
+    "e2e": "pnpm --workspace-root exec tsc -p packages/plugin-sdk/tsconfig.test.json && pnpm --workspace-root exec tsc -p packages/bot/tsconfig.json && tsc && node --test \"dist/**/*.e2e.js\"",
     "chaos": "tsc && node --test \"dist/**/*.chaos.js\""
   },
   "devDependencies": {

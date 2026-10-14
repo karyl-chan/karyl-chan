@@ -13,6 +13,15 @@
 export { Events, CANONICAL_EVENTS, isCanonicalEvent } from "./events.js";
 export type { EventName } from "./events.js";
 
+// Register-time event transport negotiation. The bot selects exactly one of
+// the transports a plugin replica proves it can start.
+export { EVENT_TRANSPORTS } from "./event-transport.js";
+export type {
+  EventTransport,
+  EventTransportCapabilities,
+  EventTransportSelection,
+} from "./event-transport.js";
+
 // Event Ceiling + the unknown-subscription verdict it drives.
 export { EVENT_CEILING, classifyEventSubscription } from "./event-ceiling.js";
 

@@ -12,6 +12,7 @@ import { describe, it } from "node:test";
 
 import { CANONICAL_EVENTS, Events } from "../src/events.js";
 import { CONTRACT_FIXTURES } from "../src/contract-fixtures.js";
+import { EVENT_TRANSPORTS } from "../src/event-transport.js";
 
 describe("contract fixtures: canonical events", () => {
   it("fixture event list equals the CANONICAL_EVENTS ledger", () => {
@@ -50,6 +51,15 @@ describe("contract fixtures: internal consistency", () => {
         `'${f}' is listed both required and optional`,
       );
     }
+  });
+
+  it("register transport values equal the exported transport ledger", () => {
+    assert.deepEqual(
+      [...CONTRACT_FIXTURES.register.eventTransports],
+      [...EVENT_TRANSPORTS],
+    );
+    assert.equal(CONTRACT_FIXTURES.register.capabilityField, "eventTransports");
+    assert.equal(CONTRACT_FIXTURES.register.selectionField, "eventTransport");
   });
 
   it("every RPC path the SDK calls is unique and plugin-scoped", () => {

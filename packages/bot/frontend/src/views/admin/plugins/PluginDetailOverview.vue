@@ -23,6 +23,7 @@ function healthTone(status: string | undefined): BadgeTone {
     return 'neutral';
 }
 const metrics = computed(() => props.plugin.metrics ?? null);
+const eventTransport = computed(() => props.plugin.eventTransport ?? null);
 const hasMetrics = computed(() => {
     const m = metrics.value;
     if (!m) return false;
@@ -72,6 +73,29 @@ function formatAge(unixMs: number): string {
                     <dd>{{ plugin.lastHeartbeatAt ?? t('admin.plugins.neverHeartbeat') }}</dd>
                 </div>
             </dl>
+        </section>
+
+        <section v-if="eventTransport" class="section">
+            <div class="section-header">
+                <h3 class="section-title">{{ t('admin.plugins.detail.eventTransport.title') }}</h3>
+                <AppBadge :tone="healthTone(eventTransport.status === 'ready' ? 'healthy' : eventTransport.status === 'misconfigured' ? 'unhealthy' : 'degraded')">
+                    {{ eventTransport.status }}
+                </AppBadge>
+            </div>
+            <p class="transport-summary">
+                {{ t('admin.plugins.detail.eventTransport.configured') }}:
+                <code>{{ eventTransport.configured }}</code>
+            </p>
+            <p v-if="eventTransport.replicas.length === 0" class="muted">
+                {{ t('admin.plugins.detail.eventTransport.noReplica') }}
+            </p>
+            <ul v-else class="transport-replicas">
+                <li v-for="replica in eventTransport.replicas" :key="replica.url">
+                    <code>{{ replica.url }}</code>
+                    <span>{{ replica.transport ?? 'unknown' }} · {{ replica.lifecycleState }} · {{ replica.consumerState }}</span>
+                    <p v-if="replica.error" class="error">{{ replica.error }}</p>
+                </li>
+            </ul>
         </section>
 
         <!-- Workpack C: health probe result -->
@@ -200,6 +224,10 @@ function formatAge(unixMs: number): string {
 .link:hover { text-decoration: underline; }
 
 .chip-row { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.5rem; }
+.transport-summary { margin: 0 0 0.55rem; font-size: 0.85rem; }
+.transport-replicas { margin: 0; padding-left: 1.2rem; display: grid; gap: 0.45rem; }
+.transport-replicas li { display: grid; gap: 0.15rem; font-size: 0.8rem; }
+.transport-replicas p { margin: 0; }
 
 .manifest-fold summary { cursor: pointer; color: var(--text-muted); font-size: 0.85rem; }
 .manifest-fold pre {

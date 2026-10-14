@@ -106,6 +106,9 @@ export interface ContractFixtures {
     readonly optionalResponseFields: readonly string[];
     readonly heartbeatEndpoint: string;
     readonly readinessEndpoint: string;
+    readonly eventTransports: readonly string[];
+    readonly capabilityField: string;
+    readonly selectionField: string;
   };
   readonly behaviorWebhook: {
     readonly endSentinel: string;
@@ -382,6 +385,7 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
       "publicBaseUrl",
       "heartbeat",
       "readiness",
+      "eventTransport",
       "commandSync",
       // The bot's verdict on this manifest's event subscriptions
       // (#29 decisions 4/6/7) — `{ enforced, status, ceiling,
@@ -392,6 +396,9 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
     ],
     heartbeatEndpoint: "/api/plugins/heartbeat",
     readinessEndpoint: "/api/plugins/ready",
+    eventTransports: ["http", "redis-streams"],
+    capabilityField: "eventTransports",
+    selectionField: "eventTransport",
   },
 
   /**

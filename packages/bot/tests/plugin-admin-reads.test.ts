@@ -20,7 +20,15 @@
  * scans no longer exist in the source. No spy test against internals,
  * per the spec's testing decisions.
  */
-import { vi, describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
+import {
+  vi,
+  describe,
+  it,
+  expect,
+  beforeAll,
+  beforeEach,
+  afterAll,
+} from "vitest";
 
 vi.hoisted(() => {
   process.env.SQLITE_DB_PATH = ":memory:";
@@ -62,6 +70,7 @@ import {
   upsertPluginRegistration,
 } from "../src/modules/plugin-system/models/plugin.model.js";
 import { PluginKv } from "../src/modules/plugin-system/models/plugin-kv.model.js";
+import { pluginEndpointRegistry } from "../src/modules/plugin-system/plugin-endpoint-registry.js";
 
 let server: import("fastify").FastifyInstance;
 
@@ -104,9 +113,8 @@ beforeAll(async () => {
   // Import the routes BEFORE sync so every model they touch (plugin
   // config, plugin commands, feature rows) is registered on the
   // sequelize instance when the tables are created.
-  const { registerPluginRoutes } = await import(
-    "../src/modules/plugin-system/plugin-routes.js"
-  );
+  const { registerPluginRoutes } =
+    await import("../src/modules/plugin-system/plugin-routes.js");
   await sequelize.sync({ force: true });
   server = fastify({ logger: false });
   server.addHook("onRequest", (req, _reply, done) => {
@@ -126,6 +134,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   await Plugin.destroy({ where: {} });
   await PluginKv.destroy({ where: {} });
+  pluginEndpointRegistry.removeAll(PLUGIN_KEY);
 });
 
 afterAll(async () => {
@@ -200,12 +209,18 @@ describe("GET /api/plugins/:id — by-id detail via Plugin Admin", () => {
       "dispatch",
       "sdkCompat",
       "eventSubscriptions",
+      "eventTransport",
     ]);
     expect(body.plugin.id).toBe(id);
     expect(body.plugin.pluginKey).toBe(PLUGIN_KEY);
     expect(body.plugin.manifest).toEqual(manifest());
     expect(body.sdkCompat.status).toBe("unknown");
     expect(body.eventSubscriptions.status).toBe("ok");
+    expect(body.eventTransport).toEqual({
+      configured: "http",
+      status: "unknown",
+      replicas: [],
+    });
   });
 
   it("404s a missing id with the unchanged body", async () => {
@@ -215,6 +230,35 @@ describe("GET /api/plugins/:id — by-id detail via Plugin Admin", () => {
     });
     expect(res.statusCode).toBe(404);
     expect(res.json()).toEqual({ error: "plugin not found" });
+  });
+
+  it("distinguishes transport misconfiguration from a handler failure", async () => {
+    const id = await seedPlugin();
+    pluginEndpointRegistry.recordTransportFailure(
+      PLUGIN_KEY,
+      "http://localhost:9999",
+      "redis-streams",
+      "REDIS_URL is not set",
+    );
+
+    const res = await server.inject({
+      method: "GET",
+      url: `/api/plugins/${id}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().eventTransport).toEqual({
+      configured: "http",
+      status: "misconfigured",
+      replicas: [
+        {
+          url: "http://localhost:9999",
+          lifecycleState: "failed",
+          transport: "redis-streams",
+          consumerState: "misconfigured",
+          error: "REDIS_URL is not set",
+        },
+      ],
+    });
   });
 });
 
@@ -235,6 +279,11 @@ describe("GET /api/plugins/by-key/:pluginKey — by-key detail via Plugin Admin"
     expect(plugin.pluginCommands).toEqual([]);
     expect(plugin.sdkCompat.status).toBe("unknown");
     expect(plugin.eventSubscriptions.status).toBe("ok");
+    expect(plugin.eventTransport).toEqual({
+      configured: "http",
+      status: "unknown",
+      replicas: [],
+    });
   });
 
   it("404s an unknown key with the unchanged body", async () => {

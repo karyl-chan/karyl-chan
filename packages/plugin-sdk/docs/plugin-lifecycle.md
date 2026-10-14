@@ -41,7 +41,7 @@ stateDiagram-v2
 | **Listening**    | HTTP server up (`onReady` ran). SDK routes mounted.                                                                                                                                                  |
 | **Serving dark** | Listening but never registered — `KARYL_PLUGIN_SETUP_SECRET` unset. Useful while building the HTTP surface; the bot doesn't know the plugin exists, so no commands/events flow.                      |
 | **Registering**  | Sending the manifest to `POST /api/plugins/register`. Exponential-backoff retry on transient failure.                                                                                                |
-| **Initializing** | Credentials exist, but the endpoint is excluded from every Dispatch Kind. The SDK completes `onStart(ctx)` and required event-transport startup. `/health/ready` is 503.                               |
+| **Initializing** | Credentials exist, but the endpoint is excluded from every Dispatch Kind. The SDK completes `onStart(ctx)` and required event-transport startup. `/health/ready` is 503.                             |
 | **Ready**        | Initialization completed and the bot acknowledged the authenticated ready transition. Only now may the bot route events/interactions here. Heartbeating every ~30 s.                                 |
 | **Failed**       | Transport startup or `onStart` threw. Readiness rejects with the original error, heartbeat stops, the SDK best-effort deregisters, and dispatch remains 503. Liveness stays available for diagnosis. |
 | **Reaped**       | The bot's reaper marked the plugin inactive after ~75 s with no heartbeat (≈ 2 missed beats). Events stop dispatching. The next successful heartbeat revives it.                                     |
@@ -59,6 +59,13 @@ stateDiagram-v2
   replica as `initializing`. A signed dispatch still receives 503 until the
   authenticated ready transition completes; an invalid signature receives
   401 before the readiness check.
+- **The bot selects the event transport.** The register request advertises
+  transports this replica proved it can start; the response selects exactly
+  one. The SDK starts only that selection. An event-subscribing replica that
+  cannot start the selected transport receives
+  `409 event_transport_unavailable`, transitions to `failed`, and never
+  reports ready. Legacy SDKs remain accepted for HTTP, but are refused for
+  Redis Streams because they cannot prove a consumer exists.
 - **Token loss → re-register.** If any bot call returns `401` (e.g. the
   bot restarted and lost the in-memory token), the SDK transparently
   re-registers. Handlers don't see this.
