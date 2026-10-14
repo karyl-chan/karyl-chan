@@ -2,7 +2,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   access,
-  copyFile,
   mkdtemp,
   mkdir,
   readFile,
@@ -11,7 +10,7 @@ import {
 } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 
@@ -122,12 +121,6 @@ test(
         }
       }
 
-      const sdkTarball = await pack(sdkDir, artifacts, cleanNpmEnv);
-      // npm 10 may consume/remove sibling tarballs while materialising the
-      // package passed to `npm exec`. Preserve the SDK candidate outside the
-      // exec artifact directory before invoking the initializer.
-      const preservedSdkTarball = join(scratch, "candidate-plugin-sdk.tgz");
-      await copyFile(sdkTarball, preservedSdkTarball);
       const initializerTarball = await pack(
         packageDir,
         artifacts,
@@ -149,8 +142,10 @@ test(
       );
 
       await assert.rejects(access(join(generatedDir, ".npmrc")));
-      const candidateName = "candidate-plugin-sdk.tgz";
-      await copyFile(preservedSdkTarball, join(generatedDir, candidateName));
+      // npm 10 may clean local tarballs from npm exec's working directory.
+      // Pack the SDK candidate only after the packed initializer has run.
+      const sdkTarball = await pack(sdkDir, generatedDir, cleanNpmEnv);
+      const candidateName = basename(sdkTarball);
       const generatedPackagePath = join(generatedDir, "package.json");
       const generatedPackage = JSON.parse(
         await readFile(generatedPackagePath, "utf8"),
