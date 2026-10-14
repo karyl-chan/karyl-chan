@@ -233,6 +233,7 @@ export async function createWebServer(
       const path = pathOnly(request.url);
       if (path === "/api/plugins/register") return;
       if (path === "/api/plugins/heartbeat") return;
+      if (path === "/api/plugins/ready") return;
       if (path === "/api/plugins/deregister") return;
       // Plugin RPC: any route under /api/plugin/* (singular).
       // Auth is the plugin's bearer token, not admin auth. We verify
@@ -602,7 +603,9 @@ export async function createWebServer(
       const accessToken = header?.startsWith("Bearer ")
         ? header.slice(7)
         : null;
-      const userId = accessToken ? await auth.verifyAccessToken(accessToken) : null;
+      const userId = accessToken
+        ? await auth.verifyAccessToken(accessToken)
+        : null;
       if (accessToken) await auth.revokeAccess(accessToken);
       if (userId) {
         botEventLog.record("info", "auth", `Admin logout: ${userId}`, {
@@ -626,7 +629,9 @@ export async function createWebServer(
     }
     const header = request.headers.authorization;
     const accessToken = header?.startsWith("Bearer ") ? header.slice(7) : null;
-    const userId = accessToken ? await auth.verifyAccessToken(accessToken) : null;
+    const userId = accessToken
+      ? await auth.verifyAccessToken(accessToken)
+      : null;
     if (!userId) {
       reply.code(401).send({ error: "Unauthorized" });
       return;

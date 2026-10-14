@@ -163,6 +163,8 @@ export type {
   HealthStatus,
   HealthProducer,
 } from "./context.js";
+export { PluginReadinessError } from "./lifecycle.js";
+export type { PluginLifecycleState } from "./lifecycle.js";
 
 // HMAC primitives — used by plugins that mount their own dispatch-style
 // routes (e.g. a custom webhook receiver). The SDK already verifies its

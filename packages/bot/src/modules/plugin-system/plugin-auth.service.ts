@@ -29,6 +29,8 @@ export interface PluginAuthRecord {
   pluginKey: string;
   scopes: Set<string>;
   expiresAt: number;
+  /** Replica address this token was issued to. */
+  endpointUrl?: string;
 }
 
 function hashToken(token: string): string {
@@ -44,18 +46,30 @@ export class PluginAuthStore {
 
   /**
    * Mint a fresh plugin token. Returns the cleartext (to send to the
-   * plugin) and the hash (to persist in plugins.tokenHash). Any
-   * previously cached token for this pluginId is wiped — only the
-   * latest registration is honored.
+   * plugin) and the hash (to persist in plugins.tokenHash). A new token
+   * replaces the previous token for that endpoint; distinct replicas of
+   * the same plugin keep independent live tokens.
    */
-  issue(input: { pluginId: number; pluginKey: string; scopes: string[] }): {
+  issue(input: {
+    pluginId: number;
+    pluginKey: string;
+    scopes: string[];
+    endpointUrl?: string;
+  }): {
     token: string;
     tokenHash: string;
   } {
-    // Drop any stale records for this plugin id. There can be at most
-    // one live token per plugin at a time.
+    const endpointUrl = input.endpointUrl?.replace(/\/+$/, "");
+    // Rotate only the same replica. Distinct endpoints for one pluginKey
+    // need independent live tokens so each replica can heartbeat, become
+    // ready, and deregister without invalidating its siblings.
     for (const [h, rec] of this.byHash) {
-      if (rec.pluginId === input.pluginId) this.byHash.delete(h);
+      if (
+        rec.pluginId === input.pluginId &&
+        (endpointUrl === undefined || rec.endpointUrl === endpointUrl)
+      ) {
+        this.byHash.delete(h);
+      }
     }
     const token = newToken();
     const tokenHash = hashToken(token);
@@ -64,6 +78,7 @@ export class PluginAuthStore {
       pluginKey: input.pluginKey,
       scopes: new Set(input.scopes),
       expiresAt: Date.now() + TOKEN_TTL_MS,
+      ...(endpointUrl !== undefined ? { endpointUrl } : {}),
     });
     return { token, tokenHash };
   }

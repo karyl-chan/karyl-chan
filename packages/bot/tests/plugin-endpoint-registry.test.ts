@@ -21,6 +21,37 @@ function fakeClock(start = 1_000_000) {
 }
 
 describe("PluginEndpointRegistry", () => {
+  it("keeps a readiness-aware endpoint out of dispatch until markReady", () => {
+    const clock = fakeClock();
+    const reg = new PluginEndpointRegistry({ ttlMs: 75_000, now: clock.now });
+    reg.initialize("radio", "http://radio-a:3000");
+    expect(reg.endpoints("radio")).toEqual([]);
+    expect(reg.allEndpoints("radio")).toEqual(["http://radio-a:3000"]);
+    expect(reg.markReady("radio", "http://radio-a:3000")).toBe(true);
+    expect(reg.endpoints("radio")).toEqual(["http://radio-a:3000"]);
+  });
+
+  it("an initializing replica cannot poison a ready sibling", () => {
+    const clock = fakeClock();
+    const reg = new PluginEndpointRegistry({ ttlMs: 75_000, now: clock.now });
+    reg.touch("radio", "http://radio-ready:3000");
+    reg.initialize("radio", "http://radio-starting:3000");
+    expect(reg.readyEndpoint("radio", "http://radio-starting:3000")).toBe(
+      "http://radio-ready:3000",
+    );
+    expect(reg.endpoints("radio")).toEqual(["http://radio-ready:3000"]);
+  });
+
+  it("heartbeat preserves initializing state", () => {
+    const clock = fakeClock();
+    const reg = new PluginEndpointRegistry({ ttlMs: 75_000, now: clock.now });
+    reg.initialize("radio", "http://radio:3000");
+    clock.advance(10_000);
+    reg.heartbeat("radio", "http://radio:3000");
+    expect(reg.endpoints("radio")).toEqual([]);
+    expect(reg.allEndpoints("radio")).toEqual(["http://radio:3000"]);
+  });
+
   it("single-replica default: one touch → one live endpoint", () => {
     const clock = fakeClock();
     const reg = new PluginEndpointRegistry({ ttlMs: 75_000, now: clock.now });

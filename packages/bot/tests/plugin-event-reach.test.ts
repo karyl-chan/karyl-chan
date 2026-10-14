@@ -10,20 +10,31 @@
  * (the bridge posts via undici, not fetch; host-policy mocked open so
  * the gate is the only thing standing between event and POST).
  */
-import { vi, describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
+import {
+  vi,
+  describe,
+  it,
+  expect,
+  beforeAll,
+  beforeEach,
+  afterEach,
+} from "vitest";
 
 vi.hoisted(() => {
   process.env.SQLITE_DB_PATH = ":memory:";
 });
 
 // Open the SSRF gate so postEventToPlugin reaches the fetch spy.
-vi.mock("../src/modules/plugin-system/plugin-dispatch-util.js", async (orig) => {
-  const real = (await orig()) as Record<string, unknown>;
-  return {
-    ...real,
-    preflightPluginTarget: vi.fn().mockResolvedValue({ ok: true }),
-  };
-});
+vi.mock(
+  "../src/modules/plugin-system/plugin-dispatch-util.js",
+  async (orig) => {
+    const real = (await orig()) as Record<string, unknown>;
+    return {
+      ...real,
+      preflightPluginTarget: vi.fn().mockResolvedValue({ ok: true }),
+    };
+  },
+);
 
 import { sequelize } from "../src/db.js";
 import { Plugin } from "../src/modules/plugin-system/models/plugin.model.js";
@@ -38,6 +49,7 @@ import {
   dispatchEventToPlugins,
 } from "../src/modules/plugin-system/plugin-event-bridge.service.js";
 import { pluginDispatcher } from "../src/modules/plugin-system/plugin-dispatch.service.js";
+import { pluginEndpointRegistry } from "../src/modules/plugin-system/plugin-endpoint-registry.js";
 import type { PluginManifest } from "@karyl-chan/plugin-wire";
 
 const GUILD_ON = "900000000000000111";
@@ -74,6 +86,7 @@ async function seedPlugin(opts: {
     lastHeartbeatAt: null,
     approvedGlobalEventSubs: JSON.stringify(opts.approvedGlobalEventSubs ?? []),
   } as Record<string, unknown>);
+  pluginEndpointRegistry.touch(opts.key, `http://${opts.key}.invalid`);
 }
 
 let postSpy: ReturnType<typeof vi.spyOn>;
@@ -88,6 +101,9 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await Plugin.destroy({ where: {}, truncate: true });
+  for (const pluginKey of ["feat-plugin", "default-on", "global-plugin"]) {
+    pluginEndpointRegistry.removeAll(pluginKey);
+  }
   await PluginGuildFeature.destroy({ where: {} });
   await PluginFeatureDefault.destroy({ where: {} });
   featureReachResolver.clear();
@@ -155,7 +171,11 @@ describe("PM-8 dispatch reach gate (HTTP fan-out)", () => {
     });
     await rebuildEventIndex();
 
-    dispatchEventToPlugins("guild.message_create", { guild_id: GUILD_ON }, GUILD_ON);
+    dispatchEventToPlugins(
+      "guild.message_create",
+      { guild_id: GUILD_ON },
+      GUILD_ON,
+    );
     await waitFor(
       () => dispatchedUrls().some((u) => u.includes("feat-plugin")),
       "a dispatch to feat-plugin",
@@ -163,7 +183,11 @@ describe("PM-8 dispatch reach gate (HTTP fan-out)", () => {
     expect(dispatchedUrls().some((u) => u.includes("feat-plugin"))).toBe(true);
 
     postSpy.mockClear();
-    dispatchEventToPlugins("guild.message_create", { guild_id: GUILD_OFF }, GUILD_OFF);
+    dispatchEventToPlugins(
+      "guild.message_create",
+      { guild_id: GUILD_OFF },
+      GUILD_OFF,
+    );
     await settle();
     expect(postSpy).not.toHaveBeenCalled();
   });
@@ -184,7 +208,11 @@ describe("PM-8 dispatch reach gate (HTTP fan-out)", () => {
       },
     });
     await rebuildEventIndex();
-    dispatchEventToPlugins("guild.message_create", { guild_id: GUILD_OFF }, GUILD_OFF);
+    dispatchEventToPlugins(
+      "guild.message_create",
+      { guild_id: GUILD_OFF },
+      GUILD_OFF,
+    );
     await waitFor(
       () => postSpy.mock.calls.length > 0,
       "a dispatch to a default-enabled feature",
@@ -253,7 +281,11 @@ describe("PM-8 dispatch reach gate (HTTP fan-out)", () => {
       },
     });
     await rebuildEventIndex();
-    dispatchEventToPlugins("guild.message_create", { guild_id: GUILD_ON }, GUILD_ON);
+    dispatchEventToPlugins(
+      "guild.message_create",
+      { guild_id: GUILD_ON },
+      GUILD_ON,
+    );
     await settle();
     expect(postSpy).not.toHaveBeenCalled();
 
@@ -266,7 +298,11 @@ describe("PM-8 dispatch reach gate (HTTP fan-out)", () => {
       enabled: true,
     });
     featureReachResolver.invalidateGuild(1, GUILD_ON);
-    dispatchEventToPlugins("guild.message_create", { guild_id: GUILD_ON }, GUILD_ON);
+    dispatchEventToPlugins(
+      "guild.message_create",
+      { guild_id: GUILD_ON },
+      GUILD_ON,
+    );
     await waitFor(
       () => postSpy.mock.calls.length > 0,
       "a dispatch after the feature was enabled",

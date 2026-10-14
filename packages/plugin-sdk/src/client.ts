@@ -1,15 +1,18 @@
 import type { PluginManifest } from "./manifest.js";
 import type { Logger } from "./types.js";
+import {
+  PluginReadinessError,
+  type PluginLifecycleState,
+} from "./lifecycle.js";
 
 /**
  * Plugin lifecycle client: register-on-startup + heartbeat loop +
  * automatic re-register on 401 (e.g. bot restart wiped token cache).
  *
- * Designed to never throw out to the host process — registration
- * failures and heartbeat errors are logged and retried with backoff.
- * The plugin's primary job (serving /commands/:commandName) keeps working
- * even when registration is offline; the bot just won't dispatch to
- * us until we re-register successfully.
+ * Registration/network failures are logged and retried with backoff. Fatal
+ * initialization failures are exposed through `whenReady()` and leave the
+ * HTTP server alive but fail-closed for dispatch, so health probes retain a
+ * useful diagnosis surface.
  */
 
 export interface PluginClientOptions {
@@ -37,14 +40,15 @@ export interface PluginClientOptions {
     register?: number;
     heartbeat?: number;
     deregister?: number;
+    ready?: number;
   };
   /**
    * Called once, after the very first successful register. Receives no
    * arguments — `token()` / `getDispatchHmacKey()` etc. on the client
    * handle are populated by the time this fires. Used by the SDK to
    * build the `PluginContext` and fire the plugin's `onStart` hook.
-   * Errors thrown here are caught and logged; they do NOT prevent the
-   * client from running.
+   * Errors thrown here fail readiness, stop lifecycle activity, and trigger
+   * a best-effort deregister for this endpoint.
    */
   onFirstRegister?: () => void | Promise<void>;
 }
@@ -79,6 +83,13 @@ export interface PluginClient {
    * or when the bot has no `WEB_BASE_URL` configured.
    */
   getPublicBaseUrl(): string | undefined;
+  /** Current process lifecycle state. */
+  lifecycleState(): PluginLifecycleState;
+  /**
+   * Resolves after initialization and the authenticated bot-side ready
+   * transition. Rejects with the original initialization error.
+   */
+  whenReady(): Promise<void>;
 }
 
 const REGISTER_BACKOFF_BASE_MS = 2_000;
@@ -87,6 +98,7 @@ const REGISTER_BACKOFF_MAX_MS = 60_000;
 const REGISTER_TIMEOUT_MS = 30_000;
 const HEARTBEAT_TIMEOUT_MS = 10_000;
 const DEREGISTER_TIMEOUT_MS = 5_000;
+const READY_TIMEOUT_MS = 10_000;
 // After this many consecutive register timeouts the problem is almost
 // certainly a wedged bot-side handler (not a blip), so escalate from
 // warn to error with a pointer at the bot.
@@ -113,19 +125,90 @@ export function startPluginClient(opts: PluginClientOptions): PluginClient {
   let publicBaseUrl: string | undefined = undefined;
   let heartbeatTimer: NodeJS.Timeout | null = null;
   let stopped = false;
+  let fatalInitializationFailure = false;
+  let lifecycleState: PluginLifecycleState = "registering";
   let registerAttempt = 0;
   let consecutiveRegisterTimeouts = 0;
   const timeoutsMs = {
     register: opts.lifecycleTimeoutsMs?.register ?? REGISTER_TIMEOUT_MS,
     heartbeat: opts.lifecycleTimeoutsMs?.heartbeat ?? HEARTBEAT_TIMEOUT_MS,
     deregister: opts.lifecycleTimeoutsMs?.deregister ?? DEREGISTER_TIMEOUT_MS,
+    ready: opts.lifecycleTimeoutsMs?.ready ?? READY_TIMEOUT_MS,
   };
   // `onFirstRegister` fires exactly once across the client's lifetime —
   // re-register after a 401 must not re-fire `onStart` (which would
   // double-seed state / double-flush metrics).
   let firstRegisterFired = false;
+  let initializationComplete = false;
+  let settleReadyResolve!: () => void;
+  let settleReadyReject!: (error: unknown) => void;
+  let readinessSettled = false;
+  const readiness = new Promise<void>((resolve, reject) => {
+    settleReadyResolve = resolve;
+    settleReadyReject = reject;
+  });
+  // A plugin is allowed to ignore readiness and use only liveness. Attach a
+  // sink so a fatal startup error does not become an unhandled rejection;
+  // callers awaiting the original promise still receive the rejection.
+  void readiness.catch(() => {});
+
+  function transition(next: PluginLifecycleState): void {
+    lifecycleState = next;
+  }
+
+  function resolveReadiness(): void {
+    if (readinessSettled) return;
+    readinessSettled = true;
+    settleReadyResolve();
+  }
+
+  function rejectReadiness(error: unknown): void {
+    if (readinessSettled) return;
+    readinessSettled = true;
+    settleReadyReject(error);
+  }
+
+  function clearHeartbeat(): void {
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+  }
+
+  async function announceReady(path: string): Promise<boolean> {
+    if (!token || stopped || fatalInitializationFailure) return false;
+    try {
+      const res = await fetch(`${botUrl}${path}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ url: pluginUrl }),
+        signal: AbortSignal.timeout(timeoutsMs.ready),
+      });
+      if (res.status === 401) token = null;
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        log.warn(
+          `ready transition rejected by bot: ${res.status} ${text.slice(0, 200)}`,
+        );
+        return false;
+      }
+      transition("ready");
+      resolveReadiness();
+      return true;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn(
+        isTimeoutError(err)
+          ? `ready transition timed out after ${timeoutsMs.ready}ms`
+          : `ready transition network error: ${msg}`,
+      );
+      return false;
+    }
+  }
 
   async function register(): Promise<boolean> {
+    transition("registering");
     try {
       const res = await fetch(`${botUrl}/api/plugins/register`, {
         method: "POST",
@@ -133,7 +216,10 @@ export function startPluginClient(opts: PluginClientOptions): PluginClient {
           "Content-Type": "application/json",
           "X-Plugin-Setup-Secret": opts.setupSecret,
         },
-        body: JSON.stringify({ manifest: opts.manifest }),
+        body: JSON.stringify({
+          manifest: opts.manifest,
+          lifecycle: { readiness: "v1" },
+        }),
         signal: AbortSignal.timeout(timeoutsMs.register),
       });
       consecutiveRegisterTimeouts = 0;
@@ -152,6 +238,7 @@ export function startPluginClient(opts: PluginClientOptions): PluginClient {
         sessionVerifyPublicKey?: string;
         publicBaseUrl?: string;
         heartbeat?: { path?: string; interval_seconds?: number };
+        readiness?: { required?: boolean; path?: string };
       };
       if (typeof data.token !== "string" || data.token.length === 0) {
         log.error("register response missing token");
@@ -170,28 +257,56 @@ export function startPluginClient(opts: PluginClientOptions): PluginClient {
       ) {
         sessionVerifyPublicKey = data.sessionVerifyPublicKey;
       }
-      if (typeof data.publicBaseUrl === "string" && data.publicBaseUrl.length > 0) {
+      if (
+        typeof data.publicBaseUrl === "string" &&
+        data.publicBaseUrl.length > 0
+      ) {
         publicBaseUrl = data.publicBaseUrl;
       } else {
         publicBaseUrl = undefined;
       }
       const intervalSec = data.heartbeat?.interval_seconds ?? 30;
-      scheduleHeartbeat(intervalSec * 1000);
       log.info("registered with bot", {
         pluginKey: data.plugin?.pluginKey,
         botPluginId: data.plugin?.id,
         heartbeatIntervalSec: intervalSec,
       });
       registerAttempt = 0;
+      transition("initializing");
       if (!firstRegisterFired && typeof opts.onFirstRegister === "function") {
         firstRegisterFired = true;
         try {
           await opts.onFirstRegister();
+          initializationComplete = true;
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           log.error(`onFirstRegister hook threw: ${msg}`);
+          fatalInitializationFailure = true;
+          transition("failed");
+          clearHeartbeat();
+          rejectReadiness(err);
+          await deregister();
+          return false;
         }
+      } else if (!firstRegisterFired) {
+        firstRegisterFired = true;
+        initializationComplete = true;
       }
+      if (!initializationComplete) return false;
+
+      // New bots require an authenticated second phase. Old bots omit this
+      // field and preserve the pre-readiness registration behaviour, which
+      // keeps a rolling bot-first upgrade compatible with older deployments.
+      if (data.readiness?.required === true) {
+        const ready = await announceReady(
+          data.readiness.path ?? "/api/plugins/ready",
+        );
+        if (!ready) return false;
+      } else {
+        transition("ready");
+        resolveReadiness();
+      }
+      scheduleHeartbeat(intervalSec * 1000);
       return true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -215,7 +330,7 @@ export function startPluginClient(opts: PluginClientOptions): PluginClient {
   }
 
   function scheduleRegisterRetry() {
-    if (stopped) return;
+    if (stopped || fatalInitializationFailure) return;
     registerAttempt++;
     const base = Math.min(
       REGISTER_BACKOFF_MAX_MS,
@@ -230,7 +345,7 @@ export function startPluginClient(opts: PluginClientOptions): PluginClient {
   }
 
   async function registerWithRetry(): Promise<void> {
-    if (stopped) return;
+    if (stopped || fatalInitializationFailure) return;
     const ok = await register();
     if (!ok) scheduleRegisterRetry();
   }
@@ -253,8 +368,8 @@ export function startPluginClient(opts: PluginClientOptions): PluginClient {
       if (res.status === 401) {
         log.warn("heartbeat 401, re-registering");
         token = null;
-        if (heartbeatTimer) clearInterval(heartbeatTimer);
-        heartbeatTimer = null;
+        clearHeartbeat();
+        transition("registering");
         void registerWithRetry();
         return;
       }
@@ -280,7 +395,8 @@ export function startPluginClient(opts: PluginClientOptions): PluginClient {
       }
       if (data) {
         const hbUrl =
-          typeof data.publicBaseUrl === "string" && data.publicBaseUrl.length > 0
+          typeof data.publicBaseUrl === "string" &&
+          data.publicBaseUrl.length > 0
             ? data.publicBaseUrl
             : undefined;
         if (hbUrl !== publicBaseUrl) {
@@ -331,14 +447,24 @@ export function startPluginClient(opts: PluginClientOptions): PluginClient {
   return {
     stop() {
       stopped = true;
-      if (heartbeatTimer) clearInterval(heartbeatTimer);
-      heartbeatTimer = null;
+      transition("stopping");
+      clearHeartbeat();
+      if (!readinessSettled) {
+        rejectReadiness(
+          new PluginReadinessError(
+            "plugin stopped before becoming ready",
+            "stopping",
+          ),
+        );
+      }
     },
     deregister,
     token: () => token,
     getDispatchHmacKey: () => dispatchHmacKey,
     getSessionVerifyPublicKey: () => sessionVerifyPublicKey,
     getPublicBaseUrl: () => publicBaseUrl,
+    lifecycleState: () => lifecycleState,
+    whenReady: () => readiness,
   };
 }
 

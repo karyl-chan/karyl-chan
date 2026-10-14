@@ -3,7 +3,10 @@ import type { Client } from "discord.js";
 import { ManifestError, pluginRegistry } from "./plugin-registry.service.js";
 import { pluginAdmin, unhandledRefusal } from "./plugin-admin.service.js";
 import { pluginAuthStore, PluginAuthStore } from "./plugin-auth.service.js";
-import { requireCapability, requirePluginCapability } from "../web-core/route-guards.js";
+import {
+  requireCapability,
+  requirePluginCapability,
+} from "../web-core/route-guards.js";
 import { jwtService } from "../web-core/jwt.service.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { shouldRecord } from "../bot-events/bot-event-dedup.js";
@@ -11,10 +14,7 @@ import { mintPluginManageToken } from "./plugin-manage-token.js";
 import type { PluginManifest } from "./plugin-registry.service.js";
 import { ManifestCommandError } from "./plugin-command-registry.service.js";
 import { config } from "../../config.js";
-import {
-  findPluginByKey,
-  findPluginById,
-} from "./models/plugin.model.js";
+import { findPluginByKey, findPluginById } from "./models/plugin.model.js";
 import type { CommandReconciler } from "../command-system/reconcile.service.js";
 import { createHash } from "crypto";
 
@@ -149,194 +149,254 @@ export async function registerPluginRoutes(
    * The token is the only time it's ever returned in cleartext —
    * server-side we keep just the SHA-256 hash.
    */
-  server.post<{ Body: { manifest?: unknown } }>(
-    "/api/plugins/register",
-    async (request, reply) => {
-      const presented = presentedSetupSecret(request);
-      if (!presented) {
-        const ip = request.ip;
-        if (shouldRecord(`pluginAuth:${ip}`)) {
-          botEventLog.record(
-            "warn",
-            "auth",
-            "Plugin registration rejected (missing setup secret header)",
-            { ip },
-          );
-        }
-        reply.code(401).send({ error: "invalid setup secret" });
-        return;
-      }
-
-      // ── Per-plugin secret verification ────────────────────────────
-      // Extract pluginKey from the manifest (without full validation
-      // yet) so we can look up the per-plugin secret.
-      const rawManifest = request.body?.manifest;
-      const manifestPluginId =
-        rawManifest &&
-        typeof rawManifest === "object" &&
-        "plugin" in rawManifest &&
-        rawManifest.plugin &&
-        typeof rawManifest.plugin === "object" &&
-        "id" in (rawManifest as { plugin: Record<string, unknown> }).plugin &&
-        typeof (rawManifest as { plugin: Record<string, unknown> }).plugin
-          .id === "string"
-          ? ((rawManifest as { plugin: { id: string } }).plugin.id as string)
-          : null;
-
-      if (!manifestPluginId) {
-        reply.code(401).send({ error: "invalid setup secret" });
-        return;
-      }
-
-      const pluginRow = await findPluginByKey(manifestPluginId);
-      if (!pluginRow?.setupSecretHash) {
-        const ip = request.ip;
-        if (shouldRecord(`pluginAuth:${ip}`)) {
-          botEventLog.record(
-            "warn",
-            "auth",
-            "Plugin registration rejected (no setup secret configured)",
-            { ip, pluginKey: manifestPluginId },
-          );
-        }
-        reply.code(401).send({ error: "invalid setup secret" });
-        return;
-      }
-
-      // Compare presented secret against stored hash.
-      const presentedHash = hashSecret(presented);
-      if (
-        !PluginAuthStore.constantTimeEqual(
-          presentedHash,
-          pluginRow.setupSecretHash,
-        )
-      ) {
-        const ip = request.ip;
-        if (shouldRecord(`pluginAuth:${ip}`)) {
-          botEventLog.record(
-            "warn",
-            "auth",
-            "Plugin registration rejected (bad per-plugin setup secret)",
-            { ip, pluginKey: manifestPluginId },
-          );
-        }
-        reply.code(401).send({ error: "invalid setup secret" });
-        return;
-      }
-
-      // Per-plugin register throttle (PM-7.1). The old synchronous
-      // Discord sync acted as a natural brake on re-register storms;
-      // with the sync backgrounded, an authenticated-but-buggy plugin
-      // could loop register cheaply and amplify into Discord-API
-      // pressure. Counted only AFTER secret verification so
-      // unauthenticated 401s can't consume a plugin's budget.
-      const throttled = registerThrottle.hit(manifestPluginId);
-      if (throttled !== null) {
-        reply
-          .header("Retry-After", String(throttled))
-          .code(429)
-          .send({ error: "register rate limited", retryAfterSeconds: throttled });
-        return;
-      }
-
-      // Duration watchdog (PM-7.6). The 2026-06-11 incident's register
-      // hang was invisible: an "incoming request" log line with no
-      // completion, ever. Surface a wedged handler while it is still
-      // wedged instead of leaving the operator to diff log lines.
-      const registerStartedAt = Date.now();
-      const slowWatchdog = setTimeout(() => {
+  server.post<{
+    Body: {
+      manifest?: unknown;
+      lifecycle?: { readiness?: unknown };
+    };
+  }>("/api/plugins/register", async (request, reply) => {
+    const presented = presentedSetupSecret(request);
+    if (!presented) {
+      const ip = request.ip;
+      if (shouldRecord(`pluginAuth:${ip}`)) {
         botEventLog.record(
           "warn",
-          "bot",
-          `Plugin register for '${manifestPluginId}' still in flight after 10s — handler may be wedged (DB lock? host-policy DNS?)`,
-          { pluginKey: manifestPluginId },
+          "auth",
+          "Plugin registration rejected (missing setup secret header)",
+          { ip },
         );
-      }, 10_000);
-      slowWatchdog.unref();
-
-      try {
-        const result = await pluginRegistry.register(request.body?.manifest);
-        // publicBaseUrl is the browser-reachable URL for this plugin's
-        // WebUI, served via the bot's reverse proxy at
-        // /plugin/<pluginKey>/*. Omitted entirely when WEB_BASE_URL is
-        // not set (so plugins in envs without an external URL don't get a
-        // broken empty string to act on).
-        const publicBaseUrl = pluginPublicBaseUrl(result.plugin.pluginKey);
-        return {
-          plugin: {
-            id: result.plugin.id,
-            pluginKey: result.plugin.pluginKey,
-            name: result.plugin.name,
-            version: result.plugin.version,
-            enabled: result.plugin.enabled,
-          },
-          token: result.token,
-          dispatchHmacKey: result.dispatchHmacKey,
-          // SPKI-PEM Ed25519 public key for verifying `plugin-session`
-          // JWTs. PER-PLUGIN: the bot derives a distinct signing key for
-          // each plugin (jwt.service.ts), so a token minted for this plugin
-          // can't be verified — hence can't be replayed — against another
-          // plugin's WebUI. Plugins that don't run a WebUI can ignore it.
-          sessionVerifyPublicKey: jwtService.pluginSessionPublicKeyPem(
-            result.plugin.pluginKey,
-          ),
-          // publicBaseUrl: the bot reverse-proxies /plugin/<pluginKey>/*
-          // to the plugin's stored manifest url, no TLS cert required.
-          // Omitted when WEB_BASE_URL is not configured.
-          ...(publicBaseUrl !== undefined ? { publicBaseUrl } : {}),
-          // Echo back the heartbeat path/cadence so a fresh plugin
-          // doesn't need to hardcode anything.
-          heartbeat: { path: "/api/plugins/heartbeat", interval_seconds: 30 },
-          // Informational (PM-7.1): slash-command sync runs in the
-          // background after this response; status is visible to the
-          // operator via the admin plugin views.
-          commandSync: "deferred",
-          // Unknown event-subscription verdict (#29 decisions 4/6/7).
-          // Always present, `status: "ok"` when every subscription is a
-          // Canonical Event. Warn-only this release: a non-ok status is
-          // information, not a failure — the plugin is registered.
-          // Declared in CONTRACT_FIXTURES.register.optionalResponseFields.
-          eventSubscriptions: result.eventSubscriptions,
-        };
-      } catch (err) {
-        if (err instanceof ManifestError) {
-          reply.code(400).send({ error: err.message });
-          return;
-        }
-        // Command-name collision (reserved name / another plugin's
-        // command) is a manifest-level authoring error: 400 so the
-        // author sees it in the SDK's "register rejected" log line,
-        // instead of a half-registered plugin with silently missing
-        // commands.
-        if (err instanceof ManifestCommandError) {
-          reply.code(400).send({ error: err.message });
-          return;
-        }
-        const msg = err instanceof Error ? err.message : String(err);
-        request.log.error({ err }, "plugin register failed");
-        botEventLog.record(
-          "error",
-          "error",
-          `Plugin registration failed: ${msg}`,
-        );
-        reply.code(500).send({ error: "registration failed" });
-      } finally {
-        clearTimeout(slowWatchdog);
-        const durationMs = Date.now() - registerStartedAt;
-        // Post-PM-7.1 the handler does no Discord I/O, so anything
-        // slow here is DB/DNS trouble worth a louder line.
-        if (durationMs > 2_000) {
-          request.log.warn(
-            { durationMs, pluginKey: manifestPluginId },
-            "plugin register slow",
-          );
-        } else {
-          request.log.info(
-            { durationMs, pluginKey: manifestPluginId },
-            "plugin register completed",
-          );
-        }
       }
+      reply.code(401).send({ error: "invalid setup secret" });
+      return;
+    }
+
+    // ── Per-plugin secret verification ────────────────────────────
+    // Extract pluginKey from the manifest (without full validation
+    // yet) so we can look up the per-plugin secret.
+    const rawManifest = request.body?.manifest;
+    const manifestPluginId =
+      rawManifest &&
+      typeof rawManifest === "object" &&
+      "plugin" in rawManifest &&
+      rawManifest.plugin &&
+      typeof rawManifest.plugin === "object" &&
+      "id" in (rawManifest as { plugin: Record<string, unknown> }).plugin &&
+      typeof (rawManifest as { plugin: Record<string, unknown> }).plugin.id ===
+        "string"
+        ? ((rawManifest as { plugin: { id: string } }).plugin.id as string)
+        : null;
+
+    if (!manifestPluginId) {
+      reply.code(401).send({ error: "invalid setup secret" });
+      return;
+    }
+
+    const pluginRow = await findPluginByKey(manifestPluginId);
+    if (!pluginRow?.setupSecretHash) {
+      const ip = request.ip;
+      if (shouldRecord(`pluginAuth:${ip}`)) {
+        botEventLog.record(
+          "warn",
+          "auth",
+          "Plugin registration rejected (no setup secret configured)",
+          { ip, pluginKey: manifestPluginId },
+        );
+      }
+      reply.code(401).send({ error: "invalid setup secret" });
+      return;
+    }
+
+    // Compare presented secret against stored hash.
+    const presentedHash = hashSecret(presented);
+    if (
+      !PluginAuthStore.constantTimeEqual(
+        presentedHash,
+        pluginRow.setupSecretHash,
+      )
+    ) {
+      const ip = request.ip;
+      if (shouldRecord(`pluginAuth:${ip}`)) {
+        botEventLog.record(
+          "warn",
+          "auth",
+          "Plugin registration rejected (bad per-plugin setup secret)",
+          { ip, pluginKey: manifestPluginId },
+        );
+      }
+      reply.code(401).send({ error: "invalid setup secret" });
+      return;
+    }
+
+    // Per-plugin register throttle (PM-7.1). The old synchronous
+    // Discord sync acted as a natural brake on re-register storms;
+    // with the sync backgrounded, an authenticated-but-buggy plugin
+    // could loop register cheaply and amplify into Discord-API
+    // pressure. Counted only AFTER secret verification so
+    // unauthenticated 401s can't consume a plugin's budget.
+    const throttled = registerThrottle.hit(manifestPluginId);
+    if (throttled !== null) {
+      reply
+        .header("Retry-After", String(throttled))
+        .code(429)
+        .send({ error: "register rate limited", retryAfterSeconds: throttled });
+      return;
+    }
+
+    // Duration watchdog (PM-7.6). The 2026-06-11 incident's register
+    // hang was invisible: an "incoming request" log line with no
+    // completion, ever. Surface a wedged handler while it is still
+    // wedged instead of leaving the operator to diff log lines.
+    const registerStartedAt = Date.now();
+    const slowWatchdog = setTimeout(() => {
+      botEventLog.record(
+        "warn",
+        "bot",
+        `Plugin register for '${manifestPluginId}' still in flight after 10s — handler may be wedged (DB lock? host-policy DNS?)`,
+        { pluginKey: manifestPluginId },
+      );
+    }, 10_000);
+    slowWatchdog.unref();
+
+    try {
+      const readinessProtocol =
+        request.body?.lifecycle?.readiness === "v1" ? "v1" : undefined;
+      const result = await pluginRegistry.register(request.body?.manifest, {
+        ...(readinessProtocol ? { readinessProtocol } : {}),
+      });
+      // publicBaseUrl is the browser-reachable URL for this plugin's
+      // WebUI, served via the bot's reverse proxy at
+      // /plugin/<pluginKey>/*. Omitted entirely when WEB_BASE_URL is
+      // not set (so plugins in envs without an external URL don't get a
+      // broken empty string to act on).
+      const publicBaseUrl = pluginPublicBaseUrl(result.plugin.pluginKey);
+      return {
+        plugin: {
+          id: result.plugin.id,
+          pluginKey: result.plugin.pluginKey,
+          name: result.plugin.name,
+          version: result.plugin.version,
+          enabled: result.plugin.enabled,
+        },
+        token: result.token,
+        dispatchHmacKey: result.dispatchHmacKey,
+        // SPKI-PEM Ed25519 public key for verifying `plugin-session`
+        // JWTs. PER-PLUGIN: the bot derives a distinct signing key for
+        // each plugin (jwt.service.ts), so a token minted for this plugin
+        // can't be verified — hence can't be replayed — against another
+        // plugin's WebUI. Plugins that don't run a WebUI can ignore it.
+        sessionVerifyPublicKey: jwtService.pluginSessionPublicKeyPem(
+          result.plugin.pluginKey,
+        ),
+        // publicBaseUrl: the bot reverse-proxies /plugin/<pluginKey>/*
+        // to the plugin's stored manifest url, no TLS cert required.
+        // Omitted when WEB_BASE_URL is not configured.
+        ...(publicBaseUrl !== undefined ? { publicBaseUrl } : {}),
+        // Echo back the heartbeat path/cadence so a fresh plugin
+        // doesn't need to hardcode anything.
+        heartbeat: { path: "/api/plugins/heartbeat", interval_seconds: 30 },
+        ...(readinessProtocol
+          ? {
+              readiness: {
+                required: true,
+                path: "/api/plugins/ready",
+              },
+            }
+          : {}),
+        // Informational (PM-7.1): slash-command sync runs in the
+        // background after this response; status is visible to the
+        // operator via the admin plugin views.
+        commandSync: "deferred",
+        // Unknown event-subscription verdict (#29 decisions 4/6/7).
+        // Always present, `status: "ok"` when every subscription is a
+        // Canonical Event. Warn-only this release: a non-ok status is
+        // information, not a failure — the plugin is registered.
+        // Declared in CONTRACT_FIXTURES.register.optionalResponseFields.
+        eventSubscriptions: result.eventSubscriptions,
+      };
+    } catch (err) {
+      if (err instanceof ManifestError) {
+        reply.code(400).send({ error: err.message });
+        return;
+      }
+      // Command-name collision (reserved name / another plugin's
+      // command) is a manifest-level authoring error: 400 so the
+      // author sees it in the SDK's "register rejected" log line,
+      // instead of a half-registered plugin with silently missing
+      // commands.
+      if (err instanceof ManifestCommandError) {
+        reply.code(400).send({ error: err.message });
+        return;
+      }
+      const msg = err instanceof Error ? err.message : String(err);
+      request.log.error({ err }, "plugin register failed");
+      botEventLog.record(
+        "error",
+        "error",
+        `Plugin registration failed: ${msg}`,
+      );
+      reply.code(500).send({ error: "registration failed" });
+    } finally {
+      clearTimeout(slowWatchdog);
+      const durationMs = Date.now() - registerStartedAt;
+      // Post-PM-7.1 the handler does no Discord I/O, so anything
+      // slow here is DB/DNS trouble worth a louder line.
+      if (durationMs > 2_000) {
+        request.log.warn(
+          { durationMs, pluginKey: manifestPluginId },
+          "plugin register slow",
+        );
+      } else {
+        request.log.info(
+          { durationMs, pluginKey: manifestPluginId },
+          "plugin register completed",
+        );
+      }
+    }
+  });
+
+  /**
+   * POST /api/plugins/ready
+   *
+   * Second phase of readiness-v1. Registration issued credentials and
+   * recorded this endpoint as initializing; only this authenticated call
+   * makes the replica eligible for dispatch.
+   */
+  server.post<{ Body: { url?: unknown } }>(
+    "/api/plugins/ready",
+    async (request, reply) => {
+      const token = presentedBearerToken(request);
+      if (!token) {
+        reply.code(401).send({ error: "missing bearer token" });
+        return;
+      }
+      const rec = pluginAuthStore.verify(token);
+      if (!rec) {
+        reply.code(401).send({ error: "token invalid or expired" });
+        return;
+      }
+      const presentedUrl =
+        typeof request.body?.url === "string"
+          ? request.body.url.replace(/\/+$/, "")
+          : undefined;
+      if (
+        rec.endpointUrl &&
+        presentedUrl !== undefined &&
+        presentedUrl !== rec.endpointUrl
+      ) {
+        reply.code(409).send({ error: "ready endpoint does not match token" });
+        return;
+      }
+      const endpointUrl = rec.endpointUrl ?? presentedUrl;
+      if (!endpointUrl) {
+        reply.code(400).send({ error: "missing endpoint url" });
+        return;
+      }
+      const ready = await pluginRegistry.ready(rec.pluginId, endpointUrl);
+      if (!ready) {
+        reply.code(409).send({ error: "endpoint is not awaiting readiness" });
+        return;
+      }
+      return { ok: true, state: "ready" };
     },
   );
 
@@ -360,32 +420,33 @@ export async function registerPluginRoutes(
   server.post<{ Body: { url?: unknown } }>(
     "/api/plugins/heartbeat",
     async (request, reply) => {
-    const token = presentedBearerToken(request);
-    if (!token) {
-      reply.code(401).send({ error: "missing bearer token" });
-      return;
-    }
-    const rec = pluginAuthStore.verify(token);
-    if (!rec) {
-      reply.code(401).send({ error: "token invalid or expired" });
-      return;
-    }
-    // Optional `url` in the beat is the replica's own advertised address
-    // (PR-3.1 multi-endpoint). Older SDKs send no body — handled by the
-    // registry falling back to the DB row's url.
-    const advertisedUrl =
-      typeof request.body?.url === "string" ? request.body.url : undefined;
-    await pluginRegistry.heartbeat(rec.pluginId, token, advertisedUrl);
-    const publicBaseUrl = pluginPublicBaseUrl(rec.pluginKey);
-    return {
-      ok: true,
-      // Per-plugin verify key (see register handler) — re-sent each beat
-      // so a plugin picks up rotations within ~30s.
-      sessionVerifyPublicKey: jwtService.pluginSessionPublicKeyPem(
-        rec.pluginKey,
-      ),
-      ...(publicBaseUrl !== undefined ? { publicBaseUrl } : {}),
-    };
+      const token = presentedBearerToken(request);
+      if (!token) {
+        reply.code(401).send({ error: "missing bearer token" });
+        return;
+      }
+      const rec = pluginAuthStore.verify(token);
+      if (!rec) {
+        reply.code(401).send({ error: "token invalid or expired" });
+        return;
+      }
+      // Optional `url` in the beat is the replica's own advertised address
+      // (PR-3.1 multi-endpoint). Older SDKs send no body — handled by the
+      // registry falling back to the DB row's url.
+      const advertisedUrl =
+        rec.endpointUrl ??
+        (typeof request.body?.url === "string" ? request.body.url : undefined);
+      await pluginRegistry.heartbeat(rec.pluginId, token, advertisedUrl);
+      const publicBaseUrl = pluginPublicBaseUrl(rec.pluginKey);
+      return {
+        ok: true,
+        // Per-plugin verify key (see register handler) — re-sent each beat
+        // so a plugin picks up rotations within ~30s.
+        sessionVerifyPublicKey: jwtService.pluginSessionPublicKeyPem(
+          rec.pluginKey,
+        ),
+        ...(publicBaseUrl !== undefined ? { publicBaseUrl } : {}),
+      };
     },
   );
 
@@ -418,7 +479,8 @@ export async function registerPluginRoutes(
         return;
       }
       const advertisedUrl =
-        typeof request.body?.url === "string" ? request.body.url : undefined;
+        rec.endpointUrl ??
+        (typeof request.body?.url === "string" ? request.body.url : undefined);
       await pluginRegistry.deregister(rec.pluginId, token, advertisedUrl);
       return { ok: true };
     },
@@ -1491,7 +1553,11 @@ export async function registerPluginRoutes(
       return;
     }
 
-    return pluginAdmin.provisionSetupSecret(key, bodySecret, request.authUserId);
+    return pluginAdmin.provisionSetupSecret(
+      key,
+      bodySecret,
+      request.authUserId,
+    );
   });
 }
 

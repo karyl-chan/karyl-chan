@@ -68,6 +68,7 @@ import {
   preflightPluginTarget,
   resolvePluginEndpoint,
 } from "./plugin-dispatch-util.js";
+import { pluginEndpointRegistry } from "./plugin-endpoint-registry.js";
 
 export type DispatchKind =
   | "command"
@@ -147,8 +148,7 @@ const KIND_SPECS: Record<DispatchKind, KindSpec> = {
     requireManifest: true,
     reach: "any-feature",
     requireKey: true,
-    endpointTemplate: (m) =>
-      m.endpoints?.plugin_modal ?? "/modals/{modal_id}",
+    endpointTemplate: (m) => m.endpoints?.plugin_modal ?? "/modals/{modal_id}",
     readBody: false,
     transport: "direct",
     traceparent: false,
@@ -199,6 +199,7 @@ export type PluginDispatchGate =
       ok: false;
       reason:
         | "plugin_offline"
+        | "plugin_not_ready"
         | "manifest_invalid"
         | "reach_denied"
         | "no_dispatch_key";
@@ -218,9 +219,7 @@ export interface PluginDeliverRequest {
    *  - `data`: event/lifecycle envelope — the HTTP body becomes
    *    `{type: label, data}` and the bus transport receives `data` raw.
    */
-  payload:
-    | { body: () => string | Promise<string> }
-    | { data: unknown };
+  payload: { body: () => string | Promise<string> } | { data: unknown };
 }
 
 export type PluginDispatchDelivery =
@@ -229,7 +228,11 @@ export type PluginDispatchDelivery =
   | { status: "ok"; httpStatus?: number; body?: unknown }
   | {
       status: "skipped";
-      reason: "manifest_invalid" | "no_dispatch_key" | "no_endpoint";
+      reason:
+        | "plugin_not_ready"
+        | "manifest_invalid"
+        | "no_dispatch_key"
+        | "no_endpoint";
     }
   | {
       status: "failed";
@@ -253,7 +256,10 @@ export type PluginDispatchDelivery =
 
 export type PluginDispatchOutcome =
   | PluginDispatchDelivery
-  | { status: "skipped"; reason: "plugin_offline" | "reach_denied" };
+  | {
+      status: "skipped";
+      reason: "plugin_offline" | "plugin_not_ready" | "reach_denied";
+    };
 
 /** The reach queries the gate needs — satisfied by featureReachResolver. */
 export interface DispatchReachResolver {
@@ -280,6 +286,11 @@ export interface PluginDispatcherDeps {
    *  dispatch (the registry memoizes construction). */
   getEventBus?: () => PluginEventBus | null;
   reach?: DispatchReachResolver;
+  /** Resolve the concrete ready replica used for this dispatch. */
+  resolveReadyEndpoint?: (
+    pluginKey: string,
+    preferredUrl: string,
+  ) => string | null;
 }
 
 export interface PluginDispatcher {
@@ -341,12 +352,19 @@ export function createPluginDispatcher(
     });
   const getEventBus = deps.getEventBus ?? getPluginEventBus;
   const reach: DispatchReachResolver = deps.reach ?? featureReachResolver;
+  const resolveReadyEndpoint =
+    deps.resolveReadyEndpoint ??
+    ((pluginKey: string, preferredUrl: string) =>
+      pluginEndpointRegistry.readyEndpoint(pluginKey, preferredUrl));
 
   async function gate(req: PluginGateRequest): Promise<PluginDispatchGate> {
     const spec = KIND_SPECS[req.kind];
     const plugin = req.plugin;
     if (!plugin.enabled || plugin.status !== "active") {
       return { ok: false, reason: "plugin_offline" };
+    }
+    if (!resolveReadyEndpoint(plugin.pluginKey, plugin.url)) {
+      return { ok: false, reason: "plugin_not_ready" };
     }
     let manifest: PluginManifest | null = null;
     if (spec.requireManifest) {
@@ -412,6 +430,10 @@ export function createPluginDispatcher(
   ): Promise<PluginDispatchDelivery> {
     const spec = KIND_SPECS[req.kind];
     const plugin = req.plugin;
+    const readyBaseUrl = resolveReadyEndpoint(plugin.pluginKey, plugin.url);
+    if (!readyBaseUrl) {
+      return { status: "skipped", reason: "plugin_not_ready" };
+    }
 
     // The bus is a transport INSIDE the module, before any HTTP-only
     // concern: no signing key, no manifest endpoint, no preflight —
@@ -437,7 +459,7 @@ export function createPluginDispatcher(
     const template = spec.endpointTemplate(manifest);
     if (template === null) return { status: "skipped", reason: "no_endpoint" };
     const url = resolvePluginEndpoint(
-      plugin.url,
+      readyBaseUrl,
       template,
       req.endpointVars ?? {},
     );

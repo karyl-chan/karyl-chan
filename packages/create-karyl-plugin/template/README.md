@@ -1,4 +1,4 @@
-# __PLUGIN_NAME__
+# **PLUGIN_NAME**
 
 A [karyl-chan](https://github.com/karyl-chan/karyl-chan) plugin, scaffolded
 with `create-karyl-plugin`. It registers one slash command,
@@ -22,16 +22,19 @@ setup secret:
 3. **Security → Generate setup secret**, copy the value into `.env` as
    `KARYL_PLUGIN_SETUP_SECRET`.
 
-On the next start the plugin registers, syncs its command to Discord, and
-begins heartbeating. Invoke `/__PLUGIN_KEY__-ping` in a guild where the
-plugin is installed to see `pong 🏓`.
+On the next start the plugin registers, runs its initialization, performs an
+authenticated ready transition, and only then begins heartbeating and accepts
+dispatch. The generated entry point awaits `started.whenReady()`, so an
+`onStart` failure is visible instead of producing a half-ready service. Invoke
+`/__PLUGIN_KEY__-ping` in a guild where the plugin is installed to see
+`pong 🏓`.
 
 ## Layout
 
-| File | What |
-|------|------|
-| `src/plugin.ts` | `definePlugin({...})` — the manifest + command handlers. |
-| `src/index.ts`  | Entry point — calls `plugin.start()`. |
+| File            | What                                                                      |
+| --------------- | ------------------------------------------------------------------------- |
+| `src/plugin.ts` | `definePlugin({...})` — the manifest + command handlers.                  |
+| `src/index.ts`  | Entry point — calls `plugin.start()`.                                     |
 | `.env.example`  | The environment contract (`BOT_URL`, setup secret, `PLUGIN_URL`, `PORT`). |
 
 ## Next steps
