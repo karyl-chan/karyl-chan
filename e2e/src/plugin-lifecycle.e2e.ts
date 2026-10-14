@@ -2,7 +2,7 @@
  * PM-2.1 — Core path 3: plugin lifecycle E2E.
  *
  *   register → heartbeat-credentialed RPC → command sync state →
- *   admin enable → signed dispatch → handler → bot-side KV →
+ *   admin enable → signed component dispatch → handler → bot-side KV →
  *   read-back → graceful stop
  *
  * REAL components end to end, over real HTTP:
@@ -32,7 +32,7 @@ import { after, before, describe, it } from "node:test";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHmac, randomBytes } from "node:crypto";
 import { createServer } from "node:net";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import { existsSync } from "node:fs";
 
@@ -95,11 +95,14 @@ async function until<T>(
     await new Promise((r) => setTimeout(r, stepMs));
   }
   throw new Error(
-    `timed out waiting for ${what}` + (lastErr ? `; last error: ${String(lastErr)}` : ""),
+    `timed out waiting for ${what}` +
+      (lastErr ? `; last error: ${String(lastErr)}` : ""),
   );
 }
 
-async function getJson(url: string): Promise<{ status: number; body: unknown }> {
+async function getJson(
+  url: string,
+): Promise<{ status: number; body: unknown }> {
   const res = await fetch(url);
   return { status: res.status, body: await res.json().catch(() => null) };
 }
@@ -122,6 +125,8 @@ async function postJson(
 interface StartedPluginLike {
   stop(): Promise<void>;
   getDispatchHmacKey(): string | null;
+  lifecycleState(): "registering" | "initializing" | "ready" | "failed";
+  whenReady(): Promise<void>;
   kv: {
     guild(guildId: string): {
       get(key: string): Promise<unknown>;
@@ -182,15 +187,27 @@ describe("plugin lifecycle E2E (PM-2.1, path 3)", { skip: !DB_URL }, () => {
   after(async () => {
     if (started) await started.stop().catch(() => undefined);
     if (bot && bot.exitCode === null) {
-      const exited = new Promise<void>((resolve) => bot?.once("exit", () => resolve()));
+      const exited = new Promise<void>((resolve) =>
+        bot?.once("exit", () => resolve()),
+      );
       bot.kill("SIGTERM");
       // Graceful shutdown must actually terminate — a hang here is a
       // drain-path regression.
-      const timeout = new Promise<"timeout">((r) => setTimeout(() => r("timeout"), 15_000));
-      const result = await Promise.race([exited.then(() => "exited" as const), timeout]);
+      let watchdog: NodeJS.Timeout;
+      const timeout = new Promise<"timeout">((resolve) => {
+        watchdog = setTimeout(() => resolve("timeout"), 15_000);
+        watchdog.unref();
+      });
+      const result = await Promise.race([
+        exited.then(() => "exited" as const),
+        timeout,
+      ]);
+      clearTimeout(watchdog!);
       if (result === "timeout") {
         bot.kill("SIGKILL");
-        throw new Error(`bot did not exit within 15s of SIGTERM\n--- bot log tail ---\n${botLog.slice(-4000)}`);
+        throw new Error(
+          `bot did not exit within 15s of SIGTERM\n--- bot log tail ---\n${botLog.slice(-4000)}`,
+        );
       }
     }
   });
@@ -201,11 +218,14 @@ describe("plugin lifecycle E2E (PM-2.1, path 3)", { skip: !DB_URL }, () => {
     //    state from a previous run.
     {
       const r = await getJson(`${botUrl}/api/plugins`);
-      const rows = (r.body as { plugins: Array<{ id: number; pluginKey: string }> })
-        .plugins;
+      const rows = (
+        r.body as { plugins: Array<{ id: number; pluginKey: string }> }
+      ).plugins;
       const leftover = rows.find((p) => p.pluginKey === PLUGIN_KEY);
       if (leftover) {
-        await fetch(`${botUrl}/api/plugins/${leftover.id}`, { method: "DELETE" });
+        await fetch(`${botUrl}/api/plugins/${leftover.id}`, {
+          method: "DELETE",
+        });
       }
     }
 
@@ -213,12 +233,16 @@ describe("plugin lifecycle E2E (PM-2.1, path 3)", { skip: !DB_URL }, () => {
     const mint = await postJson(`${botUrl}/api/plugins/setup-secret`, {
       pluginKey: PLUGIN_KEY,
     });
-    assert.equal(mint.status, 200, `setup-secret: ${JSON.stringify(mint.body)}`);
+    assert.equal(
+      mint.status,
+      200,
+      `setup-secret: ${JSON.stringify(mint.body)}`,
+    );
     const setupSecret = (mint.body as { setupSecret: string }).setupSecret;
     assert.ok(setupSecret && setupSecret.length >= 32);
 
     // 2. A REAL SDK plugin starts and registers itself with that secret.
-    const sdk = await import(SDK_DIST);
+    const sdk = await import(pathToFileURL(SDK_DIST).href);
     const pluginUrl = `http://127.0.0.1:${pluginPort}`;
     const pingCommand = sdk.definePluginCommand({
       name: "e2e-ping",
@@ -228,6 +252,13 @@ describe("plugin lifecycle E2E (PM-2.1, path 3)", { skip: !DB_URL }, () => {
       scope: "guild",
       integrationTypes: ["guild_install"],
       contexts: ["Guild"],
+      async handler() {
+        return "unused command-sync probe";
+      },
+    });
+    const pingComponent = sdk.definePluginComponent({
+      id: "e2e-ping",
+      componentType: 2,
       async handler(ctx: {
         guildId: string | null;
         userId: string;
@@ -239,7 +270,10 @@ describe("plugin lifecycle E2E (PM-2.1, path 3)", { skip: !DB_URL }, () => {
           from: ctx.userId,
           pong: true,
         });
-        return { content: "pong", ephemeral: true };
+        // Component handlers may intentionally return nothing after the bot
+        // has acknowledged the click. That keeps this Discord-less E2E on
+        // the real HMAC + plugin RPC path without inventing a fake gateway.
+        return undefined;
       },
     });
     const plugin = sdk.definePlugin({
@@ -250,6 +284,7 @@ describe("plugin lifecycle E2E (PM-2.1, path 3)", { skip: !DB_URL }, () => {
       storage: { guildKv: true },
       rpcMethodsUsed: ["me.enabled_guilds"],
       pluginCommands: [pingCommand],
+      components: [pingComponent],
     });
     started = (await plugin.start({
       port: pluginPort,
@@ -266,14 +301,22 @@ describe("plugin lifecycle E2E (PM-2.1, path 3)", { skip: !DB_URL }, () => {
     //    because there is no Discord client to sync against) and (b)
     //    the row version flipping from the 0.0.0 placeholder to the
     //    manifest's. Register itself never waited on sync (PM-7.1).
-    const row = await until("registered row (commandSync ok)", async () => {
-      const r = await getJson(`${botUrl}/api/plugins`);
-      if (r.status !== 200) return null;
-      const rows = (r.body as { plugins: Array<Record<string, unknown>> }).plugins;
-      const mine = rows.find((p) => p.pluginKey === PLUGIN_KEY);
-      const sync = mine?.commandSync as { status?: string } | null | undefined;
-      return mine && sync?.status === "ok" ? mine : null;
-    }, 30_000);
+    const row = await until(
+      "registered row (commandSync ok)",
+      async () => {
+        const r = await getJson(`${botUrl}/api/plugins`);
+        if (r.status !== 200) return null;
+        const rows = (r.body as { plugins: Array<Record<string, unknown>> })
+          .plugins;
+        const mine = rows.find((p) => p.pluginKey === PLUGIN_KEY);
+        const sync = mine?.commandSync as
+          | { status?: string }
+          | null
+          | undefined;
+        return mine && sync?.status === "ok" ? mine : null;
+      },
+      30_000,
+    );
     assert.equal(row.version, "0.0.1", "manifest version replaced placeholder");
     // Register must NOT flip an admin's enable switch (PM-7 docs:
     // "register ≠ enabled") — the minting placeholder starts disabled.
@@ -282,33 +325,34 @@ describe("plugin lifecycle E2E (PM-2.1, path 3)", { skip: !DB_URL }, () => {
     // 4. Admin enables the plugin. (Ordering matters: plugin-token RPC
     //    is 403 "disabled or inactive" until this flips — verified by
     //    construction, the RPC below would fail if moved above.)
-    const enable = await postJson(
-      `${botUrl}/api/plugins/${row.id}/enabled`,
-      { enabled: true },
-    );
+    const enable = await postJson(`${botUrl}/api/plugins/${row.id}/enabled`, {
+      enabled: true,
+    });
     assert.equal(enable.status, 200, `enable: ${JSON.stringify(enable.body)}`);
 
     // 5. Plugin-token RPC round-trip works (scope granted at register).
     const guilds = await (started as StartedPluginLike).me.enabledGuilds();
     assert.ok(Array.isArray(guilds), "me.enabledGuilds answers over RPC");
 
-    // 6. Dispatch /commands/e2e-ping signed EXACTLY like the bot signs
+    // 6. Dispatch /components signed EXACTLY like the bot signs
     //    (METHOD:path:ts:nonce:body, x-karyl-* headers) with the
     //    per-plugin key from the register handshake.
     const dispatchKey = (started as StartedPluginLike).getDispatchHmacKey();
     assert.ok(dispatchKey, "plugin holds the dispatch HMAC key after register");
     const payload = JSON.stringify({
-      command_name: "e2e-ping",
+      custom_id: `kc:${PLUGIN_KEY}:e2e-ping`,
+      component_type: 2,
       interaction_id: "1",
       interaction_token: "e2e-fake-interaction-token",
+      message_id: "900000000000000004",
       guild_id: GUILD_ID,
       channel_id: "900000000000000002",
       user: { id: "900000000000000003", username: "e2e" },
-      options: [],
+      selected_values: [],
     });
     const ts = String(Math.floor(Date.now() / 1000));
     const nonce = randomBytes(16).toString("hex");
-    const dispatchPath = "/commands/e2e-ping";
+    const dispatchPath = "/components";
     // Nonced scheme (BH-2.4): <METHOD>:<path>:<ts>:<nonce>:<body>.
     const sig = createHmac("sha256", dispatchKey as string)
       .update(`POST:${dispatchPath}:${ts}:${nonce}:${payload}`)
@@ -323,30 +367,209 @@ describe("plugin lifecycle E2E (PM-2.1, path 3)", { skip: !DB_URL }, () => {
       },
       body: payload,
     });
-    // SDK acks the dispatch immediately (204) and the handler replies
-    // out-of-band via interactions.respond — which will fail against a
-    // fake interaction token, and that's fine; the KV write below is
-    // the proof the handler ran.
+    // SDK acks the dispatch immediately (204). The KV write below is the
+    // proof the background handler completed.
     assert.equal(res.status, 204, `dispatch: HTTP ${res.status}`);
 
     // 7. The handler's bot-side KV write is observable from the plugin.
-    const stored = await until("kv read-back of the handler's write", async () => {
-      const v = await (started as StartedPluginLike).kv.guild(GUILD_ID).get("ping");
-      return v && (v as { pong?: boolean }).pong === true ? v : null;
-    }, 15_000);
+    const stored = await until(
+      "kv read-back of the handler's write",
+      async () => {
+        const v = await (started as StartedPluginLike).kv
+          .guild(GUILD_ID)
+          .get("ping");
+        return v && (v as { pong?: boolean }).pong === true ? v : null;
+      },
+      15_000,
+    );
     assert.equal((stored as { from: string }).from, "900000000000000003");
 
     // 8. Graceful stop deregisters; the bot marks the plugin inactive
     //    without waiting for the heartbeat reaper.
     await (started as StartedPluginLike).stop();
     started = null;
-    await until("plugin row inactive after deregister", async () => {
-      const r = await getJson(`${botUrl}/api/plugins`);
-      const rows = (r.body as { plugins: Array<Record<string, unknown>> }).plugins;
-      const mine = rows.find((p) => p.pluginKey === PLUGIN_KEY);
-      return mine && mine.status === "inactive" ? mine : null;
-    }, 20_000);
+    await until(
+      "plugin row inactive after deregister",
+      async () => {
+        const r = await getJson(`${botUrl}/api/plugins`);
+        const rows = (r.body as { plugins: Array<Record<string, unknown>> })
+          .plugins;
+        const mine = rows.find((p) => p.pluginKey === PLUGIN_KEY);
+        return mine && mine.status === "inactive" ? mine : null;
+      },
+      20_000,
+    );
 
-    t.diagnostic("full lifecycle verified: register → enable → dispatch → KV → deregister");
+    t.diagnostic(
+      "full lifecycle verified: register → enable → dispatch → KV → deregister",
+    );
+  });
+
+  it("#65 refuses signed dispatch while onStart is still initializing", async (t) => {
+    const pluginKey = "e2e-initializing";
+    const port = await freePort();
+    const pluginUrl = `http://127.0.0.1:${port}`;
+    const sdk = await import(pathToFileURL(SDK_DIST).href);
+
+    const prior = await getJson(`${botUrl}/api/plugins/by-key/${pluginKey}`);
+    if (prior.status === 200) {
+      const id = (prior.body as { plugin: { id: number } }).plugin.id;
+      await fetch(`${botUrl}/api/plugins/${id}`, { method: "DELETE" });
+    }
+    const mint = await postJson(`${botUrl}/api/plugins/setup-secret`, {
+      pluginKey,
+    });
+    assert.equal(mint.status, 200, JSON.stringify(mint.body));
+    const setupSecret = (mint.body as { setupSecret: string }).setupSecret;
+
+    let releaseStart!: () => void;
+    const startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve;
+    });
+    let enteredStart!: () => void;
+    const onStartEntered = new Promise<void>((resolve) => {
+      enteredStart = resolve;
+    });
+    const command = sdk.definePluginCommand({
+      name: "e2e-initializing",
+      description: "Readiness gate probe",
+      scope: "guild",
+      integrationTypes: ["guild_install"],
+      contexts: ["Guild"],
+      async handler() {
+        return { content: "must not run while initializing" };
+      },
+    });
+    const plugin = sdk.definePlugin({
+      key: pluginKey,
+      name: "E2E Initializing",
+      version: "0.0.1",
+      description: "Readiness initialization probe",
+      pluginCommands: [command],
+      async onStart() {
+        enteredStart();
+        await startGate;
+      },
+    });
+    const candidate = (await plugin.start({
+      port,
+      host: "127.0.0.1",
+      botUrl,
+      setupSecret,
+      pluginUrl,
+    })) as StartedPluginLike;
+
+    try {
+      await onStartEntered;
+      assert.equal(candidate.lifecycleState(), "initializing");
+      const readyDuringInit = await getJson(`${pluginUrl}/health/ready`);
+      assert.equal(
+        readyDuringInit.status,
+        503,
+        JSON.stringify(readyDuringInit.body),
+      );
+
+      const key = candidate.getDispatchHmacKey();
+      assert.ok(key, "register must provide a key before onStart runs");
+      const dispatchPath = "/commands/e2e-initializing";
+      const payload = JSON.stringify({
+        command_name: "e2e-initializing",
+        interaction_id: "65",
+        interaction_token: "e2e-initializing-token",
+        guild_id: GUILD_ID,
+        channel_id: "900000000000000002",
+        user: { id: "900000000000000003", username: "e2e" },
+        options: [],
+      });
+      const ts = String(Math.floor(Date.now() / 1000));
+      const nonce = randomBytes(16).toString("hex");
+      const sig = createHmac("sha256", key)
+        .update(`POST:${dispatchPath}:${ts}:${nonce}:${payload}`)
+        .digest("hex");
+      const refused = await fetch(`${pluginUrl}${dispatchPath}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-karyl-timestamp": ts,
+          "x-karyl-nonce": nonce,
+          "x-karyl-signature": sig,
+        },
+        body: payload,
+      });
+      assert.equal(
+        refused.status,
+        503,
+        "valid dispatch must fail closed before ready",
+      );
+
+      releaseStart();
+      await candidate.whenReady();
+      assert.equal(candidate.lifecycleState(), "ready");
+      assert.equal((await getJson(`${pluginUrl}/health/ready`)).status, 200);
+    } finally {
+      releaseStart();
+      await candidate.stop().catch(() => undefined);
+    }
+    t.diagnostic(
+      "#65 verified: initialization keeps readiness and dispatch closed",
+    );
+  });
+
+  it("#65 keeps a plugin failed and not-ready when onStart throws", async (t) => {
+    const pluginKey = "e2e-onstart-failure";
+    const port = await freePort();
+    const pluginUrl = `http://127.0.0.1:${port}`;
+    const sdk = await import(pathToFileURL(SDK_DIST).href);
+
+    const prior = await getJson(`${botUrl}/api/plugins/by-key/${pluginKey}`);
+    if (prior.status === 200) {
+      const id = (prior.body as { plugin: { id: number } }).plugin.id;
+      await fetch(`${botUrl}/api/plugins/${id}`, { method: "DELETE" });
+    }
+    const mint = await postJson(`${botUrl}/api/plugins/setup-secret`, {
+      pluginKey,
+    });
+    assert.equal(mint.status, 200, JSON.stringify(mint.body));
+    const setupSecret = (mint.body as { setupSecret: string }).setupSecret;
+    const plugin = sdk.definePlugin({
+      key: pluginKey,
+      name: "E2E onStart failure",
+      version: "0.0.1",
+      description: "Readiness failure probe",
+      async onStart() {
+        throw new Error("intentional e2e onStart failure");
+      },
+    });
+    const failed = (await plugin.start({
+      port,
+      host: "127.0.0.1",
+      botUrl,
+      setupSecret,
+      pluginUrl,
+    })) as StartedPluginLike;
+
+    try {
+      await assert.rejects(
+        failed.whenReady(),
+        /intentional e2e onStart failure/,
+      );
+      assert.equal(failed.lifecycleState(), "failed");
+      assert.equal((await getJson(`${pluginUrl}/health`)).status, 200);
+      assert.equal((await getJson(`${pluginUrl}/health/ready`)).status, 503);
+
+      await until(
+        "failed plugin to deregister",
+        async () => {
+          const r = await getJson(`${botUrl}/api/plugins/by-key/${pluginKey}`);
+          if (r.status !== 200) return null;
+          const row = (r.body as { plugin: { status: string } }).plugin;
+          return row.status === "inactive" ? row : null;
+        },
+        15_000,
+      );
+    } finally {
+      await failed.stop().catch(() => undefined);
+    }
+    t.diagnostic("#65 verified: throwing onStart never reaches ready");
   });
 });

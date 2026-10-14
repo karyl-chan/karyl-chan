@@ -1,185 +1,427 @@
 /**
- * PR-6.3 — Chaos / fault-injection scenarios (scaffold).
+ * Plugin Platform 1.0 fault-injection gate.
  *
- * Chaos testing needs running services (a real bot, a real plugin, a
- * real Redis, and the ability to kill / partition them mid-flight). The
- * environment this was authored in cannot fully exercise that, so this
- * file ships a **documented scenario catalogue + a thin runner**, gated
- * behind TEST_CHAOS=1 exactly like the E2E smoke. It is deliberately NOT
- * claimed to have been executed.
- *
- * Each scenario records:
- *   - `fault`     : the failure injected.
- *   - `invariant` : what must still hold after recovery (the assertion).
- *   - `run`       : the steps. Steps that require live services and
- *                   out-of-process control (docker kill, iptables) are
- *                   documented TODOs that throw `NOT_IMPLEMENTED` so a
- *                   run can't silently "pass" without doing the work.
- *
- * To run (with the full compose topology up — see e2e/README.md):
- *
- *   docker compose -f e2e/docker-compose.e2e.yml --profile full up -d --build
- *   TEST_CHAOS=1 pnpm --dir e2e chaos
- *
- * Without TEST_CHAOS the whole file reports `# SKIP` and exits 0.
+ * These are the two recovery paths #67 makes mandatory. Both inject a real
+ * process failure and wait on an observable recovery invariant; neither uses
+ * a fixed sleep as its assertion.
  */
 
-import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { after, describe, it } from "node:test";
+import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
+import { createServer } from "node:net";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const CHAOS = process.env.TEST_CHAOS === "1";
+const DB_URL = process.env.TEST_E2E_DB_URL;
+const REDIS_URL = process.env.TEST_E2E_REDIS_URL;
+const ENABLED = process.env.TEST_CHAOS === "1";
 
-const NOT_IMPLEMENTED =
-  "live-service chaos step not implemented here — requires the `full` " +
-  "compose topology + out-of-process fault control (docker kill / iptables). " +
-  "See the scenario's `invariant` for the assertion to wire up.";
-
-interface ChaosScenario {
-  name: string;
-  /** The failure injected mid-flight. */
-  fault: string;
-  /** What must still hold after the system recovers. */
-  invariant: string;
-  /** Which bot subsystem this exercises. */
-  exercises: string;
-  /** Steps. Throws NOT_IMPLEMENTED until wired to a services-up lane. */
-  run: () => Promise<void>;
+function findRepoRoot(from: string): string {
+  let dir = from;
+  for (let i = 0; i < 10; i++) {
+    if (existsSync(path.join(dir, "pnpm-workspace.yaml"))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  throw new Error(`pnpm-workspace.yaml not found above ${from}`);
 }
 
-/**
- * The chaos catalogue. These map 1:1 to the resilience mechanisms the bot
- * already ships (circuit breaker, retry, DLQ, graceful drain, gateway
- * resume) — each scenario injects the fault that mechanism exists to
- * survive and asserts the mechanism actually kicks in.
- */
-export const SCENARIOS: ChaosScenario[] = [
-  {
-    name: "kill-plugin",
-    fault:
-      "SIGKILL the plugin process mid event-dispatch, then restart it.",
-    invariant:
-      "Events emitted while the plugin was down are NOT lost: with " +
-      "EVENT_BUS=redis-streams they queue in the stream and are " +
-      "redelivered (XREADGROUP from the group's cursor) on restart; the " +
-      "bot's per-plugin circuit breaker opens during the outage and " +
-      "half-opens after, so dispatch resumes without operator action. No " +
-      "duplicate side effects beyond at-least-once (handler idempotency).",
-    exercises: "circuit breaker + Streams redelivery + plugin re-register",
-    run: async () => {
-      // TODO(services-up):
-      //   1. produce N events via the bot while the plugin is alive; drain.
-      //   2. `docker kill` the plugin container.
-      //   3. produce M more events (these must buffer in the stream).
-      //   4. `docker start` the plugin; wait for re-register + consumer join.
-      //   5. assert the handler eventually observes all N+M event ids
-      //      (XPENDING for the group reaches 0; no entry in the :dlq stream
-      //      that wasn't a genuine poison message).
-      throw new Error(NOT_IMPLEMENTED);
-    },
-  },
-  {
-    name: "kill-redis",
-    fault: "Stop the Redis container during steady-state dispatch.",
-    invariant:
-      "Producer XADDs fail soft (fire-and-forget contract — bot does not " +
-      "crash, Discord event handlers still return); the SDK consumer's " +
-      "XREADGROUP backs off and retries. When Redis returns, dispatch " +
-      "resumes and the consumer group cursor is intact (no events lost " +
-      "for entries that were durably XADDed before the outage).",
-    exercises: "fire-and-forget producer + consumer backoff/reconnect",
-    run: async () => {
-      // TODO(services-up):
-      //   1. steady-state produce/consume; confirm flow.
-      //   2. `docker stop redis`; produce events (XADD should fail soft,
-      //      bot must stay up — assert no crash, /healthz still 200).
-      //   3. `docker start redis`; assert consumer reconnects and resumes
-      //      from its cursor within a bounded window.
-      throw new Error(NOT_IMPLEMENTED);
-    },
-  },
-  {
-    name: "network-partition",
-    fault:
-      "iptables-DROP the bot→plugin RPC path (commands/events dispatch) " +
-      "while leaving both processes alive.",
-    invariant:
-      "Outbound dispatch POSTs time out and are retried per the SDK's " +
-      "callBotRpc policy (503/429/network → bounded retry+backoff); the " +
-      "per-plugin circuit breaker opens after the failure threshold and " +
-      "sheds load instead of hammering a black hole. On heal, the breaker " +
-      "half-opens and traffic resumes. No unbounded retry storm, no " +
-      "memory growth from queued dispatches.",
-    exercises: "RPC retry/backoff + circuit breaker open→half-open→close",
-    run: async () => {
-      // TODO(services-up):
-      //   1. establish flow.
-      //   2. partition (iptables -A) the bot→plugin route.
-      //   3. drive dispatches; assert breaker opens + metrics reflect
-      //      failures; assert NO crash and bounded in-flight count.
-      //   4. heal (iptables -D); assert breaker recovers and flow resumes.
-      throw new Error(NOT_IMPLEMENTED);
-    },
-  },
-  {
-    name: "gateway-resume-window",
-    fault:
-      "Drop the Discord gateway connection and force a RESUME (vs a fresh " +
-      "IDENTIFY) — simulate the resume window where buffered gateway " +
-      "events replay.",
-    invariant:
-      "Events that arrive during/around the resume window are not " +
-      "double-processed: the bot's event-dedup layer (bot-event-dedup) " +
-      "drops replays so each Discord event is dispatched to plugins " +
-      "exactly once. Graceful-drain in flight is respected (readiness " +
-      "drain doesn't strand half-handled interactions).",
-    exercises: "gateway resume dedup + graceful drain",
-    run: async () => {
-      // TODO(services-up):
-      //   1. with the bot connected, capture the set of dispatched event
-      //      ids over a window.
-      //   2. force a gateway reconnect/RESUME (kill the ws / use a proxy
-      //      that severs then restores the gateway socket).
-      //   3. assert the dispatched-event-id set has no duplicates across
-      //      the resume boundary (dedup held).
-      throw new Error(NOT_IMPLEMENTED);
-    },
-  },
-];
+const REPO = findRepoRoot(path.dirname(fileURLToPath(import.meta.url)));
+const BOT_MAIN = path.join(REPO, "packages", "bot", "build", "main.js");
+const PLUGIN_WORKER = path.join(
+  REPO,
+  "e2e",
+  "dist",
+  "src",
+  "fixtures",
+  "restartable-plugin.js",
+);
+const CONSUMER_WORKER = path.join(
+  REPO,
+  "e2e",
+  "dist",
+  "src",
+  "fixtures",
+  "streams-consumer.js",
+);
 
-/**
- * Sanity invariants that DON'T need live services — these run even in the
- * gated lane to prove the catalogue itself is well-formed (every scenario
- * declares a fault, an invariant, and a runnable step).
- */
-function assertCatalogueWellFormed(): void {
-  const names = new Set<string>();
-  for (const s of SCENARIOS) {
-    if (!s.name || names.has(s.name)) {
-      throw new Error(`chaos scenario name missing/duplicate: ${s.name}`);
+interface RedisLike {
+  del(...keys: string[]): Promise<number>;
+  quit(): Promise<string>;
+  xadd(key: string, ...args: Array<string | number>): Promise<string>;
+  xlen(key: string): Promise<number>;
+  xpending(...args: Array<string | number>): Promise<unknown>;
+}
+
+interface RedisCtor {
+  new (url: string): RedisLike;
+}
+
+interface LoggedChild {
+  child: ChildProcess;
+  output(): string;
+}
+
+async function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close(() => reject(new Error("no address")));
+        return;
+      }
+      server.close(() => resolve(address.port));
+    });
+  });
+}
+
+async function until<T>(
+  what: string,
+  fn: () => Promise<T | null>,
+  timeoutMs = 30_000,
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    try {
+      const value = await fn();
+      if (value !== null) return value;
+    } catch (error) {
+      lastError = error;
     }
-    names.add(s.name);
-    if (!s.fault || !s.invariant || typeof s.run !== "function") {
-      throw new Error(`chaos scenario '${s.name}' is incomplete`);
-    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(
+    `timed out waiting for ${what}` +
+      (lastError ? `; last error: ${String(lastError)}` : ""),
+  );
+}
+
+async function api(
+  method: string,
+  url: string,
+  body?: unknown,
+): Promise<{ status: number; body: unknown }> {
+  const response = await fetch(url, {
+    method,
+    signal: AbortSignal.timeout(10_000),
+    headers:
+      body === undefined ? undefined : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  return {
+    status: response.status,
+    body: await response.json().catch(() => null),
+  };
+}
+
+function spawnLogged(file: string, env: NodeJS.ProcessEnv): LoggedChild {
+  let output = "";
+  const child = spawn(process.execPath, [file], {
+    cwd: REPO,
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  child.stdout?.on("data", (chunk: Buffer) => (output += chunk.toString()));
+  child.stderr?.on("data", (chunk: Buffer) => (output += chunk.toString()));
+  return { child, output: () => output };
+}
+
+async function waitForMarker(
+  worker: LoggedChild,
+  marker: string,
+  timeoutMs = 30_000,
+): Promise<void> {
+  await until(
+    `'${marker}' from child process`,
+    async () => {
+      if (worker.output().includes(marker)) return true;
+      if (worker.child.exitCode !== null) {
+        throw new Error(
+          `child exited ${worker.child.exitCode} before '${marker}'\n${worker.output()}`,
+        );
+      }
+      return null;
+    },
+    timeoutMs,
+  );
+}
+
+async function terminate(
+  worker: LoggedChild | null,
+  signal: NodeJS.Signals = "SIGTERM",
+): Promise<void> {
+  if (
+    !worker ||
+    worker.child.exitCode !== null ||
+    worker.child.signalCode !== null
+  ) {
+    return;
+  }
+  const exited = new Promise<void>((resolve) =>
+    worker.child.once("exit", () => resolve()),
+  );
+  if (!worker.child.kill(signal)) return;
+  let watchdog: NodeJS.Timeout;
+  const outcome = await Promise.race([
+    exited.then(() => "exited" as const),
+    new Promise<"timeout">((resolve) => {
+      watchdog = setTimeout(() => resolve("timeout"), 5_000);
+      watchdog.unref();
+    }),
+  ]);
+  clearTimeout(watchdog!);
+  if (outcome === "timeout") {
+    if (worker.child.exitCode !== null || worker.child.signalCode !== null)
+      return;
+    if (!worker.child.kill("SIGKILL")) return;
+    await exited;
   }
 }
 
-(CHAOS ? describe : describe.skip)("PR-6.3 chaos scenarios", () => {
-  it("catalogue is well-formed", () => {
-    assertCatalogueWellFormed();
+/** Explicitly deferred by #67's non-goals; they are not registered as tests. */
+export const DEFERRED_SCENARIOS = [
+  "network-partition",
+  "gateway-resume-window",
+] as const;
+
+const run = ENABLED && DB_URL && REDIS_URL ? describe : describe.skip;
+const liveChildren: LoggedChild[] = [];
+
+after(async () => {
+  for (const worker of liveChildren.reverse()) {
+    await terminate(worker, "SIGKILL").catch(() => undefined);
+  }
+});
+
+run("plugin-platform chaos recovery", () => {
+  it("abrupt plugin death is reaped and restart restores one ready endpoint", async (t) => {
+    const botPort = await freePort();
+    const pluginPort = await freePort();
+    const botUrl = `http://127.0.0.1:${botPort}`;
+    const pluginUrl = `http://127.0.0.1:${pluginPort}`;
+    const pluginKey = `e2e-restart-${process.pid}`;
+    const bot = spawnLogged(BOT_MAIN, {
+      PATH: process.env.PATH ?? "",
+      NODE_ENV: "development",
+      BOT_SKIP_DISCORD: "true",
+      BOT_TOKEN: "e2e.placeholder",
+      ENCRYPTION_KEY:
+        "0000000000000000000000000000000000000000000000000000000000000000",
+      JWT_SECRET:
+        "0000000000000000000000000000000000000000000000000000000000000000",
+      DB_URL,
+      WEB_PORT: String(botPort),
+      WEB_HOST: "127.0.0.1",
+      PLUGIN_HEARTBEAT_TIMEOUT_MS: "1500",
+      PLUGIN_REAPER_INTERVAL_MS: "250",
+    });
+    liveChildren.push(bot);
+    let first: LoggedChild | null = null;
+    let restarted: LoggedChild | null = null;
+
+    try {
+      await until(
+        "chaos bot readiness",
+        async () => {
+          const response = await api("GET", `${botUrl}/api/health/ready`);
+          return response.status === 200 ? response : null;
+        },
+        90_000,
+      );
+
+      const minted = await api("POST", `${botUrl}/api/plugins/setup-secret`, {
+        pluginKey,
+      });
+      assert.equal(minted.status, 200, JSON.stringify(minted.body));
+      const setupSecret = (minted.body as { setupSecret: string }).setupSecret;
+      const workerEnv = {
+        PATH: process.env.PATH ?? "",
+        E2E_PLUGIN_KEY: pluginKey,
+        E2E_PLUGIN_PORT: String(pluginPort),
+        E2E_BOT_URL: botUrl,
+        E2E_PLUGIN_URL: pluginUrl,
+        E2E_SETUP_SECRET: setupSecret,
+      };
+
+      first = spawnLogged(PLUGIN_WORKER, workerEnv);
+      liveChildren.push(first);
+      await waitForMarker(first, "PLUGIN_READY");
+      await until("first ready endpoint", async () => {
+        const response = await api(
+          "GET",
+          `${botUrl}/api/plugins/by-key/${pluginKey}`,
+        );
+        if (response.status !== 200) return null;
+        const plugin = (
+          response.body as {
+            plugin: {
+              status: string;
+              eventTransport: { status: string; replicas: unknown[] };
+            };
+          }
+        ).plugin;
+        return plugin.status === "active" &&
+          plugin.eventTransport.status === "ready" &&
+          plugin.eventTransport.replicas.length === 1
+          ? plugin
+          : null;
+      });
+
+      await terminate(first, "SIGKILL");
+      await until(
+        "heartbeat reaper to remove the dead endpoint",
+        async () => {
+          const response = await api(
+            "GET",
+            `${botUrl}/api/plugins/by-key/${pluginKey}`,
+          );
+          if (response.status !== 200) return null;
+          const plugin = (
+            response.body as {
+              plugin: {
+                status: string;
+                eventTransport: { replicas: unknown[] };
+              };
+            }
+          ).plugin;
+          return plugin.status === "inactive" &&
+            plugin.eventTransport.replicas.length === 0
+            ? plugin
+            : null;
+        },
+        15_000,
+      );
+
+      restarted = spawnLogged(PLUGIN_WORKER, workerEnv);
+      liveChildren.push(restarted);
+      await waitForMarker(restarted, "PLUGIN_READY");
+      const recovered = await until(
+        "one recovered ready endpoint",
+        async () => {
+          const response = await api(
+            "GET",
+            `${botUrl}/api/plugins/by-key/${pluginKey}`,
+          );
+          if (response.status !== 200) return null;
+          const plugin = (
+            response.body as {
+              plugin: {
+                status: string;
+                eventTransport: {
+                  status: string;
+                  replicas: Array<{ url: string; lifecycleState: string }>;
+                };
+              };
+            }
+          ).plugin;
+          return plugin.status === "active" &&
+            plugin.eventTransport.status === "ready" &&
+            plugin.eventTransport.replicas.length === 1
+            ? plugin
+            : null;
+        },
+      );
+      assert.equal(recovered.eventTransport.replicas[0]?.url, pluginUrl);
+      assert.equal(
+        recovered.eventTransport.replicas[0]?.lifecycleState,
+        "ready",
+      );
+      t.diagnostic(
+        "chaos verified: SIGKILL → stale endpoint reaped → restart ready",
+      );
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- bot ---\n${bot.output()}\n--- first ---\n${first?.output() ?? ""}\n--- restart ---\n${restarted?.output() ?? ""}`,
+      );
+    } finally {
+      await terminate(restarted);
+      await terminate(first, "SIGKILL");
+      await terminate(bot);
+    }
   });
 
-  for (const scenario of SCENARIOS) {
-    // Each live scenario throws NOT_IMPLEMENTED until wired to a
-    // services-up lane — so a TEST_CHAOS run is honest about what has
-    // and hasn't actually been exercised (it FAILS loudly rather than
-    // green-washing). Operators wiring the services-up lane replace the
-    // `run` body and drop the `{ todo: true }`.
-    it(
-      `${scenario.name}: ${scenario.invariant.slice(0, 60)}…`,
-      { todo: true },
-      async () => {
-        await scenario.run();
-      },
-    );
-  }
+  it("a pending Streams event survives consumer death and is reclaimed", async (t) => {
+    const redisModule = (await import("ioredis")) as unknown as {
+      Redis: RedisCtor;
+    };
+    const redis = new redisModule.Redis(REDIS_URL!);
+    const pluginKey = `e2e-pending-${process.pid}`;
+    const streamKey = `karyl:plugin:${pluginKey}:events`;
+    const dlqKey = `${streamKey}:dlq`;
+    const group = `kc-consumer:${pluginKey}`;
+    let crashed: LoggedChild | null = null;
+    let recovered: LoggedChild | null = null;
+
+    try {
+      await redis.del(streamKey, dlqKey);
+      crashed = spawnLogged(CONSUMER_WORKER, {
+        PATH: process.env.PATH ?? "",
+        TEST_E2E_REDIS_URL: REDIS_URL!,
+        E2E_PLUGIN_KEY: pluginKey,
+        E2E_CONSUMER_MODE: "block",
+      });
+      liveChildren.push(crashed);
+      await waitForMarker(crashed, "CONSUMER_READY");
+      await redis.xadd(
+        streamKey,
+        "*",
+        "type",
+        "e2e.pending",
+        "data",
+        JSON.stringify({ id: "pending-1" }),
+      );
+      await waitForMarker(crashed, "HANDLING pending-1");
+      await terminate(crashed, "SIGKILL");
+
+      const pendingAfterDeath = (await redis.xpending(
+        streamKey,
+        group,
+      )) as unknown[];
+      assert.equal(
+        pendingAfterDeath[0],
+        1,
+        "killed handler must leave one entry pending",
+      );
+
+      recovered = spawnLogged(CONSUMER_WORKER, {
+        PATH: process.env.PATH ?? "",
+        TEST_E2E_REDIS_URL: REDIS_URL!,
+        E2E_PLUGIN_KEY: pluginKey,
+        E2E_CONSUMER_MODE: "succeed",
+      });
+      liveChildren.push(recovered);
+      await waitForMarker(recovered, "CONSUMER_READY");
+      await waitForMarker(recovered, "HANDLED pending-1", 15_000);
+      await until(
+        "reclaimed event to be XACKed",
+        async () => {
+          const pending = (await redis.xpending(streamKey, group)) as unknown[];
+          return pending[0] === 0 ? true : null;
+        },
+        15_000,
+      );
+      assert.equal(
+        await redis.xlen(dlqKey),
+        0,
+        "successful reclaim must not DLQ",
+      );
+      t.diagnostic(
+        "chaos verified: pending entry survived SIGKILL and was XAUTOCLAIMed",
+      );
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- crashed consumer ---\n${crashed?.output() ?? ""}\n--- recovered consumer ---\n${recovered?.output() ?? ""}`,
+      );
+    } finally {
+      await terminate(recovered);
+      await terminate(crashed, "SIGKILL");
+      await redis.del(streamKey, dlqKey).catch(() => 0);
+      await redis.quit().catch(() => undefined);
+    }
+  });
 });

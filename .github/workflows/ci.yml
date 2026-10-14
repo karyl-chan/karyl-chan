@@ -72,6 +72,49 @@ jobs:
           pnpm --filter karyl-chan-frontend build
           pnpm --filter karyl-chan-frontend test
 
+  plugin-platform-e2e:
+    runs-on: ubuntu-latest
+    name: plugin-platform-e2e
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: e2e
+          POSTGRES_DB: karyl_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d karyl_e2e"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      BOT_SKIP_DISCORD: "true"
+      TEST_E2E_REQUIRED: "1"
+      TEST_CHAOS: "1"
+      TEST_E2E_DB_URL: postgres://postgres:e2e@127.0.0.1:5432/karyl_e2e
+      TEST_E2E_REDIS_URL: redis://127.0.0.1:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run every required Plugin Platform path
+        run: pnpm --dir e2e required
+
   docker-smoke:
     runs-on: ubuntu-latest
     name: Docker smoke build
