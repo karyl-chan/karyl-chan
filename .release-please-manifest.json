@@ -1,6 +1,6 @@
 {
   "packages/bot": "1.12.1",
-  "packages/plugin-sdk": "0.15.0",
-  "packages/create-karyl-plugin": "0.15.0",
+  "packages/plugin-sdk": "0.15.1",
+  "packages/create-karyl-plugin": "0.15.1",
   "packages/ui": "0.4.0"
 }
