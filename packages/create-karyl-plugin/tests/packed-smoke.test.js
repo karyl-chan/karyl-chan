@@ -141,23 +141,32 @@ test(
         artifacts,
         cleanNpmEnv,
       );
-      const generatedDir = join(scratch, "generated-plugin");
-
+      const runnerDir = join(scratch, "initializer-runner");
+      await mkdir(runnerDir);
+      await writeFile(
+        join(runnerDir, "package.json"),
+        '{"private":true,"type":"module"}\n',
+      );
       await runNpm(
-        [
-          "exec",
-          "--yes",
-          `--package=${initializerTarball}`,
-          "--",
-          "create-karyl-plugin",
-          generatedDir,
-        ],
+        ["install", "--ignore-scripts", initializerTarball],
+        { cwd: runnerDir, env: cleanNpmEnv },
+      );
+      const generatedDir = join(scratch, "generated-plugin");
+      const packedCli = join(
+        runnerDir,
+        "node_modules",
+        "create-karyl-plugin",
+        "index.js",
+      );
+      await access(packedCli);
+      await run(
+        process.execPath,
+        [packedCli, generatedDir],
         { cwd: scratch, env: cleanNpmEnv },
       );
 
+      await access(join(generatedDir, "package.json"));
       await assert.rejects(access(join(generatedDir, ".npmrc")));
-      // npm 10 may clean local tarballs from npm exec's working directory.
-      // Pack the SDK candidate only after the packed initializer has run.
       const sdkTarball = await pack(sdkDir, generatedDir, cleanNpmEnv);
       const candidateName = basename(sdkTarball);
       const generatedPackagePath = join(generatedDir, "package.json");
