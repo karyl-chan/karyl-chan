@@ -3,21 +3,21 @@
     {
       "name": "radio",
       "repository": "karyl-chan/plugin-radio",
-      "ref": "5e942c975ad4fa906afac26af2181d249eac7138",
+      "ref": "7e3da6991d4cdc88089e6eb0932add2636ba867d",
       "buildCommand": "pnpm build",
       "testCommand": "pnpm test"
     },
     {
       "name": "xiangqi",
       "repository": "karyl-chan/plugin-xiangqi",
-      "ref": "0d1631feb53cdd3b0ec951154609f62d8ad53439",
+      "ref": "a09b017ae23568fce6bca513642619cfc03486f2",
       "buildCommand": "pnpm build",
       "testCommand": "pnpm test"
     },
     {
       "name": "quest-game",
       "repository": "karyl-chan/plugin-quest-game",
-      "ref": "2e9a1fedabf6833a9aece0a8a510098ff6813061",
+      "ref": "22e6cab81b22bb5c1da7f10a6f5a6f15a576521d",
       "buildCommand": "pnpm build",
       "testCommand": "pnpm test"
     }
