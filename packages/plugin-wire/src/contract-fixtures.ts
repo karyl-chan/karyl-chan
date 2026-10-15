@@ -345,6 +345,7 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
       "/api/plugin/messages.delete",
       "/api/plugin/messages.add_reaction",
       "/api/plugin/members.get",
+      "/api/plugin/users.get",
       "/api/plugin/interactions.respond",
       "/api/plugin/interactions.followup",
       "/api/plugin/interactions.send_modal",
@@ -363,6 +364,7 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
       "/api/plugin/voice.pause",
       "/api/plugin/voice.stop",
       "/api/plugin/voice.status",
+      "/api/plugin/voice.locate",
     ],
   },
 

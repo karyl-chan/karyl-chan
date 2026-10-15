@@ -155,8 +155,9 @@ with `ctx.botRpc(path, body)` as escape hatch):
 - `messages.send_dm`.
 - `voice.join`, `voice.play`, `voice.pause` (`{ guild_id, paused? }`;
   omitting `paused` toggles), `voice.stop`, `voice.status`, `voice.leave`
-  — all available as `ctx.voice.*`.
+  and `voice.locate` — all available as `ctx.voice.*`.
 - `members.get` (`ctx.discord.members.get`).
+- `users.get` (`ctx.discord.users.get`).
 - `auth.session` via `ctx.auth.mintSession(...)`, and KV access via
   `ctx.kv.guild(guildId).get/set/...`.
 

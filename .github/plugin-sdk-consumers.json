@@ -1,0 +1,25 @@
+{
+  "consumers": [
+    {
+      "name": "radio",
+      "repository": "karyl-chan/plugin-radio",
+      "ref": "32f8f859cba0adde75289dd3b8641be8cc024d90",
+      "buildCommand": "pnpm build",
+      "testCommand": "pnpm test"
+    },
+    {
+      "name": "xiangqi",
+      "repository": "karyl-chan/plugin-xiangqi",
+      "ref": "c03886a22575196410f60d0c98dd9144fc88b960",
+      "buildCommand": "pnpm build",
+      "testCommand": "pnpm test"
+    },
+    {
+      "name": "quest-game",
+      "repository": "karyl-chan/plugin-quest-game",
+      "ref": "901a7ba0c2ffbe9766b80f72bd973e749f33c449",
+      "buildCommand": "pnpm build",
+      "testCommand": "pnpm test"
+    }
+  ]
+}

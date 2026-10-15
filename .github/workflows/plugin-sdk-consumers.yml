@@ -1,0 +1,110 @@
+name: Plugin SDK consumers
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 3 * * 1"
+  push:
+    branches: [main]
+    paths:
+      - "packages/plugin-sdk/**"
+      - "packages/plugin-wire/**"
+      - ".github/plugin-sdk-consumers.json"
+      - ".github/workflows/plugin-sdk-consumers.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "packages/plugin-sdk/**"
+      - "packages/plugin-wire/**"
+      - ".github/plugin-sdk-consumers.json"
+      - ".github/workflows/plugin-sdk-consumers.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  catalogue:
+    name: Read consumer catalogue
+    runs-on: ubuntu-latest
+    outputs:
+      consumers: ${{ steps.catalogue.outputs.consumers }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: catalogue
+        name: Validate catalogue
+        shell: bash
+        run: |
+          jq -e '
+            .consumers | length > 0 and
+            all(.[];
+              (.name | type == "string" and length > 0) and
+              (.repository | test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")) and
+              (.ref | test("^[0-9a-f]{40}$")) and
+              (.buildCommand | type == "string" and length > 0) and
+              (.testCommand | type == "string" and length > 0)
+            )
+          ' .github/plugin-sdk-consumers.json
+          echo "consumers=$(jq -c '.consumers' .github/plugin-sdk-consumers.json)" >> "$GITHUB_OUTPUT"
+
+  verify:
+    name: ${{ matrix.consumer.name }} @ ${{ matrix.consumer.ref }}
+    needs: catalogue
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        consumer: ${{ fromJSON(needs.catalogue.outputs.consumers) }}
+    steps:
+      - name: Check out candidate SDK
+        uses: actions/checkout@v4
+
+      - name: Check out pinned consumer
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.consumer.repository }}
+          ref: ${{ matrix.consumer.ref }}
+          path: consumer
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Build and pack candidate SDK
+        shell: bash
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter "@karyl-chan/plugin-sdk..." build
+          pnpm --dir packages/plugin-sdk pack --pack-destination "$RUNNER_TEMP"
+          SDK_TARBALL=$(find "$RUNNER_TEMP" -maxdepth 1 -name 'karyl-chan-plugin-sdk-*.tgz' -print -quit)
+          test -n "$SDK_TARBALL"
+          echo "SDK_TARBALL=$SDK_TARBALL" >> "$GITHUB_ENV"
+
+      - name: Install candidate into consumer
+        shell: bash
+        run: |
+          pnpm --dir consumer install --frozen-lockfile
+          pnpm --dir consumer add --save-exact --lockfile=false "$SDK_TARBALL"
+          pnpm --dir consumer list @karyl-chan/plugin-sdk --depth 0
+
+      - name: Build and test consumer
+        working-directory: consumer
+        run: |
+          ${{ matrix.consumer.buildCommand }}
+          ${{ matrix.consumer.testCommand }}
+
+      - name: Record tested provenance
+        if: always()
+        shell: bash
+        run: |
+          TESTED_SHA=$(git -C consumer rev-parse HEAD)
+          {
+            echo "### Plugin SDK consumer"
+            echo "- Repository: \`${{ matrix.consumer.repository }}\`"
+            echo "- Tested commit: \`$TESTED_SHA\`"
+            echo "- Candidate: \`$(basename "$SDK_TARBALL")\`"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -283,12 +283,14 @@ The five typed namespaces hide the wire path, snake_case body
 translation, and retry/error narrowing:
 
 ```ts
-// discord — messages, members, interactions
+// discord — messages, members, users, interactions
 await ctx.discord.messages.send({ channelId, content: "hi" });
 await ctx.discord.interactions.respond({ interactionToken, content: "ack" });
+const user = await ctx.discord.users.get({ userId });
 
 // voice
 await ctx.voice.play({ guildId, url });
+const locations = await ctx.voice.locate(userId);
 
 // me — plugin introspection
 const guildIds = await ctx.me.enabledGuilds();
@@ -312,7 +314,7 @@ const session = await ctx.auth.mintSession({
 });
 ```
 
-Methods not yet in the typed facade (`channels.*`, `roles.*`, `users.*`,
+Methods not yet in the typed facade (`channels.*`, `roles.*`,
 `messages.send_dm`, `messages.fetch_history`, `messages.get`) remain
 available via `ctx.botRpc(path, body)`. New methods join the typed
 facade additively in subsequent minor releases.

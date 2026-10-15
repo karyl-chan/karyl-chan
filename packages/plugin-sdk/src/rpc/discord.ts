@@ -3,7 +3,7 @@
  *
  * Wraps the `/api/plugin/messages.*`, `/api/plugin/members.*`, and
  * `/api/plugin/interactions.*` RPCs that the in-tree plugins use most.
- * Other surfaces (channels, roles, users, guilds reads) live behind
+ * Other surfaces (channels, roles, guild reads) live behind
  * `ctx.botRpc(path, body)` until they are typed in a follow-up bump.
  */
 
@@ -93,6 +93,28 @@ export interface DiscordMembers {
   get(args: MemberGetArgs): Promise<MemberSummary | null>;
 }
 
+// ─── users.* ──────────────────────────────────────────────────────────
+
+export interface UserGetArgs {
+  userId: string;
+}
+
+export interface UserSummary {
+  userId: string;
+  username: string;
+  globalName: string | null;
+  displayName: string;
+  avatarUrl: string | null;
+  bannerUrl: string | null;
+  accentColor: number | null;
+  isBot: boolean;
+}
+
+export interface DiscordUsers {
+  /** Returns null when the bot cannot resolve the global Discord user. */
+  get(args: UserGetArgs): Promise<UserSummary | null>;
+}
+
 // ─── interactions.* ────────────────────────────────────────────────────
 
 export interface InteractionRespondArgs {
@@ -131,6 +153,7 @@ export interface DiscordInteractions {
 export interface Discord {
   messages: DiscordMessages;
   members: DiscordMembers;
+  users: DiscordUsers;
   interactions: DiscordInteractions;
 }
 
@@ -196,6 +219,14 @@ export function createDiscord(call: RpcCaller): Discord {
           user_ids: [args.userId],
         })) as { members?: MemberSummary[] };
         return res.members?.[0] ?? null;
+      },
+    },
+    users: {
+      async get(args) {
+        const res = (await call("/api/plugin/users.get", {
+          user_ids: [args.userId],
+        })) as { users?: UserSummary[] };
+        return res.users?.[0] ?? null;
       },
     },
     interactions: {
