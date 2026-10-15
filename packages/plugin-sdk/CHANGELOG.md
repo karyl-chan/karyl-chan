@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.0](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.16.0...plugin-sdk-v1.0.0) (2026-10-15)
+
+
+### Features
+
+* **plugin-sdk:** declare stable 1.0 public surface ([9a33fd8](https://github.com/karyl-chan/karyl-chan/commit/9a33fd864aedc2be74313f2e26f24fe311c734cc))
+* **plugin-sdk:** declare stable 1.0 public surface ([08d4ed2](https://github.com/karyl-chan/karyl-chan/commit/08d4ed256e2d93096cbfd34a5d759def0580f5f0))
+
 ## [0.16.0](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.15.1...plugin-sdk-v0.16.0) (2026-10-15)
 
 
