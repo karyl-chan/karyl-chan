@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.13.0](https://github.com/karyl-chan/karyl-chan/compare/bot-v1.12.1...bot-v1.13.0) (2026-10-15)
+
+
+### Features
+
+* **plugin-sdk:** gate releases on maintained consumers ([#82](https://github.com/karyl-chan/karyl-chan/issues/82)) ([078815e](https://github.com/karyl-chan/karyl-chan/commit/078815e56110f64599af8d6b19a660509edaaa39))
+
+
+### Bug Fixes
+
+* **plugin-platform:** negotiate event transport ([#75](https://github.com/karyl-chan/karyl-chan/issues/75)) ([8d204cf](https://github.com/karyl-chan/karyl-chan/commit/8d204cfa60d143b97213d326696e72db0e6d6252))
+* **plugin-sdk:** fail closed until plugin readiness ([#71](https://github.com/karyl-chan/karyl-chan/issues/71)) ([9d171f3](https://github.com/karyl-chan/karyl-chan/commit/9d171f3fef6d0cd8c8b0260d942e2e442d36bc1e))
+
 ## [1.12.1](https://github.com/karyl-chan/karyl-chan/compare/bot-v1.12.0...bot-v1.12.1) (2026-08-09)
 
 
