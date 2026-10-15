@@ -117,18 +117,48 @@ describe("ctx.discord.interactions", () => {
     });
   });
 
-  it("followup: returns a MessageHandle", async () => {
+  it("followup: maps attachments and returns a MessageHandle", async () => {
     const stub = makeStub({ id: "M", channel_id: "C" });
     const rpc = createPluginRpc(stub.call);
     const handle = await rpc.discord.interactions.followup({
       interactionToken: "tok",
       content: "hi",
+      attachments: [{ name: "card.png", path: "/art/card.png" }],
+    });
+    assert.deepEqual(stub.calls[0], {
+      path: "/api/plugin/interactions.followup",
+      body: {
+        interaction_token: "tok",
+        content: "hi",
+        attachments: [{ name: "card.png", path: "/art/card.png" }],
+      },
     });
     assert.deepEqual(handle, { id: "M", channel_id: "C" });
   });
 });
 
 describe("ctx.voice", () => {
+  it("locate: maps one user id and returns every reachable voice location", async () => {
+    const matches = [
+      {
+        guildId: "g",
+        guildName: "Guild",
+        channelId: "vc",
+        channelName: "General",
+      },
+    ];
+    const stub = makeStub({ matches });
+    const rpc = createPluginRpc(stub.call);
+
+    const result = await rpc.voice.locate("u");
+
+    assert.deepEqual(stub.calls[0], {
+      path: "/api/plugin/voice.locate",
+      body: { user_id: "u" },
+    });
+    assert.deepEqual(result, matches);
+  });
+
   it("join: forwards guildId / userId; only specified fields land on wire", async () => {
     const stub = makeStub({});
     const rpc = createPluginRpc(stub.call);
@@ -189,6 +219,26 @@ describe("ctx.voice", () => {
 });
 
 describe("ctx.discord.members", () => {
+  it("getMany: preserves the bot's one-batch lookup contract", async () => {
+    const members = [
+      { userId: "u1", displayName: "Alice", avatarUrl: null, roles: [] },
+      { userId: "u2", displayName: "Bob", avatarUrl: null, roles: [] },
+    ];
+    const stub = makeStub({ members });
+    const rpc = createPluginRpc(stub.call);
+
+    const result = await rpc.discord.members.getMany({
+      guildId: "g",
+      userIds: ["u1", "u2"],
+    });
+
+    assert.deepEqual(stub.calls[0], {
+      path: "/api/plugin/members.get",
+      body: { guild_id: "g", user_ids: ["u1", "u2"] },
+    });
+    assert.deepEqual(result, members);
+  });
+
   it("get: sends a one-element user_ids batch and unwraps members[0]", async () => {
     const member = { userId: "u1", displayName: "Alice", avatarUrl: null };
     const stub = makeStub({ members: [member] });
@@ -210,5 +260,39 @@ describe("ctx.discord.members", () => {
     const rpc = createPluginRpc(stub.call);
     const res = await rpc.discord.members.get({ guildId: "g1", userId: "u1" });
     assert.equal(res, null);
+  });
+});
+
+describe("ctx.discord.users", () => {
+  it("get: sends a one-element user_ids batch and unwraps users[0]", async () => {
+    const user = {
+      userId: "u1",
+      username: "alice",
+      globalName: "Alice",
+      displayName: "Alice",
+      avatarUrl: null,
+      bannerUrl: null,
+      accentColor: null,
+      isBot: false,
+    };
+    const stub = makeStub({ users: [user] });
+    const rpc = createPluginRpc(stub.call);
+
+    const result = await rpc.discord.users.get({ userId: "u1" });
+
+    assert.deepEqual(stub.calls[0], {
+      path: "/api/plugin/users.get",
+      body: { user_ids: ["u1"] },
+    });
+    assert.deepEqual(result, user);
+  });
+
+  it("get: returns null when the bot cannot resolve the user", async () => {
+    const stub = makeStub({ users: [] });
+    const rpc = createPluginRpc(stub.call);
+
+    const result = await rpc.discord.users.get({ userId: "u1" });
+
+    assert.equal(result, null);
   });
 });

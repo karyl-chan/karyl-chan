@@ -25,8 +25,13 @@ permissions:
   id-token: write
 
 jobs:
+  consumer-gate:
+    name: Verify maintained consumers
+    uses: ./.github/workflows/plugin-sdk-consumers.yml
+
   publish:
     name: Publish to npm
+    needs: consumer-gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

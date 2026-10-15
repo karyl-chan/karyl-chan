@@ -283,12 +283,14 @@ The five typed namespaces hide the wire path, snake_case body
 translation, and retry/error narrowing:
 
 ```ts
-// discord — messages, members, interactions
+// discord — messages, members, users, interactions
 await ctx.discord.messages.send({ channelId, content: "hi" });
 await ctx.discord.interactions.respond({ interactionToken, content: "ack" });
+const user = await ctx.discord.users.get({ userId });
 
 // voice
 await ctx.voice.play({ guildId, url });
+const locations = await ctx.voice.locate(userId);
 
 // me — plugin introspection
 const guildIds = await ctx.me.enabledGuilds();
@@ -312,7 +314,7 @@ const session = await ctx.auth.mintSession({
 });
 ```
 
-Methods not yet in the typed facade (`channels.*`, `roles.*`, `users.*`,
+Methods not yet in the typed facade (`channels.*`, `roles.*`,
 `messages.send_dm`, `messages.fetch_history`, `messages.get`) remain
 available via `ctx.botRpc(path, body)`. New methods join the typed
 facade additively in subsequent minor releases.
@@ -641,12 +643,20 @@ roughly 30 seconds.
 
 ---
 
-## Backwards-compatibility commitment
+## 1.0 compatibility and deprecation policy
 
 Starting at 1.0 the SDK commits to these stability rules; pre-1.0 the
 project (`karyl-chan`) is allowed breaking changes in lockstep with the
-bot, but plugins **inside this monorepo** are kept in sync at every
-release.
+bot. A candidate tarball is built and installed into the maintained
+`plugin-radio`, `plugin-xiangqi`, and `plugin-quest-game` repositories
+before release, so their source compatibility is part of the release gate.
+
+The public 1.0 API is exactly the package export map: the root export,
+`@karyl-chan/plugin-sdk/web`, and `@karyl-chan/plugin-sdk/web/vue`.
+Unexported files and deep imports are internal. No public 1.0 export is
+marked experimental or deprecated. In particular, `ctx.botRpc(path, body)`
+remains a supported low-level escape hatch; it is not deprecated when a
+typed method is added.
 
 Stable surface (no breaking changes within a major):
 
@@ -677,6 +687,18 @@ Allowed non-breaking evolution:
 - Additional `BotRpcError.reason` values.
 - Additional inbound retry on transient bot states.
 - Additional canonical events on `Events.*`.
+
+The bot's Wire Contract currently has a **Compat Floor of 0.10.0**. The
+cross-version tests guarantee the stable HMAC header/wire constants and
+that canonical events present at the floor are not removed. This is a wire
+interoperability promise, not a claim that every pre-1.0 TypeScript API is
+source-compatible with 1.0.
+
+After 1.0, a public API scheduled for removal is documented as deprecated
+in both its type documentation and release notes for at least one minor
+release. Removal or an incompatible semantic change requires the next
+major release. Security fixes may tighten validation without notice when
+the previously accepted input was unsafe.
 
 ---
 

@@ -3,7 +3,7 @@
  *
  * Wraps the `/api/plugin/messages.*`, `/api/plugin/members.*`, and
  * `/api/plugin/interactions.*` RPCs that the in-tree plugins use most.
- * Other surfaces (channels, roles, users, guilds reads) live behind
+ * Other surfaces (channels, roles, guild reads) live behind
  * `ctx.botRpc(path, body)` until they are typed in a follow-up bump.
  */
 
@@ -80,6 +80,11 @@ export interface MemberGetArgs {
   userId: string;
 }
 
+export interface MemberGetManyArgs {
+  guildId: string;
+  userIds: string[];
+}
+
 export interface MemberSummary {
   // camelCase to match what the bot's /api/plugin/members.get actually
   // returns ({ userId, displayName, avatarUrl }).
@@ -91,6 +96,30 @@ export interface MemberSummary {
 export interface DiscordMembers {
   /** Returns null if the user isn't a member of the guild (left / never joined). */
   get(args: MemberGetArgs): Promise<MemberSummary | null>;
+  /** Resolves a roster in one bot RPC; unresolved users are omitted. */
+  getMany(args: MemberGetManyArgs): Promise<MemberSummary[]>;
+}
+
+// ─── users.* ──────────────────────────────────────────────────────────
+
+export interface UserGetArgs {
+  userId: string;
+}
+
+export interface UserSummary {
+  userId: string;
+  username: string;
+  globalName: string | null;
+  displayName: string;
+  avatarUrl: string | null;
+  bannerUrl: string | null;
+  accentColor: number | null;
+  isBot: boolean;
+}
+
+export interface DiscordUsers {
+  /** Returns null when the bot cannot resolve the global Discord user. */
+  get(args: UserGetArgs): Promise<UserSummary | null>;
 }
 
 // ─── interactions.* ────────────────────────────────────────────────────
@@ -111,6 +140,7 @@ export interface InteractionFollowupArgs {
   ephemeral?: boolean;
   embeds?: APIEmbed[];
   components?: MessageActionRow[];
+  attachments?: MessageAttachment[];
   flags?: MessageFlags;
 }
 
@@ -131,10 +161,21 @@ export interface DiscordInteractions {
 export interface Discord {
   messages: DiscordMessages;
   members: DiscordMembers;
+  users: DiscordUsers;
   interactions: DiscordInteractions;
 }
 
 export function createDiscord(call: RpcCaller): Discord {
+  const getMembers = async (
+    args: MemberGetManyArgs,
+  ): Promise<MemberSummary[]> => {
+    const res = (await call("/api/plugin/members.get", {
+      guild_id: args.guildId,
+      user_ids: args.userIds,
+    })) as { members?: MemberSummary[] };
+    return Array.isArray(res.members) ? res.members : [];
+  };
+
   return {
     messages: {
       async send(args) {
@@ -191,11 +232,19 @@ export function createDiscord(call: RpcCaller): Discord {
         // users who aren't in the guild. Send a one-element batch and
         // unwrap. (The old facade sent `user_id` + cast the wrapper object
         // as a single MemberSummary → every call 400'd.)
-        const res = (await call("/api/plugin/members.get", {
-          guild_id: args.guildId,
+        return (await getMembers({
+          guildId: args.guildId,
+          userIds: [args.userId],
+        }))[0] ?? null;
+      },
+      getMany: getMembers,
+    },
+    users: {
+      async get(args) {
+        const res = (await call("/api/plugin/users.get", {
           user_ids: [args.userId],
-        })) as { members?: MemberSummary[] };
-        return res.members?.[0] ?? null;
+        })) as { users?: UserSummary[] };
+        return res.users?.[0] ?? null;
       },
     },
     interactions: {
@@ -226,6 +275,9 @@ export function createDiscord(call: RpcCaller): Discord {
           ...(args.embeds !== undefined ? { embeds: args.embeds } : {}),
           ...(args.components !== undefined
             ? { components: args.components }
+            : {}),
+          ...(args.attachments !== undefined
+            ? { attachments: args.attachments }
             : {}),
           ...(args.flags !== undefined ? { flags: args.flags } : {}),
         })) as MessageHandle;

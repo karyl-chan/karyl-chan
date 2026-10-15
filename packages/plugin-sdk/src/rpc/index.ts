@@ -55,6 +55,7 @@ export type { Discord } from "./discord.js";
 export type {
   DiscordMessages,
   DiscordMembers,
+  DiscordUsers,
   DiscordInteractions,
   MessageSendArgs,
   MessageEditArgs,
@@ -62,7 +63,10 @@ export type {
   MessageAddReactionArgs,
   MessageHandle,
   MemberGetArgs,
+  MemberGetManyArgs,
   MemberSummary,
+  UserGetArgs,
+  UserSummary,
   InteractionRespondArgs,
   InteractionFollowupArgs,
 } from "./discord.js";
@@ -72,6 +76,7 @@ export type {
   VoicePlayArgs,
   VoicePauseArgs,
   VoiceStatus,
+  VoiceLocation,
 } from "./voice.js";
 export type { Me, MeKvUsageArgs, MeKvUsage } from "./me.js";
 export type {

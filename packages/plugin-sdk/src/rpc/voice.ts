@@ -48,7 +48,16 @@ export interface VoiceStatus {
   listeners?: number;
 }
 
+export interface VoiceLocation {
+  guildId: string;
+  guildName: string;
+  channelId: string;
+  channelName: string | null;
+}
+
 export interface Voice {
+  /** Find every reachable voice channel currently containing this user. */
+  locate(userId: string): Promise<VoiceLocation[]>;
   join(args: VoiceJoinArgs): Promise<VoiceStatus>;
   leave(guildId: string): Promise<VoiceStatus>;
   play(args: VoicePlayArgs): Promise<VoiceStatus>;
@@ -59,6 +68,12 @@ export interface Voice {
 
 export function createVoice(call: RpcCaller): Voice {
   return {
+    async locate(userId) {
+      const res = (await call("/api/plugin/voice.locate", {
+        user_id: userId,
+      })) as { matches?: VoiceLocation[] };
+      return Array.isArray(res.matches) ? res.matches : [];
+    },
     async join(args) {
       return (await call("/api/plugin/voice.join", {
         guild_id: args.guildId,
