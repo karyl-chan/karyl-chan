@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.1](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.15.0...plugin-sdk-v0.15.1) (2026-10-14)
+
+
+### Miscellaneous Chores
+
+* **plugin-sdk:** Synchronize plugin-platform versions
+
 ## [0.15.0](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.14.0...plugin-sdk-v0.15.0) (2026-10-14)
 
 

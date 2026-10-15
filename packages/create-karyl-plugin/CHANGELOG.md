@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.1](https://github.com/karyl-chan/karyl-chan/compare/create-karyl-plugin-v0.15.0...create-karyl-plugin-v0.15.1) (2026-10-14)
+
+
+### Bug Fixes
+
+* **create-karyl-plugin:** add first-publish bootstrap ([#80](https://github.com/karyl-chan/karyl-chan/issues/80)) ([991022c](https://github.com/karyl-chan/karyl-chan/commit/991022cfd121ed84e338d82f54d50a9f64ddafc7))
+
 ## [0.15.0](https://github.com/karyl-chan/karyl-chan/compare/create-karyl-plugin-v0.14.0...create-karyl-plugin-v0.15.0) (2026-10-14)
 
 
