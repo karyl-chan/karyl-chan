@@ -63,6 +63,7 @@ export type {
   MessageAddReactionArgs,
   MessageHandle,
   MemberGetArgs,
+  MemberGetManyArgs,
   MemberSummary,
   UserGetArgs,
   UserSummary,

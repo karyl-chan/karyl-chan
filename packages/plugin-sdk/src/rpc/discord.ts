@@ -80,6 +80,11 @@ export interface MemberGetArgs {
   userId: string;
 }
 
+export interface MemberGetManyArgs {
+  guildId: string;
+  userIds: string[];
+}
+
 export interface MemberSummary {
   // camelCase to match what the bot's /api/plugin/members.get actually
   // returns ({ userId, displayName, avatarUrl }).
@@ -91,6 +96,8 @@ export interface MemberSummary {
 export interface DiscordMembers {
   /** Returns null if the user isn't a member of the guild (left / never joined). */
   get(args: MemberGetArgs): Promise<MemberSummary | null>;
+  /** Resolves a roster in one bot RPC; unresolved users are omitted. */
+  getMany(args: MemberGetManyArgs): Promise<MemberSummary[]>;
 }
 
 // ─── users.* ──────────────────────────────────────────────────────────
@@ -159,6 +166,16 @@ export interface Discord {
 }
 
 export function createDiscord(call: RpcCaller): Discord {
+  const getMembers = async (
+    args: MemberGetManyArgs,
+  ): Promise<MemberSummary[]> => {
+    const res = (await call("/api/plugin/members.get", {
+      guild_id: args.guildId,
+      user_ids: args.userIds,
+    })) as { members?: MemberSummary[] };
+    return Array.isArray(res.members) ? res.members : [];
+  };
+
   return {
     messages: {
       async send(args) {
@@ -215,12 +232,12 @@ export function createDiscord(call: RpcCaller): Discord {
         // users who aren't in the guild. Send a one-element batch and
         // unwrap. (The old facade sent `user_id` + cast the wrapper object
         // as a single MemberSummary → every call 400'd.)
-        const res = (await call("/api/plugin/members.get", {
-          guild_id: args.guildId,
-          user_ids: [args.userId],
-        })) as { members?: MemberSummary[] };
-        return res.members?.[0] ?? null;
+        return (await getMembers({
+          guildId: args.guildId,
+          userIds: [args.userId],
+        }))[0] ?? null;
       },
+      getMany: getMembers,
     },
     users: {
       async get(args) {

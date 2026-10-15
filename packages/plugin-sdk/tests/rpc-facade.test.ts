@@ -219,6 +219,26 @@ describe("ctx.voice", () => {
 });
 
 describe("ctx.discord.members", () => {
+  it("getMany: preserves the bot's one-batch lookup contract", async () => {
+    const members = [
+      { userId: "u1", displayName: "Alice", avatarUrl: null, roles: [] },
+      { userId: "u2", displayName: "Bob", avatarUrl: null, roles: [] },
+    ];
+    const stub = makeStub({ members });
+    const rpc = createPluginRpc(stub.call);
+
+    const result = await rpc.discord.members.getMany({
+      guildId: "g",
+      userIds: ["u1", "u2"],
+    });
+
+    assert.deepEqual(stub.calls[0], {
+      path: "/api/plugin/members.get",
+      body: { guild_id: "g", user_ids: ["u1", "u2"] },
+    });
+    assert.deepEqual(result, members);
+  });
+
   it("get: sends a one-element user_ids batch and unwraps members[0]", async () => {
     const member = { userId: "u1", displayName: "Alice", avatarUrl: null };
     const stub = makeStub({ members: [member] });
