@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.15.1...plugin-sdk-v0.16.0) (2026-10-15)
+
+
+### Features
+
+* **plugin-sdk:** gate releases on maintained consumers ([#82](https://github.com/karyl-chan/karyl-chan/issues/82)) ([078815e](https://github.com/karyl-chan/karyl-chan/commit/078815e56110f64599af8d6b19a660509edaaa39))
+
 ## [0.15.1](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.15.0...plugin-sdk-v0.15.1) (2026-10-14)
 
 
