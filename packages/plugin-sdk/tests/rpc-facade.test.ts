@@ -117,12 +117,21 @@ describe("ctx.discord.interactions", () => {
     });
   });
 
-  it("followup: returns a MessageHandle", async () => {
+  it("followup: maps attachments and returns a MessageHandle", async () => {
     const stub = makeStub({ id: "M", channel_id: "C" });
     const rpc = createPluginRpc(stub.call);
     const handle = await rpc.discord.interactions.followup({
       interactionToken: "tok",
       content: "hi",
+      attachments: [{ name: "card.png", path: "/art/card.png" }],
+    });
+    assert.deepEqual(stub.calls[0], {
+      path: "/api/plugin/interactions.followup",
+      body: {
+        interaction_token: "tok",
+        content: "hi",
+        attachments: [{ name: "card.png", path: "/art/card.png" }],
+      },
     });
     assert.deepEqual(handle, { id: "M", channel_id: "C" });
   });

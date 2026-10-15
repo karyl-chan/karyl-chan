@@ -133,6 +133,7 @@ export interface InteractionFollowupArgs {
   ephemeral?: boolean;
   embeds?: APIEmbed[];
   components?: MessageActionRow[];
+  attachments?: MessageAttachment[];
   flags?: MessageFlags;
 }
 
@@ -257,6 +258,9 @@ export function createDiscord(call: RpcCaller): Discord {
           ...(args.embeds !== undefined ? { embeds: args.embeds } : {}),
           ...(args.components !== undefined
             ? { components: args.components }
+            : {}),
+          ...(args.attachments !== undefined
+            ? { attachments: args.attachments }
             : {}),
           ...(args.flags !== undefined ? { flags: args.flags } : {}),
         })) as MessageHandle;
