@@ -645,9 +645,9 @@ roughly 30 seconds.
 
 ## 1.0 compatibility and deprecation policy
 
-Starting at 1.0 the SDK commits to these stability rules; pre-1.0 the
-project (`karyl-chan`) is allowed breaking changes in lockstep with the
-bot. A candidate tarball is built and installed into the maintained
+Version 1.0 establishes these stability rules. Earlier 0.x releases were
+allowed breaking changes in lockstep with the bot. A candidate tarball is
+built and installed into the maintained
 `plugin-radio`, `plugin-xiangqi`, and `plugin-quest-game` repositories
 before release, so their source compatibility is part of the release gate.
 
