@@ -79,8 +79,16 @@ export { useEscapeStack } from "./composables/use-escape-stack";
 export { useFileDrop } from "./composables/use-file-drop";
 export type { FileDropHandlers } from "./composables/use-file-drop";
 export { useLongPress } from "./composables/use-long-press";
-export { usePopover } from "./composables/use-popover";
-export type { Placement, UsePopoverOptions } from "./composables/use-popover";
+export {
+  usePopover,
+  createVirtualElement,
+  createVirtualElementFromEvent,
+} from "./composables/use-popover";
+export type {
+  Placement,
+  UsePopoverOptions,
+  VirtualElement,
+} from "./composables/use-popover";
 export { useShiftKey } from "./composables/use-shift-key";
 
 // ── Stores ───────────────────────────────────────────────────────────────

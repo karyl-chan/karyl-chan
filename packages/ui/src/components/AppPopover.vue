@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useBreakpoint } from '../composables/use-breakpoint';
-import { usePopover, type Placement } from '../composables/use-popover';
+import { usePopover, type Placement, type VirtualElement } from '../composables/use-popover';
 import { useDrawer, type DrawerPlacement } from '../composables/use-drawer';
 
 /**
@@ -18,16 +18,26 @@ import { useDrawer, type DrawerPlacement } from '../composables/use-drawer';
  *   2. `referenceEl` prop — for cases where the trigger can't live
  *      inside this component (e.g., per-row react buttons in a list
  *      that share a single popover instance). No click wiring; the
- *      caller drives open state directly.
+ *      caller drives open state directly. Accepts either a real
+ *      HTMLElement or a Popper `VirtualElement` (`{ getBoundingClientRect,
+ *      contextElement? }`, e.g. from `createVirtualElement(x, y)`) to
+ *      anchor at a point / text selection / canvas coordinate. Passing a
+ *      new object repositions an open popover; if you mutate the same
+ *      virtual element in place, call the exposed `update()` instead.
  *
  * If both are provided, `referenceEl` wins.
  *
  * Open state is `v-model:open`; if the caller doesn't bind, the
- * component manages it internally.
+ * component manages it internally. (`open` defaults to `undefined`, not
+ * `false` — Vue would otherwise cast the absent boolean prop to `false`
+ * and pin an unbound popover shut.)
  */
 const props = withDefaults(defineProps<{
-    /** External reference element. Overrides the #trigger slot if set. */
-    referenceEl?: HTMLElement | null;
+    /**
+     * External anchor. Overrides the #trigger slot if set. Either a real
+     * element or a Popper VirtualElement (point / range anchor).
+     */
+    referenceEl?: HTMLElement | VirtualElement | null;
     /** Controlled open state; two-way via v-model:open. Optional. */
     open?: boolean;
     placement?: Placement;
@@ -43,6 +53,9 @@ const props = withDefaults(defineProps<{
     sameWidth?: boolean;
 }>(), {
     referenceEl: null,
+    // Explicit `undefined` default stops Vue's boolean casting (absent
+    // boolean prop → false), which made uncontrolled mode never open.
+    open: undefined,
     placement: 'bottom-start',
     offset: () => [0, 8],
     drawerPlacement: 'bottom',
@@ -80,7 +93,7 @@ const contentEl = ref<HTMLElement | null>(null);
 // template: `v-if="!referenceEl"` reads the prop, not this computed,
 // which avoids a mount → unmount loop when the slot wrapper's presence
 // feeds back into its own v-if condition.
-const anchorRef = computed<HTMLElement | null>(() => {
+const anchorRef = computed<HTMLElement | VirtualElement | null>(() => {
     if (props.referenceEl) return props.referenceEl;
     const wrap = triggerWrapRef.value;
     if (!wrap) return null;
@@ -95,7 +108,7 @@ const anchorRef = computed<HTMLElement | null>(() => {
 const popoverVisible = computed(() => !isMobile.value && isOpen.value);
 const drawerVisible = computed(() => isMobile.value && isOpen.value);
 
-usePopover(anchorRef, contentEl, {
+const { update } = usePopover(anchorRef, contentEl, {
     placement: props.placement,
     trigger: 'manual',
     offset: props.offset,
@@ -141,6 +154,15 @@ watch(isMobile, (mobile) => {
 function onContentClick() {
     if (props.closeOnContentClick) close();
 }
+
+defineExpose({
+    open,
+    close,
+    toggle,
+    /** Recompute the desktop popover position (e.g. after mutating a
+     *  VirtualElement anchor in place). No-op while closed / on mobile. */
+    update
+});
 </script>
 
 <template>
