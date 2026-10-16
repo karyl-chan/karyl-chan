@@ -57,6 +57,12 @@
 
     --pill-bg: #f3f4f6;
 
+    /* Unread / mention indicator (UnreadPill etc.). Same in both themes. */
+    --unread-accent: #f23f43;
+
+    /* Monospaced stack for IDs, keys, code-ish values. */
+    --font-mono: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+
     --transition-fast: 0.12s;
     --transition-base: 0.15s;
     --transition-slow: 0.2s;

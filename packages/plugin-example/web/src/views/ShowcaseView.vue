@@ -24,6 +24,7 @@ import {
   AppMenuItem,
   AppModal,
   AppPopover,
+  AppProgress,
   AppSelect,
   AppSelectField,
   AppTabs,
@@ -104,6 +105,9 @@ const modalOpen = ref(false);
 const inlineConfirmOpen = ref(false);
 const inlineLoading = ref(false);
 const popoverOpen = ref(false);
+
+// ── Display-tab state ─────────────────────────────────────────────
+const progressValue = ref(35);
 
 // ── Layout-tab state ──────────────────────────────────────────────
 const subTab = ref("a");
@@ -305,7 +309,12 @@ function onInlineClose() {
           <p class="hint">Fire toasts from the global store (Pinia).</p>
           <div class="row">
             <AppButton @click="toast.show('Info toast', 'info')">Info</AppButton>
+            <AppButton @click="toast.show('Saved!', 'success')">Success</AppButton>
+            <AppButton @click="toast.show('Heads up: quota at 90%', 'warn')">Warn</AppButton>
             <AppButton variant="danger" @click="toast.show('Error toast', 'error')">Error</AppButton>
+            <AppButton @click="toast.show('Sticky — close me with the ×', 'info', { duration: 0 })">
+              Sticky (duration: 0)
+            </AppButton>
           </div>
         </section>
 
@@ -528,6 +537,28 @@ function onInlineClose() {
               <AppBadge mono tone="accent">karyl-example</AppBadge>
               <AppBadge mono size="sm">/ping</AppBadge>
             </div>
+          </div>
+        </section>
+
+        <section>
+          <h2>AppProgress</h2>
+          <p class="hint">
+            <code>value</code> 0–100 is determinate (<code>role="progressbar"</code> +
+            aria-value*); omit it for an indeterminate bar (static under
+            reduced motion). <code>tone</code>: accent / success / warn / danger;
+            <code>size</code>: sm / md.
+          </p>
+          <div class="progress-demo">
+            <AppProgress :value="progressValue" label="Determinate demo" />
+            <div class="row">
+              <AppButton size="sm" @click="progressValue = Math.max(0, progressValue - 10)">-10</AppButton>
+              <AppButton size="sm" @click="progressValue = Math.min(100, progressValue + 10)">+10</AppButton>
+              <span>{{ progressValue }}%</span>
+            </div>
+            <AppProgress label="Indeterminate demo" />
+            <AppProgress :value="80" size="sm" tone="success" label="Success" />
+            <AppProgress :value="55" size="sm" tone="warn" label="Warn" />
+            <AppProgress :value="20" size="sm" tone="danger" label="Danger" />
           </div>
         </section>
 
@@ -863,6 +894,12 @@ section h2 {
 .muted { color: var(--text-muted); font-size: 0.85rem; }
 
 /* ── Rows / grids ───────────────────────────────────────────────── */
+.progress-demo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  max-width: 420px;
+}
 .row {
   display: flex;
   flex-wrap: wrap;

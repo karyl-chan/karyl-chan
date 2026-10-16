@@ -31,6 +31,9 @@ withDefaults(defineProps<{
     /** Make the popup width match the trigger's width. Default: true. */
     sameWidth?: boolean;
 }>(), {
+    // `undefined` (not Vue's boolean-cast `false`) so an unbound AppSelect
+    // falls through to AppPopover's internal open state.
+    open: undefined,
     placement: 'bottom-start',
     drawerPlacement: 'bottom',
     closeOnItemClick: true,

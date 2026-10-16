@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [bot, plugin-sdk, plugin-wire, voice]
+        target: [bot, plugin-sdk, plugin-wire, ui, voice]
     steps:
       - uses: actions/checkout@v4
 
@@ -53,6 +53,14 @@ jobs:
         run: |
           pnpm --filter @karyl-chan/plugin-wire build
           pnpm --filter @karyl-chan/plugin-wire test
+
+      - name: Typecheck & test ui
+        if: matrix.target == 'ui'
+        # @karyl-chan/ui ships raw .vue/.ts source (no build step), so its
+        # gate is vue-tsc plus the colocated vitest specs (jsdom).
+        run: |
+          pnpm --filter @karyl-chan/ui typecheck
+          pnpm --filter @karyl-chan/ui test
 
       - name: Build & test voice
         if: matrix.target == 'voice'
