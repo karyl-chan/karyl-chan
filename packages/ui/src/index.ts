@@ -31,6 +31,8 @@ export { default as AppMenu } from "./components/AppMenu.vue";
 export { default as AppMenuItem } from "./components/AppMenuItem.vue";
 export { default as AppModal } from "./components/AppModal.vue";
 export { default as AppPopover } from "./components/AppPopover.vue";
+export { default as AppProgress } from "./components/AppProgress.vue";
+export type { ProgressSize, ProgressTone } from "./components/AppProgress.vue";
 export { default as AppSelect } from "./components/AppSelect.vue";
 export { default as AppSelectField } from "./components/AppSelectField.vue";
 export type { SelectOption } from "./components/AppSelectField.vue";
