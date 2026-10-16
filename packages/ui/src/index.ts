@@ -92,5 +92,5 @@ export type {
 export { useShiftKey } from "./composables/use-shift-key";
 
 // ── Stores ───────────────────────────────────────────────────────────────
-export { useToastStore } from "./stores/toastStore";
-export type { ToastItem } from "./stores/toastStore";
+export { useToastStore, DEFAULT_TOAST_DURATION } from "./stores/toastStore";
+export type { ToastItem, ToastType, ToastOptions } from "./stores/toastStore";
