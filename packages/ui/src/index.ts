@@ -31,6 +31,8 @@ export { default as AppMenu } from "./components/AppMenu.vue";
 export { default as AppMenuItem } from "./components/AppMenuItem.vue";
 export { default as AppModal } from "./components/AppModal.vue";
 export { default as AppPopover } from "./components/AppPopover.vue";
+export { default as AppProgress } from "./components/AppProgress.vue";
+export type { ProgressSize, ProgressTone } from "./components/AppProgress.vue";
 export { default as AppSelect } from "./components/AppSelect.vue";
 export { default as AppSelectField } from "./components/AppSelectField.vue";
 export type { SelectOption } from "./components/AppSelectField.vue";
@@ -79,10 +81,18 @@ export { useEscapeStack } from "./composables/use-escape-stack";
 export { useFileDrop } from "./composables/use-file-drop";
 export type { FileDropHandlers } from "./composables/use-file-drop";
 export { useLongPress } from "./composables/use-long-press";
-export { usePopover } from "./composables/use-popover";
-export type { Placement, UsePopoverOptions } from "./composables/use-popover";
+export {
+  usePopover,
+  createVirtualElement,
+  createVirtualElementFromEvent,
+} from "./composables/use-popover";
+export type {
+  Placement,
+  UsePopoverOptions,
+  VirtualElement,
+} from "./composables/use-popover";
 export { useShiftKey } from "./composables/use-shift-key";
 
 // ── Stores ───────────────────────────────────────────────────────────────
-export { useToastStore } from "./stores/toastStore";
-export type { ToastItem } from "./stores/toastStore";
+export { useToastStore, DEFAULT_TOAST_DURATION } from "./stores/toastStore";
+export type { ToastItem, ToastType, ToastOptions } from "./stores/toastStore";

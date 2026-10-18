@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, useId } from 'vue';
 import { Icon } from '@iconify/vue';
 import { useBreakpoint } from '../composables/use-breakpoint';
 import AppSelectField, { type SelectOption } from './AppSelectField.vue';
 import type { TabDef } from './tab-types';
+import { onTablistKeydown, rovingTabKey } from './tab-keyboard';
 
 export type { TabDef };
 
@@ -20,6 +21,12 @@ export type { TabDef };
  *
  * Mobile (≤768px):
  *   - Both rows collapse to AppSelectField dropdowns stacked vertically.
+ *
+ * Keyboard (desktop, WAI-ARIA tabs pattern): each tablist is a single
+ * Tab stop (roving tabindex on the selected tab); ArrowLeft/ArrowRight
+ * (ArrowUp/ArrowDown in the vertical sidebar) and Home/End move between
+ * tabs, skipping disabled ones, and select as they go. The panel is a
+ * `role="tabpanel"` labelled by the selected sub-tab (or primary tab).
  *
  * If you need URL-synced tabs with deep-linkable hrefs, use
  * `AppTabsRouted` from this package (a thin wrapper that adds
@@ -65,6 +72,27 @@ const primaryOptions = computed<SelectOption<string>[]>(() =>
 const subOptions = computed<SelectOption<string>[]>(() =>
     props.subTabs.map(t => ({ value: t.key, label: t.label }))
 );
+
+// ── ARIA wiring ──────────────────────────────────────────────────────
+// Ids are index-based (keys may contain characters that aren't valid in
+// an id). One panel serves every tab, so all tabs point at it.
+const uid = useId();
+const panelId = `${uid}-panel`;
+const tabId = (i: number) => `${uid}-tab-${i}`;
+const subTabId = (i: number) => `${uid}-sub-${i}`;
+const primaryRoving = computed(() => rovingTabKey(props.tabs, props.modelValue));
+const subRoving = computed(() => rovingTabKey(props.subTabs, props.subModelValue));
+const panelLabelledBy = computed(() => {
+    if (hasSub.value) {
+        const si = props.subTabs.findIndex(t => t.key === props.subModelValue);
+        if (si !== -1) return subTabId(si);
+    }
+    const pi = props.tabs.findIndex(t => t.key === props.modelValue);
+    return pi !== -1 ? tabId(pi) : undefined;
+});
+function onPrimaryKeydown(e: KeyboardEvent) { onTablistKeydown(e, props.tabs, pickPrimary); }
+function onSubKeydown(e: KeyboardEvent) { onTablistKeydown(e, props.subTabs, pickSub); }
+function onSubSideKeydown(e: KeyboardEvent) { onTablistKeydown(e, props.subTabs, pickSub, 'vertical'); }
 </script>
 
 <template>
@@ -93,14 +121,18 @@ const subOptions = computed<SelectOption<string>[]>(() =>
         v-else-if="!hasSub || subLayout === 'top'"
         :class="['tabs-root', 'desktop', 'top', { underline: variant === 'underline' }]"
     >
-        <nav class="primary-row" role="tablist">
+        <nav class="primary-row" role="tablist" @keydown="onPrimaryKeydown">
             <button
-                v-for="t in tabs"
+                v-for="(t, i) in tabs"
+                :id="tabId(i)"
                 :key="t.key"
                 type="button"
                 role="tab"
                 :class="['tab', { active: t.key === modelValue }]"
                 :aria-selected="t.key === modelValue"
+                :aria-controls="panelId"
+                :tabindex="t.key === primaryRoving ? 0 : -1"
+                :data-tab-key="t.key"
                 :disabled="t.disabled"
                 @click="!t.disabled && pickPrimary(t.key)"
             >
@@ -108,14 +140,18 @@ const subOptions = computed<SelectOption<string>[]>(() =>
                 <span>{{ t.label }}</span>
             </button>
         </nav>
-        <nav v-if="hasSub" class="sub-row" role="tablist">
+        <nav v-if="hasSub" class="sub-row" role="tablist" @keydown="onSubKeydown">
             <button
-                v-for="t in subTabs"
+                v-for="(t, i) in subTabs"
+                :id="subTabId(i)"
                 :key="t.key"
                 type="button"
                 role="tab"
                 :class="['sub-tab', { active: t.key === subModelValue }]"
                 :aria-selected="t.key === subModelValue"
+                :aria-controls="panelId"
+                :tabindex="t.key === subRoving ? 0 : -1"
+                :data-tab-key="t.key"
                 :disabled="t.disabled"
                 @click="!t.disabled && pickSub(t.key)"
             >
@@ -123,21 +159,25 @@ const subOptions = computed<SelectOption<string>[]>(() =>
                 <span>{{ t.label }}</span>
             </button>
         </nav>
-        <div class="panel">
+        <div :id="panelId" class="panel" role="tabpanel" :aria-labelledby="panelLabelledBy">
             <slot />
         </div>
     </div>
 
     <!-- Desktop, sub-tabs as a vertical sidebar. -->
     <div v-else :class="['tabs-root', 'desktop', 'sidebar', { underline: variant === 'underline' }]">
-        <nav class="primary-row" role="tablist">
+        <nav class="primary-row" role="tablist" @keydown="onPrimaryKeydown">
             <button
-                v-for="t in tabs"
+                v-for="(t, i) in tabs"
+                :id="tabId(i)"
                 :key="t.key"
                 type="button"
                 role="tab"
                 :class="['tab', { active: t.key === modelValue }]"
                 :aria-selected="t.key === modelValue"
+                :aria-controls="panelId"
+                :tabindex="t.key === primaryRoving ? 0 : -1"
+                :data-tab-key="t.key"
                 :disabled="t.disabled"
                 @click="!t.disabled && pickPrimary(t.key)"
             >
@@ -146,14 +186,18 @@ const subOptions = computed<SelectOption<string>[]>(() =>
             </button>
         </nav>
         <div class="split">
-            <nav class="sub-side" role="tablist">
+            <nav class="sub-side" role="tablist" aria-orientation="vertical" @keydown="onSubSideKeydown">
                 <button
-                    v-for="t in subTabs"
+                    v-for="(t, i) in subTabs"
+                    :id="subTabId(i)"
                     :key="t.key"
                     type="button"
                     role="tab"
                     :class="['sub-side-tab', { active: t.key === subModelValue }]"
                     :aria-selected="t.key === subModelValue"
+                    :aria-controls="panelId"
+                    :tabindex="t.key === subRoving ? 0 : -1"
+                    :data-tab-key="t.key"
                     :disabled="t.disabled"
                     @click="!t.disabled && pickSub(t.key)"
                 >
@@ -161,7 +205,7 @@ const subOptions = computed<SelectOption<string>[]>(() =>
                     <span>{{ t.label }}</span>
                 </button>
             </nav>
-            <div class="panel side-panel">
+            <div :id="panelId" class="panel side-panel" role="tabpanel" :aria-labelledby="panelLabelledBy">
                 <slot />
             </div>
         </div>

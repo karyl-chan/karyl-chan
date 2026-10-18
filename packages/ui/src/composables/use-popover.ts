@@ -201,8 +201,22 @@ const DEFAULT_OPTIONS: Required<
   transition: true,
 };
 
-export function createVirtualElement(x: number, y: number): VirtualElement {
+/**
+ * Build a Popper `VirtualElement` anchored at a viewport point — pass it
+ * as `AppPopover`'s `referenceEl` (or to `usePopover`) to position a
+ * popover at a cursor / canvas coordinate instead of a DOM element.
+ *
+ * `contextElement` (optional) tells Popper which element's scroll
+ * containers to track, so the popover follows the anchor while that
+ * region scrolls.
+ */
+export function createVirtualElement(
+  x: number,
+  y: number,
+  contextElement?: Element,
+): VirtualElement {
   return {
+    contextElement,
     getBoundingClientRect: () => ({
       width: 0,
       height: 0,
@@ -221,6 +235,11 @@ export function createVirtualElementFromEvent(
   event: MouseEvent,
 ): VirtualElement {
   return createVirtualElement(event.clientX, event.clientY);
+}
+
+/** True when `ref` is a real DOM element rather than a Popper VirtualElement. */
+export function isDomElement(ref: unknown): ref is Element {
+  return typeof Element !== "undefined" && ref instanceof Element;
 }
 
 export function getScrollParent(element: HTMLElement): HTMLElement | Window {
@@ -865,7 +884,6 @@ export function createPopover(
    * 設置關閉相關的事件監聽器
    */
   function setupCloseListeners() {
-    const referenceEl = reference as HTMLElement;
 
     if (mergedOptions.closeOnContentClick) {
       const handleContentClick = () => hide();
@@ -876,7 +894,15 @@ export function createPopover(
     }
 
     if (mergedOptions.hideOnScroll) {
-      const scrollParents = getScrollParents(referenceEl);
+      // A VirtualElement has no DOM ancestry — getComputedStyle() on it
+      // throws. Fall back to its contextElement, else just the window.
+      const scrollRoot = isDomElement(reference)
+        ? reference
+        : reference.contextElement;
+      const scrollParents: (HTMLElement | Window)[] =
+        scrollRoot instanceof HTMLElement
+          ? getScrollParents(scrollRoot)
+          : [window];
       const handleScroll = () => {
         if (isVisible) hide();
       };
@@ -1165,7 +1191,10 @@ export function usePopover(
         const c = unref(contentRef);
         const r = unref(referenceRef);
         if (c && c.contains(target)) return true;
-        if (r && (r as HTMLElement).contains?.(target)) return true;
+        // Only a real element can "contain" the click; a VirtualElement
+        // anchor (point / range) has no DOM extent, so any click outside
+        // the content counts as outside.
+        if (r && isDomElement(r) && r.contains(target)) return true;
         return false;
       },
       close: () => instance.value?.hide(),

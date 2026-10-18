@@ -29,7 +29,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "typecheck": "vue-tsc --noEmit"
+    "typecheck": "vue-tsc --noEmit",
+    "test": "vitest run"
   },
   "peerDependencies": {
     "@iconify/vue": ">=5",
@@ -47,6 +48,7 @@
   "devDependencies": {
     "@iconify/vue": "^5.0.0",
     "@popperjs/core": "^2.11.8",
+    "@vitejs/plugin-vue": "^5.2.4",
     "@vue/test-utils": "^2.4.8",
     "@vue/tsconfig": "^0.7.0",
     "jsdom": "^29.0.2",

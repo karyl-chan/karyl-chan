@@ -15,16 +15,22 @@
  * which does NOT import vue-router and so doesn't pull it into your
  * plugin SPA's bundle.
  *
+ * Keyboard / ARIA behaviour matches AppTabs (roving tabindex, Arrow /
+ * Home / End navigation skipping disabled tabs, tabpanel wiring); a
+ * keyboard move updates the URL with `router.replace` so arrowing across
+ * tabs does not flood the history stack.
+ *
  * NB: separate component (vs an `routed` prop on AppTabs) so that
  * plugin SPAs that never use routed tabs don't transitively depend on
  * `vue-router`.
  */
-import { computed, ref, watch } from 'vue';
+import { computed, ref, useId, watch } from 'vue';
 import { useRoute, useRouter, RouterLink, type LocationQueryRaw } from 'vue-router';
 import { Icon } from '@iconify/vue';
 import { useBreakpoint } from '../composables/use-breakpoint';
 import AppSelectField, { type SelectOption } from './AppSelectField.vue';
 import type { TabDef } from './tab-types';
+import { onTablistKeydown, rovingTabKey } from './tab-keyboard';
 
 const props = withDefaults(defineProps<{
     modelValue: string;
@@ -133,6 +139,27 @@ function subLinkTo(key: string) {
     q[subKey.value] = key === defaultSub.value ? undefined : key;
     return { path: route.path, query: q };
 }
+
+// -- ARIA wiring (mirrors AppTabs) --------------------------------------
+const uid = useId();
+const panelId = `${uid}-panel`;
+const tabId = (i: number) => `${uid}-tab-${i}`;
+const subTabId = (i: number) => `${uid}-sub-${i}`;
+const primaryRoving = computed(() => rovingTabKey(props.tabs, props.modelValue));
+const subRoving = computed(() => rovingTabKey(props.subTabs, props.subModelValue));
+const panelLabelledBy = computed(() => {
+    if (hasSub.value) {
+        const si = props.subTabs.findIndex(t => t.key === props.subModelValue);
+        if (si !== -1) return subTabId(si);
+    }
+    const pi = props.tabs.findIndex(t => t.key === props.modelValue);
+    return pi !== -1 ? tabId(pi) : undefined;
+});
+function keyPrimary(key: string) { router.replace(tabLinkTo(key)); }
+function keySub(key: string) { router.replace(subLinkTo(key)); }
+function onPrimaryKeydown(e: KeyboardEvent) { onTablistKeydown(e, props.tabs, keyPrimary); }
+function onSubKeydown(e: KeyboardEvent) { onTablistKeydown(e, props.subTabs, keySub); }
+function onSubSideKeydown(e: KeyboardEvent) { onTablistKeydown(e, props.subTabs, keySub, 'vertical'); }
 </script>
 
 <template>
@@ -161,24 +188,32 @@ function subLinkTo(key: string) {
         v-else-if="!hasSub || subLayout === 'top'"
         :class="['tabs-root', 'desktop', 'top', { underline: variant === 'underline' }]"
     >
-        <nav class="primary-row" role="tablist">
-            <template v-for="t in tabs" :key="t.key">
+        <nav class="primary-row" role="tablist" @keydown="onPrimaryKeydown">
+            <template v-for="(t, i) in tabs" :key="t.key">
                 <RouterLink
                     v-if="!t.disabled"
+                    :id="tabId(i)"
                     :to="tabLinkTo(t.key)"
                     role="tab"
                     :class="['tab', { active: t.key === modelValue }]"
                     :aria-selected="t.key === modelValue"
+                    :aria-controls="panelId"
+                    :tabindex="t.key === primaryRoving ? 0 : -1"
+                    :data-tab-key="t.key"
                 >
                     <Icon v-if="t.icon" :icon="t.icon" width="16" height="16" />
                     <span>{{ t.label }}</span>
                 </RouterLink>
                 <button
                     v-else
+                    :id="tabId(i)"
                     type="button"
                     role="tab"
                     :class="['tab', { active: t.key === modelValue }]"
                     :aria-selected="t.key === modelValue"
+                    :aria-controls="panelId"
+                    tabindex="-1"
+                    :data-tab-key="t.key"
                     disabled
                 >
                     <Icon v-if="t.icon" :icon="t.icon" width="16" height="16" />
@@ -186,24 +221,32 @@ function subLinkTo(key: string) {
                 </button>
             </template>
         </nav>
-        <nav v-if="hasSub" class="sub-row" role="tablist">
-            <template v-for="t in subTabs" :key="t.key">
+        <nav v-if="hasSub" class="sub-row" role="tablist" @keydown="onSubKeydown">
+            <template v-for="(t, i) in subTabs" :key="t.key">
                 <RouterLink
                     v-if="!t.disabled"
+                    :id="subTabId(i)"
                     :to="subLinkTo(t.key)"
                     role="tab"
                     :class="['sub-tab', { active: t.key === subModelValue }]"
                     :aria-selected="t.key === subModelValue"
+                    :aria-controls="panelId"
+                    :tabindex="t.key === subRoving ? 0 : -1"
+                    :data-tab-key="t.key"
                 >
                     <Icon v-if="t.icon" :icon="t.icon" width="14" height="14" />
                     <span>{{ t.label }}</span>
                 </RouterLink>
                 <button
                     v-else
+                    :id="subTabId(i)"
                     type="button"
                     role="tab"
                     :class="['sub-tab', { active: t.key === subModelValue }]"
                     :aria-selected="t.key === subModelValue"
+                    :aria-controls="panelId"
+                    tabindex="-1"
+                    :data-tab-key="t.key"
                     disabled
                 >
                     <Icon v-if="t.icon" :icon="t.icon" width="14" height="14" />
@@ -211,31 +254,39 @@ function subLinkTo(key: string) {
                 </button>
             </template>
         </nav>
-        <div class="panel">
+        <div :id="panelId" class="panel" role="tabpanel" :aria-labelledby="panelLabelledBy">
             <slot />
         </div>
     </div>
 
     <!-- Desktop, sub-tabs as a vertical sidebar. -->
     <div v-else :class="['tabs-root', 'desktop', 'sidebar', { underline: variant === 'underline' }]">
-        <nav class="primary-row" role="tablist">
-            <template v-for="t in tabs" :key="t.key">
+        <nav class="primary-row" role="tablist" @keydown="onPrimaryKeydown">
+            <template v-for="(t, i) in tabs" :key="t.key">
                 <RouterLink
                     v-if="!t.disabled"
+                    :id="tabId(i)"
                     :to="tabLinkTo(t.key)"
                     role="tab"
                     :class="['tab', { active: t.key === modelValue }]"
                     :aria-selected="t.key === modelValue"
+                    :aria-controls="panelId"
+                    :tabindex="t.key === primaryRoving ? 0 : -1"
+                    :data-tab-key="t.key"
                 >
                     <Icon v-if="t.icon" :icon="t.icon" width="16" height="16" />
                     <span>{{ t.label }}</span>
                 </RouterLink>
                 <button
                     v-else
+                    :id="tabId(i)"
                     type="button"
                     role="tab"
                     :class="['tab', { active: t.key === modelValue }]"
                     :aria-selected="t.key === modelValue"
+                    :aria-controls="panelId"
+                    tabindex="-1"
+                    :data-tab-key="t.key"
                     disabled
                 >
                     <Icon v-if="t.icon" :icon="t.icon" width="16" height="16" />
@@ -244,24 +295,32 @@ function subLinkTo(key: string) {
             </template>
         </nav>
         <div class="split">
-            <nav class="sub-side" role="tablist">
-                <template v-for="t in subTabs" :key="t.key">
+            <nav class="sub-side" role="tablist" aria-orientation="vertical" @keydown="onSubSideKeydown">
+                <template v-for="(t, i) in subTabs" :key="t.key">
                     <RouterLink
                         v-if="!t.disabled"
+                        :id="subTabId(i)"
                         :to="subLinkTo(t.key)"
                         role="tab"
                         :class="['sub-side-tab', { active: t.key === subModelValue }]"
                         :aria-selected="t.key === subModelValue"
+                        :aria-controls="panelId"
+                        :tabindex="t.key === subRoving ? 0 : -1"
+                        :data-tab-key="t.key"
                     >
                         <Icon v-if="t.icon" :icon="t.icon" width="16" height="16" />
                         <span>{{ t.label }}</span>
                     </RouterLink>
                     <button
                         v-else
+                        :id="subTabId(i)"
                         type="button"
                         role="tab"
                         :class="['sub-side-tab', { active: t.key === subModelValue }]"
                         :aria-selected="t.key === subModelValue"
+                        :aria-controls="panelId"
+                        tabindex="-1"
+                        :data-tab-key="t.key"
                         disabled
                     >
                         <Icon v-if="t.icon" :icon="t.icon" width="16" height="16" />
@@ -269,7 +328,7 @@ function subLinkTo(key: string) {
                     </button>
                 </template>
             </nav>
-            <div class="panel side-panel">
+            <div :id="panelId" class="panel side-panel" role="tabpanel" :aria-labelledby="panelLabelledBy">
                 <slot />
             </div>
         </div>
@@ -282,6 +341,8 @@ function subLinkTo(key: string) {
     flex-direction: column;
     gap: 0.7rem;
     min-height: 0;
+    /* Span the parent's cross-axis - see AppTabs.vue. */
+    width: 100%;
     flex: 1;
 }
 
@@ -290,7 +351,10 @@ function subLinkTo(key: string) {
     gap: 0.4rem;
     border-bottom: 1px solid var(--border);
     padding-bottom: 0.5rem;
+    /* Horizontal scroll only; `overflow-y: hidden` stops the implicit
+       vertical scrollbar - see AppTabs.vue. */
     overflow-x: auto;
+    overflow-y: hidden;
     scrollbar-width: thin;
     flex-shrink: 0;
 }
@@ -348,6 +412,7 @@ function subLinkTo(key: string) {
     gap: 0.6rem;
     border-bottom: 1px solid var(--border);
     overflow-x: auto;
+    overflow-y: hidden;
     scrollbar-width: thin;
     margin-top: -0.3rem;
     flex-shrink: 0;
