@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.5.0](https://github.com/karyl-chan/karyl-chan/compare/ui-v0.4.0...ui-v0.5.0) (2026-10-18)
+
+
+### Features
+
+* **ui:** accessibility fixes, AppProgress, toast types, virtual popover anchors ([6d8041d](https://github.com/karyl-chan/karyl-chan/commit/6d8041d66734cfb1cf34b94d164fd0a22a25db6f))
+* **ui:** add AppProgress linear progress bar ([7a9c61b](https://github.com/karyl-chan/karyl-chan/commit/7a9c61b2718a314ea857b78c5344cb2e98b298b4))
+* **ui:** keyboard-navigable AppTabs with tabpanel wiring ([64ee509](https://github.com/karyl-chan/karyl-chan/commit/64ee509bd9d0d754f10e7e0e2697d2b393097b8b))
+* **ui:** success/warn toasts, per-toast duration and live-region roles ([2e77857](https://github.com/karyl-chan/karyl-chan/commit/2e77857683cf7db198133a0a0c30411d4ea0105a))
+
+
+### Bug Fixes
+
+* **ui:** define --font-mono and --unread-accent tokens ([2ae055a](https://github.com/karyl-chan/karyl-chan/commit/2ae055a1a80a90a0caa3f8de50b5254e94eb0efc))
+* **ui:** make AppModal an accessible, stack-aware dialog ([aec4733](https://github.com/karyl-chan/karyl-chan/commit/aec473327ffbf20ae67d8fc7299d7050b1844679))
+* **ui:** open uncontrolled AppPopover/AppSelect and accept virtual anchors ([b071674](https://github.com/karyl-chan/karyl-chan/commit/b0716743016b302cc8cf7a280ca66ba70638bd67))
+* **ui:** settle a superseded confirm() with false ([d8b42fe](https://github.com/karyl-chan/karyl-chan/commit/d8b42fe713bb7be53a98a8f6af6d7bccbf6265d4))
+
 ## [0.4.0](https://github.com/karyl-chan/karyl-chan/compare/ui-v0.3.0...ui-v0.4.0) (2026-07-05)
 
 
