@@ -15,11 +15,15 @@ RUN corepack enable
 WORKDIR /repo
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY packages/plugin-sdk/package.json packages/plugin-sdk/
+# plugin-sdk vendors the workspace-private plugin-wire into its dist
+# (tsconfig paths → ../plugin-wire/src), so its sources must be present.
+COPY packages/plugin-wire/package.json packages/plugin-wire/
 COPY packages/plugin-reminder/package.json packages/plugin-reminder/
 
 
 FROM base AS build
 RUN pnpm install --frozen-lockfile --filter @karyl-chan/plugin-reminder...
+COPY packages/plugin-wire packages/plugin-wire
 COPY packages/plugin-sdk packages/plugin-sdk
 COPY packages/plugin-reminder packages/plugin-reminder
 RUN pnpm --filter @karyl-chan/plugin-sdk build \
