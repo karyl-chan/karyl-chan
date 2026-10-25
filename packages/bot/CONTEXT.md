@@ -65,7 +65,15 @@ _Avoid_: rule、自訂指令（指令只是其中一種觸發）
 啟動 behavior 的方式；只有 Command Trigger 與 Message Trigger 兩種。
 
 **Command Trigger（指令觸發）**:
-Behavior 本身註冊成一個 Discord application command；誰看得到、在哪能用，由 Discord 與伺服器管理員決定，看得到就能執行。
+Behavior 綁在某個 Command 的一個 Command Leaf 上；誰看得到、在哪能用，由 Discord 與伺服器管理員決定，看得到就能執行。
+
+**Command（指令）**:
+Discord 註冊的單位，持有名稱與所有可見性設定，底下有一或多個 Command Leaf。
+_Avoid_: 用「指令」稱呼單一子指令
+
+**Command Leaf（葉節點）**:
+指令底下一個可呼叫的路徑（指令本身或某個子指令），綁一個動作。根葉節點與子指令不並存。
+_Avoid_: subcommand behavior、子行為
 _Avoid_: slash behavior 的範圍、指定使用者的指令
 
 **Message Trigger（訊息觸發）**:
