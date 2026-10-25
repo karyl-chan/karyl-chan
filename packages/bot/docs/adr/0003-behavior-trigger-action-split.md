@@ -39,5 +39,5 @@ Behaviors 最初照早期 Discord bot 的思路設計：每個 behavior 掛在�
 ## 後果
 
 - 系統 behavior 目前在每次開機時自動補建；移除 `manual`、`break` 必須改程式，不能只刪資料。正式站的 `!login` 轉成「登入動作 + 私訊訊息觸發」的綁定。
-- Track 3 `plugin_commands`（plugin 在 manifest 寫死註冊範圍等三個維度）和「指令觸發 + plugin action」的能力重疊；兩者之後的關係另外決定。
+- Track 3 `plugin_commands`（plugin 在 manifest 寫死註冊範圍等三個維度）與「指令觸發 + plugin action」**並存**：前者給想自己掌握指令體驗的 plugin，後者給可被管理員組合的能力。兩者共用 Discord 的指令命名空間，所以同一註冊範圍內的名稱衝突要在存檔與註冊時拒絕，不能讓後註冊的靜默覆蓋。
 - 第二階段需要新版的 plugin 協定與 SDK，三個獨立 plugin repo 要跟著升級。
