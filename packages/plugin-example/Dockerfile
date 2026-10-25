@@ -17,16 +17,26 @@ WORKDIR /repo
 # `pnpm install` layer caches when only app code changes.
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY packages/plugin-sdk/package.json packages/plugin-sdk/
+# plugin-sdk vendors the workspace-private plugin-wire into its dist
+# (tsconfig paths → ../plugin-wire/src), so its sources must be present.
+COPY packages/plugin-wire/package.json packages/plugin-wire/
 COPY packages/ui/package.json packages/ui/
 COPY packages/plugin-example/package.json packages/plugin-example/
 
 
 FROM base AS build
+# Bullseye's live deb.debian.org entries are gone (LTS ended 2026-08);
+# use the image's pinned snapshot.debian.org entries, as the bot does.
+RUN sed -i \
+    -e 's|^# deb http://snapshot|deb [check-valid-until=no] http://snapshot|' \
+    -e 's|^deb http://deb.debian.org|# deb http://deb.debian.org|' \
+    /etc/apt/sources.list
 # Build toolchain for better-sqlite3's native compile.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends python3 make g++ \
     && rm -rf /var/lib/apt/lists/*
 RUN pnpm install --frozen-lockfile --filter @karyl-chan/plugin-example...
+COPY packages/plugin-wire packages/plugin-wire
 COPY packages/plugin-sdk packages/plugin-sdk
 COPY packages/ui packages/ui
 COPY packages/plugin-example packages/plugin-example
