@@ -28,3 +28,5 @@ yarn.lock
 package-lock.json
 
 .claude
+# local research notes (not part of the repo)
+docs/research/
