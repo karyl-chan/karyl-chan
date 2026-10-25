@@ -59,18 +59,26 @@ _Avoid_: config validation (validation is one of its three jobs; naming it that 
 
 **Behavior**:
 管理員設定的一個觸發綁定一個動作。
-_Avoid_: rule、自訂指令（App 指令只是其中一種觸發）
+_Avoid_: rule、自訂指令（指令只是其中一種觸發）
 
 **Trigger（觸發）**:
-啟動 behavior 的方式；只有 App Command Trigger 與 Message Trigger 兩種。
+啟動 behavior 的方式；只有 Command Trigger 與 Message Trigger 兩種。
 
-**App Command Trigger（App 指令觸發）**:
-Behavior 本身註冊成一個 Discord application command；誰看得到、在哪能用，由 Discord 與伺服器管理員決定，不由 karyl 決定。
+**Command Trigger（指令觸發）**:
+Behavior 本身註冊成一個 Discord application command；誰看得到、在哪能用，由 Discord 與伺服器管理員決定，看得到就能執行。
 _Avoid_: slash behavior 的範圍、指定使用者的指令
 
 **Message Trigger（訊息觸發）**:
-比對 bot 收得到的訊息 —— 與 bot 的私訊、bot 所在伺服器的頻道。對象與位置的篩選、持續對話，只屬於這種觸發。
+比對 bot 收得到的訊息 —— 與 bot 的私訊，或伺服器的頻道。對象篩選只在與 bot 的私訊提供。
 _Avoid_: DM pattern、message_pattern（舊稱，且不只限於私訊）
+
+**Behavior Section（分區）**:
+Admin UI 依觸發的可用情境推導出的分組：App 指令、與 bot 的私訊、伺服器。只是呈現，不儲存、不影響行為。
+_Avoid_: scope tab、範圍分頁（已移除）
+
+**App 指令**:
+可用情境跨越多處，或開放使用者安裝的指令觸發所屬的分區。
+_Avoid_: 用來泛稱所有 slash 指令
 
 **Action（動作）**:
 Behavior 被觸發後要做的事，由一個 Action Source 提供。
@@ -79,10 +87,10 @@ Behavior 被觸發後要做的事，由一個 Action Source 提供。
 動作的提供者：內建、webhook 或 plugin。
 _Avoid_: `source: custom / system`（舊稱）
 
+**Login Action（登入動作）**:
+唯一的內建動作：回覆管理介面的一次性登入連結。系統永遠保有至少一個啟用中的登入綁定。
+_Avoid_: admin-login 系統 behavior
+
 **Plugin Action**:
 Plugin 宣告、與觸發面無關的動作，由管理員綁到觸發上。
 _Avoid_: dm_behavior（已移除的前身，綁死在私訊上）
-
-**Scope Tab（範圍分頁）**:
-Admin UI 裡整理 behaviors 的分組；不決定 behavior 的任何行為。
-_Avoid_: 範圍、reach（它不再是觸發範圍的來源）
