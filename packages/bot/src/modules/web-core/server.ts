@@ -20,6 +20,12 @@ import {
 } from "../admin/authorized-user.service.js";
 import { RateLimiter } from "../../utils/rate-limiter.js";
 import fastifyMultipart from "@fastify/multipart";
+import {
+  AUTH_EXCHANGE_PATH,
+  AUTH_REFRESH_PATH,
+  clientKey,
+  refuseIfThrottled,
+} from "./client-throttle.js";
 
 // Per-IP throttles for the unauthenticated auth endpoints. One-time
 // tokens are 256-bit so brute force is infeasible, but the limiter
@@ -51,16 +57,6 @@ const THROTTLE_EXEMPT_PATHS = new Set([
   "/api/plugin/interactions.followup",
   "/api/plugin/interactions.delete_followup",
 ]);
-
-function clientKey(request: import("fastify").FastifyRequest): string {
-  // request.ip reflects the trust-proxy configuration: when
-  // config.web.trustedProxy is true and CIDRs are provided, Fastify
-  // unwraps X-Forwarded-For for peers that match those CIDRs; otherwise
-  // it falls back to the immediate socket peer. The trust-proxy value is
-  // computed in createWebServer from config.web.trustedProxy,
-  // config.web.trustedProxyCidrs, and config.web.trustCloudflare.
-  return request.ip || "unknown";
-}
 
 /**
  * Paths that accept a single-use ticket via the `?ticket=` query
@@ -102,6 +98,7 @@ import {
 } from "../plugin-system/plugin-auth.service.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { shouldRecord } from "../bot-events/bot-event-dedup.js";
+import { recordAuthThrottled } from "../bot-events/auth-throttle-log.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -415,23 +412,19 @@ export async function createWebServer(
   });
 
   server.post<{ Body: { token?: unknown } }>(
-    "/api/auth/exchange",
+    AUTH_EXCHANGE_PATH,
     async (request, reply) => {
       if (!authEnabled) {
         reply.code(503).send({ error: "Auth not configured" });
         return;
       }
-      if (loginRateLimiter.isRateLimited(clientKey(request))) {
-        const ip = clientKey(request);
-        if (shouldRecord(`rateLimit:${ip}:/api/auth/exchange`)) {
-          botEventLog.record(
-            "warn",
-            "auth",
-            "Auth rate-limit hit: /api/auth/exchange",
-            { endpoint: "/api/auth/exchange", ip },
-          );
-        }
-        reply.code(429).send({ error: "Too many attempts, slow down" });
+      if (
+        refuseIfThrottled(loginRateLimiter, request, reply, {
+          path: AUTH_EXCHANGE_PATH,
+          message: "Too many attempts, slow down",
+          onThrottled: recordAuthThrottled,
+        })
+      ) {
         return;
       }
       const loginToken =
@@ -521,23 +514,19 @@ export async function createWebServer(
   );
 
   server.post<{ Body: { refreshToken?: unknown } }>(
-    "/api/auth/refresh",
+    AUTH_REFRESH_PATH,
     async (request, reply) => {
       if (!authEnabled) {
         reply.code(503).send({ error: "Auth not configured" });
         return;
       }
-      if (refreshRateLimiter.isRateLimited(clientKey(request))) {
-        const ip = clientKey(request);
-        if (shouldRecord(`rateLimit:${ip}:/api/auth/refresh`)) {
-          botEventLog.record(
-            "warn",
-            "auth",
-            "Auth rate-limit hit: /api/auth/refresh",
-            { endpoint: "/api/auth/refresh", ip },
-          );
-        }
-        reply.code(429).send({ error: "Too many refresh attempts, slow down" });
+      if (
+        refuseIfThrottled(refreshRateLimiter, request, reply, {
+          path: AUTH_REFRESH_PATH,
+          message: "Too many refresh attempts, slow down",
+          onThrottled: recordAuthThrottled,
+        })
+      ) {
         return;
       }
       const refreshToken =

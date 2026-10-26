@@ -447,6 +447,9 @@ plus cross-cutting meta routes.
   `models/refresh-token.model.ts` — token storage.
 - `route-guards.ts` — `requireAnyCapability` / `requireGuildCapability`
   and similar middleware.
+- `client-throttle.ts` — the per-client throttle of the public
+  `/api/auth/*` endpoints (`clientKey`, `refuseIfThrottled`) and their
+  paths; the caller passes its log (`bot-events/auth-throttle-log.ts`).
 - `validators.ts` — `isSnowflake`, `isBoundedString`, and so on (pure
   functions).
 - `message-mapper.ts` + `message-types.ts` — Discord message → API DTO.
