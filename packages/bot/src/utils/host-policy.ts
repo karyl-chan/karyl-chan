@@ -4,14 +4,16 @@ import { moduleLogger } from "../logger.js";
 import { config } from "../config.js";
 import type { PinnedAddress } from "./pinned-dispatcher.js";
 import {
-  allowlistMatches,
   classifyAddress,
-  normalizeHostname,
-  parseAllowlistEntries,
   transitionEmbeddedIPv4,
   type AddressClass,
-  type AllowlistEntry,
 } from "./ip-address.js";
+import {
+  allowlistMatches,
+  normalizeHostname,
+  parseAllowlistEntries,
+  type AllowlistEntry,
+} from "./webhook-allowlist.js";
 
 const log = moduleLogger("host-policy");
 

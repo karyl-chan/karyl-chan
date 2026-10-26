@@ -17,7 +17,7 @@
 
 import { selectSecretProvider } from "./adapters/secret-provider.js";
 import { FileSecretProvider } from "./adapters/file-secret-provider.js";
-import { parseAllowlistEntries } from "./utils/ip-address.js";
+import { parseAllowlistEntries } from "./utils/webhook-allowlist.js";
 
 // Provider used at config load to source the boot-time secrets. Selected
 // from SECRET_PROVIDER; defaults to the in-process env provider.

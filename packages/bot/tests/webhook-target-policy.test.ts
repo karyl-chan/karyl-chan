@@ -13,7 +13,9 @@ const { lookup } = await import("dns/promises");
 const { resolveWebhookTarget, HostPolicyError } = await import(
   "../src/utils/host-policy.js"
 );
-const { parseAllowlistEntries } = await import("../src/utils/ip-address.js");
+const { parseAllowlistEntries } = await import(
+  "../src/utils/webhook-allowlist.js"
+);
 
 const mockedLookup = vi.mocked(lookup);
 
@@ -48,26 +50,6 @@ beforeEach(() => {
 
 afterEach(() => {
   delete process.env.WEBHOOK_ALLOW_PRIVATE;
-});
-
-describe("parseAllowlistEntries", () => {
-  it("accepts hostnames, bare IPs and CIDRs", () => {
-    expect(() =>
-      allow("nas.latte.lan", "192.168.2.40", "10.0.0.0/8", "fd12::/16"),
-    ).not.toThrow();
-  });
-
-  it.each([
-    "192.168.0.0/33",
-    "fd12::/129",
-    "10.0.0.0/",
-    "not a host",
-    "*.latte.lan",
-    "http://nas.latte.lan",
-    "192.168.0.0/16/1",
-  ])("rejects malformed entry %s", (entry) => {
-    expect(() => allow(entry)).toThrow(/WEBHOOK_PRIVATE_ALLOWLIST/);
-  });
 });
 
 describe("resolveWebhookTarget — private targets", () => {
