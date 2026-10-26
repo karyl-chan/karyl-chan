@@ -1242,14 +1242,13 @@
             "disabled": "已停用",
             "audienceUser": "使用者 {user}",
             "audienceGroup": "群組 {group}",
-            "registration": "註冊範圍",
             "registrationGlobal": "全域",
             "registrationGuild": "伺服器 {guild}",
             "contexts": "可用情境",
             "context": {
                 "Guild": "伺服器",
                 "BotDM": "bot 私訊",
-                "PrivateChannel": "群組私訊"
+                "PrivateChannel": "其他私訊"
             },
             "integrationTypes": "安裝方式",
             "integration": {
@@ -1297,7 +1296,8 @@
             "tooLong": "最多 {max} 個字",
             "tooMany": "最多 {max} 項",
             "format": "格式不正確",
-            "invalid": "值無效"
+            "invalid": "值無效",
+            "tooFew": "至少選 {min} 項"
         },
         "unsaved": {
             "title": "放棄未儲存的修改？",
@@ -1420,7 +1420,38 @@
             "done": "完成"
         },
         "command": {
-            "resync": "重新同步到 Discord"
+            "resync": "重新同步到 Discord",
+            "name": "Slash 指令名稱",
+            "nameHint": "1–32 個小寫英數、- 與 _，不含 /。",
+            "description": "Slash 指令說明",
+            "descriptionHint": "Discord 指令選單會顯示（1–100 字）。",
+            "reservedName": "/login 保留給系統登入。",
+            "saveAndSync": "儲存並同步到 Discord",
+            "visibility": "可見性",
+            "registration": {
+                "label": "註冊目標",
+                "global": "全域",
+                "guild": "指定伺服器"
+            },
+            "permissions": {
+                "label": "預設成員權限（只在伺服器生效）",
+                "everyone": "所有人",
+                "manageGuild": "管理伺服器",
+                "administrator": "管理員",
+                "custom": "自訂（{value}）"
+            },
+            "guildFixed": "伺服器指令只能在該伺服器使用、由伺服器安裝，這是 Discord 的規定。",
+            "sectionHere": "歸在「{section}」。",
+            "sectionMoves": "儲存後，這個指令會移到「{section}」。",
+            "sectionPending": "選好伺服器後，就會顯示這個指令歸在哪一區。",
+            "visibleRuns": "看得到就能執行。要限制伺服器裡的身分組或頻道，請到 Discord 的「伺服器設定 → 整合」。",
+            "rule": {
+                "guildNeedsGuildId": "請選擇伺服器。",
+                "guildContextsOnlyGuild": "伺服器指令只能在該伺服器使用。",
+                "guildInstallOnly": "伺服器指令只能由伺服器安裝。",
+                "globalHasNoGuild": "全域指令不指定伺服器。",
+                "privateChannelNeedsUserInstall": "「其他私訊」需要開啟使用者安裝；只有伺服器安裝時，Discord 不會在那裡顯示這個指令。"
+            }
         },
         "registration": {
             "registered": "已同步到 Discord。",

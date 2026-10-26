@@ -13,6 +13,7 @@ import { messageTriggerLocationOf } from './message-trigger-location';
 import { describeBehaviorError, isStale } from './behavior-errors';
 import { countInSection, itemsInSection } from './behavior-sections';
 import { useBehaviorList } from './use-behavior-list';
+import { provideRegistrationResults } from './use-registration-results';
 import { provideUnsavedDrafts } from './use-unsaved-drafts';
 
 const { t } = useI18n();
@@ -22,10 +23,11 @@ const { confirm } = useConfirm();
 const guildList = useGuildListStore();
 
 const toast = useToastStore();
-const { view, selected, loading, error, expandId, sections, groupUse, load, applyTrigger, applyCommand, showCreated, reorder } =
+const { view, selected, loading, error, expandKey, sections, groupUse, load, applyTrigger, applyCommand, showCreated, reorder } =
     useBehaviorList();
 const adding = ref(false);
 const { hasUnsaved } = provideUnsavedDrafts();
+provideRegistrationResults();
 
 const counts = computed(() => {
     const map: Record<string, number> = {};
@@ -104,13 +106,13 @@ async function onSelect(section: BehaviorSection) {
             :guild-names="guildNames"
             :group-names="groupNames"
             :group-use="groupUse"
-            :expand-id="expandId"
+            :expand-key="expandKey"
             :loading="loading"
             :error="error"
             @retry="load"
             @reload="load"
             @updated="applyTrigger($event, mayDropDrafts)"
-            @command-updated="applyCommand"
+            @command-updated="applyCommand($event, mayDropDrafts)"
             @deleted="load"
             @add="adding = true"
             @reorder="onReorder"

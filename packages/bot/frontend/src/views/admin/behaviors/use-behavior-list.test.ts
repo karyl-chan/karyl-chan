@@ -59,6 +59,27 @@ describe('useBehaviorList — commands', () => {
         await state.load();
         await state.applyCommand(savedCommand({ description: 'Resynced' }));
         expect(state.view.value?.commands.map((c) => c.description)).toEqual(['Resynced', 'Service status']);
+        expect(state.expandKey.value).toBeNull();
+    });
+
+    it('follows a command whose visibility moved it to another section, and opens it', async () => {
+        listMock.mockResolvedValue({ system: null, commands: [savedCommand()], messageTriggers: [] });
+        const state = useBehaviorList();
+        await state.load();
+        state.selected.value = 'bot_dm';
+        await state.applyCommand(savedCommand({ integrationTypes: ['guild_install', 'user_install'], section: 'app' }));
+        expect(state.selected.value).toBe('app');
+        expect(state.expandKey.value).toBe('command:4');
+    });
+
+    it('a created command is listed and opened where it lives', async () => {
+        const created = savedCommand({ id: 9, section: 'app' });
+        listMock.mockResolvedValue({ system: null, commands: [created], messageTriggers: [] });
+        const state = useBehaviorList();
+        state.selected.value = 'bot_dm';
+        await state.showCreated(created);
+        expect(state.selected.value).toBe('app');
+        expect(state.expandKey.value).toBe('command:9');
     });
 });
 
@@ -72,7 +93,7 @@ describe('useBehaviorList', () => {
         await state.applyTrigger(trigger(2, { title: 'renamed' }));
         expect(state.view.value?.messageTriggers.map((m) => m.title)).toEqual(['t1', 'renamed']);
         expect(state.selected.value).toBe('bot_dm');
-        expect(state.expandId.value).toBeNull();
+        expect(state.expandKey.value).toBeNull();
     });
 
     it('follows a trigger that moved to another section and opens it', async () => {
@@ -84,7 +105,7 @@ describe('useBehaviorList', () => {
         await state.applyTrigger(trigger(1, { surface: 'guild', guildId: GUILD, section: `guild:${GUILD}` }));
         expect(state.selected.value).toBe(`guild:${GUILD}`);
         expect(state.sections.value).toContain(`guild:${GUILD}`);
-        expect(state.expandId.value).toBe(1);
+        expect(state.expandKey.value).toBe('message:1');
     });
 
     it('stays put when leaving would drop drafts and the admin says no', async () => {
@@ -113,7 +134,7 @@ describe('useBehaviorList', () => {
         expect(listMock).toHaveBeenCalledTimes(2);
         expect(state.view.value?.messageTriggers.map((m) => m.id)).toEqual([1, 2]);
         expect(state.selected.value).toBe(`guild:${GUILD}`);
-        expect(state.expandId.value).toBe(2);
+        expect(state.expandKey.value).toBe('message:2');
     });
 
     it('after a create elsewhere, asks before leaving a section with drafts', async () => {

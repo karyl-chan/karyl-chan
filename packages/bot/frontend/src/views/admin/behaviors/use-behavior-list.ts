@@ -2,13 +2,14 @@ import { computed, ref } from 'vue';
 import {
     listBehaviors,
     reorderMessageTriggers,
+    type BehaviorItemView,
     type BehaviorListView,
     type BehaviorSection,
     type CommandView,
     type MessageTriggerLocation,
     type MessageTriggerView,
 } from '../../../api/behavior';
-import { sidebarSections } from './behavior-sections';
+import { itemKey, sidebarSections } from './behavior-sections';
 
 /** Asks whether the page may switch section (dropping drafts there). */
 export type MayLeave = () => Promise<boolean>;
@@ -25,8 +26,8 @@ export function useBehaviorList() {
     const selected = ref<BehaviorSection | null>(null);
     const loading = ref(false);
     const error = ref<string | null>(null);
-    /** The card to open next render (a trigger that just moved or was created). */
-    const expandId = ref<number | null>(null);
+    /** The card to open next render (an item that just moved or was created): its itemKey. */
+    const expandKey = ref<string | null>(null);
 
     const sections = computed(() => (view.value ? sidebarSections(view.value) : []));
 
@@ -46,19 +47,19 @@ export function useBehaviorList() {
         }
     }
 
-    /** Follow a trigger to its section and open its card. */
-    function reveal(trigger: MessageTriggerView): void {
-        selected.value = trigger.section;
-        expandId.value = trigger.id;
+    /** Follow an item to its section and open its card. */
+    function reveal(item: BehaviorItemView): void {
+        selected.value = item.section;
+        expandKey.value = itemKey(item);
     }
 
     /**
-     * Follow a trigger to its section and open it — if leaving the current
+     * Follow an item to its section and open it — if leaving the current
      * section is all right (`mayLeave`: other cards there may hold unsaved
      * drafts the switch would drop).
      */
-    async function follow(trigger: MessageTriggerView, mayLeave: MayLeave): Promise<void> {
-        if (trigger.section === selected.value || (await mayLeave())) reveal(trigger);
+    async function follow(item: BehaviorItemView, mayLeave: MayLeave): Promise<void> {
+        if (item.section === selected.value || (await mayLeave())) reveal(item);
     }
 
     /** A card saved its trigger: take the server's version; follow it if it moved. */
@@ -73,20 +74,25 @@ export function useBehaviorList() {
         if (before && before.section !== trigger.section) await follow(trigger, mayLeave);
     }
 
-    /** A command was written (resync, edit): take the server's version. */
-    async function applyCommand(command: CommandView): Promise<void> {
+    /**
+     * A card wrote its command (an edit, a resync, a leaf write): take the
+     * server's version; follow it if its visibility moved it.
+     */
+    async function applyCommand(command: CommandView, mayLeave: MayLeave = allowLeave): Promise<void> {
         const current = view.value;
         if (!current) return;
+        const before = current.commands.find((c) => c.id === command.id);
         view.value = {
             ...current,
             commands: current.commands.map((c) => (c.id === command.id ? command : c)),
         };
+        if (before && before.section !== command.section) await follow(command, mayLeave);
     }
 
-    /** A trigger was created: reload so it is listed, then open it where it lives (#104). */
-    async function showCreated(trigger: MessageTriggerView, mayLeave: MayLeave = allowLeave): Promise<void> {
+    /** An item was created: reload so it is listed, then open it where it lives (#104). */
+    async function showCreated(item: BehaviorItemView, mayLeave: MayLeave = allowLeave): Promise<void> {
         await load();
-        await follow(trigger, mayLeave);
+        await follow(item, mayLeave);
     }
 
     /**
@@ -127,5 +133,5 @@ export function useBehaviorList() {
         return use;
     });
 
-    return { view, selected, loading, error, expandId, sections, groupUse, load, applyTrigger, applyCommand, showCreated, reorder };
+    return { view, selected, loading, error, expandKey, sections, groupUse, load, applyTrigger, applyCommand, showCreated, reorder };
 }

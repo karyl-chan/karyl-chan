@@ -21,6 +21,10 @@
  *
  * Disabled leaves count everywhere: re-enabling one must not break the
  * command.
+ *
+ * The admin UI's command forms check a draft against a mirror of these
+ * rules (frontend/src/views/admin/behaviors/command-rules.ts);
+ * tests/behavior-command-rules-mirror.test.ts keeps the two equal.
  */
 
 import { BehaviorApiError } from "./behavior-api-error.js";

@@ -7,7 +7,7 @@ import { AppButton, Spacer } from '@karyl-chan/ui';
 import MessageTriggerCard from './MessageTriggerCard.vue';
 import CommandCard from './CommandCard.vue';
 import type { BehaviorSection, CommandView, MessageTriggerView } from '../../../api/behavior';
-import type { SectionItems } from './behavior-sections';
+import { itemKey, type SectionItems } from './behavior-sections';
 import { locationOfSection } from './message-trigger-location';
 import { sectionKind, sectionLabel } from './section-labels';
 
@@ -20,8 +20,8 @@ const props = defineProps<{
     /** Audience Groups in use, sorted, and how many triggers use each. */
     groupNames: readonly string[];
     groupUse: ReadonlyMap<string, number>;
-    /** The card to open (a trigger that just moved here or was created). */
-    expandId: number | null;
+    /** The card to open (an item that just moved here or was created), by itemKey. */
+    expandKey: string | null;
     loading?: boolean;
     error?: string | null;
 }>();
@@ -130,8 +130,10 @@ const note = computed(() => {
                         v-for="c in items.commands"
                         :key="c.id"
                         :command="c"
+                        :expand="expandKey === itemKey(c)"
                         :guild-names="guildNames"
                         @updated="emit('commandUpdated', $event)"
+                        @reload="emit('reload')"
                     />
                 </div>
             </template>
@@ -143,7 +145,7 @@ const note = computed(() => {
                         v-for="(m, index) in items.messageTriggers"
                         :key="m.id"
                         :trigger="m"
-                        :expand="expandId === m.id"
+                        :expand="expandKey === itemKey(m)"
                         :guild-names="guildNames"
                         :group-names="groupNames"
                         :group-use="groupUse"

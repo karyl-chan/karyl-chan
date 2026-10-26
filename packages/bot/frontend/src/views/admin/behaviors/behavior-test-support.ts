@@ -36,6 +36,54 @@ export const MESSAGE_TRIGGER_SCHEMA = {
     required: ['title', 'patternValue', 'webhook'],
 };
 
+/** The command schema GET /api/behaviors/schema serves, trimmed to what the tests touch. */
+const NON_BLANK = '\\S';
+const SNOWFLAKE = '^\\d{17,20}$';
+
+export const COMMAND_SCHEMA = {
+    type: 'object',
+    properties: {
+        name: { type: 'string', pattern: '^[a-z0-9_-]{1,32}$' },
+        description: { type: 'string', minLength: 1, maxLength: 100, pattern: NON_BLANK },
+        guildId: { anyOf: [{ type: 'string', pattern: SNOWFLAKE }, { type: 'null' }] },
+        contexts: { type: 'array', minItems: 1, items: { enum: ['Guild', 'BotDM', 'PrivateChannel'] } },
+        integrationTypes: { type: 'array', minItems: 1, items: { enum: ['guild_install', 'user_install'] } },
+        leaves: { type: 'array', minItems: 1, items: leafSchemaItems() },
+    },
+    required: ['name', 'description', 'registration', 'leaves'],
+};
+
+function leafSchemaItems() {
+    return {
+        type: 'object',
+        properties: {
+            subcommand: { anyOf: [{ const: '' }, { type: 'string', pattern: '^[a-z0-9_-]{1,32}$' }] },
+            title: { type: 'string', minLength: 1, maxLength: 100, pattern: NON_BLANK },
+            leafDescription: { anyOf: [{ type: 'string', minLength: 1, maxLength: 100 }, { type: 'null' }] },
+            options: {
+                type: 'array',
+                maxItems: 25,
+                items: {
+                    type: 'object',
+                    properties: {
+                        name: { type: 'string', pattern: '^[a-z0-9_-]{1,32}$' },
+                        description: { type: 'string', minLength: 1, maxLength: 100, pattern: NON_BLANK },
+                    },
+                },
+            },
+            webhook: { type: 'object', properties: { url: { type: 'string', minLength: 1 } }, required: ['url'] },
+        },
+        required: ['title', 'webhook'],
+    };
+}
+
+/** The added-subcommand schema GET /api/behaviors/schema serves, trimmed likewise. */
+export const COMMAND_LEAF_SCHEMA = {
+    ...leafSchemaItems(),
+    properties: { ...leafSchemaItems().properties, subcommand: { type: 'string', pattern: '^[a-z0-9_-]{1,32}$' } },
+    required: ['subcommand', 'title', 'webhook'],
+};
+
 /** A saved bot DM message trigger, id 7, HMAC webhook. */
 export function savedTrigger(overrides: Partial<MessageTriggerView> = {}): MessageTriggerView {
     return {

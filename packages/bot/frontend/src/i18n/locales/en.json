@@ -1242,14 +1242,13 @@
             "disabled": "Disabled",
             "audienceUser": "User {user}",
             "audienceGroup": "Group {group}",
-            "registration": "Registered",
             "registrationGlobal": "Globally",
             "registrationGuild": "In server {guild}",
             "contexts": "Usable in",
             "context": {
                 "Guild": "servers",
                 "BotDM": "bot DMs",
-                "PrivateChannel": "group DMs"
+                "PrivateChannel": "other DMs"
             },
             "integrationTypes": "Install types",
             "integration": {
@@ -1297,7 +1296,8 @@
             "tooLong": "At most {max} characters",
             "tooMany": "At most {max} entries",
             "format": "Invalid format",
-            "invalid": "Invalid value"
+            "invalid": "Invalid value",
+            "tooFew": "Pick at least {min}"
         },
         "unsaved": {
             "title": "Discard unsaved edits?",
@@ -1420,7 +1420,38 @@
             "done": "Done"
         },
         "command": {
-            "resync": "Sync to Discord again"
+            "resync": "Sync to Discord again",
+            "name": "Command name",
+            "nameHint": "1–32 lower-case letters, digits, - and _; without the /.",
+            "description": "Command description",
+            "descriptionHint": "Shown in Discord's command menu (1–100 characters).",
+            "reservedName": "/login is reserved for the system login.",
+            "saveAndSync": "Save and sync to Discord",
+            "visibility": "Visibility",
+            "registration": {
+                "label": "Registration target",
+                "global": "Everywhere (global)",
+                "guild": "One server"
+            },
+            "permissions": {
+                "label": "Default member permissions (servers only)",
+                "everyone": "Everyone",
+                "manageGuild": "Manage Server",
+                "administrator": "Administrator",
+                "custom": "Custom ({value})"
+            },
+            "guildFixed": "A server command can only be used in its server and is installed by the server — Discord's rule.",
+            "sectionHere": "Listed under “{section}”.",
+            "sectionMoves": "After saving, this command moves to “{section}”.",
+            "sectionPending": "Pick the server to see where this command is listed.",
+            "visibleRuns": "Whoever can see it can run it. To limit roles or channels in a server, use Discord's Server Settings → Integrations.",
+            "rule": {
+                "guildNeedsGuildId": "Pick the server.",
+                "guildContextsOnlyGuild": "A server command can only be used in its server.",
+                "guildInstallOnly": "A server command is installed by the server only.",
+                "globalHasNoGuild": "A global command has no server.",
+                "privateChannelNeedsUserInstall": "Other DMs need user install: with server install only, Discord does not show the command there."
+            }
         },
         "registration": {
             "registered": "Synced to Discord.",
