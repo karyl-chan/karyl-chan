@@ -175,6 +175,13 @@ describe("POST /api/behaviors/:id/test", () => {
     expect(JSON.stringify(calls[0][1])).not.toContain('"admin"');
   });
 
+  it("a message trigger's test carries the message keys", async () => {
+    forward.mockClear();
+    await server.inject({ method: "POST", url: `/api/behaviors/${ids.dm}/test` });
+    const calls = forward.mock.calls as unknown as Array<[unknown, { _meta: Record<string, unknown> }]>;
+    expect(calls[0][1]._meta.captures).toEqual([]);
+  });
+
   it("refuses the system behavior and unknown ids", async () => {
     const sys = await server.inject({ method: "POST", url: `/api/behaviors/${ids.login}/test` });
     expect(sys.statusCode).toBe(400);

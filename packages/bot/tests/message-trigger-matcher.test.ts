@@ -154,6 +154,14 @@ describe("bot DM triggers", () => {
     expect((await BehaviorStat.findByPk(id))?.get("successCount")).toBe(1);
   });
 
+  it("send a regex trigger's capture groups in _meta.captures", async () => {
+    await seedMessageTrigger({ patternKind: "regex", patternValue: "^天氣\\s+(.+)" });
+    const forwarder = makeForwarder();
+    await matcherWith(forwarder).onMessage(dmMsg("U1", "天氣 台北").message);
+    const payload = forwarder.forward.mock.calls[0][1] as { _meta: { captures: unknown } };
+    expect(payload._meta.captures).toEqual(["台北"]);
+  });
+
   it("do not fire in guild channels", async () => {
     await seedMessageTrigger();
     const forwarder = makeForwarder();

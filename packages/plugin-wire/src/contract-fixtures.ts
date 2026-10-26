@@ -514,6 +514,9 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
         "guild_id",
         "behavior_id",
         "attachments",
+        // a regex trigger's groups, group 1 first (null = took no part);
+        // [] for startswith / endswith
+        "captures",
       ],
       slashMetaKeys: [
         "interaction_id",

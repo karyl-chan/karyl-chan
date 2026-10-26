@@ -22,7 +22,7 @@ import {
   getBehaviorCatalog,
   type CatalogBehavior,
 } from "../behavior/behavior-catalog.js";
-import { matchesTrigger } from "../behavior/behavior-trigger.js";
+import { matchesTrigger, triggerCaptures } from "../behavior/behavior-trigger.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import type { MessageMatchOutcome } from "./types.js";
 import type { WebhookForwarder } from "./webhook-forwarder.service.js";
@@ -311,6 +311,12 @@ export class MessageTriggerMatcher {
         guild_id: djsMessage.guildId ?? null,
         behavior_id: behavior.id,
         attachments,
+        // regex 觸發的擷取群組（第 1 組起；沒參與的選用群組為 null），
+        // 其他比對方式為 []（#140）
+        captures:
+          behavior.patternKind && behavior.patternValue !== null
+            ? triggerCaptures(behavior.patternKind, behavior.patternValue, djsMessage.content ?? "")
+            : [],
       },
     };
   }

@@ -49,3 +49,19 @@ export function matchesTrigger(
   }
   return false;
 }
+
+/**
+ * The capture groups of a regex trigger's match, in order (group 1 first;
+ * a named group counts by its position; null for an optional group that
+ * took no part) — sent to the webhook as `_meta.captures` (#140). Empty
+ * for startswith / endswith, a regex without groups, or no match.
+ */
+export function triggerCaptures(
+  patternKind: BehaviorPatternKind,
+  patternValue: string,
+  content: string,
+): Array<string | null> {
+  if (patternKind !== "regex") return [];
+  const match = getRegex(patternValue)?.exec(content);
+  return match ? match.slice(1).map((g) => g ?? null) : [];
+}

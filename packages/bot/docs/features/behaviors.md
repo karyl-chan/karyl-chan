@@ -122,6 +122,10 @@ obtain a synchronous response):
   - `message_id`, `channel_id`, `behavior_id`
   - `attachments` — `[{ url, filename, content_type, size }]` for any
     files attached to the DM.
+  - `captures` — a regex trigger's capture groups, group 1 first (a named
+    group counts by its position; `null` for an optional group that took
+    no part). `天氣 台北` against `^天氣\s+(.+)` sends `["台北"]`. Always
+    `[]` for `startswith` / `endswith`.
 
 (The top-level shape stays Discord-webhook compatible — no `embeds` or
 `allowed_mentions` outbound. The `allowed_mentions: { parse: [] }` guard is

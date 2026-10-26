@@ -171,6 +171,9 @@ function registerReadAndTestRoutes(
           test: true,
           behavior_id: behavior.id,
           user: TEST_FIRE_USER,
+          // the keys a real message trigger sends, so a receiver reads the
+          // same shape (no message was matched, so no groups)
+          ...(behavior.triggerKind === "message" ? { captures: [] } : {}),
         },
       };
       const result = await forwarder.forward(
