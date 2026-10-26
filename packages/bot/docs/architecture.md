@@ -205,7 +205,11 @@ This is the bot's command backbone.
   owns so it cannot mistakenly delete track-1 in-process commands; the
   stale sweep is keyed by name + registration target. `registerOne(key)`
   registers a single desired command inside the reconcile lock and
-  returns a typed per-target result.
+  returns a typed per-target result. `withRegistrationLock(fn)` holds the
+  lock across a whole section and hands `fn` lock-free single-command
+  operations — registering a behavior command as given (not as stored)
+  and releasing a registration — for a write that must reach Discord
+  before the DB (the system login's trigger switch).
 - `desired-command-source.ts` — `DesiredCommandSource` adapters that feed
   the desired set: one for behaviors, one for track-3 `plugin_commands`.
 - `command-target.ts` — registration targets (`global`, `guild:<id>`,

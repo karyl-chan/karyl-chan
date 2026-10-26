@@ -39,9 +39,11 @@ import {
   type CommandTarget,
   type ConcreteTarget,
 } from "./command-target.js";
+import type { CatalogCommand } from "../behavior/behavior-catalog.js";
 import {
   BehaviorCommandSource,
   PluginCommandSource,
+  lookupBehaviorCommand,
   type CommandKey,
   type CommandSourceKind,
   type DesiredCommand,
@@ -77,6 +79,26 @@ export type RegisterOneResult =
       outcomes: TargetOutcome[];
       error: string;
     };
+
+/**
+ * releaseRegistration 的結果：
+ *   - removed：已刪除（Discord 上本來就沒有也算）
+ *   - still_desired：仍被需要，沒有刪
+ *   - unavailable：bot 未就緒或碰不到該伺服器 / Discord 失敗；名冊保留，
+ *     交給之後的 reconcileAll
+ */
+export type ReleaseOutcome = "removed" | "still_desired" | "unavailable";
+
+/** withRegistrationLock 交給呼叫端、持鎖期間可用的單一指令操作。 */
+export interface LockedRegistration {
+  /**
+   * 照給定的樣子（不是 DB 現在存的）註冊一個 behavior 指令；結果同
+   * registerOne。名冊照常登記。
+   */
+  registerBehaviorCommand(command: CatalogCommand): Promise<RegisterOneResult>;
+  /** 同 releaseRegistration（desired set 照 DB 現況判斷）。 */
+  releaseRegistration(name: string, target: ConcreteTarget): Promise<ReleaseOutcome>;
+}
 
 // ── reconciler_owned_commands 名冊（透過 ReconcilerOwnedCommand model）──────────
 
@@ -293,19 +315,51 @@ export class CommandReconciler {
    * 鎖內執行，所以不會跟 reconcileAll 的 stale 清除交錯（清除看到的
    * desired set 與這裡註冊的是同一份 DB 狀態）。不做 stale 清除、不刪除。
    *
-   * 給 S7 的原子切換用：新觸發要先註冊成功（ok=true）才停用舊的。
-   * 鎖不可重入：不要在持有 reconcile 鎖的流程裡呼叫。
+   * 指令寫入（先寫 DB 再註冊）用它；要先註冊、再寫 DB 的流程用
+   * withRegistrationLock。鎖不可重入：不要在持有 reconcile 鎖的流程裡呼叫。
    */
   async registerOne(key: CommandKey): Promise<RegisterOneResult> {
-    return this.withLock(() => this._registerOne(key));
+    return this.withLock(() =>
+      this.registerLookup(key, () => this.sourceFor(key.source).lookup(key.id)),
+    );
   }
 
-  private async _registerOne(key: CommandKey): Promise<RegisterOneResult> {
+  /**
+   * Run `fn` holding the reconcile lock: no reconcileAll, registerOne,
+   * release or guild reconcile runs until it returns. `fn` gets lock-free
+   * versions of the single-command operations — calling the public ones
+   * from inside would wait on the lock `fn` holds, forever.
+   *
+   * For a write that has to reach Discord BEFORE the DB says so (the
+   * system login's new command is registered first, stored only once
+   * Discord accepted it): the stale sweep cannot remove the registration
+   * while its row is still being written, and when the write fails `fn`
+   * can still take the registration back.
+   */
+  async withRegistrationLock<T>(
+    fn: (locked: LockedRegistration) => Promise<T>,
+  ): Promise<T> {
+    return this.withLock(() =>
+      fn({
+        registerBehaviorCommand: (command) =>
+          this.registerLookup({ source: "behavior", id: command.id }, async () =>
+            lookupBehaviorCommand(command),
+          ),
+        releaseRegistration: (name, target) =>
+          this._releaseRegistration(name, target),
+      }),
+    );
+  }
+
+  private async registerLookup(
+    key: CommandKey,
+    lookupOf: () => Promise<DesiredLookup>,
+  ): Promise<RegisterOneResult> {
     const bot = this.getBot();
     if (!bot?.application) {
       return { ok: false, key, reason: "bot_not_ready", error: "bot not ready" };
     }
-    const lookup = await this.sourceFor(key.source).lookup(key.id);
+    const lookup = await lookupOf();
     if (lookup.status !== "desired") {
       return { ok: false, key, ...notRegistrable(lookup) };
     }
@@ -346,19 +400,24 @@ export class CommandReconciler {
   async releaseRegistration(
     name: string,
     target: ConcreteTarget,
-  ): Promise<"removed" | "still_desired" | "unavailable"> {
-    return this.withLock(async () => {
-      const bot = this.getBot();
-      if (!bot?.application) return "unavailable";
-      const desired = (await this.listDesired()).map((d) => ({
-        name: d.name,
-        target: d.spec.target,
-      }));
-      if (isOwnedCommandDesired({ name, target }, desired)) return "still_desired";
-      return (await this.deleteStale(bot, { name, target }))
-        ? "removed"
-        : "unavailable";
-    });
+  ): Promise<ReleaseOutcome> {
+    return this.withLock(() => this._releaseRegistration(name, target));
+  }
+
+  private async _releaseRegistration(
+    name: string,
+    target: ConcreteTarget,
+  ): Promise<ReleaseOutcome> {
+    const bot = this.getBot();
+    if (!bot?.application) return "unavailable";
+    const desired = (await this.listDesired()).map((d) => ({
+      name: d.name,
+      target: d.spec.target,
+    }));
+    if (isOwnedCommandDesired({ name, target }, desired)) return "still_desired";
+    return (await this.deleteStale(bot, { name, target }))
+      ? "removed"
+      : "unavailable";
   }
 
   /**
