@@ -1,5 +1,7 @@
 import { DataTypes, Op } from "sequelize";
 import { sequelize } from "../../../db.js";
+import type { CommandTarget } from "../../command-system/command-target.js";
+import type { ManifestPluginCommand } from "../plugin-registry.service.js";
 
 export const PluginCommand = sequelize.define(
   "PluginCommand",
@@ -69,7 +71,9 @@ export interface PluginCommandRow {
   adminEnabled: boolean;
 }
 
-function rowOf(model: InstanceType<typeof PluginCommand>): PluginCommandRow {
+export function rowOfPluginCommand(
+  model: InstanceType<typeof PluginCommand>,
+): PluginCommandRow {
   return {
     id: model.getDataValue("id") as number,
     pluginId: model.getDataValue("pluginId") as number,
@@ -89,8 +93,31 @@ export const findPluginCommandsByPlugin = async (
   pluginId: number,
 ): Promise<PluginCommandRow[]> => {
   const rows = await PluginCommand.findAll({ where: { pluginId } });
-  return rows.map(rowOf);
+  return rows.map(rowOfPluginCommand);
 };
+
+// ── 註冊目標 ─────────────────────────────────────────────────────────────────
+// CommandTarget 是 command-system 的型別；這裡只做 type import，不形成
+// plugin-system → command-system 的 runtime 依賴。
+
+/** 軌三 manifest 的 scope → 註冊目標：guild 是「每個伺服器」（reconciler 逐伺服器註冊）。 */
+export function pluginCommandScopeTarget(
+  scope: string | undefined,
+): CommandTarget {
+  return scope === "guild" ? "all_guilds" : "global";
+}
+
+/** 軌三列的 manifestJson；無法解析或缺名稱時回 null。 */
+export function parsePluginCommandManifest(
+  manifestJson: string,
+): ManifestPluginCommand | null {
+  try {
+    const parsed = JSON.parse(manifestJson) as ManifestPluginCommand | null;
+    return parsed && parsed.name ? parsed : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Reverse lookup used by the interaction dispatcher. Returns the
@@ -107,12 +134,12 @@ export const findPluginCommandByName = async (
     const guildScoped = await PluginCommand.findOne({
       where: { name, guildId },
     });
-    if (guildScoped) return rowOf(guildScoped);
+    if (guildScoped) return rowOfPluginCommand(guildScoped);
   }
   const global = await PluginCommand.findOne({
     where: { name, guildId: { [Op.is]: null } },
   });
-  return global ? rowOf(global) : null;
+  return global ? rowOfPluginCommand(global) : null;
 };
 
 /**
@@ -141,7 +168,7 @@ export const findCommandCollisions = async (
       if (candidate.guildId === null) return true;
       return g === null || g === candidate.guildId;
     })
-    .map(rowOf);
+    .map(rowOfPluginCommand);
 };
 
 export interface UpsertPluginCommandInput {
@@ -169,7 +196,7 @@ export const upsertPluginCommand = async (
       featureKey: input.featureKey ?? null,
       manifestJson: input.manifestJson,
     });
-    return rowOf(existing);
+    return rowOfPluginCommand(existing);
   }
   const created = await PluginCommand.create({
     pluginId: input.pluginId,
@@ -179,7 +206,7 @@ export const upsertPluginCommand = async (
     featureKey: input.featureKey ?? null,
     manifestJson: input.manifestJson,
   });
-  return rowOf(created);
+  return rowOfPluginCommand(created);
 };
 
 export const findPluginCommandsByFeature = async (
@@ -189,7 +216,7 @@ export const findPluginCommandsByFeature = async (
   const rows = await PluginCommand.findAll({
     where: { pluginId, featureKey },
   });
-  return rows.map(rowOf);
+  return rows.map(rowOfPluginCommand);
 };
 
 export const deletePluginCommandRow = async (rowId: number): Promise<void> => {

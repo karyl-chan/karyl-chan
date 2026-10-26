@@ -4,6 +4,10 @@
  * CommandReconciler：軌二（behaviors）+ 軌三（plugin_commands）Discord 指令
  * 統一 reconcile 入口。對齊 C-runtime §2.2 介面定義 + §3.2 流程 2 + §3.3 三軸表。
  *
+ * desired set 來自 DesiredCommandSource adapters（desired-command-source.ts）；
+ * 每個 desired 指令帶一個註冊目標（global / guild:<id> / all_guilds，見
+ * command-target.ts），執行時依 bot 的 guild cache 展開成具體目標。
+ *
  * 「軌一不動」保證（C-runtime §1）：
  *   - 本服務只認領 reconciler_owned_commands 名冊 + desired set 中的指令
  *   - 任何 featureKey 非 null 的 plugin_commands 由 PluginCommandRegistry 管，不觸碰
@@ -11,384 +15,149 @@
  */
 
 import {
-  ApplicationCommandType,
-  ApplicationIntegrationType,
   InteractionContextType,
   type Client,
+  type Collection,
   type Guild,
-  type ApplicationCommandData,
   type ApplicationCommand,
+  type ApplicationCommandData,
 } from "discord.js";
 import { Op } from "sequelize";
-import {
-  Behavior,
-  type BehaviorRow,
-} from "../behavior/models/behavior.model.js";
-import {
-  PluginCommand,
-  type PluginCommandRow,
-} from "../plugin-system/models/plugin-command.model.js";
-import {
-  findPluginById,
-  type PluginRow,
-} from "../plugin-system/models/plugin.model.js";
-import { parsePluginManifest } from "../plugin-system/plugin-dispatch-util.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import type {
-  CommandScope,
-  DiscordContext,
-  DiscordIntegrationType,
-  DiscordRegistrationSpec,
   ReconcileItemResult,
   ReconcileReport,
+  TargetOutcome,
 } from "./types.js";
-import { RejectionError } from "./types.js";
-import type {
-  PluginManifest,
-  ManifestPluginCommand,
-  ManifestCommandOption,
-} from "../plugin-system/plugin-registry.service.js";
-import { manifestOptionToData } from "../plugin-system/plugin-command-registry.service.js";
 import { ReconcilerOwnedCommand } from "./models/reconciler-owned-command.model.js";
+import { commandNeedsPatch } from "./command-registration.js";
+import {
+  expandTarget,
+  guildTarget,
+  targetDiscordScope,
+  targetGuildId,
+  type CommandTarget,
+  type ConcreteTarget,
+} from "./command-target.js";
+import {
+  BehaviorCommandSource,
+  PluginCommandSource,
+  type CommandKey,
+  type CommandSourceKind,
+  type DesiredCommand,
+  type DesiredCommandSource,
+} from "./desired-command-source.js";
 
-// ── Discord 三軸對照表 ────────────────────────────────────────────────────────
+// ── reconciler_owned_commands 名冊（透過 ReconcilerOwnedCommand model）──────────
 
-const CONTEXT_MAP: Record<DiscordContext, InteractionContextType> = {
-  Guild: InteractionContextType.Guild,
-  BotDM: InteractionContextType.BotDM,
-  PrivateChannel: InteractionContextType.PrivateChannel,
-};
-
-const INTEGRATION_MAP: Record<
-  DiscordIntegrationType,
-  ApplicationIntegrationType
-> = {
-  guild_install: ApplicationIntegrationType.GuildInstall,
-  user_install: ApplicationIntegrationType.UserInstall,
-};
-
-// ── 輔助：三軸 string → 陣列解析 ─────────────────────────────────────────────
-
-function parseContexts(raw: string): DiscordContext[] {
-  return raw
-    .split(",")
-    .map((s) => s.trim())
-    .filter(
-      (s): s is DiscordContext =>
-        s === "Guild" || s === "BotDM" || s === "PrivateChannel",
-    );
-}
-
-function parseIntegrationTypes(raw: string): DiscordIntegrationType[] {
-  return raw
-    .split(",")
-    .map((s) => s.trim())
-    .filter(
-      (s): s is DiscordIntegrationType =>
-        s === "guild_install" || s === "user_install",
-    );
-}
-
-// ── 輔助：行比對（指令是否需要 patch）────────────────────────────────────────
-
-/**
- * Canonical JSON for options comparison.
- * Projects each option (and nested sub-command options) to a stable
- * {type, name, description, required, options} shape, sorts sibling
- * arrays by name, then serialises to JSON.
- * Used for both the desired side (ApplicationCommandOptionData[]) and
- * the existing side (ApplicationCommandOption[] from Discord's cache).
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function canonicalOptions(options: any[]): string {
-  type CanonicalOption = {
-    type: number;
-    name: string;
-    description: string;
-    required: boolean;
-    choices?: unknown[];
-    channel_types?: number[];
-    min_value?: number | null;
-    max_value?: number | null;
-    autocomplete?: boolean;
-    description_localizations?: Record<string, string>;
-    name_localizations?: Record<string, string>;
-    options?: CanonicalOption[];
-  };
-  // Discord returns localization maps under snake_case (REST shape) but
-  // discord.js camelCases them on `ApplicationCommandOption`. Read both
-  // so the diff catches localization-only changes whether the desired
-  // side originated from a JS literal (camelCase) or the wire (snake).
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  function sortedLocalizationMap(raw: any): Record<string, string> | undefined {
-    if (!raw || typeof raw !== "object") return undefined;
-    const entries = Object.entries(raw as Record<string, string>);
-    if (entries.length === 0) return undefined;
-    return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)));
-  }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  function project(o: any): CanonicalOption {
-    const node: CanonicalOption = {
-      type: o.type as number,
-      name: o.name as string,
-      description: (o.description as string | undefined) ?? "",
-      required: (o.required as boolean | undefined) ?? false,
-      choices: o.choices ?? [],
-      channel_types: o.channel_types ?? o.channelTypes ?? [],
-      min_value: o.min_value ?? o.minValue ?? null,
-      max_value: o.max_value ?? o.maxValue ?? null,
-      autocomplete: o.autocomplete ?? false,
-    };
-    const descLoc = sortedLocalizationMap(
-      o.description_localizations ?? o.descriptionLocalizations,
-    );
-    if (descLoc) node.description_localizations = descLoc;
-    const nameLoc = sortedLocalizationMap(
-      o.name_localizations ?? o.nameLocalizations,
-    );
-    if (nameLoc) node.name_localizations = nameLoc;
-    if (Array.isArray(o.options) && o.options.length > 0) {
-      node.options = (o.options as unknown[])
-        .map(project)
-        .sort((a, b) => a.name.localeCompare(b.name));
-    }
-    return node;
-  }
-  return JSON.stringify(
-    options.map(project).sort((a, b) => a.name.localeCompare(b.name)),
-  );
-}
-
-function commandNeedsPatch(
-  existing: ApplicationCommand,
-  desired: ApplicationCommandData,
-): boolean {
-  // 比對 description
-  const existDesc = "description" in existing ? existing.description : "";
-  const desiredDesc =
-    "description" in desired
-      ? ((desired as { description?: string }).description ?? "")
-      : "";
-  if (existDesc !== desiredDesc) return true;
-
-  // 比對 top-level description_localizations / name_localizations.
-  // discord.js's ApplicationCommand carries them as camelCase
-  // (`descriptionLocalizations`); the desired side (our manifest data)
-  // uses camelCase too. Compare via sorted-keys canonical JSON.
-  const canonLocMap = (raw: unknown): string => {
-    if (!raw || typeof raw !== "object") return "";
-    const entries = Object.entries(raw as Record<string, string>);
-    return JSON.stringify(entries.sort(([a], [b]) => a.localeCompare(b)));
-  };
-  const existDescLoc = (existing as { descriptionLocalizations?: unknown })
-    .descriptionLocalizations;
-  const desiredDescLoc = (desired as { descriptionLocalizations?: unknown })
-    .descriptionLocalizations;
-  if (canonLocMap(existDescLoc) !== canonLocMap(desiredDescLoc)) return true;
-  const existNameLoc = (existing as { nameLocalizations?: unknown })
-    .nameLocalizations;
-  const desiredNameLoc = (desired as { nameLocalizations?: unknown })
-    .nameLocalizations;
-  if (canonLocMap(existNameLoc) !== canonLocMap(desiredNameLoc)) return true;
-
-  // 比對 contexts — numeric enum values, so sort numerically (both sides
-  // identically) before joining, otherwise the canonical strings can
-  // differ purely from JS's default lexicographic Array.sort().
-  const byNumber = (a: number, b: number): number => a - b;
-  const existCtxSorted = (existing.contexts ?? [])
-    .slice()
-    .sort(byNumber)
-    .join(",");
-  const desiredCtx =
-    (desired as { contexts?: InteractionContextType[] }).contexts ?? [];
-  const desiredCtxSorted = desiredCtx.slice().sort(byNumber).join(",");
-  if (existCtxSorted !== desiredCtxSorted) return true;
-
-  // 比對 integrationTypes — likewise numeric enum values.
-  const existItSorted = (existing.integrationTypes ?? [])
-    .slice()
-    .sort(byNumber)
-    .join(",");
-  const desiredIt =
-    (desired as { integrationTypes?: ApplicationIntegrationType[] })
-      .integrationTypes ?? [];
-  const desiredItSorted = desiredIt.slice().sort(byNumber).join(",");
-  if (existItSorted !== desiredItSorted) return true;
-
-  // 比對 options（sub_command / 參數定義）
-  // Discord cache 的 existing.options 是 ApplicationCommandOption[]；
-  // desired.options 是 ApplicationCommandOptionData[]。
-  // 兩側都序列化成 canonical JSON 再比對，避免嵌套 sub_command stale。
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const existOptions: any[] = (existing as any).options ?? [];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const desiredOptions: any[] = (desired as any).options ?? [];
-  if (canonicalOptions(existOptions) !== canonicalOptions(desiredOptions)) {
-    return true;
-  }
-
-  return false;
-}
-
-// ── reconciler_owned_commands 名冊操作（透過 ReconcilerOwnedCommand model）─────
-
-interface OwnedCommandKey {
+/** 名冊的一筆：reconciler 在某個具體目標上註冊過的一個指令名稱。 */
+export interface OwnedCommand {
   name: string;
-  scope: CommandScope;
-  guildId: string | null;
+  target: ConcreteTarget;
 }
 
-async function loadOwnedCommands(): Promise<Set<string>> {
-  // key format: `${scope}:${name}:${guildId ?? ""}`
+/** 名冊表以 scope + guildId 存目標；與 OwnedCommand 的換算只在這幾個函式裡。 */
+function ownedWhere(owned: OwnedCommand) {
+  const guildId = targetGuildId(owned.target);
+  return guildId === null
+    ? { name: owned.name, scope: "global", guildId: { [Op.is]: null } }
+    : { name: owned.name, scope: "guild", guildId };
+}
+
+async function loadOwnedCommands(): Promise<OwnedCommand[]> {
   const rows = await ReconcilerOwnedCommand.findAll();
-  const result = new Set<string>();
+  const out: OwnedCommand[] = [];
   for (const r of rows) {
-    const scope = r.getDataValue("scope") as string;
     const name = r.getDataValue("name") as string;
-    const guildId = r.getDataValue("guildId") as string | null;
-    result.add(`${scope}:${name}:${guildId ?? ""}`);
+    const guildId = (r.getDataValue("guildId") as string | null) ?? null;
+    if (r.getDataValue("scope") === "global") {
+      out.push({ name, target: "global" });
+    } else if (guildId) {
+      out.push({ name, target: guildTarget(guildId) });
+    }
   }
-  return result;
+  return out;
 }
 
-async function upsertOwnedCommand(key: OwnedCommandKey): Promise<void> {
+async function upsertOwnedCommand(owned: OwnedCommand): Promise<void> {
   // 先刪再建：partial unique index 下不能用 upsert，且每次 reconcile 都要
   // 刷新 ownedAt。create() 會觸發 model 的 scopeGuildShape validate。
-  const ownedAt = new Date();
-  if (key.scope === "global") {
-    await ReconcilerOwnedCommand.destroy({
-      where: { name: key.name, scope: "global", guildId: { [Op.is]: null } },
-    });
-    await ReconcilerOwnedCommand.create({
-      name: key.name,
-      scope: "global",
-      guildId: null,
-      ownedAt,
-    });
-  } else {
-    await ReconcilerOwnedCommand.destroy({
-      where: { name: key.name, scope: "guild", guildId: key.guildId },
-    });
-    await ReconcilerOwnedCommand.create({
-      name: key.name,
-      scope: "guild",
-      guildId: key.guildId,
-      ownedAt,
-    });
-  }
+  const guildId = targetGuildId(owned.target);
+  await ReconcilerOwnedCommand.destroy({ where: ownedWhere(owned) });
+  await ReconcilerOwnedCommand.create({
+    name: owned.name,
+    scope: guildId === null ? "global" : "guild",
+    guildId,
+    ownedAt: new Date(),
+  });
 }
 
-async function deleteOwnedCommand(key: OwnedCommandKey): Promise<void> {
-  if (key.scope === "global") {
-    await ReconcilerOwnedCommand.destroy({
-      where: { name: key.name, scope: "global", guildId: { [Op.is]: null } },
-    });
-  } else {
-    await ReconcilerOwnedCommand.destroy({
-      where: { name: key.name, scope: "guild", guildId: key.guildId },
-    });
-  }
+async function deleteOwnedCommand(owned: OwnedCommand): Promise<void> {
+  await ReconcilerOwnedCommand.destroy({ where: ownedWhere(owned) });
 }
-
-// ── deriveRegistrationCall（C-runtime §3.3 三軸 → Discord 登記形狀）──────────
 
 /**
- * 依三軸計算 Discord API call shape。
- * 對齊 C-runtime §3.3 的 9 種合法組合（含 #8 非法修正）。
- * 非法組合回 RejectionError。
- *
- * 欄位 name/description 由呼叫方傳入（behaviors.slashCommandName / plugin_commands.name）。
+ * 名冊中的一筆是否仍被 desired set 需要：同名且 Discord 作用域相同
+ * （global / guild）的 desired 指令存在即保留。
  */
-export function deriveRegistrationCall(
-  name: string,
-  description: string,
-  scope: CommandScope,
-  integrationTypes: DiscordIntegrationType[],
-  contexts: DiscordContext[],
-  options?: ManifestCommandOption[],
-  localizations?: {
-    description_localizations?: Record<string, string>;
-    name_localizations?: Record<string, string>;
-  },
-): DiscordRegistrationSpec {
-  // 非法組合檢查（C-runtime §3.3 底部非法清單）
-  if (integrationTypes.length === 0) {
-    throw new RejectionError("integrationTypes 不得為空");
-  }
-  if (contexts.length === 0) {
-    throw new RejectionError("contexts 不得為空");
-  }
-  if (scope === "guild") {
-    if (integrationTypes.includes("user_install")) {
-      throw new RejectionError("scope=guild 不支援 user_install");
-    }
-    if (
-      integrationTypes.includes("guild_install") &&
-      integrationTypes.includes("user_install")
-    ) {
-      throw new RejectionError(
-        "scope=guild 不支援 guild_install+user_install 組合",
-      );
-    }
-    // M-8 修：scope=guild + 含 BotDM 為非法
-    if (contexts.some((c) => c !== "Guild")) {
-      throw new RejectionError(
-        "scope=guild 的 contexts 只能包含 Guild（BotDM/PrivateChannel 非法）",
-      );
-    }
-  }
-
-  const discordContexts = contexts.map((c) => CONTEXT_MAP[c]);
-  const discordIntegrationTypes = integrationTypes.map(
-    (t) => INTEGRATION_MAP[t],
+export function isOwnedCommandDesired(
+  owned: OwnedCommand,
+  desired: ReadonlyArray<{ name: string; target: CommandTarget }>,
+): boolean {
+  return desired.some(
+    (d) =>
+      d.name === owned.name &&
+      targetDiscordScope(d.target) === targetDiscordScope(owned.target),
   );
-
-  const data: Record<string, unknown> = {
-    type: ApplicationCommandType.ChatInput,
-    name,
-    description,
-  };
-
-  // Discord's per-locale picker overrides. Map snake_case (manifest /
-  // wire shape) → camelCase (discord.js ApplicationCommandData).
-  if (localizations?.description_localizations) {
-    data["descriptionLocalizations"] = localizations.description_localizations;
-  }
-  if (localizations?.name_localizations) {
-    data["nameLocalizations"] = localizations.name_localizations;
-  }
-
-  if (discordContexts.length > 0) {
-    data["contexts"] = discordContexts;
-  }
-  if (discordIntegrationTypes.length > 0) {
-    data["integrationTypes"] = discordIntegrationTypes;
-  }
-  if (options && options.length > 0) {
-    data["options"] = options.map(manifestOptionToData);
-  }
-
-  return {
-    scope,
-    data: data as unknown as ApplicationCommandData,
-  };
 }
 
-// ── DesiredItem：reconcile desired set 的元素 ────────────────────────────────
+// ── Discord 現況 ─────────────────────────────────────────────────────────────
 
-interface DesiredItem {
-  name: string;
-  spec: DiscordRegistrationSpec;
-  source: "behavior" | "plugin_command";
-  sourceId: number;
+interface DiscordState {
+  /** key：stateKey(name, target) */
+  commands: Map<string, ApplicationCommand>;
+  /** 拉取失敗的具體目標（現況未知） */
+  unreadable: Set<ConcreteTarget>;
+}
+
+/** 全域與伺服器指令 manager 共用的操作面。 */
+interface CommandManager {
+  fetch(): Promise<Collection<string, ApplicationCommand>>;
+  create(data: ApplicationCommandData): Promise<unknown>;
+  edit(id: string, data: ApplicationCommandData): Promise<unknown>;
+  delete(id: string): Promise<unknown>;
+}
+
+/** 具體目標的指令 manager；bot 不在（或此 shard 看不到）該伺服器時回 null。 */
+function commandManagerFor(
+  bot: Client,
+  target: ConcreteTarget,
+): CommandManager | null {
+  const guildId = targetGuildId(target);
+  if (guildId === null) return bot.application!.commands;
+  return bot.guilds.cache.get(guildId)?.commands ?? null;
+}
+
+/** DiscordState.commands 的 key：具體目標 + 指令名稱。 */
+function stateKey(name: string, target: ConcreteTarget): string {
+  return `${target} ${name}`;
 }
 
 // ── CommandReconciler 主類別 ──────────────────────────────────────────────────
 
 export class CommandReconciler {
   private reconcileLock: Promise<void> = Promise.resolve();
+  private readonly sources: Map<CommandSourceKind, DesiredCommandSource>;
 
-  constructor(private readonly getBot: () => Client | null) {}
+  constructor(
+    private readonly getBot: () => Client | null,
+    sources: DesiredCommandSource[] = [
+      new BehaviorCommandSource(),
+      new PluginCommandSource(),
+    ],
+  ) {
+    this.sources = new Map(sources.map((s) => [s.kind, s]));
+  }
 
   private async withLock<T>(fn: () => Promise<T>): Promise<T> {
     const prev = this.reconcileLock;
@@ -436,67 +205,54 @@ export class CommandReconciler {
     };
 
     // 步驟 1：枚舉 desired set
-    const desiredItems = await this.buildDesiredSet();
+    const desired = await this.listDesired();
 
     // 步驟 3：拉 Discord 現況
     const discordState = await this.fetchDiscordState(bot);
 
     // 載入已知名冊（避免誤刪軌一）
-    const ownedSet = await loadOwnedCommands();
+    const owned = await loadOwnedCommands();
 
     // 步驟 4：Diff & Apply
-    for (const item of desiredItems) {
+    const outcomesByCommand = new Map<DesiredCommand, TargetOutcome[]>();
+    for (const cmd of desired) {
       try {
-        const result = await this.applyOne(bot, item, discordState);
-        // Count only successful work; a failed create/patch returns
-        // ok:false with action set, and must land in errors (not the
-        // created/patched totals) so the report can't claim a command
-        // was registered when the Discord call actually threw.
-        if (result.ok) {
-          if (result.action === "create") report.created++;
-          else if (result.action === "patch") report.patched++;
-        } else {
-          report.errors.push(result);
-        }
+        const outcomes = await this.applyCommand(
+          bot,
+          cmd,
+          this.concreteTargets(bot, cmd),
+          discordState,
+        );
+        outcomesByCommand.set(cmd, outcomes);
+        tally(report, toItemResult(cmd.key, outcomes));
       } catch (err) {
         const error = err instanceof Error ? err.message : String(err);
         report.errors.push({
           ok: false,
-          source: item.source,
-          sourceId: item.sourceId,
+          source: cmd.key.source,
+          sourceId: cmd.key.id,
           error,
         });
       }
     }
 
-    // 步驟 4 續：stale 清除（名冊中有、但 desired set 沒有的指令）
-    const desiredNames = new Set(
-      desiredItems.map((i) => `${i.spec.scope}:${i.name}`),
-    );
-
-    for (const key of ownedSet) {
-      // key format: `${scope}:${name}:${guildId ?? ""}`
-      const [scope, name, guildIdPart] = key.split(":");
-      if (!scope || !name) continue;
-      const desiredKey = `${scope}:${name}`;
-      if (!desiredNames.has(desiredKey)) {
-        // stale：此指令已不在 desired set，從 Discord + 名冊刪除
-        await this.deleteStale(
-          bot,
-          name,
-          scope as CommandScope,
-          guildIdPart || null,
-        );
-        report.deleted++;
-      }
+    // 步驟 4 續：stale 清除（名冊中有、但 desired set 沒涵蓋的「名稱 + 目標」）
+    const desiredTargets = desired.map((d) => ({
+      name: d.name,
+      target: d.spec.target,
+    }));
+    for (const entry of owned) {
+      if (isOwnedCommandDesired(entry, desiredTargets)) continue;
+      await this.deleteStale(bot, entry);
+      report.deleted++;
     }
 
     // 步驟 5：清舊版產物（dm-slash-rebind 遺留物）
-    await this.cleanupLegacyDmSlashCommands(bot, desiredItems);
+    await this.cleanupLegacyDmSlashCommands(bot, desired);
 
     // 步驟末：upsert 名冊
-    for (const item of desiredItems) {
-      await this.upsertOwnedForItem(bot, item);
+    for (const [cmd, outcomes] of outcomesByCommand) {
+      await this.upsertOwned(cmd, outcomes);
     }
 
     botEventLog.record(
@@ -510,77 +266,12 @@ export class CommandReconciler {
 
   /**
    * 增量 reconcile 單條 behavior（admin CRUD 後呼叫）。
-   * 若 triggerType !== 'slash_command' 則為 no-op。
+   * 若 triggerType !== 'slash_command' 則為 no-op；停用的 behavior 從 Discord 刪除。
    */
   async reconcileForBehavior(behaviorId: number): Promise<ReconcileItemResult> {
-    return this.withLock(() => this._reconcileForBehavior(behaviorId));
-  }
-
-  private async _reconcileForBehavior(
-    behaviorId: number,
-  ): Promise<ReconcileItemResult> {
-    const bot = this.getBot();
-    if (!bot?.application) {
-      return {
-        ok: false,
-        source: "behavior",
-        sourceId: behaviorId,
-        error: "bot not ready",
-      };
-    }
-
-    const row = await Behavior.findByPk(behaviorId);
-    if (!row) {
-      return {
-        ok: false,
-        source: "behavior",
-        sourceId: behaviorId,
-        error: "behavior not found",
-      };
-    }
-
-    const behaviorRow = rowOfBehavior(row);
-
-    // message_pattern 不在 Discord 指令登記範疇
-    if (behaviorRow.triggerType !== "slash_command") {
-      return {
-        ok: true,
-        source: "behavior",
-        sourceId: behaviorId,
-        action: "noop",
-      };
-    }
-
-    if (!behaviorRow.enabled) {
-      // disabled：從 Discord 刪除（若存在）
-      await this.deleteIfExistsForBehavior(bot, behaviorRow);
-      return {
-        ok: true,
-        source: "behavior",
-        sourceId: behaviorId,
-        action: "delete",
-      };
-    }
-
-    const item = await this.behaviorToDesiredItem(behaviorRow);
-    if (!item) {
-      return {
-        ok: false,
-        source: "behavior",
-        sourceId: behaviorId,
-        error: "無法計算 desired spec（三軸非法或缺少 slashCommandName）",
-      };
-    }
-
-    const discordState = await this.fetchDiscordState(bot);
-    const result = await this.applyOne(bot, item, discordState);
-    // Register in the owned-commands roster so a later reconcileAll can
-    // recognise + clean this command up. Without this, a command created
-    // via this incremental path (e.g. /resync) is invisible to the
-    // roster, so when the behavior is later deleted reconcileAll's stale
-    // sweep can't find it and it orphans on Discord.
-    await this.upsertOwnedForItem(bot, item);
-    return result;
+    return this.withLock(() =>
+      this._reconcileForSource({ source: "behavior", id: behaviorId }),
+    );
   }
 
   /**
@@ -588,72 +279,71 @@ export class CommandReconciler {
    * rowId 對應 plugin_commands.id（featureKey=null 的那半部）。
    */
   async reconcileForPluginCommand(rowId: number): Promise<ReconcileItemResult> {
-    return this.withLock(() => this._reconcileForPluginCommand(rowId));
+    return this.withLock(() =>
+      this._reconcileForSource({ source: "plugin_command", id: rowId }),
+    );
   }
 
-  private async _reconcileForPluginCommand(
-    rowId: number,
+  private async _reconcileForSource(
+    key: CommandKey,
   ): Promise<ReconcileItemResult> {
+    const base = { source: key.source, sourceId: key.id };
     const bot = this.getBot();
     if (!bot?.application) {
-      return {
-        ok: false,
-        source: "plugin_command",
-        sourceId: rowId,
-        error: "bot not ready",
-      };
+      return { ...base, ok: false, error: "bot not ready" };
     }
-
-    const row = await PluginCommand.findByPk(rowId);
-    if (!row) {
-      return {
-        ok: false,
-        source: "plugin_command",
-        sourceId: rowId,
-        error: "plugin_command row not found",
-      };
+    const lookup = await this.sourceFor(key.source).lookup(key.id);
+    switch (lookup.status) {
+      case "desired":
+        return toItemResult(
+          key,
+          await this.applyAndRecord(bot, lookup.command),
+        );
+      case "not_found":
+        return {
+          ...base,
+          ok: false,
+          error:
+            key.source === "behavior"
+              ? "behavior not found"
+              : "plugin_command row not found",
+        };
+      case "unmanaged":
+        return { ...base, ok: true, action: "noop" };
+      case "not_desired":
+        // behavior 停用：從 Discord 刪除（若存在）。plugin 指令的停用沿用
+        // 既有行為（回報無法計算，由 reconcileAll 的 stale 清除處理）。
+        if (key.source === "behavior" && lookup.name && lookup.target) {
+          for (const target of expandTarget(
+            lookup.target,
+            bot.guilds.cache.keys(),
+          )) {
+            await this.deleteStale(bot, { name: lookup.name, target });
+          }
+          return { ...base, ok: true, action: "delete" };
+        }
+        return {
+          ...base,
+          ok: false,
+          error: `無法計算 desired spec：${lookup.reason}`,
+        };
+      case "invalid":
+        return {
+          ...base,
+          ok: false,
+          error: `無法計算 desired spec：${lookup.reason}`,
+        };
     }
-
-    const cmdRow = rowOfPluginCommand(row);
-    if (cmdRow.featureKey !== null) {
-      // 軌一指令，不由本服務管
-      return {
-        ok: true,
-        source: "plugin_command",
-        sourceId: rowId,
-        action: "noop",
-      };
-    }
-
-    const item = await this.pluginCommandToDesiredItem(cmdRow);
-    if (!item) {
-      return {
-        ok: false,
-        source: "plugin_command",
-        sourceId: rowId,
-        error:
-          "無法計算 desired spec（schema_version 非 \"1\"、三軸非法、或 plugin 不存在）",
-      };
-    }
-
-    const discordState = await this.fetchDiscordState(bot);
-    const result = await this.applyOne(bot, item, discordState);
-    // Register in the owned-commands roster (see _reconcileForBehavior) so
-    // reconcileAll's stale sweep can later clean up a command first created
-    // via this incremental path.
-    await this.upsertOwnedForItem(bot, item);
-    return result;
   }
 
   /**
    * 增量 reconcile 單一 guild（OQ-8 補強）。
    *
-   * 在 bot 加入新 guild（guildCreate 事件）時呼叫，確保 scope='guild' 的
-   * 軌二 behaviors 與軌三 plugin_commands 在該 guild 自動 register，
-   * 不需要重啟才生效。
+   * 在 bot 加入新 guild（guildCreate 事件）時呼叫，確保伺服器指令在該
+   * guild 自動 register，不需要重啟才生效。
    *
    * 流程：
-   *   1. 枚舉 desired set（只取 scope='guild' 的項目）
+   *   1. 枚舉 desired set（只取伺服器指令）
    *   2. 拉取該 guild 的 Discord 現況
    *   3. diff + apply create / patch（不做 stale 清除，讓 reconcileAll 負責全量 cleanup）
    *   4. 更新 reconciler_owned_commands 名冊（限此 guild）
@@ -680,67 +370,25 @@ export class CommandReconciler {
       errors: [],
     };
 
-    // 步驟 1：枚舉 desired set，只保留 scope='guild' 的項目
-    const allDesired = await this.buildDesiredSet();
-    const guildDesired = allDesired.filter((i) => i.spec.scope === "guild");
+    // 步驟 1：枚舉 desired set，只保留伺服器指令
+    const here = guildTarget(guild.id);
+    const guildDesired = (await this.listDesired()).filter(
+      (c) => targetDiscordScope(c.spec.target) === "guild",
+    );
 
     if (guildDesired.length === 0) {
       return report;
     }
 
-    // 步驟 2：拉取此 guild 的 Discord 現況
-    const discordState = new Map<string, ApplicationCommand>();
-    try {
-      const guildCmds = await guild.commands.fetch();
-      for (const cmd of guildCmds.values()) {
-        discordState.set(`guild:${cmd.name}:${guild.id}`, cmd);
-      }
-    } catch (err) {
-      botEventLog.record(
-        "warn",
-        "bot",
-        `command-reconciler: reconcileForGuild(${guild.id}) 拉 guild commands 失敗：${err instanceof Error ? err.message : String(err)}`,
-      );
-      return report;
-    }
+    // 步驟 2：拉取此 guild 的 Discord 現況；拉不到就不動（避免盲目重建）
+    const discordState = await this.fetchDiscordState(bot, [here]);
+    if (discordState.unreadable.has(here)) return report;
 
-    // 步驟 3：diff + apply
-    for (const item of guildDesired) {
-      const { name, spec, source, sourceId } = item;
-      const key = `guild:${name}:${guild.id}`;
-      const existing = discordState.get(key);
-      try {
-        if (!existing) {
-          await guild.commands.create(spec.data);
-          report.created++;
-        } else if (commandNeedsPatch(existing, spec.data)) {
-          await guild.commands.edit(existing.id, spec.data);
-          report.patched++;
-        }
-      } catch (err) {
-        const error = err instanceof Error ? err.message : String(err);
-        report.errors.push({ ok: false, source, sourceId, error });
-        botEventLog.record(
-          "warn",
-          "bot",
-          `command-reconciler: reconcileForGuild(${guild.id}) ${name} 失敗：${error}`,
-        );
-      }
-    }
-
-    // 步驟 4：更新名冊（限此 guild 的 guild-scope 項目）
-    for (const item of guildDesired) {
-      await upsertOwnedCommand({
-        name: item.name,
-        scope: "guild",
-        guildId: guild.id,
-      }).catch((e: unknown) => {
-        botEventLog.record(
-          "warn",
-          "bot",
-          `command-reconciler: reconcileForGuild 名冊 upsert 失敗 ${item.name}/${guild.id}: ${e instanceof Error ? e.message : String(e)}`,
-        );
-      });
+    // 步驟 3：diff + apply；步驟 4：更新名冊（限此 guild）
+    for (const cmd of guildDesired) {
+      const outcomes = await this.applyCommand(bot, cmd, [here], discordState);
+      tally(report, toItemResult(cmd.key, outcomes));
+      await this.upsertOwned(cmd, outcomes);
     }
 
     botEventLog.record(
@@ -752,223 +400,57 @@ export class CommandReconciler {
     return report;
   }
 
-  // ── 私有：desired set 建構 ────────────────────────────────────────────────
+  // ── 私有：desired set ─────────────────────────────────────────────────────
 
-  private async buildDesiredSet(): Promise<DesiredItem[]> {
-    const items: DesiredItem[] = [];
-
-    // 步驟 1a：behaviors 表 WHERE enabled=true AND triggerType='slash_command'
-    const behaviorRows = await Behavior.findAll({
-      where: {
-        enabled: true,
-        triggerType: "slash_command",
-      },
-    });
-
-    for (const row of behaviorRows) {
-      const item = await this.behaviorToDesiredItem(rowOfBehavior(row));
-      if (item) items.push(item);
-    }
-
-    // 步驟 1b：plugin_commands WHERE featureKey IS NULL（軌三）
-    const pluginCmdRows = await PluginCommand.findAll({
-      where: {
-        featureKey: { [Op.is]: null },
-      },
-    });
-
-    for (const row of pluginCmdRows) {
-      const cmdRow = rowOfPluginCommand(row);
-      const item = await this.pluginCommandToDesiredItem(cmdRow);
-      if (item) items.push(item);
-    }
-
-    return items;
+  private sourceFor(kind: CommandSourceKind): DesiredCommandSource {
+    const source = this.sources.get(kind);
+    if (!source) throw new Error(`command-reconciler: 沒有 ${kind} 來源`);
+    return source;
   }
 
-  private async behaviorToDesiredItem(
-    row: BehaviorRow,
-  ): Promise<DesiredItem | null> {
-    if (!row.slashCommandName) return null;
-
-    const integrationTypes = parseIntegrationTypes(row.integrationTypes);
-    const contexts = parseContexts(row.contexts);
-
-    // BH-2.2C：admin 定義的 options（JSON 欄位）→ 註冊 payload。
-    // 形狀已在路由層用 parseSlashCommandOptions 驗證過；這裡只防禦
-    // 解析失敗（手改 DB 等），壞 JSON 記 warn 並以無參數註冊。
-    let options: ManifestCommandOption[] | undefined;
-    if (row.slashCommandOptions) {
-      try {
-        const parsed = JSON.parse(row.slashCommandOptions) as ManifestCommandOption[];
-        if (Array.isArray(parsed) && parsed.length > 0) options = parsed;
-      } catch {
-        botEventLog.record(
-          "warn",
-          "bot",
-          `command-reconciler: behavior ${row.id} slashCommandOptions JSON 解析失敗，以無參數註冊`,
-          { behaviorId: row.id },
-        );
-      }
+  private async listDesired(): Promise<DesiredCommand[]> {
+    const out: DesiredCommand[] = [];
+    for (const source of this.sources.values()) {
+      out.push(...(await source.listDesired()));
     }
-
-    let spec: DiscordRegistrationSpec;
-    try {
-      spec = deriveRegistrationCall(
-        row.slashCommandName,
-        row.slashCommandDescription ?? row.title,
-        row.scope,
-        integrationTypes,
-        contexts,
-        options,
-      );
-    } catch (err) {
-      if (err instanceof RejectionError) {
-        botEventLog.record(
-          "warn",
-          "bot",
-          `command-reconciler: behavior ${row.id} 三軸非法，跳過：${err.reason}`,
-          { behaviorId: row.id },
-        );
-        return null;
-      }
-      throw err;
-    }
-
-    return {
-      name: row.slashCommandName,
-      spec,
-      source: "behavior",
-      sourceId: row.id,
-    };
+    return out;
   }
 
-  private async pluginCommandToDesiredItem(
-    row: PluginCommandRow,
-  ): Promise<DesiredItem | null> {
-    // OQ-14 守衛：檢查 plugin 的 manifest schema_version 是否為 "1"
-    const plugin = await findPluginById(row.pluginId);
-    if (!plugin) return null;
-
-    const parsed = parsePluginManifest(plugin);
-    if (!parsed || parsed.schema_version !== "1") {
-      return null;
-    }
-    const manifest: PluginManifest = parsed;
-
-    // 從 manifestJson 找到對應的 plugin_command 定義
-    let cmdManifest: ManifestPluginCommand | null = null;
-    try {
-      const parsed = JSON.parse(row.manifestJson) as ManifestPluginCommand;
-      cmdManifest = parsed;
-    } catch {
-      return null;
-    }
-
-    if (!cmdManifest || !cmdManifest.name) return null;
-
-    // 確認 plugin + command 都在 enabled 狀態
-    if (!plugin.enabled) return null;
-    if (plugin.status !== "active") return null;
-
-    // 確認 adminEnabled：admin 可停用個別指令
-    if (!row.adminEnabled) return null;
-
-    const integrationTypes = cmdManifest.integration_types.filter(
-      (t): t is DiscordIntegrationType =>
-        t === "guild_install" || t === "user_install",
-    );
-    const contexts = cmdManifest.contexts.filter(
-      (c): c is DiscordContext =>
-        c === "Guild" || c === "BotDM" || c === "PrivateChannel",
-    );
-    const scope: CommandScope =
-      cmdManifest.scope === "guild" ? "guild" : "global";
-
-    let spec: DiscordRegistrationSpec;
-    try {
-      spec = deriveRegistrationCall(
-        cmdManifest.name,
-        cmdManifest.description,
-        scope,
-        integrationTypes,
-        contexts,
-        cmdManifest.options,
-        (() => {
-          // Accept either snake_case (SDK 0.8+ canonical) or camelCase
-          // (plugins built against older SDKs that emit camelCase via
-          // module augmentation) so neither shape is silently dropped.
-          const cm = cmdManifest as typeof cmdManifest & {
-            descriptionLocalizations?: Record<string, string>;
-            nameLocalizations?: Record<string, string>;
-          };
-          const descLoc =
-            cm.description_localizations ?? cm.descriptionLocalizations;
-          const nameLoc = cm.name_localizations ?? cm.nameLocalizations;
-          return {
-            ...(descLoc ? { description_localizations: descLoc } : {}),
-            ...(nameLoc ? { name_localizations: nameLoc } : {}),
-          };
-        })(),
-      );
-    } catch (err) {
-      if (err instanceof RejectionError) {
-        botEventLog.record(
-          "warn",
-          "bot",
-          `command-reconciler: plugin_command ${row.id} (${row.name}) 三軸非法，跳過：${err.reason}`,
-          { pluginId: row.pluginId, cmdName: row.name },
-        );
-        return null;
-      }
-      throw err;
-    }
-
-    // manifest 用於 OQ-14 守衛（已在上方使用）
-    void manifest;
-
-    return {
-      name: cmdManifest.name,
-      spec,
-      source: "plugin_command",
-      sourceId: row.id,
-    };
+  private concreteTargets(bot: Client, cmd: DesiredCommand): ConcreteTarget[] {
+    return expandTarget(cmd.spec.target, bot.guilds.cache.keys());
   }
 
   // ── 私有：Discord 現況拉取 ────────────────────────────────────────────────
 
+  /**
+   * 拉 Discord 現況。`only` 給定時只拉這些具體目標（單條指令 / 單一 guild
+   * 用，避免掃過所有伺服器）；未給定時拉全域 + 每個 cached guild。
+   * bot 不在的伺服器略過（套用時會回報 skipped）。
+   */
   private async fetchDiscordState(
     bot: Client,
-  ): Promise<Map<string, ApplicationCommand>> {
-    // key: `${scope}:${name}:${guildId ?? ""}`
-    const state = new Map<string, ApplicationCommand>();
+    only?: ConcreteTarget[],
+  ): Promise<DiscordState> {
+    const state: DiscordState = { commands: new Map(), unreadable: new Set() };
+    const targets: ConcreteTarget[] = only ?? [
+      "global",
+      ...[...bot.guilds.cache.keys()].map(guildTarget),
+    ];
 
-    // 全域指令
-    try {
-      const globalCmds = await bot.application!.commands.fetch();
-      for (const cmd of globalCmds.values()) {
-        state.set(`global:${cmd.name}:`, cmd);
-      }
-    } catch (err) {
-      botEventLog.record(
-        "warn",
-        "bot",
-        `command-reconciler: 拉 global commands 失敗：${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-
-    // per-guild 指令
-    for (const guild of bot.guilds.cache.values()) {
+    for (const target of targets) {
+      const manager = commandManagerFor(bot, target);
+      if (!manager) continue;
       try {
-        const guildCmds = await guild.commands.fetch();
-        for (const cmd of guildCmds.values()) {
-          state.set(`guild:${cmd.name}:${guild.id}`, cmd);
+        const cmds = await manager.fetch();
+        for (const cmd of cmds.values()) {
+          state.commands.set(stateKey(cmd.name, target), cmd);
         }
       } catch (err) {
+        state.unreadable.add(target);
         botEventLog.record(
           "warn",
           "bot",
-          `command-reconciler: 拉 guild ${guild.id} commands 失敗：${err instanceof Error ? err.message : String(err)}`,
+          `command-reconciler: 拉 ${target} commands 失敗：${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }
@@ -978,177 +460,116 @@ export class CommandReconciler {
 
   // ── 私有：Diff & Apply 單條 ───────────────────────────────────────────────
 
-  private async applyOne(
+  /**
+   * 單條指令的增量路徑（reconcileFor*）：只拉這條指令的目標
+   * 現況、套用、登記名冊。登記名冊是為了讓之後的 reconcileAll 認得它 ——
+   * 否則一條從這裡建立、之後被刪掉的指令，stale 清除找不到，會永遠留在
+   * Discord 上。
+   */
+  private async applyAndRecord(
     bot: Client,
-    item: DesiredItem,
-    discordState: Map<string, ApplicationCommand>,
-  ): Promise<ReconcileItemResult> {
-    const { name, spec, source, sourceId } = item;
-
-    if (spec.scope === "global") {
-      const key = `global:${name}:`;
-      const existing = discordState.get(key);
-      if (!existing) {
-        // create
-        try {
-          await bot.application!.commands.create(spec.data);
-          return { ok: true, source, sourceId, action: "create" };
-        } catch (err) {
-          return {
-            ok: false,
-            source,
-            sourceId,
-            action: "create",
-            error: err instanceof Error ? err.message : String(err),
-          };
-        }
-      } else {
-        if (commandNeedsPatch(existing, spec.data)) {
-          try {
-            await bot.application!.commands.edit(existing.id, spec.data);
-            return { ok: true, source, sourceId, action: "patch" };
-          } catch (err) {
-            return {
-              ok: false,
-              source,
-              sourceId,
-              action: "patch",
-              error: err instanceof Error ? err.message : String(err),
-            };
-          }
-        }
-        return { ok: true, source, sourceId, action: "noop" };
-      }
-    } else {
-      // guild scope：對每個 bot 所在 guild 操作
-      let anyError: string | undefined;
-      let anyCreate = false;
-      let anyPatch = false;
-      for (const guild of bot.guilds.cache.values()) {
-        const key = `guild:${name}:${guild.id}`;
-        const existing = discordState.get(key);
-        try {
-          if (!existing) {
-            await guild.commands.create(spec.data);
-            anyCreate = true;
-          } else if (commandNeedsPatch(existing, spec.data)) {
-            await guild.commands.edit(existing.id, spec.data);
-            anyPatch = true;
-          }
-        } catch (err) {
-          anyError = err instanceof Error ? err.message : String(err);
-          botEventLog.record(
-            "warn",
-            "bot",
-            `command-reconciler: guild ${guild.id} ${name} 操作失敗：${anyError}`,
-          );
-        }
-      }
-      if (anyError) {
-        return {
-          ok: false,
-          source,
-          sourceId,
-          action: "patch",
-          error: anyError,
-        };
-      }
-      // Report the strongest action actually taken across guilds. This
-      // previously always returned "noop", so reconcileAll's created /
-      // patched totals never counted guild-scope work (always 0) and the
-      // resync endpoint mislabelled every guild command as a no-op. Per-
-      // item granularity matches the global branch (one logical command
-      // = at most one count, regardless of how many guilds it fans out to).
-      const action = anyCreate ? "create" : anyPatch ? "patch" : "noop";
-      return { ok: true, source, sourceId, action };
-    }
+    cmd: DesiredCommand,
+  ): Promise<TargetOutcome[]> {
+    const targets = this.concreteTargets(bot, cmd);
+    const discordState = await this.fetchDiscordState(bot, targets);
+    const outcomes = await this.applyCommand(bot, cmd, targets, discordState);
+    await this.upsertOwned(cmd, outcomes);
+    return outcomes;
   }
 
-  // ── 私有：stale 清除 ───────────────────────────────────────────────────────
+  /** 把一個 desired 指令套到給定的具體目標。 */
+  private async applyCommand(
+    bot: Client,
+    cmd: DesiredCommand,
+    targets: ConcreteTarget[],
+    discordState: DiscordState,
+  ): Promise<TargetOutcome[]> {
+    const outcomes: TargetOutcome[] = [];
+    for (const target of targets) {
+      const manager = commandManagerFor(bot, target);
+      if (!manager) {
+        outcomes.push({ target, status: "skipped", reason: "guild_unavailable" });
+        continue;
+      }
+      const existing = discordState.commands.get(stateKey(cmd.name, target));
+      const attempted = !existing
+        ? "create"
+        : commandNeedsPatch(existing, cmd.spec.data)
+          ? "patch"
+          : null;
+      if (attempted === null) {
+        outcomes.push({ target, status: "unchanged" });
+        continue;
+      }
+      try {
+        if (attempted === "create") {
+          await manager.create(cmd.spec.data);
+          outcomes.push({ target, status: "created" });
+        } else {
+          await manager.edit(existing!.id, cmd.spec.data);
+          outcomes.push({ target, status: "patched" });
+        }
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        botEventLog.record(
+          "warn",
+          "bot",
+          `command-reconciler: ${target} ${cmd.name} 操作失敗：${error}`,
+        );
+        outcomes.push({ target, status: "failed", attempted, error });
+      }
+    }
+    return outcomes;
+  }
+
+  // ── 私有：名冊 / stale 清除 ────────────────────────────────────────────────
 
   /**
    * Register an item's owned-command rows so a later reconcileAll can
    * recognise + clean them up. Mirrors the apply just performed: one row
-   * for a global command, one per bot guild for a guild-scoped command.
-   * Failures are logged, not thrown — the registry is best-effort
+   * per concrete target that the bot could reach (skipped guilds get no
+   * row). Failures are logged, not thrown — the registry is best-effort
    * bookkeeping that reconcileAll re-derives, not the source of truth.
    */
-  private async upsertOwnedForItem(
-    bot: Client,
-    item: DesiredItem,
+  private async upsertOwned(
+    cmd: DesiredCommand,
+    outcomes: TargetOutcome[],
   ): Promise<void> {
-    if (item.spec.scope === "global") {
-      await upsertOwnedCommand({
-        name: item.name,
-        scope: "global",
-        guildId: null,
-      }).catch((e: unknown) => {
-        botEventLog.record(
-          "warn",
-          "bot",
-          `command-reconciler: 名冊 upsert 失敗 ${item.name}: ${e instanceof Error ? e.message : String(e)}`,
-        );
-      });
-    } else {
-      // guild scope：為每個 bot 所在 guild 各登記一筆
-      for (const guild of bot.guilds.cache.values()) {
-        await upsertOwnedCommand({
-          name: item.name,
-          scope: "guild",
-          guildId: guild.id,
-        }).catch((e: unknown) => {
+    for (const o of outcomes) {
+      if (o.status === "skipped") continue;
+      await upsertOwnedCommand({ name: cmd.name, target: o.target }).catch(
+        (e: unknown) => {
           botEventLog.record(
             "warn",
             "bot",
-            `command-reconciler: 名冊 upsert 失敗 ${item.name}/${guild.id}: ${e instanceof Error ? e.message : String(e)}`,
+            `command-reconciler: 名冊 upsert 失敗 ${o.target} ${cmd.name}: ${e instanceof Error ? e.message : String(e)}`,
           );
-        });
-      }
-    }
-  }
-
-  private async deleteStale(
-    bot: Client,
-    name: string,
-    scope: CommandScope,
-    guildId: string | null,
-  ): Promise<void> {
-    try {
-      if (scope === "global") {
-        const cmds = await bot.application!.commands.fetch();
-        const cmd = cmds.find((c) => c.name === name);
-        if (cmd) await bot.application!.commands.delete(cmd.id);
-      } else if (guildId) {
-        const guild = bot.guilds.cache.get(guildId);
-        if (guild) {
-          const cmds = await guild.commands.fetch();
-          const cmd = cmds.find((c) => c.name === name);
-          if (cmd) await guild.commands.delete(cmd.id);
-        }
-      }
-      await deleteOwnedCommand({ name, scope, guildId });
-    } catch (err) {
-      botEventLog.record(
-        "warn",
-        "bot",
-        `command-reconciler: stale 清除失敗 ${scope}:${name}：${err instanceof Error ? err.message : String(err)}`,
+        },
       );
     }
   }
 
-  private async deleteIfExistsForBehavior(
+  /** 從 Discord（若可達）與名冊刪除一筆。 */
+  private async deleteStale(
     bot: Client,
-    row: BehaviorRow,
-  ): Promise<void> {
-    if (!row.slashCommandName) return;
-    const name = row.slashCommandName;
-    const scope: CommandScope = row.scope === "guild" ? "guild" : "global";
-    if (scope === "global") {
-      await this.deleteStale(bot, name, "global", null);
-    } else {
-      for (const guild of bot.guilds.cache.values()) {
-        await this.deleteStale(bot, name, "guild", guild.id);
+    owned: OwnedCommand,
+  ): Promise<boolean> {
+    try {
+      const manager = commandManagerFor(bot, owned.target);
+      if (manager) {
+        const cmds = await manager.fetch();
+        const cmd = cmds.find((c) => c.name === owned.name);
+        if (cmd) await manager.delete(cmd.id);
       }
+      await deleteOwnedCommand(owned);
+      return true;
+    } catch (err) {
+      botEventLog.record(
+        "warn",
+        "bot",
+        `command-reconciler: stale 清除失敗 ${owned.target} ${owned.name}：${err instanceof Error ? err.message : String(err)}`,
+      );
+      return false;
     }
   }
 
@@ -1160,9 +581,9 @@ export class CommandReconciler {
    */
   private async cleanupLegacyDmSlashCommands(
     bot: Client,
-    desiredItems: DesiredItem[],
+    desired: DesiredCommand[],
   ): Promise<void> {
-    const desiredNames = new Set(desiredItems.map((i) => i.name));
+    const desiredNames = new Set(desired.map((i) => i.name));
     try {
       const globalCmds = await bot.application!.commands.fetch();
       for (const cmd of globalCmds.values()) {
@@ -1202,79 +623,50 @@ export class CommandReconciler {
   }
 }
 
-// ── 輔助：Sequelize model instance → typed row ───────────────────────────────
+// ── 輔助：結果彙整 ───────────────────────────────────────────────────────────
 
-function rowOfBehavior(model: InstanceType<typeof Behavior>): BehaviorRow {
-  return {
-    id: model.getDataValue("id") as number,
-    title: model.getDataValue("title") as string,
-    description: (model.getDataValue("description") as string) ?? "",
-    enabled: !!model.getDataValue("enabled"),
-    sortOrder: model.getDataValue("sortOrder") as number,
-    stopOnMatch: !!model.getDataValue("stopOnMatch"),
-    ignoreBots: !!model.getDataValue("ignoreBots"),
-    sessionExpireHours:
-      (model.getDataValue("sessionExpireHours") as number | null) ?? null,
-    forwardType: model.getDataValue(
-      "forwardType",
-    ) as BehaviorRow["forwardType"],
-    source: model.getDataValue("source") as BehaviorRow["source"],
-    triggerType: model.getDataValue(
-      "triggerType",
-    ) as BehaviorRow["triggerType"],
-    messagePatternKind:
-      (model.getDataValue(
-        "messagePatternKind",
-      ) as BehaviorRow["messagePatternKind"]) ?? null,
-    messagePatternValue:
-      (model.getDataValue("messagePatternValue") as string | null) ?? null,
-    slashCommandName:
-      (model.getDataValue("slashCommandName") as string | null) ?? null,
-    slashCommandDescription:
-      (model.getDataValue("slashCommandDescription") as string | null) ?? null,
-    slashCommandOptions:
-      (model.getDataValue("slashCommandOptions") as string | null) ?? null,
-    scope: model.getDataValue("scope") as BehaviorRow["scope"],
-    integrationTypes: model.getDataValue("integrationTypes") as string,
-    contexts: model.getDataValue("contexts") as string,
-    placementGuildId:
-      (model.getDataValue("placementGuildId") as string | null) ?? null,
-    placementChannelId:
-      (model.getDataValue("placementChannelId") as string | null) ?? null,
-    audienceKind: model.getDataValue(
-      "audienceKind",
-    ) as BehaviorRow["audienceKind"],
-    audienceUserId:
-      (model.getDataValue("audienceUserId") as string | null) ?? null,
-    audienceGroupName:
-      (model.getDataValue("audienceGroupName") as string | null) ?? null,
-    webhookUrl: (model.getDataValue("webhookUrl") as string | null) ?? null,
-    webhookSecret:
-      (model.getDataValue("webhookSecret") as string | null) ?? null,
-    webhookAuthMode:
-      (model.getDataValue(
-        "webhookAuthMode",
-      ) as BehaviorRow["webhookAuthMode"]) ?? null,
-    systemKey:
-      (model.getDataValue("systemKey") as BehaviorRow["systemKey"]) ?? null,
-    scopeTabId: (model.getDataValue("scopeTabId") as number) ?? 1,
-  };
+/**
+ * 把一條指令的結果計入 report。Count only successful work; a failed
+ * create/patch returns ok:false with action set, and must land in errors
+ * (not the created/patched totals) so the report can't claim a command
+ * was registered when the Discord call actually threw.
+ */
+function tally(report: ReconcileReport, result: ReconcileItemResult): void {
+  if (!result.ok) {
+    report.errors.push(result);
+  } else if (result.action === "create") {
+    report.created++;
+  } else if (result.action === "patch") {
+    report.patched++;
+  }
 }
 
-function rowOfPluginCommand(
-  model: InstanceType<typeof PluginCommand>,
-): PluginCommandRow {
-  return {
-    id: model.getDataValue("id") as number,
-    pluginId: model.getDataValue("pluginId") as number,
-    guildId: (model.getDataValue("guildId") as string | null) ?? null,
-    name: model.getDataValue("name") as string,
-    discordCommandId:
-      (model.getDataValue("discordCommandId") as string | null) ?? null,
-    featureKey: (model.getDataValue("featureKey") as string | null) ?? null,
-    manifestJson: model.getDataValue("manifestJson") as string,
-    adminEnabled:
-      model.getDataValue("adminEnabled") !== 0 &&
-      model.getDataValue("adminEnabled") !== false,
-  };
+/**
+ * 把一個指令的各目標結果彙整成 ReconcileItemResult。action 取實際做過的
+ * 最強動作（create > patch > noop）—— 一個邏輯指令最多計一次，不論展開到
+ * 幾個伺服器。任一目標失敗則 ok=false，沿用既有回報：error 是最後一個失敗
+ * 目標的訊息；全域失敗回報嘗試的動作，伺服器失敗一律回報 patch。
+ * skipped（bot 不在指定伺服器）不算錯誤：可能在別的 shard，或 bot 已離開。
+ */
+function toItemResult(
+  key: CommandKey,
+  outcomes: TargetOutcome[],
+): ReconcileItemResult {
+  const failed = outcomes.filter((o) => o.status === "failed");
+  const lastFailed = failed[failed.length - 1];
+  if (lastFailed) {
+    return {
+      ok: false,
+      source: key.source,
+      sourceId: key.id,
+      action: lastFailed.target === "global" ? lastFailed.attempted : "patch",
+      error: lastFailed.error,
+    };
+  }
+  const action = outcomes.some((o) => o.status === "created")
+    ? "create"
+    : outcomes.some((o) => o.status === "patched")
+      ? "patch"
+      : "noop";
+  return { ok: true, source: key.source, sourceId: key.id, action };
 }
