@@ -21,7 +21,10 @@ export interface BehaviorRoutesOptions {
    * 指令寫入向 Discord 註冊用（CommandReconciler）；未提供時註冊延後到
    * 下一次 reconcile。
    */
-  reconciler?: import("./command-registration-sync.js").BehaviorCommandRegistrar;
+  reconciler?: import("./command-registration-sync.js").BehaviorCommandRegistrar &
+    import("./system-login-trigger-route.js").SystemLoginRegistrar;
+  /** Bot owners（測試用）；正式環境讀 BOT_OWNER_IDS。登入觸發的切換與系統指令 resync 只限 owner。 */
+  ownerIds?: readonly string[];
   /** 指令名稱衝突檢查（CommandNamespace）；指令寫入必填。 */
   namespace?: import("./command-registration-sync.js").CommandNamespaceChecker;
 }

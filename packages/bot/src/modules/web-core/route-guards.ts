@@ -1,6 +1,29 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { AdminCapability, GlobalCapability } from '../admin/authorized-user.service.js';
 import { accessibleGuildIds, hasGuildCapability, hasPluginCapability, type GuildScope } from '../admin/admin-capabilities.js';
+import { config } from '../../config.js';
+
+/**
+ * Owner-only gate: the caller must be a bot owner (BOT_OWNER_IDS /
+ * BOT_OWNER_ID — the same set the auth hook and /api/admin/me read), not
+ * merely hold `admin`. For the few writes that could lock the owner out
+ * (the login's trigger). With no owner configured the API runs without
+ * authentication (dev only — production refuses to boot that way), so
+ * there is no owner to require and the gate stands aside.
+ *
+ *     if (!requireOwner(request, reply, undefined, 'change the login trigger')) return;
+ */
+export function requireOwner(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    ownerIds: readonly string[] = config.bot.ownerIds,
+    action = 'do this'
+): boolean {
+    if (ownerIds.length === 0) return true;
+    if (request.authUserId !== undefined && ownerIds.includes(request.authUserId)) return true;
+    reply.code(403).send({ error: `only the bot owner can ${action}` });
+    return false;
+}
 
 /**
  * Per-route global capability gate. The global onRequest hook already

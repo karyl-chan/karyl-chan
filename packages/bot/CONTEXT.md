@@ -108,7 +108,7 @@ Behavior 被觸發後要做的事，由一個 Action Source 提供。
 _Avoid_: `source: custom / system`（舊稱）
 
 **System Behavior（系統指令）**:
-系統提供、固定存在的 behavior，目前只有登入；管理員只能改它的觸發方式，不能新增、刪除或停用。它的動作在資料裡記為 `actionSource: builtin`，那只是持久化值，不是管理員可選的 Action Source。
+系統提供、固定存在的 behavior，目前只有登入；管理員只能改它的觸發方式（與 bot 私訊的訊息比對，或一個全域指令），不能新增、刪除或停用。換觸發方式時新的觸發先生效、舊的才停用，任何一步失敗都保留原本的觸發。它的動作在資料裡記為 `actionSource: builtin`，那只是持久化值，不是管理員可選的 Action Source。
 _Avoid_: 內建動作（它不是可選的動作來源）、admin-login
 
 **Plugin Action**:

@@ -169,6 +169,16 @@ is stored.
 - `behavior-trigger.ts` — pure `matchesTrigger`.
 - `system-seed.service.ts` — adds the System Behavior (login, DM
   `!login`) when it is missing.
+- `system-login-trigger.ts` / `system-login-trigger-route.ts` —
+  `PUT /api/behaviors/system/login/trigger`, the System Behavior's one
+  write: switching its trigger between a bot DM message trigger and a
+  global command (the rules are in the first file, the sequence in the
+  second). The new trigger takes effect first: a command is registered
+  on Discord before it is stored (inside `withRegistrationLock`, taken
+  back if the store fails); leaving a command stores the message trigger
+  first and then deletes the command. Owner only (`requireOwner` in
+  `web-core/route-guards.ts`, as is resyncing the login's command);
+  every attempt that reaches the switch is audited with its outcome.
 - `models/` — behavior-command, behavior-definition,
   behavior-webhook-action, behavior-stats, behavior-group-member (an
   Audience Group's list: settable only for a group a message trigger

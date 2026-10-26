@@ -36,15 +36,18 @@ in a watched channel) has no extra capability check. Any member who can
 send messages in the channel can trigger a forward. To restrict access,
 adjust the channel's Discord send-message permissions.
 
-> The system behavior `/login` (see
-> [`features/behaviors.md`](features/behaviors.md)) is registered with
-> `contexts: BotDM` — it appears only in DMs with the bot and never in
-> guild channels, so guild permissions don't apply. It can also be
-> switched to a DM message pattern (e.g. `!login`). It carries its own
-> authorisation gate (see [Admin identity](#admin-identity)): bot owners
-> (`BOT_OWNER_IDS`) and any `authorized_users` row with at least one
-> active capability receive a login link; everyone else gets an
-> ephemeral "not authorized" reply.
+> The system login (see [`features/behaviors.md`](features/behaviors.md))
+> is a DM message trigger by default (`!login` in DMs with the bot). A
+> bot owner — only an owner, not any `admin` — can switch it to a global
+> command (Behaviors → the pinned login row → change trigger) or change
+> its pattern; the command always stays installed with the server and
+> usable in DMs with the bot, so the owner can always reach it. Its reply
+> is always visible only to the invoker (ephemeral), so guild contexts are
+> safe too, and it never takes default member permissions. It carries its own authorisation gate (see
+> [Admin identity](#admin-identity)): bot owners (`BOT_OWNER_IDS`) and any
+> `authorized_users` row with at least one active capability receive a
+> login link; on a command, everyone else gets an ephemeral "not
+> authorized" reply (a DM message trigger stays silent).
 
 ## B. Capability system
 
@@ -64,11 +67,12 @@ token names come from.
 ### Admin identity
 
 - A bot owner (any Discord user id listed in `BOT_OWNER_IDS`, or the
-  single legacy `BOT_OWNER_ID`) invokes the `/login` slash command in
-  DM with the bot to obtain a one-time login link.
+  single legacy `BOT_OWNER_ID`) uses the login trigger — by default,
+  DM the bot `!login`; the admin login page shows the current one — to
+  obtain a one-time login link.
 - Once logged in, the owner uses the admin management page to authorise
   other Discord users and assign admin roles. Authorised users can
-  subsequently `/login` themselves as long as their role still carries
+  subsequently log in the same way as long as their role still carries
   at least one capability.
 - Each admin role holds a set of capability tokens, stored in
   `admin_role_capabilities`.

@@ -26,6 +26,7 @@ import {
   type BehaviorWebhookActionRow,
 } from "./models/behavior-webhook-action.model.js";
 import { BehaviorGroupMember } from "./models/behavior-group-member.model.js";
+import { SYSTEM_BEHAVIOR_KEY_LOGIN } from "./models/behavior-definition.model.js";
 
 /** 一個 behavior 與它的 webhook 動作（actionSource='webhook' 時）。 */
 export interface CatalogBehavior extends BehaviorDefinitionRow {
@@ -100,6 +101,19 @@ export async function loadBehaviorCatalog(): Promise<BehaviorCatalog> {
     messageTriggers: behaviors.filter((b) => b.triggerKind === "message"),
     groupMembers,
   };
+}
+
+/** The System Behavior (login) in a catalog: its row, and its command when its trigger is one. */
+export interface SystemLoginEntry {
+  row: CatalogBehavior;
+  command: CatalogCommand | null;
+}
+
+export function systemLoginOf(catalog: BehaviorCatalog): SystemLoginEntry | null {
+  const isLogin = (b: CatalogBehavior) => b.systemKey === SYSTEM_BEHAVIOR_KEY_LOGIN;
+  const command = catalog.commands.find((c) => c.leaves.some(isLogin)) ?? null;
+  const row = command?.leaves.find(isLogin) ?? catalog.messageTriggers.find(isLogin);
+  return row ? { row, command } : null;
 }
 
 // ── 快照 ────────────────────────────────────────────────────────────────────
