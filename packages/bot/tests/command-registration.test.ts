@@ -1,10 +1,11 @@
 /**
  * S2 (#133)：deriveRegistrationCall / commandNeedsPatch 支援
- * defaultMemberPermissions。
+ * defaultMemberPermissions，並能把指令定義組成子指令樹。
  */
 
 import { describe, it, expect } from "vitest";
 import {
+  ApplicationCommandOptionType,
   type ApplicationCommand,
   type ApplicationCommandData,
 } from "discord.js";
@@ -13,6 +14,7 @@ import {
   deriveRegistrationCall,
   type CommandDefinition,
 } from "../src/modules/command-system/command-registration.js";
+import { RejectionError } from "../src/modules/command-system/types.js";
 
 const base: CommandDefinition = {
   name: "ping",
@@ -92,5 +94,138 @@ describe("commandNeedsPatch — defaultMemberPermissions", () => {
     const open = deriveRegistrationCall(base, "global").data;
     expect(commandNeedsPatch(existingFrom(open, null), open)).toBe(false);
     expect(commandNeedsPatch(existingFrom(open, undefined), open)).toBe(false);
+  });
+});
+
+describe("deriveRegistrationCall — command leaves (subcommand tree)", () => {
+  type Sub = {
+    type: number;
+    name: string;
+    description: string;
+    options?: Array<{ type: number; name: string }>;
+  };
+  const optionsOf = (data: ApplicationCommandData) =>
+    ((data as { options?: Sub[] }).options ?? []) as Sub[];
+
+  it("a single root leaf becomes a plain command with the leaf's parameters", () => {
+    const { data } = deriveRegistrationCall(
+      {
+        ...base,
+        leaves: [
+          {
+            path: [],
+            description: "ignored for root",
+            options: [{ type: "string", name: "who", required: true }],
+          },
+        ],
+      },
+      "global",
+    );
+    expect(optionsOf(data)).toEqual([
+      expect.objectContaining({
+        type: ApplicationCommandOptionType.String,
+        name: "who",
+        required: true,
+      }),
+    ]);
+  });
+
+  it("subcommand leaves become sub_command options carrying their own parameters", () => {
+    const { data } = deriveRegistrationCall(
+      {
+        ...base,
+        name: "nas",
+        leaves: [
+          { path: ["login"], description: "log in" },
+          {
+            path: ["status"],
+            description: "show status",
+            options: [{ type: "boolean", name: "verbose" }],
+          },
+        ],
+      },
+      "guild:g1",
+    );
+    const subs = optionsOf(data);
+    expect(subs.map((s) => [s.type, s.name, s.description])).toEqual([
+      [ApplicationCommandOptionType.Subcommand, "login", "log in"],
+      [ApplicationCommandOptionType.Subcommand, "status", "show status"],
+    ]);
+    expect(subs[1]!.options).toEqual([
+      expect.objectContaining({
+        type: ApplicationCommandOptionType.Boolean,
+        name: "verbose",
+      }),
+    ]);
+  });
+
+  it("rejects a root leaf alongside subcommands (Discord can't invoke the root then)", () => {
+    expect(() =>
+      deriveRegistrationCall(
+        {
+          ...base,
+          leaves: [
+            { path: [], description: "root" },
+            { path: ["sub"], description: "sub" },
+          ],
+        },
+        "global",
+      ),
+    ).toThrow(RejectionError);
+  });
+
+  it("rejects duplicate leaf paths", () => {
+    expect(() =>
+      deriveRegistrationCall(
+        {
+          ...base,
+          leaves: [
+            { path: ["a"], description: "a" },
+            { path: ["a"], description: "again" },
+          ],
+        },
+        "global",
+      ),
+    ).toThrow(RejectionError);
+  });
+
+  it("rejects subcommand groups for now (phase 1 supports one level)", () => {
+    expect(() =>
+      deriveRegistrationCall(
+        { ...base, leaves: [{ path: ["grp", "sub"], description: "x" }] },
+        "global",
+      ),
+    ).toThrow(RejectionError);
+  });
+
+  it("rejects a command without leaves, and more than 25 subcommands", () => {
+    expect(() =>
+      deriveRegistrationCall({ ...base, leaves: [] }, "global"),
+    ).toThrow(RejectionError);
+    const many = Array.from({ length: 26 }, (_, i) => ({
+      path: [`s${i}`],
+      description: `s${i}`,
+    }));
+    expect(() =>
+      deriveRegistrationCall({ ...base, leaves: many }, "global"),
+    ).toThrow(RejectionError);
+  });
+
+  it("rejects nested sub_command parameters inside a leaf", () => {
+    expect(() =>
+      deriveRegistrationCall(
+        {
+          ...base,
+          leaves: [
+            {
+              path: ["a"],
+              description: "a",
+              options: [{ type: "sub_command", name: "nested" }],
+            },
+          ],
+        },
+        "global",
+      ),
+    ).toThrow(RejectionError);
   });
 });

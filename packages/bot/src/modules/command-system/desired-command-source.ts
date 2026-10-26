@@ -6,7 +6,7 @@
  * 不知道背後是哪張表。
  *
  *   - BehaviorCommandSource：behaviors 表（軌二）。目前每條指令觸發的
- *     behavior 是一個指令；S3 改讀指令容器 + 葉節點表。
+ *     behavior 是一個只有根葉節點的指令；S3 改讀指令容器 + 葉節點表。
  *   - PluginCommandSource：plugin_commands 表 featureKey IS NULL 的列（軌三）。
  */
 
@@ -114,7 +114,8 @@ function behaviorDefinition(row: BehaviorRow): CommandDefinition {
     description,
     integrationTypes: parseIntegrationTypes(row.integrationTypes),
     contexts: parseContexts(row.contexts),
-    options,
+    // 今天每條 behavior 是只有根葉節點的指令；S3 改由葉節點表組樹
+    leaves: [{ path: [], description, options }],
   };
 }
 

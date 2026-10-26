@@ -74,13 +74,33 @@ export interface CommandLocalizations {
 }
 
 /**
- * 一個 Discord 指令（Command）的定義：名稱、說明、參數與可見性設定。
+ * 指令底下一個可呼叫的路徑（Command Leaf）。
+ *   - path []        根葉節點：指令本身可呼叫，options 是指令的參數
+ *   - path [sub]     子指令
+ *   - path [g, sub]  子指令群組 —— 路徑預留，第一階段不支援（ADR 0003）
+ * 根葉節點的 description 不送 Discord（根指令的說明屬於指令本身）。
+ */
+export interface CommandLeafDefinition {
+  path: string[];
+  description: string;
+  localizations?: CommandLocalizations;
+  /** 葉節點的參數；只能是一般參數，不能再含 sub_command / sub_command_group。 */
+  options?: ManifestCommandOption[];
+}
+
+/**
+ * 一個 Discord 指令（Command）的定義：名稱、說明與可見性設定。
+ * 指令的內容二選一：
+ *   - leaves：葉節點組成的樹（behavior；S3 由指令容器 + 葉節點表供給）
+ *   - options：直接給整份 options（軌三 plugin 在 manifest 裡自己寫的樹）
+ * 兩者都省略 = 沒有參數的單一指令。
  */
 export interface CommandDefinition {
   name: string;
   description: string;
   integrationTypes: DiscordIntegrationType[];
   contexts: DiscordContext[];
+  leaves?: CommandLeafDefinition[];
   options?: ManifestCommandOption[];
   localizations?: CommandLocalizations;
   /**
@@ -144,14 +164,84 @@ export function deriveRegistrationCall(
 
   data["contexts"] = contexts.map((c) => CONTEXT_MAP[c]);
   data["integrationTypes"] = integrationTypes.map((t) => INTEGRATION_MAP[t]);
-  if (def.options && def.options.length > 0) {
-    data["options"] = def.options.map(manifestOptionToData);
+  if (def.leaves && def.options) {
+    throw new RejectionError("leaves 與 options 不能同時指定");
+  }
+  const options = def.leaves ? buildLeafOptions(def.leaves) : def.options;
+  if (options && options.length > 0) {
+    data["options"] = options.map(manifestOptionToData);
   }
 
   return {
     target,
     data: data as unknown as ApplicationCommandData,
   };
+}
+
+// ── 子指令樹 ────────────────────────────────────────────────────────────────
+
+/** Discord 每層最多 25 個 options（子指令也算）。 */
+const MAX_SUBCOMMANDS = 25;
+
+/**
+ * 葉節點 → 指令的 options（manifest 形狀，再由 manifestOptionToData 轉成
+ * discord.js 資料）。根葉節點回傳它自己的參數；子指令葉節點各成一個
+ * sub_command option。違反 Discord 結構規則時丟 RejectionError。
+ */
+function buildLeafOptions(
+  leaves: CommandLeafDefinition[],
+): ManifestCommandOption[] {
+  if (leaves.length === 0) {
+    throw new RejectionError("指令至少要有一個葉節點");
+  }
+  const seen = new Set<string>();
+  for (const leaf of leaves) {
+    if (leaf.path.length > 1) {
+      throw new RejectionError(
+        `子指令群組尚未支援（路徑 ${leaf.path.join(" ")}）`,
+      );
+    }
+    if (leaf.path.some((p) => p.length === 0)) {
+      throw new RejectionError("葉節點路徑不能有空白段");
+    }
+    const key = leaf.path.join(" ");
+    if (seen.has(key)) {
+      throw new RejectionError(`葉節點路徑重複：${key || "（根）"}`);
+    }
+    seen.add(key);
+    const nested = (leaf.options ?? []).find(
+      (o) => o.type === "sub_command" || o.type === "sub_command_group",
+    );
+    if (nested) {
+      throw new RejectionError(
+        `葉節點的參數不能是子指令（${nested.name}）；子指令請用葉節點路徑表達`,
+      );
+    }
+  }
+
+  const root = leaves.find((l) => l.path.length === 0);
+  if (root) {
+    // Discord：有子指令時根指令不能呼叫，所以根葉節點與子指令不並存
+    if (leaves.length > 1) {
+      throw new RejectionError("根葉節點與子指令不能並存");
+    }
+    return root.options ?? [];
+  }
+  if (leaves.length > MAX_SUBCOMMANDS) {
+    throw new RejectionError(`子指令最多 ${MAX_SUBCOMMANDS} 個`);
+  }
+  return leaves.map((leaf) => ({
+    type: "sub_command",
+    name: leaf.path[0]!,
+    description: leaf.description,
+    ...(leaf.localizations?.description_localizations
+      ? { description_localizations: leaf.localizations.description_localizations }
+      : {}),
+    ...(leaf.localizations?.name_localizations
+      ? { name_localizations: leaf.localizations.name_localizations }
+      : {}),
+    options: leaf.options ?? [],
+  }));
 }
 
 // ── commandNeedsPatch（Discord 現況 vs desired）──────────────────────────────
