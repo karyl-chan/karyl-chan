@@ -48,6 +48,7 @@ import {
   rowOfBehaviorWebhookAction,
 } from "./models/behavior-webhook-action.model.js";
 import { findStatsBulk } from "./models/behavior-stats.model.js";
+import { pruneUnusedGroupMembers } from "./models/behavior-group-member.model.js";
 import {
   prepareWebhookWrite,
   webhookInputSchema,
@@ -274,7 +275,10 @@ export function registerBehaviorWriteRoutes(
         if (current.triggerKind === "command") {
           return deleteCommandLeaf(reconciler, request, current);
         }
-        await BehaviorDefinition.destroy({ where: { id } });
+        await behaviorTransaction(async (transaction) => {
+          await BehaviorDefinition.destroy({ where: { id }, transaction });
+          await pruneUnusedGroupMembers(transaction);
+        });
         return { audit: { kind: "message", title: current.title }, registration: null };
       });
       await auditBehaviorWrite(request, "behavior.delete", `behavior:${id}`, result.audit);
@@ -320,6 +324,10 @@ async function patchMessageTrigger(
         { behaviorId: row.id, ...webhook.values },
         { transaction },
       );
+    }
+    // the last trigger leaving a group takes its member list along (#137)
+    if (after.audienceGroupName !== before.audienceGroupName) {
+      await pruneUnusedGroupMembers(transaction);
     }
   });
 

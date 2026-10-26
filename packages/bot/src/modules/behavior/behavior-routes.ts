@@ -37,6 +37,7 @@ import {
 import { findStatsBulk } from "./models/behavior-stats.model.js";
 import {
   findGroupMembers,
+  groupInUse,
   replaceGroupMembers,
 } from "./models/behavior-group-member.model.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
@@ -45,6 +46,7 @@ import {
   installBehaviorRouteValidation,
 } from "./behavior-api-error.js";
 import { auditBehaviorWrite } from "./behavior-audit.js";
+import { behaviorTransaction, withBehaviorWriteLock } from "./behavior-write-lock.js";
 import {
   createMessageTriggerSchema,
   registerBehaviorWriteRoutes,
@@ -164,7 +166,9 @@ function registerReadAndTestRoutes(
 // ── audience group 成員管理（BH-1）─────────────────────────────────────────
 //
 // group 以名字為單位（訊息觸發的 audienceGroupName），名單存
-// behavior_group_members，同名 group 的 behaviors 共享。
+// behavior_group_members，同名 group 的 behaviors 共享。group 沒有自己的
+// 列：只有被訊息觸發引用的 group 能設名單，沒有觸發用了名單就清掉
+// （behavior-group-member.model.ts），不會留下孤兒名單（#137）。
 
 const groupParams = {
   type: "object",
@@ -197,6 +201,7 @@ function registerGroupMemberRoutes(server: FastifyInstance): void {
 
   // PUT /api/behavior-groups/:groupName/members { userIds: string[] }
   // 全量替換（與 UI 的編輯-儲存模型一致；增/刪都走同一條）。
+  // 沒有訊息觸發引用的 group → not_found：先把觸發的對象設成這個群組。
   server.put(
     "/api/behavior-groups/:groupName/members",
     {
@@ -215,7 +220,18 @@ function registerGroupMemberRoutes(server: FastifyInstance): void {
     async (request, reply) => {
       const groupName = groupNameOf(request.params);
       const { userIds } = request.body as { userIds: string[] };
-      await replaceGroupMembers(groupName, userIds);
+      await withBehaviorWriteLock(() =>
+        behaviorTransaction(async (transaction) => {
+          if (!(await groupInUse(groupName, transaction))) {
+            throw new BehaviorApiError(
+              "not_found",
+              `no message trigger uses group '${groupName}'; set a trigger's audience to it first`,
+              "groupName",
+            );
+          }
+          await replaceGroupMembers(groupName, userIds, transaction);
+        }),
+      );
       const members = await findGroupMembers(groupName);
       await auditBehaviorWrite(request, "behavior.group_members.replace", `group:${groupName}`, {
         userIds: members,

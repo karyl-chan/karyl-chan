@@ -5,6 +5,7 @@
 import { BehaviorCommand } from "../src/modules/behavior/models/behavior-command.model.js";
 import { BehaviorDefinition } from "../src/modules/behavior/models/behavior-definition.model.js";
 import { BehaviorWebhookAction } from "../src/modules/behavior/models/behavior-webhook-action.model.js";
+import { BehaviorGroupMember } from "../src/modules/behavior/models/behavior-group-member.model.js";
 import { encryptSecret } from "../src/utils/crypto.js";
 
 export const TEST_WEBHOOK_URL = "https://hooks.example/behavior";
@@ -121,8 +122,9 @@ export async function seedLeaf(
   return id;
 }
 
-/** Remove every behavior row (cascades leaves, webhook actions, stats). */
+/** Remove every behavior row (cascades leaves, webhook actions, stats) and group list. */
 export async function clearBehaviors(): Promise<void> {
+  await BehaviorGroupMember.destroy({ where: {} });
   await BehaviorWebhookAction.destroy({ where: {} });
   await BehaviorDefinition.destroy({ where: {} });
   await BehaviorCommand.destroy({ where: {} });

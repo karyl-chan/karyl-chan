@@ -5,6 +5,10 @@
  * same audienceGroupName) and managed via
  * GET/PUT /api/behavior-groups/:groupName/members. The bot DM matcher
  * must honour the list as soon as it changes.
+ *
+ * #137 (from #116): a group is a name a message trigger's audience
+ * refers to, nothing more — so members can only be set for a group some
+ * trigger uses, and the list goes when the last trigger stops using it.
  */
 import { vi, describe, it, expect, beforeAll, beforeEach } from "vitest";
 
@@ -45,8 +49,13 @@ beforeEach(async () => {
   await clearBehaviors();
 });
 
+function useGroup(groupName: string, title = `uses ${groupName}`): Promise<number> {
+  return seedMessageTrigger({ title, audienceKind: "group", audienceGroupName: groupName });
+}
+
 describe("behavior group members API", () => {
   it("PUT replaces the list and GET reads it back", async () => {
+    await useGroup("vip");
     const server = await buildServer();
 
     let res = await server.inject({
@@ -79,6 +88,7 @@ describe("behavior group members API", () => {
   });
 
   it("records the replacement in admin_audit_log", async () => {
+    await useGroup("ops");
     const server = await buildServer();
     await server.inject({
       method: "PUT",
@@ -143,6 +153,60 @@ describe("behavior group members API", () => {
     expect(await matcher.onMessage(dm("333333333333333333"))).toEqual({ handled: true, behaviorId: id });
     expect((await matcher.onMessage(dm("444444444444444444"))).handled).toBe(false);
 
+    await server.close();
+  });
+});
+
+describe("groups exist only while a message trigger uses them", () => {
+  const A = "111111111111111111";
+  const B = "222222222222222222";
+
+  async function members(server: FastifyInstance, groupName: string): Promise<string[]> {
+    const res = await server.inject({ method: "GET", url: `/api/behavior-groups/${groupName}/members` });
+    return res.json().members;
+  }
+
+  function setMembers(server: FastifyInstance, groupName: string, userIds: string[]) {
+    return server.inject({
+      method: "PUT",
+      url: `/api/behavior-groups/${groupName}/members`,
+      payload: { userIds },
+    });
+  }
+
+  it("refuses members for a group no trigger uses", async () => {
+    await seedMessageTrigger({ title: "everyone" });
+    const server = await buildServer();
+    const res = await setMembers(server, "nobody-uses-me", [A]);
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error).toMatchObject({ code: "not_found", field: "groupName" });
+    expect(await members(server, "nobody-uses-me")).toEqual([]);
+    await server.close();
+  });
+
+  it("drops the list when the last trigger moves to another audience", async () => {
+    const first = await useGroup("vip", "first");
+    const second = await useGroup("vip", "second");
+    const server = await buildServer();
+    await setMembers(server, "vip", [A, B]);
+
+    // one trigger still uses the group: its list stays
+    await server.inject({ method: "PATCH", url: `/api/behaviors/${first}`, payload: { audienceKind: "all", audienceGroupName: null } });
+    expect(await members(server, "vip")).toEqual([A, B]);
+
+    // the last one leaves: the list goes with it
+    await server.inject({ method: "PATCH", url: `/api/behaviors/${second}`, payload: { audienceGroupName: "staff" } });
+    expect(await members(server, "vip")).toEqual([]);
+    await server.close();
+  });
+
+  it("drops the list when the last trigger using it is deleted", async () => {
+    const id = await useGroup("vip");
+    const server = await buildServer();
+    await setMembers(server, "vip", [A]);
+    const res = await server.inject({ method: "DELETE", url: `/api/behaviors/${id}` });
+    expect(res.statusCode).toBe(204);
+    expect(await members(server, "vip")).toEqual([]);
     await server.close();
   });
 });

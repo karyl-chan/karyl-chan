@@ -167,7 +167,9 @@ is stored.
 - `system-seed.service.ts` — adds the System Behavior (login, DM
   `!login`) when it is missing.
 - `models/` — behavior-command, behavior-definition,
-  behavior-webhook-action, behavior-stats, behavior-group-member.
+  behavior-webhook-action, behavior-stats, behavior-group-member (an
+  Audience Group's list: settable only for a group a message trigger
+  uses, dropped when the last such trigger leaves it).
 
 **External surface.** HTTP `/api/behaviors/*`,
 `/api/behavior-commands/*`, `/api/behavior-groups/*`;
