@@ -1215,7 +1215,10 @@
             "note": {
                 "guild": "要限制这个服务器里哪些身份组或频道能用指令，请到 Discord 的“服务器设置 → 整合”。",
                 "channel": "Discord 无法把指令限定在单一频道，所以这里只有消息匹配。"
-            }
+            },
+            "reorderHandle": "拖动排序“{title}”",
+            "reorderHint": "拖动排序，或按 Alt + ↑／↓",
+            "reorderStale": "这个位置的行为刚被其他人更改，已重新载入；请再排一次。"
         },
         "card": {
             "systemRowLocked": "系统行为，固定排在最前面",

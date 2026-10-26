@@ -1215,7 +1215,10 @@
             "note": {
                 "guild": "To limit which roles or channels in this server can use a command, use Discord’s Server Settings → Integrations.",
                 "channel": "Discord cannot limit a command to one channel, so only message triggers live here."
-            }
+            },
+            "reorderHandle": "Reorder “{title}”",
+            "reorderHint": "Drag to reorder, or press Alt + ↑/↓",
+            "reorderStale": "Someone just changed the behaviors here, so the list was reloaded. Please reorder again."
         },
         "card": {
             "systemRowLocked": "System behavior — always listed first",

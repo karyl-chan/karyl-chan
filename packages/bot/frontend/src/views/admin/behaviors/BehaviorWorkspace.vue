@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { Icon } from '@iconify/vue';
+import Sortable from 'sortablejs';
 import { AppButton, Spacer } from '@karyl-chan/ui';
 import MessageTriggerCard from './MessageTriggerCard.vue';
 import CommandCard from './CommandCard.vue';
@@ -30,6 +32,8 @@ const emit = defineEmits<{
     (e: 'updated', trigger: MessageTriggerView): void;
     (e: 'deleted', id: number): void;
     (e: 'add'): void;
+    /** A new order for this section's message triggers (its Message Trigger Location). */
+    (e: 'reorder', ids: number[]): void;
 }>();
 
 const isEmpty = computed(
@@ -39,6 +43,43 @@ const isEmpty = computed(
             props.items.commands.length === 0 &&
             props.items.messageTriggers.length === 0)
 );
+
+// ── reorder (#121): drag the handle, or Alt+↑/↓ on it ──────────────────────
+// Only this location's custom triggers move; the system row is pinned
+// above them, outside the sortable list.
+
+function move(from: number, to: number) {
+    const ids = (props.items?.messageTriggers ?? []).map((m) => m.id);
+    if (to < 0 || to >= ids.length || from === to) return;
+    const [moved] = ids.splice(from, 1);
+    ids.splice(to, 0, moved);
+    emit('reorder', ids);
+}
+
+const listRef = ref<HTMLElement | null>(null);
+let sortable: Sortable | null = null;
+watch(
+    listRef,
+    (el) => {
+        sortable?.destroy();
+        sortable = el
+            ? Sortable.create(el, {
+                  handle: '.drag-handle',
+                  animation: 150,
+                  ghostClass: 'sortable-ghost',
+                  onEnd: ({ oldIndex, newIndex, item, from }) => {
+                      if (oldIndex == null || newIndex == null || oldIndex === newIndex) return;
+                      // put the node back: Vue re-renders the list in the new order
+                      from.removeChild(item);
+                      from.insertBefore(item, from.children[oldIndex] ?? null);
+                      move(oldIndex, newIndex);
+                  },
+              })
+            : null;
+    },
+    { flush: 'post' }
+);
+onBeforeUnmount(() => sortable?.destroy());
 
 /** What this section can and cannot hold, in Discord's terms (board 1). */
 const note = computed(() => {
@@ -90,9 +131,9 @@ const note = computed(() => {
 
             <template v-if="items.messageTriggers.length > 0">
                 <h3 class="group-title">{{ t('behaviors.workspace.messageTriggers') }}</h3>
-                <div class="card-list">
+                <div ref="listRef" class="card-list">
                     <MessageTriggerCard
-                        v-for="m in items.messageTriggers"
+                        v-for="(m, index) in items.messageTriggers"
                         :key="m.id"
                         :trigger="m"
                         :expand="expandId === m.id"
@@ -102,7 +143,20 @@ const note = computed(() => {
                         @updated="emit('updated', $event)"
                         @deleted="emit('deleted', $event)"
                         @reload="emit('reload')"
-                    />
+                    >
+                        <template #handle>
+                            <button
+                                type="button"
+                                class="drag-handle"
+                                :aria-label="t('behaviors.workspace.reorderHandle', { title: m.title })"
+                                :title="t('behaviors.workspace.reorderHint')"
+                                @keydown.alt.up.prevent="move(index, index - 1)"
+                                @keydown.alt.down.prevent="move(index, index + 1)"
+                            >
+                                <Icon icon="material-symbols:drag-indicator" width="16" height="16" aria-hidden="true" />
+                            </button>
+                        </template>
+                    </MessageTriggerCard>
                 </div>
             </template>
         </template>
@@ -146,6 +200,20 @@ const note = computed(() => {
     color: var(--text-muted);
 }
 .card-list { display: flex; flex-direction: column; gap: 0.5rem; }
+.drag-handle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 28px;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--text-muted);
+    cursor: grab;
+}
+.drag-handle:hover { color: var(--text); }
+.card-list :deep(.sortable-ghost) { opacity: 0.4; }
 .muted { color: var(--text-muted); }
 .center { padding: 1rem; text-align: center; }
 .note { margin: 0.25rem 0 0; font-size: 0.78rem; line-height: 1.6; color: var(--text-muted); }

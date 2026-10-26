@@ -2,10 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BehaviorListView, MessageTriggerView } from '../../../api/behavior';
 
 const listMock = vi.hoisted(() => vi.fn());
+const reorderMock = vi.hoisted(() => vi.fn());
 vi.mock('../../../api/behavior', () => ({
     listBehaviors: (...args: unknown[]) => listMock(...args),
+    reorderMessageTriggers: (...args: unknown[]) => reorderMock(...args),
 }));
 
+import { ApiError } from '../../../api/client';
 import { useBehaviorList } from './use-behavior-list';
 
 const GUILD = '123456789012345678';
@@ -44,6 +47,7 @@ function list(messageTriggers: MessageTriggerView[]): BehaviorListView {
 
 beforeEach(() => {
     listMock.mockReset();
+    reorderMock.mockReset();
 });
 
 describe('useBehaviorList', () => {
@@ -127,5 +131,34 @@ describe('useBehaviorList', () => {
             ['ops', 2],
             ['vip', 1],
         ]);
+    });
+});
+
+describe('useBehaviorList — reordering a location', () => {
+    const guildAll = (id: number) => trigger(id, { surface: 'guild', section: 'guild:all' });
+
+    it('shows the new order at once and sends it for that location only', async () => {
+        listMock.mockResolvedValue(list([trigger(1), guildAll(2), trigger(3), trigger(4)]));
+        reorderMock.mockResolvedValue({ location: 'bot_dm', ids: [4, 1, 3] });
+        const state = useBehaviorList();
+        await state.load();
+
+        await state.reorder('bot_dm', [4, 1, 3]);
+        expect(reorderMock).toHaveBeenCalledWith('bot_dm', [4, 1, 3]);
+        // the other location's trigger keeps its place in the list
+        expect(state.view.value?.messageTriggers.map((m) => m.id)).toEqual([4, 2, 1, 3]);
+        expect(listMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('a stale order reloads the list and reports the refusal', async () => {
+        listMock.mockResolvedValue(list([trigger(1), trigger(3)]));
+        const stale = new ApiError(409, 'the triggers at bot_dm changed', 'validation_failed', 'ids');
+        reorderMock.mockRejectedValue(stale);
+        const state = useBehaviorList();
+        await state.load();
+
+        await expect(state.reorder('bot_dm', [3, 1])).rejects.toBe(stale);
+        expect(listMock).toHaveBeenCalledTimes(2);
+        expect(state.view.value?.messageTriggers.map((m) => m.id)).toEqual([1, 3]);
     });
 });

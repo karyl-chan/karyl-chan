@@ -1,8 +1,10 @@
 import { computed, ref } from 'vue';
 import {
     listBehaviors,
+    reorderMessageTriggers,
     type BehaviorListView,
     type BehaviorSection,
+    type MessageTriggerLocation,
     type MessageTriggerView,
 } from '../../../api/behavior';
 import { sidebarSections } from './behavior-sections';
@@ -76,6 +78,32 @@ export function useBehaviorList() {
         await follow(trigger, mayLeave);
     }
 
+    /**
+     * Put a location's triggers in a new order: shown at once, then saved
+     * (PUT /api/behaviors/reorder). A refusal — typically stale, someone
+     * added or moved a trigger there — reloads the list and is rethrown
+     * for the page to report.
+     */
+    async function reorder(location: MessageTriggerLocation, ids: number[]): Promise<void> {
+        const current = view.value;
+        if (current) {
+            const byId = new Map(current.messageTriggers.map((m) => [m.id, m]));
+            const queue = ids.map((id) => byId.get(id)!).filter(Boolean);
+            view.value = {
+                ...current,
+                messageTriggers: current.messageTriggers.map((m) =>
+                    m.section === location && m.systemKey === null ? (queue.shift() ?? m) : m
+                ),
+            };
+        }
+        try {
+            await reorderMessageTriggers(location, ids);
+        } catch (err) {
+            await load();
+            throw err;
+        }
+    }
+
     /** Audience Groups in use, with how many message triggers use each. */
     const groupUse = computed(() => {
         const use = new Map<string, number>();
@@ -88,5 +116,5 @@ export function useBehaviorList() {
         return use;
     });
 
-    return { view, selected, loading, error, expandId, sections, groupUse, load, applyTrigger, showCreated };
+    return { view, selected, loading, error, expandId, sections, groupUse, load, applyTrigger, showCreated, reorder };
 }

@@ -3,12 +3,14 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { onBeforeRouteLeave } from 'vue-router';
 import { SidebarLayout } from '../../../layouts';
-import { useBreakpoint, useAppShell, useConfirm } from '@karyl-chan/ui';
+import { useBreakpoint, useAppShell, useConfirm, useToastStore } from '@karyl-chan/ui';
 import { useGuildListStore } from '../../../stores/guildListStore';
 import BehaviorSidebar from './BehaviorSidebar.vue';
 import BehaviorWorkspace from './BehaviorWorkspace.vue';
 import AddBehaviorModal from './AddBehaviorModal.vue';
 import type { BehaviorSection } from '../../../api/behavior';
+import { messageTriggerLocationOf } from './message-trigger-location';
+import { describeBehaviorError, isStale } from './behavior-errors';
 import { countInSection, itemsInSection } from './behavior-sections';
 import { useBehaviorList } from './use-behavior-list';
 import { provideUnsavedDrafts } from './use-unsaved-drafts';
@@ -19,7 +21,8 @@ const { closeOverlay } = useAppShell();
 const { confirm } = useConfirm();
 const guildList = useGuildListStore();
 
-const { view, selected, loading, error, expandId, sections, groupUse, load, applyTrigger, showCreated } =
+const toast = useToastStore();
+const { view, selected, loading, error, expandId, sections, groupUse, load, applyTrigger, showCreated, reorder } =
     useBehaviorList();
 const adding = ref(false);
 const { hasUnsaved } = provideUnsavedDrafts();
@@ -62,6 +65,18 @@ onMounted(() => {
 onBeforeUnmount(() => window.removeEventListener('beforeunload', onBeforeUnload));
 onBeforeRouteLeave(() => mayDropDrafts());
 
+async function onReorder(ids: number[]) {
+    const location = selected.value ? messageTriggerLocationOf(selected.value) : null;
+    if (!location) return;
+    try {
+        await reorder(location, ids);
+    } catch (err) {
+        // the list was reloaded either way; say why the order did not stick
+        if (isStale(err)) toast.show(t('behaviors.workspace.reorderStale'), 'warn');
+        else toast.show(describeBehaviorError(t, err));
+    }
+}
+
 async function onSelect(section: BehaviorSection) {
     if (section !== selected.value && !(await mayDropDrafts())) return;
     selected.value = section;
@@ -97,6 +112,7 @@ async function onSelect(section: BehaviorSection) {
             @updated="applyTrigger($event, mayDropDrafts)"
             @deleted="load"
             @add="adding = true"
+            @reorder="onReorder"
         />
         <p v-else-if="error" class="page-error" role="alert">{{ error }}</p>
 

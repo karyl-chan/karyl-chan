@@ -1215,7 +1215,10 @@
             "note": {
                 "guild": "要限制這個伺服器裡哪些身分組或頻道能用指令，請到 Discord 的「伺服器設定 → 整合」。",
                 "channel": "Discord 無法把指令限定在單一頻道，所以這裡只有訊息比對。"
-            }
+            },
+            "reorderHandle": "拖曳排序「{title}」",
+            "reorderHint": "拖曳排序，或按 Alt + ↑／↓",
+            "reorderStale": "這個位置的行為剛被其他人變更，已重新載入；請再排一次。"
         },
         "card": {
             "systemRowLocked": "系統行為，固定排在最前面",
