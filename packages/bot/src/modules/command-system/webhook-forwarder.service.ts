@@ -16,14 +16,15 @@
  *     只認得舊密鑰又只讀標準 header 的 receiver 會立刻拒收 —— 無停機輪換
  *     要 receiver 先同時接受 -Previous header（docs/features/behaviors.md）。
  *   - URL 解密後才用
- *   - 解析 response 拿 relayContent / relayEmbeds
- *   - 回 ForwardResult { ok, relayContent, relayEmbeds?, status?, error? }
+ *   - 解析 response 成回覆模型（behavior-reply.ts，#140）
+ *   - 回 ForwardResult { ok, reply, notes, status?, error? }
  */
 
 import type { RESTPostAPIWebhookWithTokenJSONBody } from "discord.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import {
   buildOutboundSignatureHeaders,
+  generateNonce,
   signBody,
   verifyInboundSignatureWithKeys,
   NONCE_HEADER,
@@ -41,81 +42,82 @@ import { webhookAllowlist } from "../../config.js";
 import type { AllowlistEntry } from "../../utils/webhook-allowlist.js";
 import { decryptSecret } from "../../utils/crypto.js";
 import type { BehaviorWebhookActionRow } from "../behavior/models/behavior-webhook-action.model.js";
-import type { ForwardResult, SanitizedEmbed } from "./types.js";
+import type { ForwardErrorCode, ForwardResult } from "./types.js";
+import {
+  MAX_REPLY_BODY_BYTES,
+  parseBehaviorReply,
+  type ReplyNote,
+} from "./behavior-reply.js";
 
-// ── BH-2.2A：embeds 白名單清洗 ───────────────────────────────────────────────
-// webhook 回應來自外部服務，不可信：只搬白名單欄位、強制型別、按 Discord
-// 上限截斷。壞形狀的個別 embed 靜默丟棄（content 仍照常 relay）。
-
-const MAX_EMBEDS = 10;
-const MAX_FIELDS = 25;
-
-function clampStr(v: unknown, max: number): string | undefined {
-  if (typeof v !== "string" || v.length === 0) return undefined;
-  return v.length > max ? v.slice(0, max) : v;
-}
-
-function sanitizeOneEmbed(raw: unknown): SanitizedEmbed | null {
-  if (typeof raw !== "object" || raw === null) return null;
-  const e = raw as Record<string, unknown>;
-  const out: SanitizedEmbed = {};
-  const title = clampStr(e["title"], 256);
-  if (title) out.title = title;
-  const description = clampStr(e["description"], 4096);
-  if (description) out.description = description;
-  const url = clampStr(e["url"], 2048);
-  if (url && /^https?:\/\//i.test(url)) out.url = url;
-  if (typeof e["color"] === "number" && Number.isInteger(e["color"])) {
-    out.color = Math.max(0, Math.min(0xffffff, e["color"]));
+/**
+ * Read the body, giving up past `max` bytes (null). A declared
+ * Content-Length over the cap is refused before reading anything.
+ */
+async function readCapped(res: Response, max: number): Promise<string | null> {
+  const declared = Number(res.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > max) {
+    await res.body?.cancel().catch(() => {});
+    return null;
   }
-  const ts = clampStr(e["timestamp"], 64);
-  if (ts && !Number.isNaN(new Date(ts).getTime())) out.timestamp = ts;
-  const footer = e["footer"] as Record<string, unknown> | undefined;
-  const footerText = footer ? clampStr(footer["text"], 2048) : undefined;
-  if (footerText) {
-    out.footer = { text: footerText };
-    const icon = footer ? clampStr(footer["icon_url"], 2048) : undefined;
-    if (icon && /^https?:\/\//i.test(icon)) out.footer.icon_url = icon;
-  }
-  for (const key of ["image", "thumbnail"] as const) {
-    const obj = e[key] as Record<string, unknown> | undefined;
-    const u = obj ? clampStr(obj["url"], 2048) : undefined;
-    if (u && /^https?:\/\//i.test(u)) out[key] = { url: u };
-  }
-  const author = e["author"] as Record<string, unknown> | undefined;
-  const authorName = author ? clampStr(author["name"], 256) : undefined;
-  if (authorName) {
-    out.author = { name: authorName };
-    const aUrl = author ? clampStr(author["url"], 2048) : undefined;
-    if (aUrl && /^https?:\/\//i.test(aUrl)) out.author.url = aUrl;
-    const aIcon = author ? clampStr(author["icon_url"], 2048) : undefined;
-    if (aIcon && /^https?:\/\//i.test(aIcon)) out.author.icon_url = aIcon;
-  }
-  if (Array.isArray(e["fields"])) {
-    const fields: NonNullable<SanitizedEmbed["fields"]> = [];
-    for (const f of e["fields"] as unknown[]) {
-      if (typeof f !== "object" || f === null) continue;
-      const fr = f as Record<string, unknown>;
-      const name = clampStr(fr["name"], 256);
-      const value = clampStr(fr["value"], 1024);
-      if (!name || !value) continue;
-      fields.push({ name, value, inline: !!fr["inline"] });
-      if (fields.length >= MAX_FIELDS) break;
+  if (!res.body) return "";
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) {
+      await reader.cancel().catch(() => {});
+      return null;
     }
-    if (fields.length > 0) out.fields = fields;
+    chunks.push(value);
   }
-  return Object.keys(out).length > 0 ? out : null;
+  return Buffer.concat(chunks).toString("utf8");
 }
 
-export function sanitizeEmbeds(raw: unknown): SanitizedEmbed[] {
-  if (!Array.isArray(raw)) return [];
-  const out: SanitizedEmbed[] = [];
-  for (const item of raw) {
-    const e = sanitizeOneEmbed(item);
-    if (e) out.push(e);
-    if (out.length >= MAX_EMBEDS) break;
+/**
+ * What a reply lost in parsing is the receiver author's business: log it
+ * once per behavior and kind of loss for the life of the process, not on
+ * every message (#140 — unknown fields are ignored and logged once). The
+ * set is capped; past the cap the oldest key is forgotten.
+ */
+const loggedReplyNotes = new Set<string>();
+const MAX_LOGGED_REPLY_NOTES = 1000;
+
+function logReplyNotes(behaviorId: number, notes: readonly ReplyNote[]): void {
+  for (const note of notes) {
+    const detail =
+      note.kind === "unknown_fields"
+        ? note.fields.join(",")
+        : note.kind === "invalid_field"
+          ? note.field
+          : "";
+    const key = `${behaviorId}:${note.kind}:${detail}`;
+    if (loggedReplyNotes.has(key)) continue;
+    if (loggedReplyNotes.size >= MAX_LOGGED_REPLY_NOTES) {
+      loggedReplyNotes.delete(loggedReplyNotes.values().next().value as string);
+    }
+    loggedReplyNotes.add(key);
+    botEventLog.record(
+      "warn",
+      "bot",
+      `webhook-forwarder: behavior ${behaviorId}'s reply was adjusted (${note.kind}${detail ? `: ${detail}` : ""}) — see the reply contract in docs/features/behaviors.md`,
+      { behaviorId, note },
+    );
   }
-  return out;
+}
+
+/** A failed forward: no reply, and the detail for the log / stats / admin. */
+function fail(error: string, status?: number, errorCode?: ForwardErrorCode): ForwardResult {
+  return {
+    ok: false,
+    reply: {},
+    notes: [],
+    error,
+    ...(status !== undefined ? { status } : {}),
+    ...(errorCode !== undefined ? { errorCode } : {}),
+  };
 }
 
 /** X-Plugin-Webhook-Token header name（CR-2 token mode）。 */
@@ -124,6 +126,56 @@ const PLUGIN_WEBHOOK_TOKEN_HEADER = "x-plugin-webhook-token";
 /** 輪換寬限期內，舊密鑰的 token / 簽章（#99）。 */
 export const PREVIOUS_TOKEN_HEADER = "x-plugin-webhook-token-previous";
 export const PREVIOUS_SIGNATURE_HEADER = "x-karyl-signature-previous";
+
+/**
+ * Test-fire (#101): a marker header, where token mode puts the token
+ * instead, and the prefix of every signed string (request and response).
+ * A receiver that verifies only the real scheme thus refuses a test at the
+ * signature level. Published in CONTRACT_FIXTURES.behaviorWebhook.signing.
+ */
+export const TEST_HEADER = "x-karyl-test";
+export const TEST_TOKEN_HEADER = "x-plugin-webhook-test-token";
+export const TEST_PREVIOUS_TOKEN_HEADER = "x-plugin-webhook-test-token-previous";
+export const TEST_SIGNATURE_PREFIX = "test:";
+
+/** How one request is authenticated: a real one, or an admin test-fire. */
+interface SigningScheme {
+  tokenHeader: string;
+  previousTokenHeader: string;
+  signaturePrefix: string;
+  /** Extra headers that mark the request. */
+  marker: Record<string, string>;
+}
+
+const REAL_SCHEME: SigningScheme = {
+  tokenHeader: PLUGIN_WEBHOOK_TOKEN_HEADER,
+  previousTokenHeader: PREVIOUS_TOKEN_HEADER,
+  signaturePrefix: "",
+  marker: {},
+};
+
+const TEST_SCHEME: SigningScheme = {
+  tokenHeader: TEST_TOKEN_HEADER,
+  previousTokenHeader: TEST_PREVIOUS_TOKEN_HEADER,
+  signaturePrefix: TEST_SIGNATURE_PREFIX,
+  marker: { [TEST_HEADER]: "1" },
+};
+
+/** One POST: where, what, and with which keys and scheme. */
+interface PostRequest {
+  webhookUrl: string;
+  payload: Record<string, unknown>;
+  action: BehaviorWebhookActionRow;
+  secret: string | null;
+  /** The previous secret during a rotation's grace period. */
+  previous: string | null;
+  scheme: SigningScheme;
+}
+
+export interface ForwardOptions {
+  /** An admin test-fire: signed under the test prefix / test headers. */
+  test?: boolean;
+}
 
 // ── WebhookForwarder ─────────────────────────────────────────────────────────
 
@@ -142,21 +194,20 @@ export class WebhookForwarder {
    *
    * @param action   behavior_webhook_actions 的列（url / secret 為密文）
    * @param payload  Discord webhook 形狀的 body（RESTPostAPIWebhookWithTokenJSONBody 相容）
-   * @returns        含 relayContent / relayEmbeds 的結果
+   * @returns        含解析後回覆（reply / notes）的結果
    */
   async forward(
     action: BehaviorWebhookActionRow,
     payload: Record<string, unknown>,
+    opts: ForwardOptions = {},
   ): Promise<ForwardResult> {
     let webhookUrl: string;
     try {
       webhookUrl = decryptSecret(action.url);
     } catch (err) {
-      return {
-        ok: false,
-        relayContent: "",
-        error: `webhookUrl 解密失敗：${err instanceof Error ? err.message : String(err)}`,
-      };
+      return fail(
+        `webhookUrl 解密失敗：${err instanceof Error ? err.message : String(err)}`,
+      );
     }
 
     // 計算 secret（需在解密後才能簽署）
@@ -178,12 +229,9 @@ export class WebhookForwarder {
         `webhook-forwarder: behavior ${action.behaviorId} is hmac mode but its webhookSecret could not be decrypted — refusing to forward (fail closed).`,
         { behaviorId: action.behaviorId },
       );
-      return {
-        ok: false,
-        relayContent: "",
-        error:
-          "hmac mode: webhook secret unavailable (rotated key or corrupt ciphertext) — refusing to forward unsigned",
-      };
+      return fail(
+        "hmac mode: webhook secret unavailable (rotated key or corrupt ciphertext) — refusing to forward unsigned",
+      );
     }
 
     // 輪換寬限期內的舊密鑰；過期或解不開就當作沒有
@@ -195,27 +243,27 @@ export class WebhookForwarder {
         ? this.safeDecrypt(action.previousSecret, action.behaviorId)
         : null;
 
-    return this.doPost(webhookUrl, payload, action, rawSecret, rawPrevious);
+    return this.doPost({
+      webhookUrl,
+      payload,
+      action,
+      secret: rawSecret,
+      previous: rawPrevious,
+      scheme: opts.test ? TEST_SCHEME : REAL_SCHEME,
+    });
   }
 
   // ── 私有：HTTP POST ───────────────────────────────────────────────────────
 
-  private async doPost(
-    webhookUrl: string,
-    payload: Record<string, unknown>,
-    action: BehaviorWebhookActionRow,
-    rawSecret: string | null,
-    rawPrevious: string | null,
-  ): Promise<ForwardResult> {
+  private async doPost(request: PostRequest): Promise<ForwardResult> {
+    const { webhookUrl, payload, action, scheme } = request;
+    const rawSecret = request.secret;
+    const rawPrevious = request.previous;
     let url: URL;
     try {
       url = new URL(webhookUrl);
     } catch {
-      return {
-        ok: false,
-        relayContent: "",
-        error: "無效的 webhook URL",
-      };
+      return fail("無效的 webhook URL");
     }
 
     url.searchParams.set("wait", "true");
@@ -223,21 +271,27 @@ export class WebhookForwarder {
     const body = JSON.stringify(payload);
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
+      ...scheme.marker,
     };
 
-    // HMAC 簽署（CR-2 兩 mode）
+    // HMAC 簽署（CR-2 兩 mode）。每個請求一個 nonce；回應的簽章必須綁定
+    // 它（#102），token mode 也送，讓有簽回應的 receiver 能綁。
     const authMode = action.authMode;
+    const nonce = generateNonce();
     if (rawSecret) {
       if (authMode === "token") {
-        // token mode：X-Plugin-Webhook-Token: <secret>（裸 shared secret）
-        headers[PLUGIN_WEBHOOK_TOKEN_HEADER] = rawSecret;
-        if (rawPrevious) headers[PREVIOUS_TOKEN_HEADER] = rawPrevious;
+        // token mode：X-Plugin-Webhook-Token: <secret>（裸 shared secret）；
+        // test-fire 改放 X-Plugin-Webhook-Test-Token（scheme 決定）
+        headers[scheme.tokenHeader] = rawSecret;
+        if (rawPrevious) headers[scheme.previousTokenHeader] = rawPrevious;
+        headers[NONCE_HEADER] = nonce;
       } else if (authMode === "hmac") {
         const sigHeaders = buildOutboundSignatureHeaders(
           rawSecret,
           "POST",
           url.pathname,
           body,
+          { nonce, prefix: scheme.signaturePrefix },
         );
         Object.assign(headers, sigHeaders);
         if (rawPrevious) {
@@ -248,6 +302,7 @@ export class WebhookForwarder {
             sigHeaders[TIMESTAMP_HEADER]!,
             sigHeaders[NONCE_HEADER]!,
             body,
+            { prefix: scheme.signaturePrefix },
           );
         }
       }
@@ -261,19 +316,14 @@ export class WebhookForwarder {
       target = await resolveWebhookTarget(url, this.allowlist);
     } catch (err) {
       if (!(err instanceof HostPolicyError)) throw err;
-      return {
-        ok: false,
-        relayContent: "",
-        error: err.message,
-        errorCode: err.code,
-      };
+      return fail(err.message, undefined, err.code);
     }
 
     // 發送 HTTP POST —— connection pinned to the checked addresses so a DNS
     // answer that changes after the check (rebinding) can't redirect it.
     const agent = createPinnedAgent(target.addresses);
     let res: Response;
-    let rawText: string;
+    let rawText: string | null;
     try {
       try {
         res = await fetch(url, {
@@ -293,42 +343,49 @@ export class WebhookForwarder {
         } as RequestInit);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        return {
-          ok: false,
-          relayContent: "",
-          error: `network error: ${msg}`,
-        };
+        return fail(`network error: ${msg}`);
       }
 
       // A webhook endpoint redirecting is not a success — and with
       // redirect: "manual" we won't have followed it. Treat any 3xx as a
       // failed delivery rather than reading the redirect body as content.
       if (res.status >= 300 && res.status < 400) {
-        return {
-          ok: false,
-          relayContent: "",
-          status: res.status,
-          error: `webhook returned a redirect (HTTP ${res.status}); redirects are not followed`,
-        };
+        return fail(
+          `webhook returned a redirect (HTTP ${res.status}); redirects are not followed`,
+          res.status,
+        );
       }
 
-      rawText = await res.text().catch(() => "");
+      try {
+        rawText = await readCapped(res, MAX_REPLY_BODY_BYTES);
+      } catch (err) {
+        return fail(
+          `could not read the response body: ${err instanceof Error ? err.message : String(err)}`,
+          res.status,
+        );
+      }
     } finally {
       // One-shot agent: drop its socket once the response is read (or
       // abandoned on the error / redirect paths above).
       void agent.destroy().catch(() => {});
     }
 
-    if (!res.ok) {
-      return {
-        ok: false,
-        relayContent: "",
-        status: res.status,
-        error: rawText ? rawText.slice(0, 500) : `HTTP ${res.status}`,
-      };
+    if (rawText === null) {
+      return fail(`response body exceeds ${MAX_REPLY_BODY_BYTES / 1024} KiB`, res.status);
     }
 
-    // Response signature verification:
+    if (!res.ok) {
+      return fail(
+        rawText ? rawText.slice(0, 500) : `HTTP ${res.status}`,
+        res.status,
+      );
+    }
+
+    // Response signature verification — over the REQUEST's nonce
+    // (`<METHOD>:<path>:<ts>:<request nonce>:<body>`, #102), so a response
+    // signed for another request (another user's) can't be swapped in. No
+    // legacy nonce-less form: a hard switch, documented in
+    // docs/features/behaviors.md.
     //
     //  - hmac mode → required, fail closed if missing/invalid.
     //  - token mode → optional but verified opportunistically: if the
@@ -343,6 +400,7 @@ export class WebhookForwarder {
     //  Webhook authors who want token-mode signing can use the same
     //  buildOutboundSignatureHeaders helper from utils/hmac.ts.
     const hasSignatureHeaders = res.headers.has(SIGNATURE_HEADER);
+    let verified: ForwardResult["verified"];
     if (rawSecret && (authMode === "hmac" || hasSignatureHeaders)) {
       const verdict = verifyInboundSignatureWithKeys(
         rawPrevious ? [rawSecret, rawPrevious] : [rawSecret],
@@ -351,15 +409,12 @@ export class WebhookForwarder {
         Math.floor(Date.now() / 1000),
         "POST",
         url.pathname,
+        { boundNonce: nonce, prefix: scheme.signaturePrefix },
       );
       if (!verdict.ok) {
-        return {
-          ok: false,
-          relayContent: "",
-          status: res.status,
-          error: verdict.reason,
-        };
+        return fail(verdict.reason, res.status, "response_signature");
       }
+      verified = authMode === "hmac" ? "hmac" : "token";
     } else if (
       authMode === "token" &&
       rawText.length > 0 &&
@@ -373,28 +428,24 @@ export class WebhookForwarder {
       );
     }
 
-    // 解析 response body
-    let responseContent = "";
-    let relayEmbeds: SanitizedEmbed[] | undefined;
-    if (rawText.length > 0) {
-      try {
-        const parsed = JSON.parse(rawText) as {
-          content?: unknown;
-          embeds?: unknown;
-        };
-        if (typeof parsed.content === "string") {
-          responseContent = parsed.content;
-        }
-        // BH-2.2A：embeds（白名單清洗；壞形狀靜默丟個別 embed）
-        const sanitized = sanitizeEmbeds(parsed.embeds);
-        if (sanitized.length > 0) relayEmbeds = sanitized;
-      } catch {
-        // wait=true 應永遠回 JSON，misbehaving webhook server 回純文字時視為無 content
-        return { ok: true, relayContent: "" };
-      }
+    // 解析 response body（#140 回覆模型）。空 body = 動作選擇不回覆；
+    // 非 JSON 或不是物件 = receiver 壞掉，算失敗（不再默默變成空回覆）。
+    const okWith = (reply: ForwardResult["reply"], notes: ForwardResult["notes"]): ForwardResult =>
+      verified ? { ok: true, reply, notes, verified } : { ok: true, reply, notes };
+    if (rawText.length === 0) return okWith({}, []);
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(rawText);
+    } catch {
+      return fail("response body is not JSON", res.status);
     }
-
-    return { ok: true, relayContent: responseContent.trim(), relayEmbeds };
+    const parsed = parseBehaviorReply(decoded);
+    if (!parsed.ok) {
+      return fail(parsed.error, res.status);
+    }
+    // a test-fire's notes go back to the admin, not into the log
+    if (scheme === REAL_SCHEME) logReplyNotes(action.behaviorId, parsed.notes);
+    return okWith(parsed.reply, parsed.notes);
   }
 
   // ── 私有：安全解密（不讓解密失敗 crash forward）──────────────────────────

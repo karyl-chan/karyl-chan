@@ -64,7 +64,7 @@ describe("WebhookForwarder connects to the checked address", () => {
       content: "hi",
     });
 
-    expect(result).toMatchObject({ ok: true, relayContent: "pinned ok" });
+    expect(result).toMatchObject({ ok: true, reply: { content: "pinned ok" } });
     expect(received).toHaveLength(1);
     expect(received[0].host).toBe(`rebind.invalid:${port}`);
     expect(received[0].url).toBe("/hook?wait=true");

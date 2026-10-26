@@ -49,6 +49,9 @@ export const behaviorCommonFields = {
   title: titleSchema,
   description: noteSchema,
   enabled: { type: "boolean" },
+  // who the reply is for when the response does not say; null = the
+  // trigger's own default (#140)
+  replyVisibility: { anyOf: [{ enum: ["private", "public"] }, { type: "null" }] },
 } as const;
 
 /** Message Trigger fields (ADR 0003). */

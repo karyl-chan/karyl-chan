@@ -4,7 +4,9 @@
  *   path 4: message trigger created over the admin write API (#136) →
  *           test-fire → REAL HTTP POST to a webhook sink → auth headers
  *           per mode (none / token / hmac, with the secret the API issued
- *           once) → signed-response verification → secret rotation: both
+ *           once; a test-fire is signed under the `test:` prefix / test
+ *           token header and carries no real identity, #101) →
+ *           signed-response verification → secret rotation: both
  *           signatures during the grace period, a response signed with the
  *           old secret still accepted
  *           + the command write API on Postgres: a command saved while the
@@ -34,7 +36,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { spawn, type ChildProcess } from "node:child_process";
-import { createHmac, randomBytes } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { createServer as createHttpServer, type Server } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import { networkInterfaces } from "node:os";
@@ -131,7 +133,10 @@ async function api(
   return { status: res.status, body: await res.json().catch(() => null) };
 }
 
-/** The shared `<METHOD>:<path>:<ts>:<nonce>:<body>` HMAC-SHA256 scheme. */
+/**
+ * The shared `<METHOD>:<path>:<ts>:<nonce>:<body>` HMAC-SHA256 scheme; a
+ * test-fire signs it under the `test:` prefix (#101).
+ */
 function hmacSign(
   secret: string,
   method: string,
@@ -139,11 +144,15 @@ function hmacSign(
   ts: string,
   nonce: string,
   body: string,
+  prefix = "",
 ): string {
   return createHmac("sha256", secret)
-    .update(`${method.toUpperCase()}:${urlPath}:${ts}:${nonce}:${body}`)
+    .update(`${prefix}${method.toUpperCase()}:${urlPath}:${ts}:${nonce}:${body}`)
     .digest("hex");
 }
+
+/** Every request in this suite is an admin test-fire. */
+const TEST_PREFIX = "test:";
 
 // ─── Webhook sink ────────────────────────────────────────────────────────────
 
@@ -156,8 +165,11 @@ interface SinkHit {
 interface Sink {
   url(path: string): string;
   hits: SinkHit[];
-  /** Next response: JSON body + optionally sign it with `secret`. */
-  respondWith(body: unknown, opts?: { signWithSecret?: string }): void;
+  /**
+   * Next response: JSON body + optionally sign it with `secret`, over the
+   * request's nonce unless `foreignNonce` says to sign another one.
+   */
+  respondWith(body: unknown, opts?: { signWithSecret?: string; foreignNonce?: string }): void;
   close(): Promise<void>;
 }
 
@@ -166,6 +178,7 @@ async function startSink(): Promise<Sink> {
   const hits: SinkHit[] = [];
   let nextBody: unknown = { content: "" };
   let nextSignSecret: string | null = null;
+  let nextForeignNonce: string | null = null;
 
   const server: Server = createHttpServer((req, res) => {
     const chunks: Buffer[] = [];
@@ -183,11 +196,12 @@ async function startSink(): Promise<Sink> {
       };
       if (nextSignSecret) {
         // hmac-mode behaviors verify the RESPONSE fail-closed, with the
-        // same scheme and the REQUEST's method+path as the bound context.
+        // same scheme and the REQUEST's method + path + nonce as the bound
+        // context (#102: a response signed for another request is refused).
         const ts = String(Math.floor(Date.now() / 1000));
-        const nonce = randomBytes(16).toString("hex");
+        const nonce = nextForeignNonce ?? (req.headers["x-karyl-nonce"] as string);
         headers["x-karyl-timestamp"] = ts;
-        headers["x-karyl-nonce"] = nonce;
+        // a test-fire is answered under the same `test:` prefix
         headers["x-karyl-signature"] = hmacSign(
           nextSignSecret,
           "POST",
@@ -195,6 +209,7 @@ async function startSink(): Promise<Sink> {
           ts,
           nonce,
           payload,
+          req.headers["x-karyl-test"] === "1" ? TEST_PREFIX : "",
         );
       }
       res.writeHead(200, headers);
@@ -214,6 +229,7 @@ async function startSink(): Promise<Sink> {
     respondWith(body, opts) {
       nextBody = body;
       nextSignSecret = opts?.signWithSecret ?? null;
+      nextForeignNonce = opts?.foreignNonce ?? null;
     },
     close: () =>
       new Promise<void>((resolve) => {
@@ -323,24 +339,45 @@ describe("behavior webhook + DM inbox E2E (PM-2.3, paths 4+5)", { skip: !DB_URL 
     return api("POST", `${botUrl}/api/behaviors/${id}/test`);
   }
 
-  it("path 4: forwards with no auth mode and relays the sink's content", async () => {
+  it("path 4: forwards with no auth mode and previews the sink's reply", async () => {
     const { id } = await createBehavior("none");
-    sink!.respondWith({ content: "ok from sink" });
+    // the reply model (#140): link buttons pass, anything else is noted
+    sink!.respondWith({
+      content: "ok from sink",
+      ephemeral: true,
+      components: [
+        { type: 1, components: [{ type: 2, style: 5, label: "Open", url: "https://example.com/x" }] },
+        { type: 1, components: [{ type: 2, style: 1, label: "Click", custom_id: "c" }] },
+      ],
+      tts: true,
+    });
 
     const fired = await testFire(id);
     assert.equal(fired.status, 200, JSON.stringify(fired.body));
-    const result = fired.body as { ok: boolean; relayContent: string };
+    const result = fired.body as {
+      ok: boolean;
+      reply: { content?: string; ephemeral?: boolean; components?: unknown[] };
+      notes: Array<{ kind: string }>;
+    };
     assert.equal(result.ok, true, JSON.stringify(result));
-    assert.equal(result.relayContent, "ok from sink");
+    assert.equal(result.reply.content, "ok from sink");
+    assert.equal(result.reply.ephemeral, true);
+    assert.equal(result.reply.components?.length, 1, "only the https link button survives");
+    assert.deepEqual(
+      result.notes.map((n) => n.kind).sort(),
+      ["components_dropped", "unknown_fields"],
+    );
 
     const hit = sink!.hits.at(-1)!;
     assert.equal(hit.path, "/hook/none");
     const payload = JSON.parse(hit.body) as {
       content: string;
-      _meta: { test: boolean; behavior_id: number };
+      _meta: { test: boolean; behavior_id: number; user: { id: string } };
     };
     assert.equal(payload._meta.test, true);
     assert.equal(payload._meta.behavior_id, id);
+    assert.equal(payload._meta.user.id, "0", "a test-fire carries a placeholder user, not the admin");
+    assert.equal(hit.headers["x-karyl-test"], "1");
     assert.ok(payload.content.includes("test fire"));
     assert.equal(hit.headers["x-plugin-webhook-token"], undefined);
     assert.equal(hit.headers["x-karyl-signature"], undefined);
@@ -351,12 +388,14 @@ describe("behavior webhook + DM inbox E2E (PM-2.3, paths 4+5)", { skip: !DB_URL 
     sink!.respondWith({ content: "token ok" });
 
     const fired = await testFire(id);
-    const result = fired.body as { ok: boolean; relayContent: string };
+    const result = fired.body as { ok: boolean; reply: { content?: string } };
     assert.equal(result.ok, true, JSON.stringify(fired.body));
-    assert.equal(result.relayContent, "token ok");
+    assert.equal(result.reply.content, "token ok");
 
     const hit = sink!.hits.at(-1)!;
-    assert.equal(hit.headers["x-plugin-webhook-token"], secret);
+    // a test-fire sends the token under the test header only (#101)
+    assert.equal(hit.headers["x-plugin-webhook-test-token"], secret);
+    assert.equal(hit.headers["x-plugin-webhook-token"], undefined);
   });
 
   it("path 4: hmac mode signs the request and verifies the response fail-closed", async () => {
@@ -368,9 +407,9 @@ describe("behavior webhook + DM inbox E2E (PM-2.3, paths 4+5)", { skip: !DB_URL 
     //    the content is relayed.
     sink!.respondWith({ content: "bye" }, { signWithSecret: secret });
     const fired = await testFire(id);
-    const result = fired.body as { ok: boolean; relayContent: string };
+    const result = fired.body as { ok: boolean; reply: { content?: string } };
     assert.equal(result.ok, true, JSON.stringify(fired.body));
-    assert.equal(result.relayContent, "bye");
+    assert.equal(result.reply.content, "bye");
 
     // Verify the bot's request signature like a webhook author would.
     const hit = sink!.hits.at(-1)!;
@@ -380,11 +419,25 @@ describe("behavior webhook + DM inbox E2E (PM-2.3, paths 4+5)", { skip: !DB_URL 
     assert.ok(ts && nonce && sig, "hmac mode must send all three headers");
     assert.equal(
       sig,
+      hmacSign(secret, "POST", "/hook/hmac", ts, nonce, hit.body, TEST_PREFIX),
+      "a test-fire's signature verifies under the test prefix",
+    );
+    assert.notEqual(
+      sig,
       hmacSign(secret, "POST", "/hook/hmac", ts, nonce, hit.body),
-      "request signature must verify with the shared scheme",
+      "… and never as a real request",
     );
 
-    // 2. An UNSIGNED response in hmac mode must be rejected (fail closed).
+    // 2. A response signed for ANOTHER request (its nonce) is refused —
+    //    the swap #102 closes.
+    sink!.respondWith({ content: "someone else's link" }, {
+      signWithSecret: secret,
+      foreignNonce: nonce === "f".repeat(32) ? "e".repeat(32) : "f".repeat(32),
+    });
+    const swapped = await testFire(id);
+    assert.equal((swapped.body as { ok: boolean }).ok, false, "a response bound to another nonce must not verify");
+
+    // 3. An UNSIGNED response in hmac mode must be rejected (fail closed).
     sink!.respondWith({ content: "unsigned imposter" });
     const rejected = await testFire(id);
     const verdict = rejected.body as { ok: boolean; error: string | null };
@@ -413,9 +466,9 @@ describe("behavior webhook + DM inbox E2E (PM-2.3, paths 4+5)", { skip: !DB_URL 
     // A receiver still on the OLD secret: its signed response is accepted …
     sink!.respondWith({ content: "old receiver" }, { signWithSecret: oldSecret });
     const fired = await testFire(created.id);
-    const result = fired.body as { ok: boolean; relayContent: string };
+    const result = fired.body as { ok: boolean; reply: { content?: string } };
     assert.equal(result.ok, true, JSON.stringify(fired.body));
-    assert.equal(result.relayContent, "old receiver");
+    assert.equal(result.reply.content, "old receiver");
 
     // … and the request carries both signatures over the same ts / nonce.
     const hit = sink!.hits.at(-1)!;
@@ -423,12 +476,12 @@ describe("behavior webhook + DM inbox E2E (PM-2.3, paths 4+5)", { skip: !DB_URL 
     const nonce = hit.headers["x-karyl-nonce"] as string;
     assert.equal(
       hit.headers["x-karyl-signature"],
-      hmacSign(newSecret, "POST", "/hook/rotate", ts, nonce, hit.body),
+      hmacSign(newSecret, "POST", "/hook/rotate", ts, nonce, hit.body, TEST_PREFIX),
       "the standard header is signed with the NEW secret",
     );
     assert.equal(
       hit.headers["x-karyl-signature-previous"],
-      hmacSign(oldSecret, "POST", "/hook/rotate", ts, nonce, hit.body),
+      hmacSign(oldSecret, "POST", "/hook/rotate", ts, nonce, hit.body, TEST_PREFIX),
       "the previous secret's signature rides along during the grace period",
     );
   });

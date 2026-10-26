@@ -45,7 +45,18 @@ describe('leaf draft', () => {
             description: '',
             leafDescription: null,
             options: [],
+            replyVisibility: null,
             webhook: { url: '', authMode: 'hmac' },
+        });
+    });
+
+    it('carries the reply default, and a change to it is a patch', () => {
+        const saved = savedLeaf({ replyVisibility: 'public' });
+        const draft = draftFromLeaf(saved);
+        expect(leafBody(draft).replyVisibility).toBe('public');
+        expect(leafPatch(saved, { ...draft, replyVisibility: null })).toEqual({
+            replyVisibility: null,
+            ifUpdatedAt: saved.updatedAt,
         });
     });
 });

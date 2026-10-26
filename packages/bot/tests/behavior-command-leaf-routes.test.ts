@@ -141,6 +141,28 @@ function deleteLeaf(id: number) {
   return server.inject({ method: "DELETE", url: `/api/behaviors/${id}` });
 }
 
+describe("reply visibility of a leaf (#140)", () => {
+  it("is stored on create and add, changed by PATCH without re-registering", async () => {
+    const { id, leafId } = await createCommand([leaf("wake", { replyVisibility: "public" })]);
+    const added = await addLeaf(id, leaf("status", { replyVisibility: "private" }));
+    expect(added.json().behavior.replyVisibility).toBe("private");
+
+    guildCmds.edit.mockClear();
+    guildCmds.create.mockClear();
+    const res = await patchLeaf(leafId("wake"), { replyVisibility: null });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().behavior.replyVisibility).toBeNull();
+    // not something Discord sees
+    expect(guildCmds.edit).not.toHaveBeenCalled();
+    expect(guildCmds.create).not.toHaveBeenCalled();
+
+    const [update] = await listAudit({ limit: 1 });
+    expect(update!.context).toMatchObject({
+      changed: { replyVisibility: { from: "public", to: null } },
+    });
+  });
+});
+
 describe("POST /api/behavior-commands/:id/leaves", () => {
   it("adds a subcommand and registers it", async () => {
     const { id } = await createCommand([leaf("wake")]);

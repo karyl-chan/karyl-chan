@@ -122,19 +122,79 @@ obtain a synchronous response):
   - `message_id`, `channel_id`, `behavior_id`
   - `attachments` — `[{ url, filename, content_type, size }]` for any
     files attached to the DM.
+  - `captures` — a regex trigger's capture groups, group 1 first (a named
+    group counts by its position; `null` for an optional group that took
+    no part). `天氣 台北` against `^天氣\s+(.+)` sends `["台北"]`. Always
+    `[]` for `startswith` / `endswith`.
 
 (The top-level shape stays Discord-webhook compatible — no `embeds` or
 `allowed_mentions` outbound. The `allowed_mentions: { parse: [] }` guard is
 applied to the bot's *response* relayed back into the DM, not to this
 outbound webhook call. The slash path's `_meta` additionally carries the
-interaction fields and now also `behavior_id`.)
+interaction fields, `behavior_id`, and the invoked leaf's path as
+`sub_command_name` / `sub_command_group` — the names the plugin command
+payload uses, `null` on a root leaf; `content` keeps reading
+`/name sub`.)
 
-Webhook → bot — the response's `content` is relayed back to the caller.
-The response may also carry `embeds` (BH-2.2A): an array of Discord-shaped
-embed objects, sanitized through a whitelist (title/description/url/color/
-timestamp/footer/image/thumbnail/author/fields), truncated to Discord's
-length limits, capped at 10, with non-http(s) urls dropped. A response may
-be embeds-only.
+### Reply contract (v1)
+
+Webhook → bot — the response body is a **Behavior Reply**, the same shape
+a plugin sends to `interactions.respond` (without the token). The earlier
+`{ content, embeds }` response is a subset of it, so there is no version
+field. The built-in login action answers with the same structure. The
+canonical lists live in `CONTRACT_FIXTURES.behaviorWebhook.response`
+(`@karyl-chan/plugin-wire`).
+
+| Field | Type | Phase-1 rule |
+|-------|------|--------------|
+| `content` | string | Trimmed. Over 2000 characters it is cut and ends with a new line and `…(truncated)`. |
+| `embeds` | array | Whitelisted fields (title / description / url / color / timestamp / footer / image / thumbnail / author / fields), Discord's per-field lengths, non-http(s) urls dropped. At most 10, and at most 6000 characters across all of them — an embed that would pass 6000 is dropped, later smaller ones may still fit. |
+| `components` | array | Action rows (`type: 1`) of **link buttons only** (`type: 2, style: 5`, an `https://` `url` ≤ 512 characters, a non-empty `label`, cut to 80). At most 5 rows of 5. Anything else is dropped. |
+| `ephemeral` | boolean | Who sees the reply — see below. |
+| `flags` | integer | Only `SuppressEmbeds` (4) and `SuppressNotifications` (4096) are kept. Visibility is never a flag. |
+
+Any other top-level field is ignored, and the bot logs it once per
+behavior. A field of the wrong type is ignored the same way. The body may
+be at most **64 KiB**; a larger body, a non-empty body that is not JSON, or
+JSON that is not an object fails the action. An empty body (or an object
+with nothing to show) means "no reply".
+
+`ephemeral`, per trigger:
+
+| Trigger | Default | `ephemeral: false` | `ephemeral: true` |
+|---------|---------|--------------------|-------------------|
+| Command | only the invoker sees it | posted publicly (the bot follows up publicly and deletes its private "thinking…" placeholder — the plugin defer table) | only the invoker |
+| Message in a DM with the bot | in the DM | in the DM | in the DM (ignored) |
+| Message in a guild channel | in the channel | in the channel | DMed to the author; never in the channel |
+
+The "Default" column can be changed per behavior: a command leaf and a
+guild message trigger store `replyVisibility` (admin UI: 「回覆給誰看」) —
+`private` (a command: only the invoker; a guild trigger: the author's
+DMs), `public` (the channel), or `null` for the default above. Who sees a
+reply is decided in this order: the response's `ephemeral`, then the
+stored `replyVisibility`, then the trigger's default. A command stored
+`public` defers in the open, so a public answer fills the "thinking…"
+message in place. Not used in a DM with the bot, nor by the system login.
+
+Mentions in a reply are never parsed. There is no `[BEHAVIOR:END]` marker
+any more: it ended a conversation session, and sessions were removed
+with ADR 0003 (S1), so a reply never ends anything.
+
+When an action fails — the webhook is unreachable, answers non-2xx, fails
+signature checks, sends a body the rules above refuse, or Discord refuses
+the reply — the user gets a generic localized line ("couldn't be completed
+right now"), never the receiver's error text:
+
+| Trigger | Where the failure line goes |
+|---------|-----------------------------|
+| Command | the invoker only: a private "thinking…" placeholder is filled with it; a public one (a leaf stored `public`) is deleted and the line follows up privately |
+| Message in a DM with the bot | the DM |
+| Message in a guild channel | a DM to the author; if that DM fails, nothing — the channel never hears about it |
+
+An ephemeral guild reply that can't be DMed is a failure too, and also
+says nothing in the channel. The system login never speaks in a guild
+channel at all. The detail goes only to the log (`bot_events`) and the
+behavior's stats (`lastError`), which the admin UI shows.
 
 Slash behaviors may define command options (BH-2.2C,
 `slashCommandOptions`): a flat list of scalar options (string / integer /
@@ -142,8 +202,9 @@ number / boolean / user / channel / role / mentionable / attachment) edited
 in the admin UI, registered to Discord by the reconciler, and delivered to
 the webhook in `_meta.options` as `{ name, type, value }` entries.
 
-Failed dispatch (network error, non-2xx, signature failure) is recorded
-in `bot_events`. The POST has a 10-second timeout.
+Failed dispatch (network error, non-2xx, signature failure, a refused
+body) is recorded in `bot_events` and the behavior's stats. The POST has a
+10-second timeout.
 
 ### Webhook targets
 
@@ -190,7 +251,8 @@ A refusal carries a machine `code` (`private_not_allowlisted`,
 `https_required`, `blocked_loopback`, `blocked_metadata`,
 `blocked_reserved`, `dns_failed`, …) next to a readable `error` that
 names the target and the setting — the save route returns it as a 400
-body, the test-fire route as `{ ok: false, error, errorCode }`.
+body, the test-fire route as `{ ok: false, error, errorCode }` (in its
+`{ ok, reply, notes, status, error, errorCode, verified }` answer).
 
 The legacy `WEBHOOK_ALLOW_PRIVATE=true` switch (allow every private
 address) still works for local development and the e2e harness, but is
@@ -216,18 +278,65 @@ In `hmac` mode the bot sends three headers on the outbound request:
 
 Receivers verifying requests should include the nonce in the signed
 string and remember seen nonces for the 300 s window to reject replays.
+`<path>` is the pathname of the configured webhook URL — the query
+string (including the `?wait=true` the bot adds) is not signed. A receiver
+behind a reverse proxy that rewrites the path must verify against the
+path as configured on the bot, not the one it receives.
 
-The webhook **response** is verified the same way (the bot binds the
-original request's method + path into the expected payload, which blocks
-cross-endpoint replay). For responses the nonce is OPTIONAL — a response
-rides the request's own connection, so response replay isn't a
-stored-request attack; sign with the legacy
-`"<METHOD>:<path>:<ts>:<body>"` form or include an `X-Karyl-Nonce`
-header and the nonced form, either verifies. Timestamps that differ from
-local time by more than 300 seconds are rejected; comparisons use
-`timingSafeEqual`. In `hmac` mode a missing or invalid response
-signature counts as a dispatch failure and **content is not relayed**
-to the caller.
+The webhook **response** is signed with the same secret over the
+**request's** method, path and **nonce** (#102):
+
+```
+X-Karyl-Signature = HMAC_SHA256(secret, "<METHOD>:<path>:<ts>:<request nonce>:<body>")
+```
+
+with `X-Karyl-Timestamp` set to the response's own time. Binding the
+request nonce means a response signed for one request — one user's login
+link — can't be swapped into another's. Sending `X-Karyl-Nonce` on the
+response is optional; if sent it must equal the request's. Timestamps that
+differ from local time by more than 300 seconds are rejected; comparisons
+use `timingSafeEqual`. In `hmac` mode a missing or invalid response
+signature fails the action and **nothing is shown** to the caller but the
+generic failure line. In `token` mode the bot also sends `X-Karyl-Nonce`,
+and a response that carries a signature is verified the same way.
+
+This was a hard switch: the earlier nonce-less response form
+(`"<METHOD>:<path>:<ts>:<body>"`) and responses signed over a nonce of the
+receiver's own no longer verify. A transition window would have kept the
+swap open for its whole length, and when it shipped production had no
+custom behaviors (only the built-in login), so no receiver depended on the
+old form.
+
+### Test-fire requests
+
+The admin **Test webhook** button sends one request to the saved webhook
+action (not the unsaved form). It must never pass for a real user, so it
+is distinguishable **at the signature level** (#101):
+
+| Mode | A test-fire |
+|------|-------------|
+| all | carries `X-Karyl-Test: 1` and `_meta.test: true` |
+| `hmac` | the signed string starts with `test:` — `HMAC(secret, "test:<METHOD>:<path>:<ts>:<nonce>:<body>")` (also `-previous` during a rotation). The response must be signed the same way, `test:` included. |
+| `token` | the token travels in `X-Plugin-Webhook-Test-Token` (and `-Test-Token-Previous`), never in `X-Plugin-Webhook-Token` |
+
+A receiver that verifies only the real scheme therefore rejects a test —
+the admin sees its answer (e.g. HTTP 401), which still proves the bot
+reaches it. A receiver that wants to answer tests verifies them under the
+test scheme and should answer with something harmless (never a real login
+link). A test-fire carries no real identity: `_meta.user` is the
+placeholder `{ id: "0", username: "karyl-test", … }`, not the admin who
+pressed the button.
+
+`POST /api/behaviors/:id/test` answers `{ ok, reply, notes, status,
+error, errorCode, verified }`: the reply after the phase-1 rules, what
+they changed (`notes`), and which key verified the response's signature
+(`"hmac"`, `"token"`, or `null` when the response was not signed). A
+signature that is missing, stale or does not match fails with
+`errorCode: "response_signature"`. The admin UI previews the reply —
+content, embeds, link buttons, who would see it on that trigger, "response
+signature verified" — and, when the service answers 401 / 403 or the
+signature fails, explains that a receiver refusing the test scheme is
+behaving as intended.
 
 ### Secret rotation
 
@@ -286,6 +395,15 @@ function sameHex(a, b) {
     a.length === b.length &&
     crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b))
   );
+}
+
+// The response: sign over the REQUEST's nonce (the bot rejects anything else).
+function signResponse(secret, method, path, requestNonce, body) {
+  const ts = String(Math.floor(Date.now() / 1000));
+  return {
+    'x-karyl-timestamp': ts,
+    'x-karyl-signature': sign(secret, method, path, ts, requestNonce, body),
+  };
 }
 
 function verify(headers, body, method, path, secret) {

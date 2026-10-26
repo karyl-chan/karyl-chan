@@ -244,7 +244,22 @@ This is the bot's command backbone.
   `messageCreate` listener that matches Message Triggers in bot DMs and
   guild channels.
 - `webhook-forwarder.service.ts` — `WebhookForwarder`: webhook POST +
-  HMAC signing and verification.
+  HMAC signing and verification; parses the response into a reply.
+- `behavior-reply.ts` — the Behavior Reply model (#140):
+  `parseBehaviorReply` turns an untrusted webhook response into
+  `{ content?, embeds?, components?, ephemeral?, flags? }` (the plugin
+  `interactions.respond` shape) and notes what it dropped. Pure.
+- `reply-renderer.ts` — `renderReply(reply, target)`: the one place a
+  Behavior Reply reaches Discord, for a command (interaction) or a message
+  trigger (message). A deferred command answers through the plugin defer
+  table (`planRespond` in plugin-system).
+- `webhook-action.ts` — `runWebhookAction`: a webhook action for either
+  trigger — forward, render, count the outcome, and on failure log the
+  detail and give the user only the generic line (never in a guild
+  channel).
+- `builtin-login-action.ts` — the System Behavior's built-in action: mints
+  the login link (admin) and answers with a Behavior Reply (embed + link
+  button, `ephemeral: true`).
 - `models/reconciler-owned-command.model.ts` — reconciler's command
   ownership ledger.
 
@@ -252,8 +267,10 @@ This is the bot's command backbone.
 `MessageTriggerMatcher`, `WebhookForwarder` (all instantiated and wired
 by `main.ts`).
 
-**Depends on.** behavior (reads the behavior catalog); plugin-system (reads
-`plugin_commands`, dispatches plugin interactions); admin; web-core.
+**Depends on.** behavior (reads the behavior catalog, records behavior
+stats); plugin-system (reads `plugin_commands`, dispatches plugin
+interactions); admin (mints the login link); bot-events (logs failures);
+web-core.
 
 ---
 
@@ -483,6 +500,7 @@ any module → web-core / utils / db.ts / config / logger     OK
 admin → bot-events                                           OK   (admin actions write log)
 behavior → admin                                             OK   (audit + capability)
 command-system → behavior / plugin-system                    OK   (reads rules, dispatches)
+command-system → admin                                       OK   (the system login's built-in action mints the link)
 plugin-system ⇢ command-system (import type only)             OK   (CommandTarget / CommandNamespace types)
 behavior ⇢ command-system (import type only)                  OK   (CommandReconciler / CommandNamespace / WebhookForwarder; injected)
 plugin-system → feature-toggle / voice                       OK

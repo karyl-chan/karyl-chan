@@ -30,6 +30,7 @@ import {
   type BehaviorMessageSurface,
   type BehaviorPatternKind,
   type BehaviorSystemKey,
+  type ReplyVisibility,
 } from "./models/behavior-definition.model.js";
 import type { BehaviorCommandRegistration } from "./models/behavior-command.model.js";
 import type { BehaviorWebhookAuthMode } from "./models/behavior-webhook-action.model.js";
@@ -54,6 +55,8 @@ interface BehaviorViewBase {
   actionSource: BehaviorActionSource;
   webhook: WebhookActionView | null;
   stats: BehaviorStatRow | null;
+  /** who the reply is for when the response does not say; null = the trigger's default */
+  replyVisibility: ReplyVisibility | null;
   /** ISO time of the last write; send it back as `ifUpdatedAt` to refuse a stale edit */
   updatedAt: string;
 }
@@ -140,6 +143,7 @@ function baseView(
     actionSource: b.actionSource,
     webhook: webhookView(b),
     stats: stats.get(b.id) ?? null,
+    replyVisibility: b.replyVisibility,
     updatedAt: b.updatedAt.toISOString(),
   };
 }

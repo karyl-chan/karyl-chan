@@ -280,7 +280,7 @@ const savedGroup = computed(() =>
 
             <form class="editor" @submit.prevent="save">
                 <Stack gap="3">
-                    <WebhookTestResult ref="tester" :behavior-id="trigger.id" />
+                    <WebhookTestResult ref="tester" :behavior-id="trigger.id" :target="trigger.surface" :visibility="trigger.replyVisibility" />
 
                     <div class="grid">
                         <AppTextField v-model="draft.title" :label="t('behaviors.card.titleLabel')" :error="errors.fields.title" />
@@ -317,6 +317,8 @@ const savedGroup = computed(() =>
                         :saved="base.webhook"
                         :behavior-id="trigger.id"
                         :issued-secret="issuedSecret"
+                        :reply-target="draft.locationKind === 'bot_dm' ? 'bot_dm' : 'guild'"
+                        :reply-visibility="draft.replyVisibility"
                         @patch="applyPatch"
                         @rotated="emit('reload')"
                     />

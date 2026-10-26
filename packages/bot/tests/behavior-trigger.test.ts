@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { matchesTrigger } from "../src/modules/behavior/behavior-trigger.js";
+import { matchesTrigger, triggerCaptures } from "../src/modules/behavior/behavior-trigger.js";
 
 describe("behavior-trigger.matchesTrigger", () => {
   describe("patternKind=startswith", () => {
@@ -61,5 +61,23 @@ describe("behavior-trigger.matchesTrigger", () => {
       // @ts-expect-error — exercising the runtime defensive branch
       expect(matchesTrigger("nonsense", "x", "x")).toBe(false);
     });
+  });
+});
+
+describe("behavior-trigger.triggerCaptures (#140, board 7)", () => {
+  it("returns a regex's numbered groups in order", () => {
+    expect(triggerCaptures("regex", "^天氣\\s+(.+)", "天氣 台北")).toEqual(["台北"]);
+    expect(triggerCaptures("regex", "^!(\\w+)\\s+(?<arg>\\S+)", "!wake box1 now")).toEqual(["wake", "box1"]);
+  });
+
+  it("an optional group that took no part is null", () => {
+    expect(triggerCaptures("regex", "^!go( fast)?(!)?$", "!go!")).toEqual([null, "!"]);
+  });
+
+  it("is empty for startswith / endswith, a group-less regex and no match", () => {
+    expect(triggerCaptures("startswith", "!go", "!go x")).toEqual([]);
+    expect(triggerCaptures("endswith", "?", "why?")).toEqual([]);
+    expect(triggerCaptures("regex", "^!go", "!go")).toEqual([]);
+    expect(triggerCaptures("regex", "^(x)", "nope")).toEqual([]);
   });
 });

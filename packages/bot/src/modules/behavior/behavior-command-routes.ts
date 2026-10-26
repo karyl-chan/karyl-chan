@@ -193,6 +193,7 @@ export function registerBehaviorCommandRoutes(
           id: leafIds[i],
           subcommand: leaf.subcommand ?? "",
           title: leaf.title.trim(),
+          replyVisibility: leaf.replyVisibility ?? null,
           webhook: webhooks[i]!.audit,
         })),
       });
@@ -357,6 +358,7 @@ export function registerBehaviorCommandRoutes(
         commandId,
         subcommand: body.subcommand,
         title: body.title.trim(),
+        replyVisibility: body.replyVisibility ?? null,
         webhook,
       });
       const result = await withBehaviorWriteLock(async () => {

@@ -82,7 +82,7 @@ describe.skipIf(lanIp === null)("webhook forward to a LAN receiver (real policy)
     const forwarder = new WebhookForwarder(parseAllowlistEntries([lanIp!]));
     const result = await forwarder.forward(behavior(), { content: "ping" });
 
-    expect(result).toMatchObject({ ok: true, relayContent: "hello from the LAN" });
+    expect(result).toMatchObject({ ok: true, reply: { content: "hello from the LAN" } });
     expect(received).toHaveLength(1);
     expect(received[0].url).toBe("/hook?wait=true");
     expect(JSON.parse(received[0].body)).toEqual({ content: "ping" });

@@ -1,4 +1,4 @@
-import type { BehaviorCommandOption, BehaviorPatch, CommandLeafView } from '../../../api/behavior';
+import type { BehaviorCommandOption, BehaviorPatch, CommandLeafView, ReplyVisibility } from '../../../api/behavior';
 import type { DraftModel } from './draft-rebase';
 import { NEW_WEBHOOK, savedWebhookBody, webhookBody, webhookDraftOf, type WebhookDraft } from './webhook-draft';
 
@@ -27,6 +27,8 @@ export interface LeafDraft extends WebhookDraft {
     /** Admin note, never sent to Discord. */
     description: string;
     options: OptionDraft[];
+    /** Who the reply is for when the response does not say; null = only the invoker. */
+    replyVisibility: ReplyVisibility | null;
 }
 
 export const OPTION_TYPES: readonly OptionType[] = [
@@ -48,6 +50,7 @@ export function draftFromLeaf(leaf: CommandLeafView): LeafDraft {
         title: leaf.title,
         description: leaf.description,
         options: leaf.options.map((o) => ({ ...o })),
+        replyVisibility: leaf.replyVisibility,
         ...webhookDraftOf(leaf.webhook),
     };
 }
@@ -60,6 +63,7 @@ export function emptyLeafDraft(): LeafDraft {
         title: '',
         description: '',
         options: [],
+        replyVisibility: null,
         ...NEW_WEBHOOK,
     };
 }
@@ -74,6 +78,7 @@ export interface LeafBody {
     description: string;
     leafDescription: string | null;
     options: BehaviorCommandOption[];
+    replyVisibility: ReplyVisibility | null;
     webhook: { url: string; authMode: 'token' | 'hmac' | null };
 }
 
@@ -90,6 +95,7 @@ export function leafBody(d: LeafDraft): LeafBody {
             description: o.description.trim(),
             required: o.required,
         })),
+        replyVisibility: d.replyVisibility,
         webhook: webhookBody(d),
     };
 }
@@ -101,6 +107,7 @@ function savedBody(leaf: CommandLeafView): LeafBody {
         description: leaf.description,
         leafDescription: leaf.leafDescription,
         options: leaf.options,
+        replyVisibility: leaf.replyVisibility,
         webhook: savedWebhookBody(leaf.webhook),
     };
 }
@@ -116,8 +123,8 @@ export function leafPatch(saved: CommandLeafView, draft: LeafDraft): BehaviorPat
     const after = leafBody(draft);
     const keys: Array<keyof LeafBody> =
         saved.subcommand === ''
-            ? ['title', 'description', 'options', 'webhook']
-            : ['subcommand', 'leafDescription', 'title', 'description', 'options', 'webhook'];
+            ? ['title', 'description', 'options', 'replyVisibility', 'webhook']
+            : ['subcommand', 'leafDescription', 'title', 'description', 'options', 'replyVisibility', 'webhook'];
     const patch: Record<string, unknown> = {};
     for (const key of keys) {
         if (JSON.stringify(after[key]) !== JSON.stringify(before[key])) patch[key] = after[key];

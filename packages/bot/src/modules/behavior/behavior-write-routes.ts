@@ -42,6 +42,7 @@ import type { BehaviorCommandRegistrar } from "./command-registration-sync.js";
 import {
   BehaviorDefinition,
   type BehaviorDefinitionRow,
+  type ReplyVisibility,
 } from "./models/behavior-definition.model.js";
 import {
   BehaviorWebhookAction,
@@ -65,6 +66,7 @@ interface MessageTriggerCreate extends Partial<MessageTriggerState> {
   patternKind: MessageTriggerState["patternKind"];
   patternValue: string;
   stopOnMatch?: boolean;
+  replyVisibility?: ReplyVisibility | null;
   webhook: WebhookInput;
 }
 
@@ -109,6 +111,7 @@ const MESSAGE_PATCH_KEYS = [
   "title",
   "description",
   "enabled",
+  "replyVisibility",
   ...(Object.keys(messageTriggerFields) as Array<keyof typeof messageTriggerFields>),
 ] as const;
 
@@ -206,6 +209,7 @@ export function registerBehaviorWriteRoutes(
               subcommandGroup: null,
               subcommand: null,
               stopOnMatch: body.stopOnMatch ?? false,
+              replyVisibility: body.replyVisibility ?? null,
               ...state,
             },
             { transaction },
@@ -224,6 +228,7 @@ export function registerBehaviorWriteRoutes(
         title: body.title,
         enabled: body.enabled ?? true,
         stopOnMatch: body.stopOnMatch ?? false,
+        replyVisibility: body.replyVisibility ?? null,
         ...state,
         webhook: webhook.audit,
       });
@@ -299,6 +304,7 @@ async function patchMessageTrigger(
     description: row.description,
     enabled: row.enabled,
     stopOnMatch: row.stopOnMatch,
+    replyVisibility: row.replyVisibility,
     ...stateOf(row),
   };
   const after: Record<string, unknown> = { ...before };

@@ -19,6 +19,11 @@ import { BehaviorCommand } from "./behavior-command.model.js";
  *   - `builtin`：系統動作，只給 System Behavior（systemKey 必填）
  *   - `webhook`：behavior_webhook_actions 的一列
  *
+ * 回覆給誰看（replyVisibility，#140）：回應沒帶 `ephemeral` 時的預設 ——
+ * `private`（指令：只有執行的人；伺服器訊息：私訊作者）、`public`（指令：
+ * 公開；伺服器訊息：貼頻道），null = 沿用觸發本身的預設。與 bot 的私訊
+ * 不適用；System Behavior 一律 null。
+ *
  * 索引一律由 migration 011 建立（理由見 behavior-command.model.ts）：
  *   - (commandId, subcommandGroup, subcommand) 唯一
  *   - systemKey 唯一（非 null）
@@ -33,6 +38,8 @@ export type BehaviorMessageSurface = "bot_dm" | "guild";
 export type BehaviorPatternKind = "startswith" | "endswith" | "regex";
 export type BehaviorAudienceKind = "all" | "user" | "group";
 export type BehaviorSystemKey = "admin-login";
+export type ReplyVisibility = "private" | "public";
+export const REPLY_VISIBILITIES: readonly ReplyVisibility[] = ["private", "public"];
 
 export const SYSTEM_BEHAVIOR_KEY_LOGIN = "admin-login" as const;
 export const SYSTEM_BEHAVIOR_KEYS = [SYSTEM_BEHAVIOR_KEY_LOGIN] as const;
@@ -178,6 +185,12 @@ export const BehaviorDefinition = sequelize.define(
       type: DataTypes.TEXT,
       allowNull: true,
     },
+    // ── reply ──
+    replyVisibility: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      validate: { isIn: [[...REPLY_VISIBILITIES]] },
+    },
   },
   {
     tableName: "behavior_definitions",
@@ -260,6 +273,13 @@ export const BehaviorDefinition = sequelize.define(
         }
         if (
           systemKey !== null &&
+          this["replyVisibility"] !== undefined &&
+          this["replyVisibility"] !== null
+        ) {
+          throw new Error("the system behavior's reply visibility is fixed");
+        }
+        if (
+          systemKey !== null &&
           this["triggerKind"] === "message" &&
           this["surface"] !== undefined &&
           this["surface"] !== "bot_dm"
@@ -295,6 +315,8 @@ export interface BehaviorDefinitionRow {
   audienceKind: BehaviorAudienceKind;
   audienceUserId: string | null;
   audienceGroupName: string | null;
+  /** the reply's default visibility; null = the trigger's own default */
+  replyVisibility: ReplyVisibility | null;
   /** last write — the version an admin edit is based on */
   updatedAt: Date;
 }
@@ -329,6 +351,7 @@ export function rowOfBehaviorDefinition(
     audienceKind: value<BehaviorAudienceKind>("audienceKind"),
     audienceUserId: nullable<string>("audienceUserId"),
     audienceGroupName: nullable<string>("audienceGroupName"),
+    replyVisibility: nullable<ReplyVisibility>("replyVisibility"),
     updatedAt: value<Date>("updatedAt"),
   };
 }

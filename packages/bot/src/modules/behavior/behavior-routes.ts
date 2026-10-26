@@ -67,6 +67,15 @@ import {
 
 export type { BehaviorRoutesOptions };
 
+/** The placeholder user a test-fire carries instead of a real identity (#101). */
+const TEST_FIRE_USER = {
+  id: "0",
+  username: "karyl-test",
+  global_name: null,
+  discriminator: "0",
+  avatar: null,
+} as const;
+
 export async function registerBehaviorRoutes(
   server: FastifyInstance,
   options: BehaviorRoutesOptions = {},
@@ -128,6 +137,10 @@ function registerReadAndTestRoutes(
   // 對 behavior 的 webhook 動作發一發測試 payload（_meta.test=true），把結果
   // 直接回給 admin —— 「裝好了有沒有通」從猜變成按一下。不改任何狀態、
   // 不 relay 到任何頻道、不計入統計。
+  //
+  // #101：測試請求不能被當成真的使用者 —— 以獨立的簽章前綴 / token header
+  // 送出（WebhookForwarder 的 test 選項），且不帶任何真實身分：_meta.user
+  // 是固定的佔位使用者，不是按下按鈕的管理員。
 
   server.post(
     "/api/behaviors/:id/test",
@@ -157,25 +170,34 @@ function registerReadAndTestRoutes(
         _meta: {
           test: true,
           behavior_id: behavior.id,
-          user: {
-            id: request.authUserId ?? "admin",
-            username: "admin-test",
-            global_name: null,
-            discriminator: "0",
-            avatar: null,
-          },
+          user: TEST_FIRE_USER,
+          // the keys a real trigger sends, so a receiver routes a test the
+          // way it routes the real thing (a test matched no message, so no
+          // groups; a leaf's own path)
+          ...(behavior.triggerKind === "message"
+            ? { captures: [] }
+            : {
+                sub_command_name: behavior.subcommand || null,
+                sub_command_group: behavior.subcommandGroup || null,
+              }),
         },
       };
       const result = await forwarder.forward(
         rowOfBehaviorWebhookAction(action),
         payload,
+        { test: true },
       );
+      // 回覆預覽（#140）：解析後的回覆與被規則改掉的部分，admin UI 依觸發
+      // 種類顯示誰看得到。
       return reply.send({
         ok: result.ok,
-        relayContent: result.relayContent,
-        relayEmbeds: result.relayEmbeds ?? [],
+        reply: result.reply,
+        notes: result.notes,
+        status: result.status ?? null,
         error: result.error ?? null,
         errorCode: result.errorCode ?? null,
+        // which key verified the response's signature (null: unsigned)
+        verified: result.verified ?? null,
       });
     },
   );

@@ -111,6 +111,17 @@ _Avoid_: `source: custom / system`（舊稱）
 系統提供、固定存在的 behavior，目前只有登入；管理員只能改它的觸發方式（與 bot 私訊的訊息比對，或一個全域指令），不能新增、刪除或停用。換觸發方式時新的觸發先生效、舊的才停用，任何一步失敗都保留原本的觸發。它的動作在資料裡記為 `actionSource: builtin`，那只是持久化值，不是管理員可選的 Action Source。
 _Avoid_: 內建動作（它不是可選的動作來源）、admin-login
 
+**Behavior Reply（回覆）**:
+動作的回答：`{ content?, embeds?, components?, ephemeral?, flags? }`，與 plugin `interactions.respond` 同形。webhook 的回應與內建登入動作都產生它，由 Reply Renderer 送出；`ephemeral` 決定誰看得到（指令預設只有執行的人；伺服器訊息預設公開，`true` 改私訊作者；與 bot 的私訊不受影響）。
+誰看得到的順序：回應的 `ephemeral` → behavior 儲存的 Reply Visibility → 觸發本身的預設。
+_Avoid_: relay、轉發內容（舊稱，只有 content / embeds）
+
+**Reply Visibility（回覆給誰看）**:
+指令葉節點與伺服器訊息觸發儲存的回覆預設：`private`（指令只有執行的人；伺服器訊息私訊作者）、`public`（貼在頻道），null 沿用觸發本身的預設。回應的 `ephemeral` 可覆蓋；與 bot 的私訊與 System Behavior 不適用。
+
+**Reply Renderer**:
+把 Behavior Reply 送到 Discord 的唯一入口，目標是一個互動（指令觸發）或一則訊息（訊息觸發）。
+
 **Plugin Action**:
 Plugin 宣告、與觸發面無關的動作，由管理員綁到觸發上。
 _Avoid_: dm_behavior（已移除的前身，綁死在私訊上）

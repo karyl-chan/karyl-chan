@@ -37,8 +37,14 @@ import { ChannelType } from "discord.js";
 import { sequelize } from "../src/db.js";
 import { MessageTriggerMatcher } from "../src/modules/command-system/message-trigger-matcher.service.js";
 import { InteractionDispatcher } from "../src/modules/command-system/interaction-dispatcher.service.js";
-import { sanitizeEmbeds } from "../src/modules/command-system/webhook-forwarder.service.js";
-import type { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
+import {
+  ALLOWED_REPLY_FLAGS,
+  MAX_REPLY_BODY_BYTES,
+  MAX_REPLY_CONTENT,
+  MAX_REPLY_EMBED_CHARS,
+  parseBehaviorReply,
+} from "../src/modules/command-system/behavior-reply.js";
+import { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
 import {
   clearBehaviors,
   seedCommand,
@@ -46,6 +52,14 @@ import {
   seedMessageTrigger,
 } from "./behavior-fixtures.js";
 import { CONTRACT_FIXTURES } from "@karyl-chan/plugin-wire";
+import { signBody, verifyInboundSignature } from "../src/utils/hmac.js";
+import { encryptSecret } from "../src/utils/crypto.js";
+import {
+  TEST_HEADER,
+  TEST_PREVIOUS_TOKEN_HEADER,
+  TEST_SIGNATURE_PREFIX,
+  TEST_TOKEN_HEADER,
+} from "../src/modules/command-system/webhook-forwarder.service.js";
 
 const C = CONTRACT_FIXTURES.behaviorWebhook;
 
@@ -56,7 +70,7 @@ beforeAll(async () => {
 
 function captureForwarder(): { forward: Mock } {
   return {
-    forward: vi.fn(async () => ({ ok: true, relayContent: "" })),
+    forward: vi.fn(async () => ({ ok: true, reply: {}, notes: [] })),
   };
 }
 
@@ -157,8 +171,121 @@ describe("behavior webhook contract (BH-2.3)", () => {
     );
   });
 
+  it("the response fields are the reply model's", () => {
+    const parsed = parseBehaviorReply({
+      content: "c",
+      embeds: [{ title: "t" }],
+      components: [{ type: 1, components: [{ type: 2, style: 5, label: "l", url: "https://x.example" }] }],
+      ephemeral: false,
+      flags: 4,
+    });
+    expect(parsed.ok && Object.keys(parsed.reply).sort()).toEqual([...C.response.fields].sort());
+    expect(C.response.allowedFlags.reduce((a, b) => a | b, 0)).toBe(ALLOWED_REPLY_FLAGS);
+    const row = {
+      type: 1,
+      components: Array.from({ length: 9 }, () => ({ type: 2, style: 5, label: "l", url: "https://x.example" })),
+    };
+    const many = parseBehaviorReply({ components: Array.from({ length: 9 }, () => row) });
+    const rows = many.ok ? many.reply.components! : [];
+    expect(rows).toHaveLength(C.response.maxComponentRows);
+    expect(rows[0].components).toHaveLength(C.response.maxButtonsPerRow);
+  });
+
+  it("the size limits are the fixtures'", () => {
+    expect(MAX_REPLY_CONTENT).toBe(C.response.maxContentLength);
+    expect(MAX_REPLY_EMBED_CHARS).toBe(C.response.maxEmbedTotalLength);
+    expect(MAX_REPLY_BODY_BYTES).toBe(C.response.maxBodyBytes);
+    const long = parseBehaviorReply({ content: "x".repeat(C.response.maxContentLength + 1) });
+    expect(long.ok && long.reply.content!.length).toBe(C.response.maxContentLength);
+  });
+
+  it("a response signature over the request nonce reproduces the golden vectors", () => {
+    for (const g of C.signing.responseGolden) {
+      expect(signBody(g.secret, g.method, g.path, g.ts, g.nonce, g.body)).toBe(g.expectedHex);
+    }
+  });
+
+  it("a golden response verifies against its request's nonce and no other", () => {
+    for (const g of C.signing.responseGolden) {
+      const headers = new Headers({
+        [CONTRACT_FIXTURES.hmac.timestampHeader]: g.ts,
+        [CONTRACT_FIXTURES.hmac.signatureHeader]: g.expectedHex,
+      });
+      const verify = (boundNonce: string) =>
+        verifyInboundSignature(g.secret, headers, g.body, Number(g.ts), g.method, g.path, {
+          boundNonce,
+        });
+      expect(verify(g.nonce)).toEqual({ ok: true });
+      expect(verify("f".repeat(32))).toEqual({ ok: false, reason: "response signature mismatch" });
+    }
+  });
+
+  it("each auth mode sends the fixtures' request headers", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => new Response("", { status: 200 }));
+    const host = await import("../src/utils/host-policy.js");
+    const resolve = vi.spyOn(host, "resolveWebhookTarget").mockImplementation(async (u) => ({
+      url: new URL(u),
+      addresses: [{ address: "203.0.113.10", family: 4 }],
+    }));
+    try {
+      for (const mode of ["hmac", "token"] as const) {
+        fetchSpy.mockClear();
+        await new WebhookForwarder().forward(
+          {
+            behaviorId: 1,
+            url: encryptSecret("https://203.0.113.10/hook"),
+            secret: encryptSecret("s"),
+            authMode: mode,
+            previousSecret: null,
+            previousSecretExpiresAt: null,
+          },
+          {},
+        );
+        const sent = (fetchSpy.mock.calls[0]![1] as { headers: Record<string, string> }).headers;
+        for (const h of C.signing.requestHeaders[mode]) expect(sent).toHaveProperty(h);
+      }
+    } finally {
+      fetchSpy.mockRestore();
+      resolve.mockRestore();
+    }
+  });
+
+  it("a test-fire is signed under the fixtures' prefix and headers", () => {
+    expect(TEST_SIGNATURE_PREFIX).toBe(C.signing.testPrefix);
+    expect(TEST_HEADER).toBe(C.signing.testHeader);
+    expect(TEST_TOKEN_HEADER).toBe(C.signing.testTokenHeader);
+    expect(TEST_PREVIOUS_TOKEN_HEADER).toBe(C.signing.testPreviousTokenHeader);
+    const prefix = { prefix: C.signing.testPrefix };
+    for (const g of [...C.signing.testGolden, ...C.signing.testResponseGolden]) {
+      expect(signBody(g.secret, g.method, g.path, g.ts, g.nonce, g.body, prefix)).toBe(g.expectedHex);
+    }
+  });
+
+  it("a golden test-fire response verifies only as a test, bound to its request nonce", () => {
+    for (const g of C.signing.testResponseGolden) {
+      const headers = new Headers({
+        [CONTRACT_FIXTURES.hmac.timestampHeader]: g.ts,
+        [CONTRACT_FIXTURES.hmac.signatureHeader]: g.expectedHex,
+      });
+      const verify = (boundNonce: string, prefix?: string) =>
+        verifyInboundSignature(g.secret, headers, g.body, Number(g.ts), g.method, g.path, {
+          boundNonce,
+          prefix,
+        });
+      expect(verify(g.nonce, C.signing.testPrefix)).toEqual({ ok: true });
+      expect(verify(g.nonce).ok).toBe(false);
+      expect(verify("f".repeat(32), C.signing.testPrefix).ok).toBe(false);
+    }
+  });
+
   it("embed whitelist matches the fixtures", () => {
-    const sanitized = sanitizeEmbeds([
+    const embedsOf = (raw: unknown[]) => {
+      const parsed = parseBehaviorReply({ embeds: raw });
+      return parsed.ok ? (parsed.reply.embeds ?? []) : [];
+    };
+    const sanitized = embedsOf([
       {
         title: "t",
         description: "d",
@@ -177,7 +304,7 @@ describe("behavior webhook contract (BH-2.3)", () => {
       [...C.response.embedWhitelist].sort(),
     );
     expect(
-      sanitizeEmbeds(Array.from({ length: 99 }, () => ({ title: "x" }))).length,
+      embedsOf(Array.from({ length: 99 }, () => ({ title: "x" }))).length,
     ).toBe(C.response.maxEmbeds);
   });
 });

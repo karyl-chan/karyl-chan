@@ -1,7 +1,7 @@
 /**
  * BH-2.2A — webhook responses may carry { content?, embeds? }.
  *
- * Embeds come from an untrusted external service: sanitizeEmbeds copies
+ * Embeds come from an untrusted external service: the reply model copies
  * only whitelisted fields, enforces types, truncates to Discord limits,
  * caps the count, and drops non-http(s) urls. The matcher relays them to
  * the DM/guild channel alongside (or instead of) plain content.
@@ -19,12 +19,18 @@ vi.mock("../src/modules/bot-events/bot-event-log.js", () => ({
 
 import { ChannelType } from "discord.js";
 import { sequelize } from "../src/db.js";
-import { sanitizeEmbeds } from "../src/modules/command-system/webhook-forwarder.service.js";
+import { parseBehaviorReply } from "../src/modules/command-system/behavior-reply.js";
+
+/** The embeds a response's `embeds` field leaves in the parsed reply. */
+function sanitizeEmbeds(raw: unknown) {
+  const parsed = parseBehaviorReply({ embeds: raw });
+  return parsed.ok ? (parsed.reply.embeds ?? []) : [];
+}
 import { MessageTriggerMatcher } from "../src/modules/command-system/message-trigger-matcher.service.js";
 import type { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
 import { clearBehaviors, seedMessageTrigger } from "./behavior-fixtures.js";
 
-describe("sanitizeEmbeds (BH-2.2A)", () => {
+describe("response embeds (BH-2.2A)", () => {
   it("keeps whitelisted fields and drops junk", () => {
     const out = sanitizeEmbeds([
       {
@@ -97,8 +103,8 @@ describe("matcher relays embeds (BH-2.2A)", () => {
     const forwarder = {
       forward: vi.fn(async () => ({
         ok: true,
-        relayContent: "",
-        relayEmbeds: embeds,
+        reply: { embeds },
+        notes: [],
       })),
     };
     const matcher = new MessageTriggerMatcher(

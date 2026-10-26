@@ -111,6 +111,43 @@ export interface ContractFixtures {
     readonly selectionField: string;
   };
   readonly behaviorWebhook: {
+    readonly signing: {
+      /** hmac mode request: the shared scheme (`hmac.payloadFormat`). */
+      readonly requestPayloadFormat: string;
+      /**
+       * The auth headers on every request, per mode. Token mode sends
+       * X-Karyl-Nonce too, so a receiver that signs its responses there
+       * can bind the request nonce like hmac mode does.
+       */
+      readonly requestHeaders: {
+        readonly hmac: readonly string[];
+        readonly token: readonly string[];
+      };
+      /**
+       * A signed response covers the REQUEST's nonce (#102); an
+       * X-Karyl-Nonce on the response, if sent, must equal it.
+       */
+      readonly responsePayloadFormat: string;
+      /** Response vectors: `nonce` is the nonce the request carried. */
+      readonly responseGolden: readonly HmacGoldenVector[];
+      /**
+       * An admin test-fire (#101) is marked with `testHeader: 1` and signed
+       * so it never verifies as a real request: in hmac mode the signed
+       * string (request and response alike) starts with `testPrefix`; in
+       * token mode the token travels in `testTokenHeader` instead of
+       * `x-plugin-webhook-token`. Its `_meta.user` is a placeholder, never
+       * the admin's identity.
+       */
+      readonly testPrefix: string;
+      readonly testHeader: string;
+      readonly testTokenHeader: string;
+      /** The previous token, during a rotation's grace period. */
+      readonly testPreviousTokenHeader: string;
+      /** A test-fire request vector, prefix included. */
+      readonly testGolden: readonly HmacGoldenVector[];
+      /** A test-fire response vector: prefix included, over the request nonce. */
+      readonly testResponseGolden: readonly HmacGoldenVector[];
+    };
     readonly request: {
       readonly topLevelKeys: readonly string[];
       readonly patternMetaKeys: readonly string[];
@@ -123,6 +160,17 @@ export interface ContractFixtures {
       readonly embedWhitelist: readonly string[];
       readonly maxEmbeds: number;
       readonly maxFields: number;
+      /** Longer content is cut (and marked). */
+      readonly maxContentLength: number;
+      /** Across all embeds; an embed that would pass it is dropped. */
+      readonly maxEmbedTotalLength: number;
+      /** A larger response body fails the action. */
+      readonly maxBodyBytes: number;
+      /** Only link buttons (type 2, style 5) with an https url, in action rows. */
+      readonly maxComponentRows: number;
+      readonly maxButtonsPerRow: number;
+      /** MessageFlags a response may set; visibility is `ephemeral`, never a flag. */
+      readonly allowedFlags: readonly number[];
     };
   };
 }
@@ -404,6 +452,59 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
    * canonical schema.
    */
   behaviorWebhook: {
+    signing: {
+      requestPayloadFormat: "<METHOD>:<path>:<ts>:<nonce>:<body>",
+      requestHeaders: {
+        hmac: ["x-karyl-timestamp", "x-karyl-nonce", "x-karyl-signature"],
+        token: ["x-plugin-webhook-token", "x-karyl-nonce"],
+      },
+      responsePayloadFormat: "<METHOD>:<path>:<ts>:<request nonce>:<body>",
+      responseGolden: [
+        {
+          name: "reply-bound-to-request-nonce",
+          secret: "behavior-secret",
+          method: "POST",
+          path: "/hook",
+          ts: "1700000000",
+          nonce: "cafe0000000000000000000000000010",
+          body: '{"content":"pong"}',
+          expectedHex:
+            "6792665cfb2dfcee8737f07b587934ee0c5b85a93140b903e663a89778c8b9fc",
+        },
+      ],
+      testPrefix: "test:",
+      testHeader: "x-karyl-test",
+      testTokenHeader: "x-plugin-webhook-test-token",
+      testPreviousTokenHeader: "x-plugin-webhook-test-token-previous",
+      testGolden: [
+        {
+          // HMAC(secret, "test:" + "<METHOD>:<path>:<ts>:<nonce>:<body>")
+          name: "test-fire-request",
+          secret: "behavior-secret",
+          method: "POST",
+          path: "/hook",
+          ts: "1700000000",
+          nonce: "cafe0000000000000000000000000011",
+          body: '{"content":"(test fire from admin UI)"}',
+          expectedHex:
+            "33dd2bee9a0e44e715b86efd5c128f2919abaf11a4a69240a08c46255b8f7b34",
+        },
+      ],
+      testResponseGolden: [
+        {
+          // HMAC(secret, "test:" + "<METHOD>:<path>:<ts>:<request nonce>:<body>")
+          name: "test-fire-response",
+          secret: "behavior-secret",
+          method: "POST",
+          path: "/hook",
+          ts: "1700000000",
+          nonce: "cafe0000000000000000000000000011",
+          body: '{"content":"test ok"}',
+          expectedHex:
+            "bb0b792abcf9b9c94baa8eb30fdbd5766d468a8eab3f6015b5c59a7e8494a3da",
+        },
+      ],
+    },
     request: {
       topLevelKeys: ["content", "username", "avatar_url", "_meta"],
       patternMetaKeys: [
@@ -413,11 +514,18 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
         "guild_id",
         "behavior_id",
         "attachments",
+        // a regex trigger's groups, group 1 first (null = took no part);
+        // [] for startswith / endswith
+        "captures",
       ],
       slashMetaKeys: [
         "interaction_id",
         "application_id",
         "command_name",
+        // the invoked leaf's path, named like the plugin command payload;
+        // null on a root leaf (content still reads "/name sub")
+        "sub_command_name",
+        "sub_command_group",
         "guild_id",
         "channel_id",
         "user",
@@ -428,8 +536,16 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
       userKeys: ["id", "username", "global_name", "discriminator", "avatar"],
       attachmentKeys: ["url", "filename", "content_type", "size"],
     },
+    /**
+     * The reply model (#140) — the plugin `interactions.respond` body
+     * without the token. `{ content, embeds }` (the pre-#140 response) is
+     * a subset, so the shape carries no version. `ephemeral`: a command
+     * defaults to true (false posts publicly); a guild message trigger
+     * defaults to public (true DMs the author instead); ignored in a DM
+     * with the bot.
+     */
     response: {
-      fields: ["content", "embeds"],
+      fields: ["content", "embeds", "components", "ephemeral", "flags"],
       embedWhitelist: [
         "title",
         "description",
@@ -444,6 +560,13 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
       ],
       maxEmbeds: 10,
       maxFields: 25,
+      maxContentLength: 2000,
+      maxEmbedTotalLength: 6000,
+      maxBodyBytes: 65536,
+      maxComponentRows: 5,
+      maxButtonsPerRow: 5,
+      // SuppressEmbeds, SuppressNotifications
+      allowedFlags: [4, 4096],
     },
   },
 };

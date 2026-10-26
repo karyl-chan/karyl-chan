@@ -132,7 +132,7 @@ async function seedGuildBehavior(guildId: string): Promise<void> {
 
 function makeDispatcher() {
   const forwarder = {
-    forward: vi.fn(async () => ({ ok: true, relayContent: "hi" })),
+    forward: vi.fn(async () => ({ ok: true, reply: { content: "hi" }, notes: [] })),
   };
   return {
     forwarder,

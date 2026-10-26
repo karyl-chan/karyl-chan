@@ -29,7 +29,7 @@ const GUILD = "123456789012345678";
 const CHANNEL = "223456789012345678";
 const USER = "323456789012345678";
 
-const forward = vi.fn(async () => ({ ok: true, relayContent: "" }));
+const forward = vi.fn(async () => ({ ok: true, reply: {}, notes: [] }));
 let server: FastifyInstance;
 
 beforeAll(async () => {
@@ -263,6 +263,38 @@ describe("DELETE /api/behaviors/:id (message trigger)", () => {
   it("an unknown id is not_found", async () => {
     const res = await server.inject({ method: "DELETE", url: "/api/behaviors/9999" });
     expect(res.statusCode).toBe(404);
+  });
+});
+
+describe("reply visibility (#140)", () => {
+  it("stores the default, lists it, and audits a change", async () => {
+    const created = await create({ ...dmTrigger, surface: "guild", replyVisibility: "private" });
+    expect(created.statusCode).toBe(201);
+    const { behavior } = created.json();
+    expect(behavior.replyVisibility).toBe("private");
+
+    const res = await patch(behavior.id, { replyVisibility: null });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().behavior.replyVisibility).toBeNull();
+    expect((await listed())[0]).toMatchObject({ replyVisibility: null });
+
+    const [update, create_] = await listAudit({ limit: 2 });
+    expect(update!.context).toMatchObject({
+      changed: { replyVisibility: { from: "private", to: null } },
+    });
+    expect(create_!.context).toMatchObject({ replyVisibility: "private" });
+  });
+
+  it("defaults to null and refuses anything but private / public / null", async () => {
+    expect((await create(dmTrigger)).json().behavior.replyVisibility).toBeNull();
+    const bad = await create({ ...dmTrigger, replyVisibility: "secret" });
+    expect(bad.statusCode).toBe(400);
+  });
+
+  it("the system behavior's stays fixed", async () => {
+    const login = await seedSystemLogin();
+    const res = await patch(login, { replyVisibility: "public" });
+    expect(res.statusCode).toBe(409);
   });
 });
 

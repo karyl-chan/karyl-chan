@@ -16,19 +16,18 @@
 import {
   type Client,
   type Message as DjsMessage,
-  type SendableChannels,
   ChannelType,
 } from "discord.js";
 import {
   getBehaviorCatalog,
   type CatalogBehavior,
 } from "../behavior/behavior-catalog.js";
-import { recordForwardOutcome } from "../behavior/models/behavior-stats.model.js";
-import { matchesTrigger } from "../behavior/behavior-trigger.js";
+import { matchesTrigger, triggerCaptures } from "../behavior/behavior-trigger.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import type { MessageMatchOutcome } from "./types.js";
 import type { WebhookForwarder } from "./webhook-forwarder.service.js";
-import { issueLoginLinkAndReply } from "../admin/admin-login.service.js";
+import { runLoginAction } from "./builtin-login-action.js";
+import { runWebhookAction } from "./webhook-action.js";
 
 // BH-0.3 multi-match：一則訊息可以連發多條 behavior，
 // outcome 取聯集；behaviorId 報第一條命中的（log 用途）。
@@ -235,32 +234,16 @@ export class MessageTriggerMatcher {
       return { handled: false };
     }
 
-    const payload = this.buildPayload(djsMessage, behavior);
-    const result = await this.forwarder.forward(behavior.webhook, payload);
-    await recordForwardOutcome(behavior.id, result.ok, result.error);
-    const channel = djsMessage.channel as SendableChannels;
-
-    if (result.ok) {
-      if (result.relayContent || result.relayEmbeds) {
-        // No allowed_mentions parsing — the response content comes from
-        // an external webhook server, which we don't trust to set ping
-        // policy (guild channels would honour @everyone / role pings).
-        await channel
-          .send({
-            content: result.relayContent,
-            embeds: result.relayEmbeds ?? [],
-            allowedMentions: { parse: [] },
-          })
-          .catch(() => {});
-      }
-    } else {
-      botEventLog.record(
-        "warn",
-        "bot",
-        `message-trigger-matcher: forward 失敗 behaviorId=${behavior.id}：${result.error ?? "unknown"}`,
-        { userId, behaviorId: behavior.id },
-      );
-    }
+    // 回覆模型（#140）與失敗處理（#114）：webhook-action.ts。私訊照常回；
+    // 伺服器預設貼頻道，ephemeral=true 改私訊作者；失敗從不貼頻道。
+    await runWebhookAction({
+      forwarder: this.forwarder,
+      behaviorId: behavior.id,
+      webhook: behavior.webhook,
+      payload: this.buildPayload(djsMessage, behavior),
+      target: { kind: "message", message: djsMessage },
+      visibility: behavior.replyVisibility,
+    });
 
     return { handled: true, behaviorId: behavior.id };
   }
@@ -273,7 +256,7 @@ export class MessageTriggerMatcher {
     userId: string,
   ): Promise<MessageMatchOutcome> {
     if (behavior.systemKey === "admin-login") {
-      await issueLoginLinkAndReply(djsMessage).catch(() => false);
+      await runLoginAction({ kind: "message", message: djsMessage });
       return { handled: true, behaviorId: behavior.id };
     }
 
@@ -329,6 +312,12 @@ export class MessageTriggerMatcher {
         guild_id: djsMessage.guildId ?? null,
         behavior_id: behavior.id,
         attachments,
+        // regex 觸發的擷取群組（第 1 組起；沒參與的選用群組為 null），
+        // 其他比對方式為 []（#140）
+        captures:
+          behavior.patternKind && behavior.patternValue !== null
+            ? triggerCaptures(behavior.patternKind, behavior.patternValue, djsMessage.content ?? "")
+            : [],
       },
     };
   }

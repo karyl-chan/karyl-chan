@@ -70,13 +70,13 @@ describe("BH-6.2 test-fire", () => {
     const id = await seedMessageTrigger();
     const forward: Mock = vi.fn(async () => ({
       ok: true,
-      relayContent: "pong",
-      relayEmbeds: [],
+      reply: { content: "pong" },
+      notes: [],
     }));
     const server = await buildServer({ forward });
     const res = await server.inject({ method: "POST", url: `/api/behaviors/${id}/test` });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ ok: true, relayContent: "pong" });
+    expect(res.json()).toMatchObject({ ok: true, reply: { content: "pong" }, notes: [] });
     const payload = (forward.mock.calls[0] as unknown[])[1] as {
       _meta: { test: boolean };
     };

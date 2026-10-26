@@ -123,7 +123,7 @@ describe("behavior group members API", () => {
       audienceKind: "group",
       audienceGroupName: "vip",
     });
-    const forward = vi.fn(async () => ({ ok: true, relayContent: "" }));
+    const forward = vi.fn(async () => ({ ok: true, reply: {}, notes: [] }));
     const matcher = new MessageTriggerMatcher({ forward } as unknown as WebhookForwarder);
     const dm = (userId: string) =>
       ({
