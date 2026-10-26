@@ -511,21 +511,3 @@ export const findAllSystemBehaviors = async (): Promise<BehaviorRow[]> => {
   const rows = await Behavior.findAll({ where: { source: "system" } });
   return rows.map(rowOfBehavior);
 };
-
-/**
- * 查詢所有 enabled=1 且 triggerType='slash_command' 的 slashCommandName。
- * 用於 CR-4：assertNoCollisions 防止 plugin command 與 behavior slash trigger 名稱碰撞。
- * NULL slashCommandName 的 row 自動過濾，回傳的全為非空字串。
- */
-export const findEnabledSlashCommandNames = async (): Promise<string[]> => {
-  const rows = await Behavior.findAll({
-    where: {
-      triggerType: "slash_command",
-      enabled: true,
-    },
-    attributes: ["slashCommandName"],
-  });
-  return rows
-    .map((r) => r.getDataValue("slashCommandName") as string | null)
-    .filter((n): n is string => typeof n === "string" && n.length > 0);
-};

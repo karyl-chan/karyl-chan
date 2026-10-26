@@ -3,6 +3,8 @@ import { WebhookForwarder } from "../modules/command-system/webhook-forwarder.se
 import { InteractionDispatcher } from "../modules/command-system/interaction-dispatcher.service.js";
 import { CommandReconciler } from "../modules/command-system/reconcile.service.js";
 import { MessagePatternMatcher } from "../modules/command-system/message-pattern-matcher.service.js";
+import { CommandNamespace } from "../modules/command-system/command-namespace.js";
+import { setPluginCommandNamespace } from "../modules/plugin-system/plugin-command-registry.service.js";
 import { installProcessErrorHandlers } from "./process-errors.js";
 import { installSignalHandlers } from "./shutdown.js";
 import { registerRuntimeEvents } from "./discord-runtime-events.js";
@@ -38,6 +40,8 @@ export function createRuntime(): Runtime {
     bot.isReady() ? bot : null,
   );
   const messageMatcher = new MessagePatternMatcher(webhookForwarder);
+  // plugin 註冊的名稱衝突檢查走共用的指令命名空間
+  setPluginCommandNamespace(new CommandNamespace());
 
   const ctx: RuntimeContext = {
     bot,

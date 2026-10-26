@@ -142,35 +142,6 @@ export const findPluginCommandByName = async (
   return global ? rowOfPluginCommand(global) : null;
 };
 
-/**
- * Hard collision check used by the registry to refuse a new plugin
- * registration if it would step on an existing plugin's command.
- * Looks across ALL plugins for the same (name, guildId) — including
- * guild-vs-global ambiguity (a global command and a guild command
- * with the same name in the same guild collide because Discord shows
- * them both to the user).
- */
-export const findCommandCollisions = async (
-  excludePluginId: number,
-  candidate: { name: string; guildId: string | null },
-): Promise<PluginCommandRow[]> => {
-  const where: Record<string, unknown> = {
-    name: candidate.name,
-    pluginId: { [Op.ne]: excludePluginId },
-  };
-  // For a global candidate (guildId=null) collide with ANY existing
-  // row of the same name (per-guild or global). For a guild-scoped
-  // candidate, collide with the same guild OR with a global row.
-  const rows = await PluginCommand.findAll({ where });
-  return rows
-    .filter((m) => {
-      const g = (m.getDataValue("guildId") as string | null) ?? null;
-      if (candidate.guildId === null) return true;
-      return g === null || g === candidate.guildId;
-    })
-    .map(rowOfPluginCommand);
-};
-
 export interface UpsertPluginCommandInput {
   pluginId: number;
   guildId: string | null;

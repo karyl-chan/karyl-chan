@@ -13,9 +13,9 @@ import {
 import {
   deletePluginCommandRow,
   deletePluginCommandsByPlugin,
-  findCommandCollisions,
   findPluginCommandsByFeature,
   findPluginCommandsByPlugin,
+  pluginCommandScopeTarget,
   upsertPluginCommand,
   type PluginCommandRow,
 } from "./models/plugin-command.model.js";
@@ -27,7 +27,12 @@ import { findFeatureDefaultsByPlugin } from "../feature-toggle/models/plugin-fea
 import { resolvePrecedenceTiers } from "../feature-toggle/feature-reach-resolver.js";
 import { findAllPlugins, type PluginRow } from "./models/plugin.model.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
-import { findEnabledSlashCommandNames } from "../behavior/models/behavior.model.js";
+// 型別 import only：namespace 由 runtime 注入（setPluginCommandNamespace），
+// 避免 plugin-system ↔ command-system 的 runtime 循環。
+import type {
+  CommandNamespace,
+  NamespaceOwner,
+} from "../command-system/command-namespace.js";
 import type {
   ManifestCommand,
   ManifestCommandOption,
@@ -248,34 +253,41 @@ export class CommandSyncRateLimitedError extends Error {
   }
 }
 
+type NamespaceChecker = Pick<CommandNamespace, "check">;
+
+function describeOwner(owner: NamespaceOwner): string {
+  switch (owner.kind) {
+    case "builtin":
+      return "a built-in bot command";
+    case "plugin_command":
+      return `another plugin (id=${owner.pluginId})`;
+    case "behavior":
+      return `behavior #${owner.behaviorId}`;
+  }
+}
+
 export class PluginCommandRegistry {
-  constructor(private getBot: () => Client | null) {}
+  constructor(
+    private getBot: () => Client | null,
+    private getNamespace: () => NamespaceChecker | null = () => null,
+  ) {}
 
   /**
-   * Names that bot infrastructure always owns and plugins must never
-   * shadow. Static fallback used when the live Discord cache isn't
-   * ready yet (early register-on-startup window).
-   *
-   * `login` is the system behavior's default global command. The
-   * runtime check below also asks the live bot what
-   * application commands it owns and merges those names in, so guild-
-   * scoped discordx commands like `picture-only-channel`, `todo-channel`,
-   * `role-emoji`, `rcon-forward-channel` are caught automatically as
-   * the cache fills — without needing this list to be hand-maintained.
+   * Names plugins must never take even when nothing currently holds
+   * them. `login` is the system login command's default slash name: the
+   * system behavior may be on a message trigger today and switch to
+   * /login later, so the name stays reserved regardless.
    */
   private static readonly RESERVED_COMMAND_NAMES_STATIC = new Set(["login"]);
 
   /**
-   * Compute the live "names plugins can't use" set. Pulls every
+   * Conservative "names plugins can't use" set, on top of the
+   * CommandNamespace check: the static reservations plus every
    * application command currently known to the bot client (global +
-   * each cached guild's commands), unions in the static fallback,
-   * and excludes commands previously persisted as belonging to the
-   * same plugin (otherwise a plugin couldn't re-register its own
+   * each cached guild), which also catches leftovers on Discord that no
+   * table describes. Excludes commands previously persisted as belonging
+   * to the same plugin (otherwise a plugin couldn't re-register its own
    * /account because the live cache already shows /account).
-   *
-   * CR-4（v2）：額外查詢 behaviors 表中 triggerType='slash_command' 且
-   * enabled=1 的 slashCommandName，避免 plugin command 與 behavior slash
-   * trigger 名稱碰撞。
    *
    * Returns a fresh Set each call so concurrent registers don't share
    * mutation, and the cost (~few dozen string lookups) is trivial.
@@ -292,29 +304,18 @@ export class PluginCommandRegistry {
       for (const r of own) ownNames.add(r.name);
     } catch {
       // findPluginCommandsByPlugin only fails on DB outage; the
-      // collision check below would also fail — let downstream surface
-      // the real error instead of crashing here.
+      // namespace check below would also fail — let it surface the
+      // real error instead of crashing here.
     }
-
-    // CR-4：從 behaviors 表動態載入 slash trigger names
-    try {
-      const behaviorSlashNames = await findEnabledSlashCommandNames();
-      for (const n of behaviorSlashNames) reserved.add(n);
-    } catch {
-      // DB outage fallback：跳過 behavior 防撞，讓下游顯示真實錯誤
-    }
-
     const bot = this.getBot();
-    if (!bot || !bot.application) {
-      for (const n of ownNames) reserved.delete(n);
-      return reserved;
-    }
-    for (const cmd of bot.application.commands.cache.values()) {
-      if (typeof cmd.name === "string") reserved.add(cmd.name);
-    }
-    for (const guild of bot.guilds.cache.values()) {
-      for (const cmd of guild.commands.cache.values()) {
+    if (bot?.application) {
+      for (const cmd of bot.application.commands.cache.values()) {
         if (typeof cmd.name === "string") reserved.add(cmd.name);
+      }
+      for (const guild of bot.guilds.cache.values()) {
+        for (const cmd of guild.commands.cache.values()) {
+          if (typeof cmd.name === "string") reserved.add(cmd.name);
+        }
       }
     }
     for (const n of ownNames) reserved.delete(n);
@@ -322,43 +323,47 @@ export class PluginCommandRegistry {
   }
 
   /**
-   * Refuse to register a plugin if its manifest commands collide
-   * with another plugin's, or with a reserved bot-internal command.
-   * Called from PluginRegistry.register BEFORE the plugin row is
-   * upserted, so on rejection nothing is persisted and the plugin
-   * retries with a corrected manifest.
+   * Refuse to register a plugin if its manifest commands collide with a
+   * reserved / live Discord command name (see buildReservedCommandNames),
+   * or — through the shared CommandNamespace — with a built-in command,
+   * another plugin's command, or a behavior command (disabled ones
+   * included) in the same registration target. Called from
+   * PluginRegistry.register BEFORE the plugin row is upserted, so on
+   * rejection nothing is persisted and the plugin retries with a
+   * corrected manifest.
    *
-   * 讀取 manifest.plugin_commands[]。
+   * 讀取 manifest.plugin_commands[]（軌三）。scope=guild 的目標是
+   * all_guilds（reconciler 在每個伺服器各註冊一份）。
    */
   async assertNoCollisions(
     incomingPluginKey: string,
     incomingPluginId: number,
     manifest: PluginManifest,
   ): Promise<void> {
-    const incomingCommands: Array<{ name: string }> =
-      manifest.plugin_commands ?? [];
-
+    const incomingCommands = manifest.plugin_commands ?? [];
+    if (incomingCommands.length === 0) return;
+    const namespace = this.getNamespace();
+    if (!namespace) {
+      // fail closed：沒有命名空間就無法保證不覆蓋別人的指令
+      throw new Error("plugin-commands: command namespace not wired");
+    }
     const reserved = await this.buildReservedCommandNames(incomingPluginId);
     for (const cmd of incomingCommands) {
       if (reserved.has(cmd.name)) {
         throw new ManifestCommandError(
-          `command '${cmd.name}' is reserved for bot internals or conflicts with an existing behavior slash trigger; ` +
+          `command '${cmd.name}' is reserved for bot internals or already registered with Discord; ` +
             `'${incomingPluginKey}' must rename it`,
         );
       }
-    }
-    for (const cmd of incomingCommands) {
-      const collisions = await findCommandCollisions(incomingPluginId, {
-        name: cmd.name,
-        // Treat both scopes as global at the persistence layer;
-        // reconcileAll re-applies them per-guild.
-        guildId: null,
-      });
-      if (collisions.length > 0) {
-        const owner = collisions[0];
+      const res = await namespace.check(
+        cmd.name,
+        pluginCommandScopeTarget(cmd.scope),
+        { pluginId: incomingPluginId },
+      );
+      if (!res.ok) {
         throw new ManifestCommandError(
-          `command '${cmd.name}' already registered by another plugin (id=${owner.pluginId}); ` +
-            `'${incomingPluginKey}' must rename or remove it`,
+          `command '${cmd.name}' conflicts with ${describeOwner(res.conflict.owner)} ` +
+            `(registered as ${res.conflict.target}); '${incomingPluginKey}' must rename or remove it`,
         );
       }
     }
@@ -840,6 +845,12 @@ let _botClient: Client | null = null;
 export function setPluginCommandBotClient(client: Client): void {
   _botClient = client;
 }
+let _namespace: NamespaceChecker | null = null;
+/** runtime 在啟動時注入 CommandNamespace（見 runtime.ts）。 */
+export function setPluginCommandNamespace(namespace: NamespaceChecker): void {
+  _namespace = namespace;
+}
 export const pluginCommandRegistry = new PluginCommandRegistry(
   () => _botClient,
+  () => _namespace,
 );
