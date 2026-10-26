@@ -29,10 +29,16 @@ export const up: MigrationFn<QueryInterface> = async ({ context: qi }) => {
   const tables = (await qi.showAllTables()) as string[];
 
   if (tables.includes(BEHAVIORS)) {
-    const removed = (await qi.select(null, BEHAVIORS, {
-      where: { source: "system", systemKey: REMOVED_SYSTEM_KEYS },
-    })) as Array<{ id: number }>;
-    const ids = removed.map((r) => r.id);
+    // Filter systemKey in JS, not in SQL: on a fresh Postgres DB the
+    // `enum_behaviors_systemKey` type is created from the current model and
+    // no longer contains 'manual' / 'break', so `systemKey IN (...)` would
+    // be rejected as an invalid enum literal.
+    const systemRows = (await qi.select(null, BEHAVIORS, {
+      where: { source: "system" },
+    })) as Array<{ id: number; systemKey: string | null }>;
+    const ids = systemRows
+      .filter((r) => r.systemKey && REMOVED_SYSTEM_KEYS.includes(r.systemKey))
+      .map((r) => r.id);
     if (ids.length > 0) {
       if (tables.includes(STATS)) {
         await qi.bulkDelete(STATS, { behaviorId: ids });
