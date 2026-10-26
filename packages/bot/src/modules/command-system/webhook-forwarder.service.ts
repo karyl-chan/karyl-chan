@@ -23,9 +23,13 @@ import {
 } from "../../utils/hmac.js";
 import { shouldRecord } from "../bot-events/bot-event-dedup.js";
 import {
-  assertExternalTarget,
   HostPolicyError,
+  resolveWebhookTarget,
+  type WebhookTarget,
 } from "../../utils/host-policy.js";
+import { createPinnedAgent } from "../../utils/pinned-dispatcher.js";
+import { webhookAllowlist } from "../../config.js";
+import type { AllowlistEntry } from "../../utils/webhook-allowlist.js";
 import { decryptSecret } from "../../utils/crypto.js";
 import type { BehaviorRow } from "../behavior/models/behavior.model.js";
 import type { ForwardResult, SanitizedEmbed } from "./types.js";
@@ -111,6 +115,15 @@ const PLUGIN_WEBHOOK_TOKEN_HEADER = "x-plugin-webhook-token";
 // ── WebhookForwarder ─────────────────────────────────────────────────────────
 
 export class WebhookForwarder {
+  /**
+   * @param allowlist  WEBHOOK_PRIVATE_ALLOWLIST entries the target policy
+   *                   applies; defaults to the boot-parsed config value
+   *                   (tests inject their own).
+   */
+  constructor(
+    private readonly allowlist: readonly AllowlistEntry[] = webhookAllowlist,
+  ) {}
+
   /**
    * 轉發 behavior webhook POST。
    *
@@ -246,57 +259,70 @@ export class WebhookForwarder {
       // authMode=null 且有 secret：異常狀態，不簽（已由 CR-6 DB CHECK 攔截）
     }
 
-    // host-policy 檢查
-    const port = url.port
-      ? Number(url.port)
-      : url.protocol === "https:"
-        ? 443
-        : 80;
-
+    // host-policy 檢查（與存檔時同一套：允許清單、https 規則、封鎖段）。
+    // 回傳的 addresses 是實際檢查過的 IP，下面的連線只會打這些 IP。
+    let target: WebhookTarget;
     try {
-      await assertExternalTarget(url.hostname, port);
+      target = await resolveWebhookTarget(url, this.allowlist);
     } catch (err) {
       if (!(err instanceof HostPolicyError)) throw err;
-      return { ok: false, relayContent: "", error: err.message };
+      return {
+        ok: false,
+        relayContent: "",
+        error: err.message,
+        errorCode: err.code,
+      };
     }
 
-    // 發送 HTTP POST
+    // 發送 HTTP POST —— connection pinned to the checked addresses so a DNS
+    // answer that changes after the check (rebinding) can't redirect it.
+    const agent = createPinnedAgent(target.addresses);
     let res: Response;
+    let rawText: string;
     try {
-      res = await fetch(url, {
-        method: "POST",
-        headers,
-        body,
-        // Do NOT follow redirects. assertExternalTarget above validated the
-        // configured host, but a 3xx `Location` is attacker-controlled and
-        // `redirect: "follow"` (the default) would chase it WITHOUT
-        // re-validating — an SSRF into cloud metadata (169.254.169.254) or
-        // internal hosts whose response we'd then relay back into Discord.
-        redirect: "manual",
-        signal: AbortSignal.timeout(10_000),
-      });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return {
-        ok: false,
-        relayContent: "",
-        error: `network error: ${msg}`,
-      };
-    }
+      try {
+        res = await fetch(url, {
+          method: "POST",
+          headers,
+          body,
+          dispatcher: agent,
+          // Do NOT follow redirects. resolveWebhookTarget above validated the
+          // configured host, but a 3xx `Location` is attacker-controlled and
+          // `redirect: "follow"` (the default) would chase it WITHOUT
+          // re-validating — an SSRF into cloud metadata (169.254.169.254) or
+          // internal hosts whose response we'd then relay back into Discord.
+          redirect: "manual",
+          signal: AbortSignal.timeout(10_000),
+          // `dispatcher` is Node's (undici) fetch extension — absent from
+          // the DOM RequestInit type the project compiles against.
+        } as RequestInit);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          ok: false,
+          relayContent: "",
+          error: `network error: ${msg}`,
+        };
+      }
 
-    // A webhook endpoint redirecting is not a success — and with
-    // redirect: "manual" we won't have followed it. Treat any 3xx as a
-    // failed delivery rather than reading the redirect body as content.
-    if (res.status >= 300 && res.status < 400) {
-      return {
-        ok: false,
-        relayContent: "",
-        status: res.status,
-        error: `webhook returned a redirect (HTTP ${res.status}); redirects are not followed`,
-      };
-    }
+      // A webhook endpoint redirecting is not a success — and with
+      // redirect: "manual" we won't have followed it. Treat any 3xx as a
+      // failed delivery rather than reading the redirect body as content.
+      if (res.status >= 300 && res.status < 400) {
+        return {
+          ok: false,
+          relayContent: "",
+          status: res.status,
+          error: `webhook returned a redirect (HTTP ${res.status}); redirects are not followed`,
+        };
+      }
 
-    const rawText = await res.text().catch(() => "");
+      rawText = await res.text().catch(() => "");
+    } finally {
+      // One-shot agent: drop its socket once the response is read (or
+      // abandoned on the error / redirect paths above).
+      void agent.destroy().catch(() => {});
+    }
 
     if (!res.ok) {
       return {

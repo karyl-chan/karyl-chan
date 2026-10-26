@@ -6,10 +6,13 @@ import {
   type AdminCapability,
 } from "../admin/admin-capabilities.js";
 import { decryptSecret } from "../../utils/crypto.js";
+import { webhookAllowlist } from "../../config.js";
+import type { AllowlistEntry } from "../../utils/webhook-allowlist.js";
 import type { BehaviorRow } from "./models/behavior.model.js";
 import {
-  assertExternalTarget,
   HostPolicyError,
+  resolveWebhookTarget,
+  type HostPolicyCode,
 } from "../../utils/host-policy.js";
 
 export interface BehaviorRoutesOptions {
@@ -99,25 +102,23 @@ export function requireBehaviorScope(
   return false;
 }
 
+/**
+ * Save-time webhook URL check — the same policy the forwarder applies at
+ * send time (`resolveWebhookTarget`: allowlist, https rule, blocked
+ * ranges), so a target that would be refused is refused on save, with
+ * the readable reason and its machine `code` for the 400 body.
+ */
 export async function isValidWebhookUrl(
   value: string,
-): Promise<{ ok: true } | { ok: false; reason: string }> {
-  let u: URL;
+  allowlist: readonly AllowlistEntry[] = webhookAllowlist,
+): Promise<{ ok: true } | { ok: false; reason: string; code: HostPolicyCode }> {
   try {
-    u = new URL(value);
-  } catch {
-    return { ok: false, reason: "無效的 URL 格式" };
-  }
-  if (u.protocol !== "http:" && u.protocol !== "https:") {
-    return { ok: false, reason: "Webhook URL 必須使用 http 或 https" };
-  }
-  const port = u.port ? Number(u.port) : u.protocol === "https:" ? 443 : 80;
-  try {
-    await assertExternalTarget(u.hostname, port);
+    await resolveWebhookTarget(value, allowlist);
   } catch (err) {
-    const reason =
-      err instanceof HostPolicyError ? err.message : "Webhook 目標不被允許";
-    return { ok: false, reason };
+    if (err instanceof HostPolicyError) {
+      return { ok: false, reason: err.message, code: err.code };
+    }
+    throw err;
   }
   return { ok: true };
 }

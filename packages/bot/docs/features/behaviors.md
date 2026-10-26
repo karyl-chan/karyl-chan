@@ -141,6 +141,57 @@ the webhook in `_meta.options` as `{ name, type, value }` entries.
 Failed dispatch (network error, non-2xx, signature failure) is recorded
 in `bot_events`. The POST has a 10-second timeout.
 
+### Webhook targets
+
+The webhook URL is checked by `resolveWebhookTarget`
+(`src/utils/host-policy.ts`) both when the behavior is saved and again
+on every forward (including the admin test-fire):
+
+| Target resolves to | Allowed? |
+|--------------------|----------|
+| Public address | Yes, `https://` only. |
+| Private address (RFC1918, `100.64.0.0/10`, IPv6 ULA `fc00::/7`) | Only when the hostname or the address is on `WEBHOOK_PRIVATE_ALLOWLIST`; `http://` is accepted for these. |
+| Loopback, cloud metadata / link-local (`169.254.0.0/16`, `fe80::/10`, …), unspecified, reserved (`0/8`, `198.18/15`, `224/4`, `240/4`, `fec0::/10`, multicast), NAT64 `64:ff9b::` / 6to4 `2002::` | Never — listing them has no effect. |
+
+`WEBHOOK_PRIVATE_ALLOWLIST` is a comma-separated list of hostnames,
+bare IPs and CIDRs (`192.168.2.0/24`, `fd12::/16`). A hostname entry is
+an exact, case-insensitive match without the trailing dot — no
+wildcards, and `nas.latte.lan.` in the list is read as `nas.latte.lan`
+(a webhook URL whose host ends in a dot is rejected anyway). It is an
+environment variable (read at boot; a malformed entry stops the bot
+from starting) and its current value is shown on the admin **System
+settings** page under the behavior group. Entries that cannot fully
+apply are logged as a warning at boot: a loopback / metadata name, an
+IP or range reaching beyond private space (`127.0.0.0/8`, a public IP,
+`0.0.0.0/0`), or a private range covering a cloud metadata address
+(`100.64.0.0/10` → `100.100.100.200`, `fd00::/8` → `fd00:ec2::254`;
+that one address stays refused, the rest applies). A hostname whose DNS answers
+include any blocked address is refused as a whole.
+
+Hosts that use fake-IP DNS (Clash, Surge and similar proxies answer
+every lookup with an address from `198.18.0.0/15`) cannot reach any
+webhook by hostname: the benchmarking range is blocked, so even a public
+hostname is refused as `blocked_reserved`. Point such a bot at a real
+resolver.
+
+The host is resolved once and the connection is made only to the
+addresses that passed the check — all of them, so a dual-stack target
+keeps its IPv4 fallback (`src/utils/pinned-dispatcher.ts`: an undici
+Agent with a fixed `lookup`; the Host header, TLS SNI and certificate
+checks still use the hostname). A DNS answer that changes between check
+and connect (DNS rebinding) therefore cannot redirect the request.
+Redirects are never followed.
+
+A refusal carries a machine `code` (`private_not_allowlisted`,
+`https_required`, `blocked_loopback`, `blocked_metadata`,
+`blocked_reserved`, `dns_failed`, …) next to a readable `error` that
+names the target and the setting — the save route returns it as a 400
+body, the test-fire route as `{ ok: false, error, errorCode }`.
+
+The legacy `WEBHOOK_ALLOW_PRIVATE=true` switch (allow every private
+address) still works for local development and the e2e harness, but is
+deprecated; the bot logs a warning at boot when it is on in production.
+
 ### Authentication (`webhookAuthMode`)
 
 Each custom behavior picks one authentication mode:

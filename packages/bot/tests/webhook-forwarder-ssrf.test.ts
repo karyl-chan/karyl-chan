@@ -15,7 +15,10 @@ vi.hoisted(() => {
 // Let the host-policy check pass so the test exercises the fetch/redirect
 // path rather than the (separately-tested) host validation.
 vi.mock("../src/utils/host-policy.js", () => ({
-  assertExternalTarget: vi.fn().mockResolvedValue(undefined),
+  resolveWebhookTarget: vi.fn(async (u: string | URL) => ({
+    url: new URL(u),
+    addresses: [{ address: "203.0.113.10", family: 4 }],
+  })),
   HostPolicyError: class HostPolicyError extends Error {},
 }));
 

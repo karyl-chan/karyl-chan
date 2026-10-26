@@ -1391,6 +1391,7 @@
         "behavior": {
             "enabled": "行为模块是否启用",
             "webhookTimeout": "Webhook 请求超时（毫秒）",
+            "webhookPrivateAllowlist": "Webhook 局域网允许清单（主机 / CIDR；清单内可用 http）",
             "maxRetries": "Webhook 最大重试次数"
         },
         "admin": {

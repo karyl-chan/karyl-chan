@@ -387,6 +387,16 @@ export const CONFIG_METADATA: Record<string, ConfigFieldMeta> = {
     productionRequired: false,
     descriptionKey: "config.behavior.profileCacheTtlMs",
   },
+  "behavior.webhookPrivateAllowlist": {
+    group: "behavior",
+    envVar: "WEBHOOK_PRIVATE_ALLOWLIST",
+    sensitivity: "public",
+    // SSRF posture — like PLUGIN_AUTO_APPROVE, keep it out of reach of a
+    // runtime admin toggle; the operator sets it in the environment.
+    editability: "env-only",
+    productionRequired: false,
+    descriptionKey: "config.behavior.webhookPrivateAllowlist",
+  },
 
   // ── admin ─────────────────────────────────────────────────────────────────
   "admin.profileCacheTtlMs": {

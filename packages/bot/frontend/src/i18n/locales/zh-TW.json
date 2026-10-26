@@ -1392,6 +1392,7 @@
         "behavior": {
             "enabled": "行為模組是否啟用",
             "webhookTimeout": "Webhook 請求逾時（毫秒）",
+            "webhookPrivateAllowlist": "Webhook 區網允許清單（主機 / CIDR；清單內可用 http）",
             "maxRetries": "Webhook 最大重試次數"
         },
         "admin": {

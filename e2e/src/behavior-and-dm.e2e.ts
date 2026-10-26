@@ -15,11 +15,12 @@
  * fail-closed response verification) and the
  * store → bus → SSE pipeline as wired in the real server.
  *
- * Webhook sink placement: assertExternalTarget unconditionally denies
+ * Webhook sink placement: resolveWebhookTarget unconditionally denies
  * loopback (deliberate SSRF posture, the bot itself lives there), so the
  * sink binds the host's non-loopback private address and the bot runs
- * with WEBHOOK_ALLOW_PRIVATE=true — the documented operator escape
- * hatch for exactly this "webhook on my own LAN" topology.
+ * with WEBHOOK_ALLOW_PRIVATE=true — the legacy dev hatch that opens every
+ * private address (operators list LAN targets in
+ * WEBHOOK_PRIVATE_ALLOWLIST instead).
  *
  * GATED behind TEST_E2E_DB_URL (Postgres; see e2e/README.md).
  */

@@ -280,7 +280,9 @@ export async function registerBehaviorRoutes(
     }
     const urlCheck = await isValidWebhookUrl(body.webhookUrl.trim());
     if (!urlCheck.ok) {
-      return reply.code(400).send({ error: urlCheck.reason });
+      return reply
+        .code(400)
+        .send({ error: urlCheck.reason, code: urlCheck.code });
     }
 
     // triggerType 相關驗證
@@ -780,7 +782,9 @@ export async function registerBehaviorRoutes(
         if (url) {
           const urlCheck = await isValidWebhookUrl(url);
           if (!urlCheck.ok)
-            return reply.code(400).send({ error: urlCheck.reason });
+            return reply
+              .code(400)
+              .send({ error: urlCheck.reason, code: urlCheck.code });
           patch["webhookUrl"] = encryptSecret(url);
         } else {
           patch["webhookUrl"] = null;
@@ -993,6 +997,7 @@ export async function registerBehaviorRoutes(
       relayContent: result.relayContent,
       relayEmbeds: result.relayEmbeds ?? [],
       error: result.error ?? null,
+      errorCode: result.errorCode ?? null,
     });
   });
 
