@@ -152,3 +152,14 @@ describe("assertAllowedTarget (RCON) — metadata through IPv6 spellings", () =>
     await expect(assertAllowedTarget("127.0.0.1", 25575)).resolves.toBeUndefined();
   });
 });
+
+describe("an empty DNS answer fails closed", () => {
+  it.each([
+    ["assertAllowedTarget", () => assertAllowedTarget("empty.example", 25575)],
+    ["assertPluginTarget", () => assertPluginTarget("empty.example", 3000)],
+    ["assertExternalTarget", () => assertExternalTarget("empty.example", 443)],
+  ])("%s refuses a host with no addresses", async (_name, check) => {
+    mockedLookup.mockResolvedValue([] as unknown as Awaited<ReturnType<typeof lookup>>);
+    await expect(check()).rejects.toThrow(/解析/);
+  });
+});

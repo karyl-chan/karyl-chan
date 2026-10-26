@@ -135,8 +135,9 @@ function vetHost(
 
 /**
  * Every address a vetted host stands for: the literal itself, or every
- * DNS answer (resolved once). A failed lookup is refused as
- * `dns_failed` with `dnsFailedMessage`.
+ * DNS answer (resolved once). A failed lookup — or one with no answers,
+ * which would otherwise pass every per-address check vacuously — is
+ * refused as `dns_failed` with `dnsFailedMessage`.
  */
 async function hostAddresses(
   host: string,
@@ -144,13 +145,15 @@ async function hostAddresses(
   dnsFailedMessage: string,
 ): Promise<string[]> {
   if (isIP(host) !== 0) return [host];
+  let answers: Array<{ address: string }>;
   try {
-    const answers = await lookup(host, { all: true });
-    return answers.map(({ address }) => address);
+    answers = await lookup(host, { all: true });
   } catch (error) {
     log.error({ err: error, host }, "DNS lookup failed");
     throw refuse("dns_failed", dnsFailedMessage);
   }
+  if (answers.length === 0) throw refuse("dns_failed", dnsFailedMessage);
+  return answers.map(({ address }) => address);
 }
 
 /**
@@ -399,11 +402,11 @@ export async function resolveWebhookTarget(
     refuseCoded,
     (h) => `目標 ${h} 是雲端 metadata 端點，一律禁止（無法加入允許清單）`,
   );
-  const dnsFailed = `無法解析主機名稱 ${host}`;
-  const addresses = await hostAddresses(host, refuseCoded, dnsFailed);
-  if (addresses.length === 0) {
-    throw new HostPolicyError(dnsFailed, "dns_failed");
-  }
+  const addresses = await hostAddresses(
+    host,
+    refuseCoded,
+    `無法解析主機名稱 ${host}`,
+  );
 
   let needsHttps = false;
   for (const address of addresses) {
