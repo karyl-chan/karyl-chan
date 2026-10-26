@@ -36,6 +36,10 @@ export interface FormErrors {
 
 export const NO_ERRORS: FormErrors = { fields: {}, general: null };
 
+export function hasErrors(errors: FormErrors): boolean {
+    return Object.keys(errors.fields).length > 0 || errors.general !== null;
+}
+
 /** Schema issues → errors on the form's fields (anything else is general). */
 export function errorsFromIssues(t: Translate, issues: SchemaIssues, fields: readonly string[]): FormErrors {
     const out: FormErrors = { fields: {}, general: null };
@@ -46,10 +50,30 @@ export function errorsFromIssues(t: Translate, issues: SchemaIssues, fields: rea
     return out;
 }
 
-/** A server refusal → the field it names when the form has it, else a general error. */
-export function errorsFromRefusal(t: Translate, err: unknown, fields: readonly string[]): FormErrors {
-    if (err instanceof ApiError && err.field && fields.includes(err.field)) {
-        return { fields: { [err.field]: err.message }, general: null };
+/**
+ * A server refusal → the field it names when the form has it, else a
+ * general error. `formField` maps the request path to the form's own
+ * (a dialog that sends `leaves.0.title` shows it on `title`).
+ */
+export function errorsFromRefusal(
+    t: Translate,
+    err: unknown,
+    fields: readonly string[],
+    formField: (requestField: string) => string = (f) => f,
+): FormErrors {
+    const field = err instanceof ApiError && err.field ? formField(err.field) : null;
+    if (field && fields.includes(field)) {
+        return { fields: { [field]: (err as ApiError).message }, general: null };
     }
     return { fields: {}, general: describeBehaviorError(t, err) };
+}
+
+/** Keep only the errors on `fields`; the first of the rest becomes the general error. */
+export function onFields(errors: FormErrors, fields: readonly string[]): FormErrors {
+    const out: FormErrors = { fields: {}, general: errors.general };
+    for (const [field, message] of Object.entries(errors.fields)) {
+        if (fields.includes(field)) out.fields[field] = message;
+        else out.general ??= `${field}: ${message}`;
+    }
+    return out;
 }

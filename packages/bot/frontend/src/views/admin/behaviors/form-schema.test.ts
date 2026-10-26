@@ -97,6 +97,7 @@ describe('issueMessage', () => {
     it('names the limit of a length or count', () => {
         expect(issueMessage(t, { keyword: 'maxLength', limit: 100 })).toBe('behaviors.validation.tooLong:{"max":100}');
         expect(issueMessage(t, { keyword: 'maxItems', limit: 2 })).toBe('behaviors.validation.tooMany:{"max":2}');
+        expect(issueMessage(t, { keyword: 'minItems', limit: 1 })).toBe('behaviors.validation.tooFew:{"min":1}');
     });
 
     it('falls back to a format message', () => {

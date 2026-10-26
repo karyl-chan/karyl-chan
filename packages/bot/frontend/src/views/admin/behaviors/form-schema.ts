@@ -184,6 +184,8 @@ export function issueMessage(t: Translate, issue: SchemaIssue): string {
             return t('behaviors.validation.tooLong', { max: issue.limit });
         case 'maxItems':
             return t('behaviors.validation.tooMany', { max: issue.limit });
+        case 'minItems':
+            return t('behaviors.validation.tooFew', { min: issue.limit });
         case 'pattern':
             return t('behaviors.validation.format');
         default:

@@ -1237,19 +1237,17 @@
             "tagStopShort": "停止",
             "unhealthy": "连续失败",
             "toggleProtected": "系统行为不可停用",
-            "toggleReadOnly": "指令的编辑会在之后的更新开放",
             "enabled": "已启用",
             "disabled": "已停用",
             "audienceUser": "用户 {user}",
             "audienceGroup": "群组 {group}",
-            "registration": "注册范围",
             "registrationGlobal": "全局",
             "registrationGuild": "服务器 {guild}",
             "contexts": "可用情境",
             "context": {
                 "Guild": "服务器",
                 "BotDM": "bot 私信",
-                "PrivateChannel": "群组私信"
+                "PrivateChannel": "其他私信"
             },
             "integrationTypes": "安装方式",
             "integration": {
@@ -1297,7 +1295,8 @@
             "tooLong": "最多 {max} 个字",
             "tooMany": "最多 {max} 项",
             "format": "格式不正确",
-            "invalid": "值无效"
+            "invalid": "值无效",
+            "tooFew": "至少选 {min} 项"
         },
         "unsaved": {
             "title": "放弃未保存的修改？",
@@ -1412,12 +1411,129 @@
             },
             "reason": {
                 "messageInApp": "App 指令区只能创建指令：bot 收不到用户之间的私信，也收不到它没加入的服务器里的消息。",
-                "commandInChannel": "Discord 无法把指令限定在单一频道。请到上层的服务器新增，再到 Discord 的“服务器设置 → 整合”限制频道。",
-                "commandLater": "指令的新增会在之后的更新开放。"
+                "commandInChannel": "Discord 无法把指令限定在单一频道。请到上层的服务器新增，再到 Discord 的“服务器设置 → 整合”限制频道。"
             },
             "create": "创建",
             "created": "已创建“{title}”。",
-            "done": "完成"
+            "done": "完成",
+            "commandNamePlaceholder": "例：status",
+            "commandPreset": "可见性（依分区默认，建立后可在卡片调整）"
+        },
+        "command": {
+            "resync": "重新同步到 Discord",
+            "name": "Slash 指令名称",
+            "nameHint": "1–32 个小写英数、- 与 _，不含 /。",
+            "description": "Slash 指令说明",
+            "descriptionHint": "Discord 指令菜单会显示（1–100 字）。",
+            "reservedName": "/login 保留给系统登录。",
+            "saveAndSync": "保存并同步到 Discord",
+            "visibility": "可见性",
+            "registration": {
+                "label": "注册目标",
+                "global": "全局",
+                "guild": "指定服务器"
+            },
+            "permissions": {
+                "label": "默认成员权限（只在服务器生效）",
+                "everyone": "所有人",
+                "manageGuild": "管理服务器",
+                "administrator": "管理员",
+                "custom": "自定义（{value}）"
+            },
+            "guildFixed": "服务器指令只能在该服务器使用、由服务器安装，这是 Discord 的规定。",
+            "sectionHere": "归在「{section}」。",
+            "sectionMoves": "保存后，这个指令会移到「{section}」。",
+            "sectionPending": "选好服务器后，就会显示这个指令归在哪一区。",
+            "visibleRuns": "看得到就能执行。要限制服务器里的身份组或频道，请到 Discord 的「服务器设置 → 整合」。",
+            "rule": {
+                "guildNeedsGuildId": "请选择服务器。",
+                "guildContextsOnlyGuild": "服务器指令只能在该服务器使用。",
+                "guildInstallOnly": "服务器指令只能由服务器安装。",
+                "globalHasNoGuild": "全局指令不指定服务器。",
+                "privateChannelNeedsUserInstall": "「其他私信」需要开启用户安装；只有服务器安装时，Discord 不会在那里显示这个指令。"
+            },
+            "delete": "删除指令",
+            "deleteTitle": "删除这个指令？",
+            "deleteMessage": "/{command} 和它所有的子指令都会删除，并从 Discord 移除，无法恢复。",
+            "deleted": "已删除 /{command}。",
+            "optionRule": {
+                "tooMany": "最多 25 个参数。",
+                "duplicateName": "已经有参数用了这个名称。",
+                "requiredAfterOptional": "Discord 会先列必填参数：请把这个参数移到选填参数前面。"
+            }
+        },
+        "registration": {
+            "registered": "已同步到 Discord。",
+            "deferred": "已保存，但还没同步到 Discord；bot 连上 Discord 后会自动注册。",
+            "removed": "已从 Discord 移除。",
+            "failed": "Discord 没有接受：",
+            "target": {
+                "global": "全局"
+            },
+            "outcome": {
+                "created": "已创建",
+                "patched": "已更新",
+                "unchanged": "已是最新",
+                "skipped": "没有注册：bot 不在这个服务器",
+                "failed": "失败"
+            }
+        },
+        "option": {
+            "title": "指令参数",
+            "none": "没有参数。",
+            "name": "参数名称",
+            "description": "参数说明",
+            "required": "必填",
+            "add": "新增参数",
+            "remove": "移除参数 {name}",
+            "moveUp": "把参数 {name} 往上移",
+            "moveDown": "把参数 {name} 往下移",
+            "type": {
+                "label": "参数类型",
+                "string": "字符串",
+                "integer": "整数",
+                "number": "数字",
+                "boolean": "是／否",
+                "user": "用户",
+                "channel": "频道",
+                "role": "身份组",
+                "mentionable": "用户或身份组",
+                "attachment": "附件"
+            }
+        },
+        "leaf": {
+            "rootTitle": "指令内容",
+            "listTitle": "子指令",
+            "count": "{count} / {max}",
+            "chars": "指令文字总长 {count} / {max}",
+            "subcommand": "子指令名称（/{command} …）",
+            "leafDescription": "子指令说明",
+            "leafDescriptionHint": "Discord 指令菜单会显示；留空就用标题。",
+            "titleHint": "子指令说明留空时，也当作它的说明。",
+            "toggle": "启用或停用 {path}",
+            "more": "{path} 的更多操作",
+            "save": "保存子指令",
+            "saveRoot": "保存",
+            "delete": "删除子指令",
+            "deleteTitle": "删除这个子指令？",
+            "deleteMessage": "{path} 会被删除，并从 Discord 移除，无法恢复。",
+            "lastTitle": "要删除整个指令吗？",
+            "lastMessage": "指令至少要有一个子指令，所以不能只删最后一个。要改成删除整个 /{command} 吗？",
+            "add": "加入子指令",
+            "addTitle": "/{command} 的新子指令",
+            "create": "加入并同步到 Discord",
+            "convertHint": "/{command} 是单一指令：加入子指令时，会先替它现在的动作取一个子指令名称。"
+        },
+        "convert": {
+            "title": "替 /{command} 加入子指令",
+            "intro": "Discord 规定：指令有子指令之后，/{command} 本身就不能再直接执行。所以要先替它现在的动作取一个子指令名称，把它搬到下一层。",
+            "name": "现有动作的新名称",
+            "now": "现在",
+            "after": "转换后",
+            "sameAction": "（动作不变）",
+            "nextLeaf": "接着设置的新子指令",
+            "note": "同步后，用户原本输入的 /{command} 会变成要再选子指令。指令的可见性设置不变。",
+            "submit": "转换并新增子指令"
         }
     },
     "config": {

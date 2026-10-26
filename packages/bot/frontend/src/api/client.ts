@@ -15,7 +15,9 @@ export class ApiError extends Error {
         /** Machine-readable reason, from `{ error: { code } }` bodies (behavior API). */
         public readonly code: string | null = null,
         /** The request field the error is about, when the server names one. */
-        public readonly field: string | null = null
+        public readonly field: string | null = null,
+        /** Structured detail some refusals carry (behavior API: `registration_failed` targets). */
+        public readonly details: unknown = null
     ) {
         super(message);
         this.name = 'ApiError';
@@ -97,21 +99,23 @@ export async function jsonOrThrow<T>(response: Response): Promise<T> {
         let message = `${response.status}${response.statusText ? ' ' + response.statusText : ''}`;
         let code: string | null = null;
         let field: string | null = null;
+        let details: unknown = null;
         try {
             const body = await response.json();
             const error = body?.error;
             if (typeof error === 'string' && error.length > 0) {
                 message = error;
             } else if (error && typeof error === 'object') {
-                // { error: { code, message, field? } } — the behavior API's shape
+                // { error: { code, message, field?, details? } } — the behavior API's shape
                 if (typeof error.message === 'string' && error.message.length > 0) message = error.message;
                 if (typeof error.code === 'string') code = error.code;
                 if (typeof error.field === 'string') field = error.field;
+                if (error.details !== undefined) details = error.details;
             }
         } catch {
             // Non-JSON body (e.g. proxy error page). Keep the status line.
         }
-        throw new ApiError(response.status, message, code, field);
+        throw new ApiError(response.status, message, code, field, details);
     }
     return response.json() as Promise<T>;
 }

@@ -1,7 +1,9 @@
 /**
  * Behavior Section（分區）：admin UI 依觸發「在哪裡能用」推導出的分組
  * （ADR 0003）。只是呈現，不儲存、不影響行為。這是唯一的推導規則；
- * 前端拿 API 回傳的 `section` 直接分組，不自己再推一次。
+ * 前端拿 API 回傳的 `section` 直接分組，不自己再推一次。唯一的例外是
+ * 指令表單編輯中的即時歸區提示（#138）：它用 frontend/.../command-rules.ts
+ * 的鏡像，由 tests/behavior-command-rules-mirror.test.ts 釘住兩邊一致。
  *
  * Section key：
  *   - `app`                         App 指令

@@ -53,7 +53,11 @@ import {
 } from "./behavior-write-routes.js";
 import { registerMessageTriggerReorderRoute } from "./message-trigger-reorder.js";
 import { registerWebhookSecretRotateRoute } from "./webhook-secret-rotate.js";
-import { registerBehaviorCommandRoutes } from "./behavior-command-routes.js";
+import {
+  addLeafSchema,
+  createCommandSchema,
+  registerBehaviorCommandRoutes,
+} from "./behavior-command-routes.js";
 import { idParams, parseRowId, snowflake } from "./behavior-schemas.js";
 
 export type { BehaviorRoutesOptions };
@@ -98,12 +102,19 @@ function registerReadAndTestRoutes(
   });
 
   // ── GET /api/behaviors/schema（#108）────────────────────────────────────────
-  // 寫入路由實際驗證用的 JSON schema。admin UI 用它在送出前檢查表單，
-  // 規則只有這一份，前端不另抄一份。schema 只涵蓋單一欄位的形狀；跨欄位
-  // 規則（message-trigger-rules.ts）由 UI 的表單結構避開，送出後仍由這裡把關。
+  // 寫入路由實際驗證用的 JSON schema：訊息觸發、指令（含葉節點）與新增的
+  // 子指令。admin UI 用它在送出前檢查欄位格式，schema 只有這一份，前端不另抄。
+  // 跨欄位規則不在 schema 裡：訊息觸發的（message-trigger-rules.ts）由 UI 的
+  // 表單結構避開；指令的（command-tree-rules.ts）是唯一例外，前端有一份鏡像
+  // （frontend/.../command-rules.ts），由 tests/behavior-command-rules-mirror.test.ts
+  // 釘住兩邊一致（見 architecture.md）。送出後一律仍由這裡把關。
 
   server.get("/api/behaviors/schema", async (_request, reply) => {
-    return reply.send({ messageTrigger: createMessageTriggerSchema });
+    return reply.send({
+      messageTrigger: createMessageTriggerSchema,
+      command: createCommandSchema,
+      commandLeaf: addLeafSchema,
+    });
   });
 
   // ── BH-6.2：test-fire ───────────────────────────────────────────────────────

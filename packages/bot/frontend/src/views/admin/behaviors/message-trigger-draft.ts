@@ -1,4 +1,3 @@
-import type { Ref } from 'vue';
 import type {
     BehaviorAudienceKind,
     BehaviorPatch,
@@ -7,7 +6,9 @@ import type {
     MessageTriggerInput,
     MessageTriggerView,
 } from '../../../api/behavior';
+import type { DraftModel } from './draft-rebase';
 import { kindHasGuild, locationKindOf, type LocationKind, type TriggerLocation } from './message-trigger-location';
+import { NEW_WEBHOOK, savedWebhookBody, webhookBody, webhookDraftOf, type WebhookDraft } from './webhook-draft';
 
 /**
  * The edit draft of a Message Trigger: what the trigger and action forms
@@ -20,9 +21,7 @@ import { kindHasGuild, locationKindOf, type LocationKind, type TriggerLocation }
  * are kept by construction, the per-field rules by the server's schema.
  */
 
-export type AuthChoice = 'none' | BehaviorWebhookAuthMode;
-
-export interface MessageTriggerDraft {
+export interface MessageTriggerDraft extends WebhookDraft {
     title: string;
     description: string;
     locationKind: LocationKind;
@@ -35,8 +34,6 @@ export interface MessageTriggerDraft {
     audienceKind: BehaviorAudienceKind;
     audienceUserId: string;
     audienceGroupName: string;
-    webhookUrl: string;
-    authMode: AuthChoice;
 }
 
 export function draftFromTrigger(t: MessageTriggerView): MessageTriggerDraft {
@@ -53,8 +50,7 @@ export function draftFromTrigger(t: MessageTriggerView): MessageTriggerDraft {
         audienceKind: t.audienceKind,
         audienceUserId: t.audienceUserId ?? '',
         audienceGroupName: t.audienceGroupName ?? '',
-        webhookUrl: t.webhook?.url ?? '',
-        authMode: t.webhook?.authMode ?? 'none',
+        ...webhookDraftOf(t.webhook),
     };
 }
 
@@ -72,8 +68,7 @@ export function emptyDraft(location: { kind: LocationKind; guildId?: string; cha
         audienceKind: 'all',
         audienceUserId: '',
         audienceGroupName: '',
-        webhookUrl: '',
-        authMode: 'hmac',
+        ...NEW_WEBHOOK,
     };
 }
 
@@ -108,16 +103,6 @@ export function draftLocation(d: MessageTriggerDraft): TriggerLocation | null {
     }
 }
 
-/**
- * The handler for the field components' `patch` events: they send what
- * changed, and it lands on the current draft (never on a stale copy).
- */
-export function draftPatcher(draft: Ref<MessageTriggerDraft>): (patch: Partial<MessageTriggerDraft>) => void {
-    return (patch) => {
-        draft.value = { ...draft.value, ...patch };
-    };
-}
-
 /** The trigger fields of a request body (everything but the webhook). */
 type TriggerBody = Omit<MessageTriggerInput, 'webhook' | 'enabled'> & {
     description: string;
@@ -149,7 +134,7 @@ export function toCreateBody(d: MessageTriggerDraft): MessageTriggerBody {
         audienceKind,
         audienceUserId: audienceKind === 'user' ? d.audienceUserId.trim() : null,
         audienceGroupName: audienceKind === 'group' ? d.audienceGroupName.trim() : null,
-        webhook: { url: d.webhookUrl.trim(), authMode: d.authMode === 'none' ? null : d.authMode },
+        webhook: webhookBody(d),
     };
 }
 
@@ -167,7 +152,7 @@ function savedBody(t: MessageTriggerView): MessageTriggerBody {
         audienceKind: t.audienceKind,
         audienceUserId: t.audienceUserId,
         audienceGroupName: t.audienceGroupName,
-        webhook: { url: t.webhook?.url ?? '', authMode: t.webhook?.authMode ?? null },
+        webhook: savedWebhookBody(t.webhook),
     };
 }
 
@@ -211,3 +196,8 @@ export function previewMatch(kind: BehaviorPatternKind, pattern: string, text: s
     }
     return re.test(text) ? 'match' : 'no_match';
 }
+
+export const messageTriggerDraftModel: DraftModel<MessageTriggerView, MessageTriggerDraft> = {
+    draftOf: draftFromTrigger,
+    patchOf: toPatchBody,
+};

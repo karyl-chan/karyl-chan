@@ -136,9 +136,22 @@ export async function listBehaviors(): Promise<BehaviorListView> {
 
 // ── write API (#136) ────────────────────────────────────────────────────────
 
-/** How a command write reached Discord. */
+/**
+ * What one registration target (`global` or `guild:<id>`) reported for a
+ * command — mirrors command-system/types.ts `TargetOutcome`.
+ */
+export type RegistrationTargetOutcome =
+  | { target: string; status: "created" | "patched" | "unchanged" }
+  | { target: string; status: "failed"; attempted: "create" | "patch"; error: string }
+  | { target: string; status: "skipped"; reason: "guild_unavailable" };
+
+/**
+ * How a command write reached Discord. A refusal is not a report: it is
+ * an ApiError with code `registration_failed` (502) whose `details` are
+ * `{ targets: RegistrationTargetOutcome[] }`.
+ */
 export type RegistrationReport =
-  | { status: "registered"; targets: unknown[] }
+  | { status: "registered"; targets: RegistrationTargetOutcome[] }
   | { status: "removed" }
   | { status: "deferred"; reason: string };
 
@@ -327,6 +340,10 @@ export async function convertToSubcommands(
  */
 export interface BehaviorSchemas {
   messageTrigger: Record<string, unknown>;
+  /** POST /api/behavior-commands: the command, its visibility and its leaves. */
+  command: Record<string, unknown>;
+  /** POST /api/behavior-commands/:id/leaves: an added subcommand. */
+  commandLeaf: Record<string, unknown>;
 }
 
 let schemas: Promise<BehaviorSchemas> | null = null;

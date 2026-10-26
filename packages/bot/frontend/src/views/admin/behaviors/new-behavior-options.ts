@@ -17,8 +17,8 @@ import type { LocationKind } from './message-trigger-location';
  *   - one channel: message triggers only — Discord cannot limit a command
  *     to one channel.
  *
- * Where commands are created is S6 (#138); this only says whether the
- * section can hold one.
+ * This only says whether the section can hold a command; the visibility a
+ * new one starts with is command-draft.ts `newCommandVisibility`.
  */
 export interface KindOption {
     possible: boolean;

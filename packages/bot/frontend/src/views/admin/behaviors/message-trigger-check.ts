@@ -61,7 +61,3 @@ export async function checkMessageTriggerDraft(
     }
     return found;
 }
-
-export function hasErrors(errors: FormErrors): boolean {
-    return Object.keys(errors.fields).length > 0 || errors.general !== null;
-}

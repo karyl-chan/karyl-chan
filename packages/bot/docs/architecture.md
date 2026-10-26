@@ -147,7 +147,10 @@ is stored.
   edits and removes leaves; `command-writes.ts` holds what both share
   (leaf shapes, row loads, the namespace check, the view);
   `command-tree-rules.ts` is Discord's rule set for a command and its
-  leaves (pure).
+  leaves (pure). The admin UI mirrors it and the command branch of
+  `behavior-section.ts` in `frontend/…/behaviors/command-rules.ts` for
+  live form feedback; `tests/behavior-command-rules-mirror.test.ts`
+  pins the two together.
 - `command-registration-sync.ts` — commit → `registerOne` → release the
   old name; a refusal restores the rows from `command-snapshot.ts` and
   answers `registration_failed` (the consistency story is in the file

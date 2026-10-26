@@ -4,15 +4,17 @@ import { useI18n } from 'vue-i18n';
 import { AppSelectField, AppTextField, Stack, type SelectOption } from '@karyl-chan/ui';
 import type { WebhookActionView } from '../../../api/behavior';
 import SecretField from './SecretField.vue';
-import type { AuthChoice, MessageTriggerDraft } from './message-trigger-draft';
+import type { AuthChoice, WebhookDraft } from './webhook-draft';
 
 /**
  * The action half of a behavior form (board 7 「轉發設定」): the Action
  * Source — webhook for now; plugin actions come with phase 2 — its URL
  * and authentication, and the write-only secret of a saved webhook.
+ * Shared by every form with a webhook action (message triggers, command
+ * leaves).
  */
 const props = defineProps<{
-    draft: MessageTriggerDraft;
+    draft: WebhookDraft;
     errors: Record<string, string>;
     /** The saved webhook (null while creating). */
     saved: WebhookActionView | null;
@@ -23,7 +25,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-    (e: 'patch', patch: Partial<MessageTriggerDraft>): void;
+    (e: 'patch', patch: Partial<WebhookDraft>): void;
     (e: 'rotated'): void;
 }>();
 

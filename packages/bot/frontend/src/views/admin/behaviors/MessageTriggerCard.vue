@@ -20,19 +20,17 @@ import MessageTriggerFields from './MessageTriggerFields.vue';
 import MessageTriggerReadOnly from './MessageTriggerReadOnly.vue';
 import WebhookActionFields from './WebhookActionFields.vue';
 import WebhookTestResult from './WebhookTestResult.vue';
-import { NO_ERRORS, describeBehaviorError, errorsFromRefusal, isStale, type FormErrors } from './behavior-errors';
-import { keepEditsOn, rebaseDraft } from './draft-rebase';
+import { NO_ERRORS, describeBehaviorError, errorsFromRefusal, hasErrors, isStale, type FormErrors } from './behavior-errors';
 import {
     checkMessageTriggerDraft,
     fieldsWithErrorLine,
-    hasErrors,
     type TriggerFormLayout,
 } from './message-trigger-check';
-import { draftPatcher, draftFromTrigger, draftLocation, isDirty, toPatchBody } from './message-trigger-draft';
+import { draftLocation, messageTriggerDraftModel } from './message-trigger-draft';
 import { locationKey } from './message-trigger-location';
 import { sectionLabel } from './section-labels';
 import { draftLeavesGroup, useSoleGroup } from './use-sole-group';
-import { trackUnsavedDraft } from './use-unsaved-drafts';
+import { useDraftForm } from './use-draft-form';
 
 /**
  * A Message Trigger (board 7): the header row toggles, test-fires and
@@ -42,7 +40,7 @@ import { trackUnsavedDraft } from './use-unsaved-drafts';
  *
  * The saved trigger (`base`) and the edit draft are kept apart (#105): a
  * new version from the server — the answer to the enabled toggle, a reload
- * — never overwrites edits in progress (see rebaseDraft).
+ * — never overwrites edits in progress (see useDraftForm).
  */
 const props = defineProps<{
     trigger: MessageTriggerView;
@@ -93,39 +91,11 @@ onMounted(() => {
 
 // ── saved state vs. edit draft ──────────────────────────────────────────────
 
-const base = ref(props.trigger);
-const draft = ref(draftFromTrigger(props.trigger));
-const applyPatch = draftPatcher(draft);
-const conflict = ref(false);
-/** The last save was refused as stale; the list was reloaded under the draft. */
-const stale = ref(false);
-const dirty = computed(() => isDirty(base.value, draft.value));
-trackUnsavedDraft(props.trigger.id, dirty);
-
-watch(
-    () => props.trigger,
-    (incoming) => {
-        if (incoming === base.value) return;
-        const next = rebaseDraft(base.value, draft.value, incoming);
-        base.value = next.base;
-        draft.value = next.draft;
-        conflict.value = next.conflict;
-    }
-);
-
-/** Keep my edits, applied onto the latest version (the next save is based on it). */
-function keepMine() {
-    stale.value = false;
-    draft.value = keepEditsOn(base.value, draft.value, props.trigger);
-    base.value = props.trigger;
-    conflict.value = false;
-}
+const form = useDraftForm(messageTriggerDraftModel, () => props.trigger, `behavior:${props.trigger.id}`);
+const { base, draft, conflict, stale, dirty, applyPatch, keepMine } = form;
 
 function discard() {
-    stale.value = false;
-    base.value = props.trigger;
-    draft.value = draftFromTrigger(props.trigger);
-    conflict.value = false;
+    form.discard();
     errors.value = NO_ERRORS;
 }
 
@@ -139,7 +109,7 @@ const issuedSecret = ref<string | null>(null);
 const canSave = computed(() => dirty.value && !saving.value && !conflict.value);
 
 async function save() {
-    const patch = toPatchBody(base.value, draft.value);
+    const patch = form.pendingPatch();
     if (!patch || !canSave.value) return;
     saving.value = true;
     stale.value = false;
@@ -150,15 +120,11 @@ async function save() {
         const result = await updateBehavior(props.trigger.id, patch);
         const saved = result.behavior as MessageTriggerView;
         issuedSecret.value = result.secret ?? null;
-        base.value = saved;
-        draft.value = draftFromTrigger(saved);
+        form.adopt(saved);
         emit('updated', saved);
     } catch (err) {
         if (isStale(err)) {
-            // the reload decides: a changed form field keeps the conflict
-            // open; otherwise the edits are rebased and only need saving again
-            conflict.value = true;
-            stale.value = true;
+            form.refusedAsStale();
             errors.value = NO_ERRORS;
             emit('reload');
         } else {

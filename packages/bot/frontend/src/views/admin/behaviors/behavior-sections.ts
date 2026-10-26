@@ -9,7 +9,9 @@ import type {
 /**
  * Grouping of the behaviors page by Behavior Section (ADR 0003). The
  * server derives each item's `section`; this file only reads those keys —
- * it never re-derives a section from trigger fields.
+ * it never re-derives a section from trigger fields. (The command form's
+ * live "lands in" hint is the one exception: command-rules.ts, a mirror
+ * the bot's tests pin to the server's rule.)
  */
 
 export type ParsedSection =
@@ -28,6 +30,11 @@ export function parseSection(key: BehaviorSection): ParsedSection {
         return { kind: 'channel', guildId, channelId };
     }
     return { kind: 'guild', guildId: key.slice('guild:'.length) };
+}
+
+/** A card's key across the page: commands and behaviors are numbered apart. */
+export function itemKey(item: Pick<BehaviorItemView, 'kind' | 'id'>): string {
+    return `${item.kind}:${item.id}`;
 }
 
 const FIXED: BehaviorSection[] = ['app', 'bot_dm', 'guild:all'];
