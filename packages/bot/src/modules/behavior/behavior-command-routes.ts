@@ -105,7 +105,11 @@ const leafInputSchema = {
   additionalProperties: false,
 } as const;
 
-const createCommandSchema = {
+/**
+ * The create body — also served to the admin UI by GET /api/behaviors/schema,
+ * so its command forms check a draft against the rules this route enforces.
+ */
+export const createCommandSchema = {
   type: "object",
   properties: {
     ...commandFields,
@@ -115,7 +119,8 @@ const createCommandSchema = {
   additionalProperties: false,
 } as const;
 
-const addLeafSchema = {
+/** An added subcommand leaf — served with the create schema. */
+export const addLeafSchema = {
   ...leafInputSchema,
   properties: { ...leafInputSchema.properties, subcommand: commandNameSchema },
   required: ["subcommand", "title", "webhook"],

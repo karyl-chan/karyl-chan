@@ -499,3 +499,45 @@ describe("audit", () => {
     expect(text).not.toContain("203.0.113.10");
   });
 });
+
+describe("GET /api/behaviors/schema — command schemas (#138)", () => {
+  async function served() {
+    const res = await server.inject({ method: "GET", url: "/api/behaviors/schema" });
+    expect(res.statusCode).toBe(200);
+    const { Ajv } = await import("ajv");
+    const ajv = new Ajv({ strict: false });
+    const body = res.json();
+    return { command: ajv.compile(body.command), commandLeaf: ajv.compile(body.commandLeaf) };
+  }
+
+  it("serves the schema POST /api/behavior-commands validates a command with", async () => {
+    const { command } = await served();
+    const refused = [
+      { ...guildCommand, name: "Bad Name" },
+      { ...guildCommand, description: "x".repeat(101) },
+      { ...guildCommand, contexts: [] },
+      { ...guildCommand, leaves: [{ ...rootLeaf, title: "  " }] },
+    ];
+    for (const payload of refused) {
+      expect(command(payload)).toBe(false);
+      expect((await create(payload)).statusCode).toBe(400);
+    }
+    expect(command(guildCommand)).toBe(true);
+    expect((await create(guildCommand)).statusCode).toBe(201);
+  });
+
+  it("serves the schema an added subcommand is validated with", async () => {
+    const { commandLeaf } = await served();
+    const id = (
+      await create({ ...guildCommand, leaves: [{ ...rootLeaf, subcommand: "a" }] })
+    ).json().command.id;
+    const add = (payload: Record<string, unknown>) =>
+      server.inject({ method: "POST", url: `/api/behavior-commands/${id}/leaves`, payload });
+    const bad = { ...rootLeaf, subcommand: "" };
+    expect(commandLeaf(bad)).toBe(false);
+    expect((await add(bad)).statusCode).toBe(400);
+    const good = { ...rootLeaf, subcommand: "b" };
+    expect(commandLeaf(good)).toBe(true);
+    expect((await add(good)).statusCode).toBe(201);
+  });
+});

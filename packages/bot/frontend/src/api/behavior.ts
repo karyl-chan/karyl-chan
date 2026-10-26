@@ -327,6 +327,10 @@ export async function convertToSubcommands(
  */
 export interface BehaviorSchemas {
   messageTrigger: Record<string, unknown>;
+  /** POST /api/behavior-commands: the command, its visibility and its leaves. */
+  command: Record<string, unknown>;
+  /** POST /api/behavior-commands/:id/leaves: an added subcommand. */
+  commandLeaf: Record<string, unknown>;
 }
 
 let schemas: Promise<BehaviorSchemas> | null = null;
