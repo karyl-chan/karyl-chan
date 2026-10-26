@@ -271,6 +271,12 @@ describe("POST /api/behavior-commands", () => {
         { type: "integer", name: "a", description: "b" },
       ] }],
     }, "leaves.0.options.1.name"],
+    ["an option type leaves do not offer", {
+      leaves: [{ ...rootLeaf, options: [{ type: "sub_command", name: "x", description: "x" }] }],
+    }, "leaves.0.options.0.type"],
+    ["an option name Discord refuses", {
+      leaves: [{ ...rootLeaf, options: [{ type: "string", name: "BadName", description: "x" }] }],
+    }, "leaves.0.options.0.name"],
     ["more than 25 subcommands", {
       leaves: Array.from({ length: 26 }, (_, i) => ({ ...rootLeaf, subcommand: `s${i}` })),
     }, "leaves"],
