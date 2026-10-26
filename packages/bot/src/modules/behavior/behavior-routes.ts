@@ -4,6 +4,7 @@
  * 路由表：
  *   GET  /api/behaviors                          — { system, commands, messageTriggers }
  *   POST /api/behaviors/:id/test                 — 對 behavior 的 webhook 動作試發
+ *   POST / PATCH / DELETE /api/behaviors[/:id]   — 訊息觸發的寫入（behavior-write-routes.ts）
  *   GET  /api/behavior-groups/:groupName/members — 群組名單
  *   PUT  /api/behavior-groups/:groupName/members — 全量替換群組名單
  *
@@ -41,6 +42,7 @@ import {
   installBehaviorRouteValidation,
 } from "./behavior-api-error.js";
 import { auditBehaviorWrite } from "./behavior-audit.js";
+import { registerBehaviorWriteRoutes } from "./behavior-write-routes.js";
 import { idParams, parseRowId, snowflake } from "./behavior-schemas.js";
 
 export type { BehaviorRoutesOptions };
@@ -59,6 +61,7 @@ export async function registerBehaviorRoutes(
       if (!requireBehaviorAdmin(request, reply)) return reply;
     });
     registerReadAndTestRoutes(scope, options);
+    registerBehaviorWriteRoutes(scope);
     registerGroupMemberRoutes(scope);
   });
 }

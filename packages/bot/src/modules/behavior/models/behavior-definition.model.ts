@@ -295,6 +295,8 @@ export interface BehaviorDefinitionRow {
   audienceKind: BehaviorAudienceKind;
   audienceUserId: string | null;
   audienceGroupName: string | null;
+  /** last write — the version an admin edit is based on */
+  updatedAt: Date;
 }
 
 export function rowOfBehaviorDefinition(
@@ -327,6 +329,7 @@ export function rowOfBehaviorDefinition(
     audienceKind: value<BehaviorAudienceKind>("audienceKind"),
     audienceUserId: nullable<string>("audienceUserId"),
     audienceGroupName: nullable<string>("audienceGroupName"),
+    updatedAt: value<Date>("updatedAt"),
   };
 }
 

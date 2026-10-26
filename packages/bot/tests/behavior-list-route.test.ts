@@ -3,8 +3,7 @@
  *
  *   GET /api/behaviors → { system, commands, messageTriggers }; every item
  *   carries its derived Behavior Section; webhook secrets are reported only
- *   as `secretSet`. Test-fire works on a behavior's webhook action. The
- *   write routes are gone until S4 re-adds them on the new model.
+ *   as `secretSet`. Test-fire works on a behavior's webhook action.
  */
 import { vi, describe, it, expect, beforeAll } from "vitest";
 
@@ -172,18 +171,9 @@ describe("POST /api/behaviors/:id/test", () => {
   });
 });
 
-describe("write routes", () => {
-  it("are not served in this slice", async () => {
-    for (const [method, url] of [
-      ["POST", "/api/behaviors"],
-      ["PATCH", `/api/behaviors/${ids.dm}`],
-      ["DELETE", `/api/behaviors/${ids.dm}`],
-      ["PATCH", "/api/behaviors/reorder"],
-      ["POST", `/api/behaviors/${ids.dm}/resync`],
-      ["GET", "/api/behavior-tabs"],
-    ] as const) {
-      const res = await server.inject({ method, url, payload: {} });
-      expect(res.statusCode, `${method} ${url}`).toBe(404);
-    }
+describe("removed routes", () => {
+  it("the scope tab API is gone", async () => {
+    const res = await server.inject({ method: "GET", url: "/api/behavior-tabs" });
+    expect(res.statusCode).toBe(404);
   });
 });

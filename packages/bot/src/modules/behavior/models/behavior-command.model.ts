@@ -122,6 +122,8 @@ export interface BehaviorCommandRow {
   contexts: string;
   defaultMemberPermissions: string | null;
   isSystem: boolean;
+  /** last write — the version an admin edit is based on */
+  updatedAt: Date;
 }
 
 export function rowOfBehaviorCommand(
@@ -141,5 +143,6 @@ export function rowOfBehaviorCommand(
       (model.getDataValue("defaultMemberPermissions") as string | null) ??
       null,
     isSystem: !!model.getDataValue("isSystem"),
+    updatedAt: model.getDataValue("updatedAt") as Date,
   };
 }

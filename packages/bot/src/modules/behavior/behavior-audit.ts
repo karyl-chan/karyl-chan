@@ -14,6 +14,9 @@ import { recordAudit } from "../admin/admin-audit.service.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 
 export type BehaviorAuditAction =
+  | "behavior.create"
+  | "behavior.update"
+  | "behavior.delete"
   | "behavior.group_members.replace";
 
 /**

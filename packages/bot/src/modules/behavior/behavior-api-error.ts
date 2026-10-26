@@ -59,13 +59,23 @@ export class BehaviorApiError extends Error {
     message: string,
     readonly field?: string,
     readonly details?: unknown,
+    private readonly status?: number,
   ) {
     super(message);
     this.name = "BehaviorApiError";
   }
 
+  /**
+   * An edit based on an outdated version (`ifUpdatedAt` no longer matches,
+   * #121). Not a new code — the request is what is wrong — but 409, as
+   * retrying it unchanged cannot succeed.
+   */
+  static stale(field: string, message: string): BehaviorApiError {
+    return new BehaviorApiError("validation_failed", message, field, undefined, 409);
+  }
+
   get statusCode(): number {
-    return STATUS[this.code];
+    return this.status ?? STATUS[this.code];
   }
 
   toBody(): BehaviorErrorBody {
@@ -89,6 +99,8 @@ export function sendBehaviorError(reply: FastifyReply, err: BehaviorApiError): F
 /** Patterns the messages name instead of quoting the regex. */
 export const SNOWFLAKE_PATTERN = "^\\d{17,20}$";
 export const ROW_ID_PATTERN = "^[1-9]\\d{0,9}$";
+/** At least one non-space character (titles, descriptions). */
+export const NON_BLANK_PATTERN = "\\S";
 
 function fieldOf(err: ErrorObject): string | undefined {
   const base = err.instancePath.replace(/^\//, "").replace(/\//g, ".");
@@ -115,6 +127,9 @@ function describe(err: ErrorObject, field: string | undefined): string {
       }
       if (err.params["pattern"] === ROW_ID_PATTERN) {
         return `${subject} must be a positive integer id`;
+      }
+      if (err.params["pattern"] === NON_BLANK_PATTERN) {
+        return `${subject} must not be blank`;
       }
       return `${subject} has an invalid format`;
     default:
