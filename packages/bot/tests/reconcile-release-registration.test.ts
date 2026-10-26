@@ -18,6 +18,7 @@ vi.mock("../src/modules/bot-events/bot-event-log.js", () => ({
 import type { Client } from "discord.js";
 import { sequelize } from "../src/db.js";
 import { BehaviorCommand } from "../src/modules/behavior/models/behavior-command.model.js";
+import { BehaviorDefinition } from "../src/modules/behavior/models/behavior-definition.model.js";
 import { ReconcilerOwnedCommand } from "../src/modules/command-system/models/reconciler-owned-command.model.js";
 import { CommandReconciler } from "../src/modules/command-system/reconcile.service.js";
 import { clearBehaviors, seedCommand, seedLeaf } from "./behavior-fixtures.js";
@@ -111,6 +112,44 @@ describe("CommandReconciler.releaseRegistration", () => {
     await reconciler.registerOne({ source: "behavior", id });
     expect(await reconciler.releaseRegistration("kept", "guild:g1")).toBe("still_desired");
     expect(guild.names()).toEqual(["kept"]);
+  });
+
+  it("reconcileForBehaviorCommand reports a removal Discord refused", async () => {
+    const id = await guildCommand("off");
+    await reconciler.registerOne({ source: "behavior", id });
+    await BehaviorDefinition.update({ enabled: false }, { where: { commandId: id } });
+    guild.delete.mockRejectedValueOnce(new Error("Missing Access"));
+
+    const result = await reconciler.reconcileForBehaviorCommand(id);
+    expect(result).toMatchObject({ ok: false, action: "delete" });
+    expect(result.error).toContain("Missing Access");
+    expect(guild.names()).toEqual(["off"]);
+  });
+
+  it("reconcileForBehaviorCommand removes a command with no enabled leaf", async () => {
+    const id = await guildCommand("off");
+    await reconciler.registerOne({ source: "behavior", id });
+    await BehaviorDefinition.update({ enabled: false }, { where: { commandId: id } });
+    expect(await reconciler.reconcileForBehaviorCommand(id)).toMatchObject({
+      ok: true,
+      action: "delete",
+    });
+    expect(guild.names()).toEqual([]);
+  });
+
+  it("reconcileForBehaviorCommand reports a target it could not reach as skipped", async () => {
+    const id = await seedCommand({
+      name: "away",
+      description: "away",
+      registration: "guild",
+      guildId: "elsewhere",
+    });
+    await seedLeaf(id, { title: "away", enabled: false });
+    expect(await reconciler.reconcileForBehaviorCommand(id)).toMatchObject({
+      ok: true,
+      action: "delete",
+      targets: [{ target: "guild:elsewhere", status: "skipped", reason: "guild_unavailable" }],
+    });
   });
 
   it("reports a target the bot cannot reach", async () => {
