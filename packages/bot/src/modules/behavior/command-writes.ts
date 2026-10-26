@@ -106,7 +106,7 @@ export async function storedLeafShapes(
   });
 }
 
-function describeOwner(conflict: Extract<NamespaceCheck, { ok: false }>["conflict"]): string {
+function describeNamespaceConflict(conflict: Extract<NamespaceCheck, { ok: false }>["conflict"]): string {
   const where = conflict.target === "global" ? "globally" : `in ${conflict.target}`;
   switch (conflict.owner.kind) {
     case "builtin":
@@ -131,6 +131,19 @@ export async function checkNameFree(
       "name",
     );
   }
+  await checkNamespaceFree(namespace, at, ownCommandId);
+}
+
+/**
+ * The shared-namespace half alone: no other command holds the name where
+ * it will be registered. The system login checks only this — the reserved
+ * names are its own.
+ */
+export async function checkNamespaceFree(
+  namespace: CommandNamespaceChecker,
+  at: RegisteredName,
+  ownCommandId: number | null,
+): Promise<void> {
   const verdict = await namespace.check(
     at.name,
     at.target,
@@ -139,7 +152,7 @@ export async function checkNameFree(
   if (!verdict.ok) {
     throw new BehaviorApiError(
       "name_conflict",
-      `/${at.name} is already taken by ${describeOwner(verdict.conflict)}`,
+      `/${at.name} is already taken by ${describeNamespaceConflict(verdict.conflict)}`,
       "name",
     );
   }
