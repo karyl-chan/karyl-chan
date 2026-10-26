@@ -44,11 +44,6 @@ export const BehaviorGroupMember = sequelize.define(
   },
 );
 
-export interface BehaviorGroupMemberRow {
-  groupName: string;
-  userId: string;
-}
-
 export const findGroupMembers = async (
   groupName: string,
 ): Promise<string[]> => {
@@ -57,46 +52,6 @@ export const findGroupMembers = async (
     order: [["userId", "ASC"]],
   });
   return rows.map((r) => r.getDataValue("userId") as string);
-};
-
-export const findGroupMembersBulk = async (
-  groupNames: string[],
-): Promise<Map<string, string[]>> => {
-  const unique = Array.from(new Set(groupNames));
-  if (unique.length === 0) return new Map();
-  const rows = await BehaviorGroupMember.findAll({
-    where: { groupName: { [Op.in]: unique } },
-    order: [
-      ["groupName", "ASC"],
-      ["userId", "ASC"],
-    ],
-  });
-  const map = new Map<string, string[]>();
-  for (const r of rows) {
-    const g = r.getDataValue("groupName") as string;
-    const uid = r.getDataValue("userId") as string;
-    let list = map.get(g);
-    if (!list) {
-      list = [];
-      map.set(g, list);
-    }
-    list.push(uid);
-  }
-  return map;
-};
-
-export const addGroupMember = async (
-  groupName: string,
-  userId: string,
-): Promise<void> => {
-  await BehaviorGroupMember.upsert({ groupName, userId });
-};
-
-export const removeGroupMember = async (
-  groupName: string,
-  userId: string,
-): Promise<void> => {
-  await BehaviorGroupMember.destroy({ where: { groupName, userId } });
 };
 
 export const replaceGroupMembers = async (
