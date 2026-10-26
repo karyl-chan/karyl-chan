@@ -83,6 +83,12 @@ export interface CommandDefinition {
   contexts: DiscordContext[];
   options?: ManifestCommandOption[];
   localizations?: CommandLocalizations;
+  /**
+   * Discord permission bitfield（十進位字串，例如 "32" = ManageGuild）。
+   * null / 省略 = 不限制（所有成員可見）。Discord 在私訊與使用者安裝情境
+   * 下會忽略它。
+   */
+  defaultMemberPermissions?: string | null;
 }
 
 // ── deriveRegistrationCall（C-runtime §3.3 三軸 → Discord 登記形狀）──────────
@@ -131,6 +137,10 @@ export function deriveRegistrationCall(
   if (def.localizations?.name_localizations) {
     data["nameLocalizations"] = def.localizations.name_localizations;
   }
+
+  // 一律帶上（未設定時為 null）：discord.js 的 edit 會略過 undefined 欄位，
+  // 只有明確送 null 才能把先前的限制拿掉。
+  data["defaultMemberPermissions"] = def.defaultMemberPermissions ?? null;
 
   data["contexts"] = contexts.map((c) => CONTEXT_MAP[c]);
   data["integrationTypes"] = integrationTypes.map((t) => INTEGRATION_MAP[t]);
@@ -214,6 +224,17 @@ function canonicalOptions(options: any[]): string {
   );
 }
 
+function canonicalPermissions(raw: unknown): string | null {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw === "bigint") return raw.toString();
+  if (typeof raw === "string" && /^\d+$/.test(raw)) {
+    return BigInt(raw).toString();
+  }
+  // 其他形狀（PermissionsBitField 等）不該出現在 desired 端；
+  // 當成不同值，寧可多 patch 一次也不要漏掉權限變更。
+  return String(raw);
+}
+
 export function commandNeedsPatch(
   existing: ApplicationCommand,
   desired: ApplicationCommandData,
@@ -269,6 +290,21 @@ export function commandNeedsPatch(
       .integrationTypes ?? [];
   const desiredItSorted = desiredIt.slice().sort(byNumber).join(",");
   if (existItSorted !== desiredItSorted) return true;
+
+  // 比對 defaultMemberPermissions。Discord 現況是 PermissionsBitField | null；
+  // desired 是 bitfield 字串 / bigint / null。兩側都轉成十進位字串（或 null）。
+  if (
+    canonicalPermissions(
+      (existing as { defaultMemberPermissions?: { bitfield: bigint } | null })
+        .defaultMemberPermissions?.bitfield,
+    ) !==
+    canonicalPermissions(
+      (desired as { defaultMemberPermissions?: unknown })
+        .defaultMemberPermissions,
+    )
+  ) {
+    return true;
+  }
 
   // 比對 options（sub_command / 參數定義）
   // Discord cache 的 existing.options 是 ApplicationCommandOption[]；
