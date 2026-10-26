@@ -1237,7 +1237,6 @@
             "tagStopShort": "Stop",
             "unhealthy": "Failing",
             "toggleProtected": "The system behavior cannot be disabled",
-            "toggleReadOnly": "Editing commands comes in a later update",
             "enabled": "Enabled",
             "disabled": "Disabled",
             "audienceUser": "User {user}",
@@ -1451,6 +1450,15 @@
                 "guildInstallOnly": "A server command is installed by the server only.",
                 "globalHasNoGuild": "A global command has no server.",
                 "privateChannelNeedsUserInstall": "Other DMs need user install: with server install only, Discord does not show the command there."
+            },
+            "delete": "Delete command",
+            "deleteTitle": "Delete this command?",
+            "deleteMessage": "/{command} and all its subcommands are deleted and removed from Discord. This cannot be undone.",
+            "deleted": "/{command} was deleted.",
+            "optionRule": {
+                "tooMany": "At most 25 options.",
+                "duplicateName": "Another option already has this name.",
+                "requiredAfterOptional": "Discord lists required options first: move this one above the optional ones."
             }
         },
         "registration": {
@@ -1468,6 +1476,51 @@
                 "skipped": "not registered: the bot is not in this server",
                 "failed": "failed"
             }
+        },
+        "option": {
+            "title": "Command options",
+            "none": "No options.",
+            "name": "Option name",
+            "description": "Option description",
+            "required": "Required",
+            "add": "Add option",
+            "remove": "Remove option {name}",
+            "moveUp": "Move option {name} up",
+            "moveDown": "Move option {name} down",
+            "type": {
+                "label": "Option type",
+                "string": "Text",
+                "integer": "Integer",
+                "number": "Number",
+                "boolean": "Yes / no",
+                "user": "User",
+                "channel": "Channel",
+                "role": "Role",
+                "mentionable": "User or role",
+                "attachment": "Attachment"
+            }
+        },
+        "leaf": {
+            "rootTitle": "Command",
+            "listTitle": "Subcommands",
+            "count": "{count} / {max}",
+            "chars": "{count} / {max} characters",
+            "subcommand": "Subcommand name (/{command} …)",
+            "leafDescription": "Subcommand description",
+            "leafDescriptionHint": "Shown in Discord's command menu; empty uses the title.",
+            "titleHint": "Also the subcommand's description when that is empty.",
+            "toggle": "Turn {path} on or off",
+            "more": "More actions for {path}",
+            "save": "Save subcommand",
+            "saveRoot": "Save",
+            "delete": "Delete subcommand",
+            "deleteTitle": "Delete this subcommand?",
+            "deleteMessage": "{path} is deleted and removed from Discord. This cannot be undone.",
+            "lastTitle": "Delete the whole command?",
+            "lastMessage": "A command needs at least one subcommand, so the last one cannot be deleted alone. Delete /{command} instead?",
+            "add": "Add subcommand",
+            "addTitle": "New subcommand of /{command}",
+            "create": "Add and sync to Discord"
         }
     },
     "config": {

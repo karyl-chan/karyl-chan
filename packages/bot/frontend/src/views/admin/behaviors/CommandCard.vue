@@ -11,19 +11,25 @@ import {
     AppTextField,
     AppToggle,
     Stack,
+    useConfirm,
+    useToastStore,
 } from '@karyl-chan/ui';
 import {
+    deleteBehaviorCommand,
     getBehaviorSchemas,
     resyncBehaviorCommand,
+    updateBehavior,
     updateBehaviorCommand,
     type CommandLeafView,
     type CommandView,
+    type RegistrationReport,
 } from '../../../api/behavior';
 import { ApiError } from '../../../api/client';
 import BehaviorActionDetails from './BehaviorActionDetails.vue';
 import BehaviorSourceNotice from './BehaviorSourceNotice.vue';
 import CommandRegistrationResult from './CommandRegistrationResult.vue';
 import CommandVisibilityFields from './CommandVisibilityFields.vue';
+import SubcommandList from './SubcommandList.vue';
 import { NO_ERRORS, errorsFromRefusal, isStale, type FormErrors } from './behavior-errors';
 import { checkCommandDraft, commandDraftErrors, commandFieldsWithErrorLine } from './command-check';
 import { commandDraftModel, draftFromCommand, type CommandDraft } from './command-draft';
@@ -53,11 +59,14 @@ const props = defineProps<{
 const emit = defineEmits<{
     /** The server's version of the command after a write. */
     (e: 'updated', command: CommandView): void;
-    /** The list is out of date (a stale write was refused). */
+    /** The list is out of date (a stale write was refused, a leaf was removed). */
     (e: 'reload'): void;
+    (e: 'deleted', id: number): void;
 }>();
 
 const { t } = useI18n();
+const { confirm } = useConfirm();
+const toast = useToastStore();
 
 const isSystem = computed(
     () => props.command.isSystem || props.command.leaves.some((l) => l.systemKey !== null)
@@ -88,6 +97,16 @@ const registration = useRegistrationResult(() => props.command.id);
 function showRegistration(result: RegistrationResult) {
     registration.value = result;
     open.value = true;
+}
+
+/** A leaf write went through: the command as it now is, and what Discord did. */
+function onLeafWrote(result: { command: CommandView; registration?: RegistrationReport }) {
+    if (result.registration) showRegistration(registrationResult(t, result.registration, props.guildNames));
+    emit('updated', result.command);
+}
+
+function onRefused(err: unknown) {
+    showRegistration(registrationFailure(t, err, props.guildNames));
 }
 
 async function resync() {
@@ -201,6 +220,48 @@ async function save() {
     }
 }
 
+// ── header actions ──────────────────────────────────────────────────────────
+
+const toggling = ref(false);
+/** The root leaf's switch is the command's (a single command has no other). */
+async function setRootEnabled(enabled: boolean) {
+    toggling.value = true;
+    try {
+        // not tied to a version: switching on / off is meant to win
+        const result = await updateBehavior(props.command.leaves[0].id, { enabled });
+        if (result.command) onLeafWrote({ command: result.command, registration: result.registration });
+    } catch (err) {
+        onRefused(err);
+    } finally {
+        toggling.value = false;
+    }
+}
+
+async function confirmDelete() {
+    const ok = await confirm({
+        title: t('behaviors.command.deleteTitle'),
+        message: t('behaviors.command.deleteMessage', { command: props.command.name }),
+        confirmLabel: t('behaviors.command.delete'),
+        confirmVariant: 'danger',
+        cancelLabel: t('common.cancel'),
+    });
+    if (ok) await removeCommand();
+}
+
+async function removeCommand() {
+    try {
+        const result = await deleteBehaviorCommand(props.command.id);
+        const outcome = registrationResult(t, result.registration, props.guildNames);
+        toast.show(
+            [t('behaviors.command.deleted', { command: props.command.name }), outcome.detail].filter(Boolean).join(' '),
+            outcome.tone === 'ok' ? 'success' : 'warn'
+        );
+        emit('deleted', props.command.id);
+    } catch (err) {
+        onRefused(err);
+    }
+}
+
 // ── view ────────────────────────────────────────────────────────────────────
 
 const anyEnabled = computed(() => props.command.leaves.some((l) => l.enabled));
@@ -265,10 +326,11 @@ const registrationTarget = computed(() =>
                 <AppToggle
                     v-if="isRoot"
                     :model-value="command.leaves[0].enabled"
-                    disabled
+                    :disabled="isSystem || toggling"
                     data-test="enabled-toggle"
-                    :title="isSystem ? t('behaviors.card.toggleProtected') : t('behaviors.card.toggleReadOnly')"
+                    :title="isSystem ? t('behaviors.card.toggleProtected') : undefined"
                     :aria-label="command.leaves[0].enabled ? t('behaviors.card.enabled') : t('behaviors.card.disabled')"
+                    @update:model-value="setRootEnabled"
                 />
                 <AppMenu v-if="!isSystem" placement="bottom-end" :offset="[0, 6]">
                     <template #trigger>
@@ -279,6 +341,10 @@ const registrationTarget = computed(() =>
                     <AppMenuItem data-test="resync" @click="resync">
                         <Icon icon="material-symbols:sync-rounded" width="16" height="16" />
                         {{ t('behaviors.command.resync') }}
+                    </AppMenuItem>
+                    <AppMenuItem danger data-test="delete-command" @click="confirmDelete">
+                        <Icon icon="material-symbols:delete-outline-rounded" width="16" height="16" />
+                        {{ t('behaviors.command.delete') }}
                     </AppMenuItem>
                 </AppMenu>
             </template>
@@ -351,7 +417,17 @@ const registrationTarget = computed(() =>
                     </Stack>
                 </form>
 
-                <ul class="leaves">
+                <SubcommandList
+                    v-if="!isSystem"
+                    :command="command"
+                    @wrote="onLeafWrote"
+                    @refused="onRefused"
+                    @removed="showRegistration(registrationResult(t, $event, guildNames))"
+                    @reload="emit('reload')"
+                    @delete-command="removeCommand"
+                />
+
+                <ul v-else class="leaves">
                     <li v-for="leaf in command.leaves" :key="leaf.id" class="leaf">
                         <header class="leaf-head">
                             <code class="leaf-path">/{{ leafPath(leaf) }}</code>

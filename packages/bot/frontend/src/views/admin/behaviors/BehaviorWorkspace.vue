@@ -134,6 +134,7 @@ const note = computed(() => {
                         :guild-names="guildNames"
                         @updated="emit('commandUpdated', $event)"
                         @reload="emit('reload')"
+                        @deleted="emit('reload')"
                     />
                 </div>
             </template>

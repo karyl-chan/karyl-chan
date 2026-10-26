@@ -1237,7 +1237,6 @@
             "tagStopShort": "停止",
             "unhealthy": "連續失敗",
             "toggleProtected": "系統行為不可停用",
-            "toggleReadOnly": "指令的編輯會在之後的更新開放",
             "enabled": "已啟用",
             "disabled": "已停用",
             "audienceUser": "使用者 {user}",
@@ -1451,6 +1450,15 @@
                 "guildInstallOnly": "伺服器指令只能由伺服器安裝。",
                 "globalHasNoGuild": "全域指令不指定伺服器。",
                 "privateChannelNeedsUserInstall": "「其他私訊」需要開啟使用者安裝；只有伺服器安裝時，Discord 不會在那裡顯示這個指令。"
+            },
+            "delete": "刪除指令",
+            "deleteTitle": "刪除這個指令？",
+            "deleteMessage": "/{command} 和它所有的子指令都會刪除，並從 Discord 移除，無法復原。",
+            "deleted": "已刪除 /{command}。",
+            "optionRule": {
+                "tooMany": "最多 25 個參數。",
+                "duplicateName": "已經有參數用了這個名稱。",
+                "requiredAfterOptional": "Discord 會先列必填參數：請把這個參數移到選填參數前面。"
             }
         },
         "registration": {
@@ -1468,6 +1476,51 @@
                 "skipped": "沒有註冊：bot 不在這個伺服器",
                 "failed": "失敗"
             }
+        },
+        "option": {
+            "title": "指令參數",
+            "none": "沒有參數。",
+            "name": "參數名稱",
+            "description": "參數說明",
+            "required": "必填",
+            "add": "新增參數",
+            "remove": "移除參數 {name}",
+            "moveUp": "把參數 {name} 往上移",
+            "moveDown": "把參數 {name} 往下移",
+            "type": {
+                "label": "參數型別",
+                "string": "字串",
+                "integer": "整數",
+                "number": "數字",
+                "boolean": "是／否",
+                "user": "使用者",
+                "channel": "頻道",
+                "role": "身分組",
+                "mentionable": "使用者或身分組",
+                "attachment": "附件"
+            }
+        },
+        "leaf": {
+            "rootTitle": "指令內容",
+            "listTitle": "子指令",
+            "count": "{count} / {max}",
+            "chars": "指令文字總長 {count} / {max}",
+            "subcommand": "子指令名稱（/{command} …）",
+            "leafDescription": "子指令說明",
+            "leafDescriptionHint": "Discord 指令選單會顯示；留空就用標題。",
+            "titleHint": "子指令說明留空時，也當作它的說明。",
+            "toggle": "啟用或停用 {path}",
+            "more": "{path} 的更多操作",
+            "save": "儲存子指令",
+            "saveRoot": "儲存",
+            "delete": "刪除子指令",
+            "deleteTitle": "刪除這個子指令？",
+            "deleteMessage": "{path} 會被刪除，並從 Discord 移除，無法復原。",
+            "lastTitle": "要刪除整個指令嗎？",
+            "lastMessage": "指令至少要有一個子指令，所以不能只刪最後一個。要改成刪除整個 /{command} 嗎？",
+            "add": "加入子指令",
+            "addTitle": "/{command} 的新子指令",
+            "create": "加入並同步到 Discord"
         }
     },
     "config": {
