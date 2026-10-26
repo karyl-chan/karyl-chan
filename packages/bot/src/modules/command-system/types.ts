@@ -93,6 +93,8 @@ export interface ReconcileItemResult {
   sourceId: number;
   action?: "create" | "patch" | "delete" | "noop";
   error?: string;
+  /** 逐目標的結果（有實際套用到 Discord 時才有） */
+  targets?: TargetOutcome[];
 }
 
 export interface ReconcileReport {

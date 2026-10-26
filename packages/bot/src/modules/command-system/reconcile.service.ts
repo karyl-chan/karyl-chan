@@ -46,7 +46,36 @@ import {
   type CommandSourceKind,
   type DesiredCommand,
   type DesiredCommandSource,
+  type DesiredLookup,
 } from "./desired-command-source.js";
+
+// ── 單一指令的結果型別 ──────────────────────────────────────────────────────
+
+/**
+ * registerOne 的結果。ok=true 表示展開後的每個具體目標都已在 Discord 上
+ * （新建、更新或本來就一致）—— S7 的原子切換靠這個判斷「新觸發已生效」。
+ */
+export type RegisterOneResult =
+  | {
+      ok: true;
+      key: CommandKey;
+      name: string;
+      outcomes: TargetOutcome[];
+    }
+  | {
+      ok: false;
+      key: CommandKey;
+      reason: "bot_not_ready" | "not_found" | "not_desired" | "invalid";
+      error: string;
+    }
+  | {
+      ok: false;
+      key: CommandKey;
+      reason: "registration_failed";
+      name: string;
+      outcomes: TargetOutcome[];
+      error: string;
+    };
 
 // ── reconciler_owned_commands 名冊（透過 ReconcilerOwnedCommand model）──────────
 
@@ -264,6 +293,46 @@ export class CommandReconciler {
   }
 
   /**
+   * 註冊單一 desired 指令（建立或 patch 到與 desired 一致），在 reconcile
+   * 鎖內執行，所以不會跟 reconcileAll 的 stale 清除交錯（清除看到的
+   * desired set 與這裡註冊的是同一份 DB 狀態）。不做 stale 清除、不刪除。
+   *
+   * 給 S7 的原子切換用：新觸發要先註冊成功（ok=true）才停用舊的。
+   * 鎖不可重入：不要在持有 reconcile 鎖的流程裡呼叫。
+   */
+  async registerOne(key: CommandKey): Promise<RegisterOneResult> {
+    return this.withLock(() => this._registerOne(key));
+  }
+
+  private async _registerOne(key: CommandKey): Promise<RegisterOneResult> {
+    const bot = this.getBot();
+    if (!bot?.application) {
+      return { ok: false, key, reason: "bot_not_ready", error: "bot not ready" };
+    }
+    const lookup = await this.sourceFor(key.source).lookup(key.id);
+    if (lookup.status !== "desired") {
+      return { ok: false, key, ...notRegistrable(lookup) };
+    }
+    const cmd = lookup.command;
+    const outcomes = await this.applyAndRecord(bot, cmd);
+
+    const problems = outcomes.filter(
+      (o) => o.status === "failed" || o.status === "skipped",
+    );
+    if (problems.length > 0) {
+      return {
+        ok: false,
+        key,
+        reason: "registration_failed",
+        name: cmd.name,
+        outcomes,
+        error: describeProblems(problems),
+      };
+    }
+    return { ok: true, key, name: cmd.name, outcomes };
+  }
+
+  /**
    * 增量 reconcile 單條 behavior（admin CRUD 後呼叫）。
    * 若 triggerType !== 'slash_command' 則為 no-op；停用的 behavior 從 Discord 刪除。
    */
@@ -462,7 +531,7 @@ export class CommandReconciler {
   // ── 私有：Diff & Apply 單條 ───────────────────────────────────────────────
 
   /**
-   * 單條指令的增量路徑（reconcileFor*）：只拉這條指令的目標
+   * 單條指令的增量路徑（registerOne / reconcileFor*）：只拉這條指令的目標
    * 現況、套用、登記名冊。登記名冊是為了讓之後的 reconcileAll 認得它 ——
    * 否則一條從這裡建立、之後被刪掉的指令，stale 清除找不到，會永遠留在
    * Discord 上。
@@ -630,6 +699,22 @@ export class CommandReconciler {
 
 // ── 輔助：結果彙整 ───────────────────────────────────────────────────────────
 
+/** 非 desired 的 lookup → registerOne 的失敗原因。 */
+function notRegistrable(
+  lookup: Exclude<DesiredLookup, { status: "desired" }>,
+): { reason: "not_found" | "not_desired" | "invalid"; error: string } {
+  switch (lookup.status) {
+    case "not_found":
+      return { reason: "not_found", error: "來源列不存在" };
+    case "unmanaged":
+      return { reason: "not_desired", error: "不是由 reconciler 管理的指令" };
+    case "not_desired":
+      return { reason: "not_desired", error: lookup.reason };
+    case "invalid":
+      return { reason: "invalid", error: lookup.reason };
+  }
+}
+
 /**
  * 把一條指令的結果計入 report。Count only successful work; a failed
  * create/patch returns ok:false with action set, and must land in errors
@@ -646,32 +731,58 @@ function tally(report: ReconcileReport, result: ReconcileItemResult): void {
   }
 }
 
+function describeProblems(problems: TargetOutcome[]): string {
+  return problems
+    .map((o) =>
+      o.status === "failed"
+        ? `${o.target}: ${o.error}`
+        : `${o.target}: ${o.status === "skipped" ? o.reason : o.status}`,
+    )
+    .join("; ");
+}
+
 /**
  * 把一個指令的各目標結果彙整成 ReconcileItemResult。action 取實際做過的
  * 最強動作（create > patch > noop）—— 一個邏輯指令最多計一次，不論展開到
- * 幾個伺服器。任一目標失敗則 ok=false，沿用既有回報：error 是最後一個失敗
- * 目標的訊息；全域失敗回報嘗試的動作，伺服器失敗一律回報 patch。
+ * 幾個伺服器；任一目標失敗則 ok=false，error 逐目標列出（不再只留最後一個）。
  * skipped（bot 不在指定伺服器）不算錯誤：可能在別的 shard，或 bot 已離開。
  */
 function toItemResult(
   key: CommandKey,
   outcomes: TargetOutcome[],
 ): ReconcileItemResult {
+  // 失敗的目標以「嘗試過的動作」計入，維持舊行為（失敗的 create 回報
+  // action=create、ok=false）
+  const triedOrDid = (
+    attempted: "create" | "patch",
+    done: "created" | "patched",
+  ): boolean =>
+    outcomes.some(
+      (o) =>
+        o.status === done ||
+        (o.status === "failed" && o.attempted === attempted),
+    );
+  const action = triedOrDid("create", "created")
+    ? "create"
+    : triedOrDid("patch", "patched")
+      ? "patch"
+      : "noop";
   const failed = outcomes.filter((o) => o.status === "failed");
-  const lastFailed = failed[failed.length - 1];
-  if (lastFailed) {
+  if (failed.length > 0) {
     return {
       ok: false,
       source: key.source,
       sourceId: key.id,
-      action: lastFailed.target === "global" ? lastFailed.attempted : "patch",
-      error: lastFailed.error,
+      action,
+      error: describeProblems(failed),
+      targets: outcomes,
     };
   }
-  const action = outcomes.some((o) => o.status === "created")
-    ? "create"
-    : outcomes.some((o) => o.status === "patched")
-      ? "patch"
-      : "noop";
-  return { ok: true, source: key.source, sourceId: key.id, action };
+  return {
+    ok: true,
+    source: key.source,
+    sourceId: key.id,
+    action,
+    targets: outcomes,
+  };
 }

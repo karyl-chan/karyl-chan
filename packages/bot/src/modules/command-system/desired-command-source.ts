@@ -44,7 +44,7 @@ import { RejectionError } from "./types.js";
 
 export type CommandSourceKind = "behavior" | "plugin_command";
 
-/** 一個 desired 指令在來源裡的身分。 */
+/** 一個 desired 指令在來源裡的身分（registerOne 的 key）。 */
 export interface CommandKey {
   source: CommandSourceKind;
   id: number;

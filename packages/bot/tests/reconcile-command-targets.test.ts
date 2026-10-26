@@ -308,3 +308,128 @@ describe("reconcile — stale cleanup keyed by name + target", () => {
     expect(rows).toHaveLength(1);
   });
 });
+
+describe("reconcile — registerOne", () => {
+  it("registers one desired command and reports each target", async () => {
+    const id = await seedSlashBehavior({ placementGuildId: "g1" });
+    const world = makeWorld(["g1", "g2"]);
+    const reconciler = new CommandReconciler(() => world.client);
+
+    const result = await reconciler.registerOne({ source: "behavior", id });
+
+    expect(result).toEqual({
+      ok: true,
+      key: { source: "behavior", id },
+      name: "ping",
+      outcomes: [{ target: "guild:g1", status: "created" }],
+    });
+    expect(world.guilds.get("g1")!.names()).toEqual(["ping"]);
+    expect(world.guilds.get("g2")!.fetch).not.toHaveBeenCalled();
+    // 註冊進名冊，之後的 reconcileAll 才認得
+    const rows = await ReconcilerOwnedCommand.findAll({
+      where: { name: "ping", scope: "guild", guildId: "g1" },
+    });
+    expect(rows).toHaveLength(1);
+  });
+
+  it("reports unchanged when Discord already matches", async () => {
+    const id = await seedSlashBehavior({ placementGuildId: "g1" });
+    const world = makeWorld(["g1"]);
+    const reconciler = new CommandReconciler(() => world.client);
+    await reconciler.registerOne({ source: "behavior", id });
+
+    const again = await reconciler.registerOne({ source: "behavior", id });
+
+    expect(again.ok).toBe(true);
+    expect(again.ok && again.outcomes).toEqual([
+      { target: "guild:g1", status: "unchanged" },
+    ]);
+  });
+
+  it("fails with registration_failed when Discord rejects the create", async () => {
+    const id = await seedSlashBehavior({ placementGuildId: "g1" });
+    const world = makeWorld(["g1"]);
+    world.guilds.get("g1")!.create.mockRejectedValueOnce(new Error("Discord 500"));
+    const reconciler = new CommandReconciler(() => world.client);
+
+    const result = await reconciler.registerOne({ source: "behavior", id });
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: "registration_failed",
+      outcomes: [
+        {
+          target: "guild:g1",
+          status: "failed",
+          attempted: "create",
+          error: "Discord 500",
+        },
+      ],
+    });
+  });
+
+  it("fails when the target guild is not reachable", async () => {
+    const id = await seedSlashBehavior({ placementGuildId: "g-gone" });
+    const world = makeWorld(["g1"]);
+    const reconciler = new CommandReconciler(() => world.client);
+
+    const result = await reconciler.registerOne({ source: "behavior", id });
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: "registration_failed",
+      outcomes: [
+        { target: "guild:g-gone", status: "skipped", reason: "guild_unavailable" },
+      ],
+    });
+  });
+
+  it("refuses a disabled behavior as not_desired and a missing one as not_found", async () => {
+    const id = await seedSlashBehavior({ enabled: false });
+    const world = makeWorld(["g1"]);
+    const reconciler = new CommandReconciler(() => world.client);
+
+    expect(
+      await reconciler.registerOne({ source: "behavior", id }),
+    ).toMatchObject({ ok: false, reason: "not_desired" });
+    expect(
+      await reconciler.registerOne({ source: "behavior", id: 9999 }),
+    ).toMatchObject({ ok: false, reason: "not_found" });
+    expect(world.guilds.get("g1")!.create).not.toHaveBeenCalled();
+  });
+
+  it("runs under the reconcile lock (a concurrent reconcileAll does not interleave)", async () => {
+    const id = await seedSlashBehavior({ placementGuildId: "g1" });
+    const world = makeWorld(["g1"]);
+    const order: string[] = [];
+    const g1 = world.guilds.get("g1")!;
+    const origCreate = g1.create.getMockImplementation()!;
+    g1.create.mockImplementation(async (data: Record<string, unknown>) => {
+      order.push("create:start");
+      await new Promise((r) => setTimeout(r, 10));
+      const res = await origCreate(data);
+      order.push("create:end");
+      return res;
+    });
+    const origFetch = g1.fetch.getMockImplementation()!;
+    g1.fetch.mockImplementation(async () => {
+      order.push("fetch");
+      return origFetch();
+    });
+    const reconciler = new CommandReconciler(() => world.client);
+
+    await Promise.all([
+      reconciler.registerOne({ source: "behavior", id }),
+      reconciler.reconcileAll(),
+    ]);
+
+    // registerOne 的 create 完成後，reconcileAll 才開始拉 Discord 現況
+    expect(order.slice(0, 4)).toEqual([
+      "fetch",
+      "create:start",
+      "create:end",
+      "fetch",
+    ]);
+    expect(g1.names()).toEqual(["ping"]);
+  });
+});
