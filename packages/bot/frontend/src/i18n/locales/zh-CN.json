@@ -1339,7 +1339,10 @@
             "preview": {
                 "match": "会触发",
                 "no_match": "不会触发",
-                "invalid": "正则表达式写法有误"
+                "invalid": "正则表达式写法有误",
+                "matchWithGroups": "会触发，捕获 {groups}",
+                "group": "第 {n} 组「{value}」",
+                "groupSeparator": "、"
             },
             "ignoreBots": "忽略其他 bot 与 webhook 的消息",
             "stopOnMatch": "匹配到之后停止，不再检查后面的行为",
@@ -1586,6 +1589,35 @@
             "rule": {
                 "needsGuildInstall": "登录指令一定要包含「服务器安装」：只开放用户安装时，没有自行安装 app 的你会看不到它。",
                 "needsBotDm": "登录指令一定要能在「bot 私信」使用：其他地方的话，没有和 bot 同在服务器时就用不到。"
+            }
+        },
+        "testReply": {
+            "title": "回复预览",
+            "empty": "服务没有回复任何内容，不会发送消息。",
+            "embeds": "{count} 个 embed：{titles}",
+            "untitled": "（无标题）",
+            "button": "链接按钮「{label}」→ {url}",
+            "audience": {
+                "invoker": "只有执行的人看得到",
+                "channel": "频道里所有人看得到",
+                "dm": "回在与 bot 的私信里",
+                "author_dm": "改为私信作者，不发在频道"
+            },
+            "note": {
+                "content_truncated": "内容有 {length} 字，超过 2000 字，已截断。",
+                "embeds_dropped": "{count} 个 embed 被忽略（格式不对、超过 10 个或总长超过 6000 字）。",
+                "unknown_fields": "忽略不认识的字段：{fields}",
+                "invalid_field": "字段 {field} 的类型不对，已忽略。",
+                "components_dropped": "{count} 个组件被忽略（只接受 https 链接按钮，最多 5 行各 5 个）。",
+                "flags_dropped": "忽略不允许的 flags（{flags}）；只接受 SuppressEmbeds 与 SuppressNotifications。"
+            },
+            "status": "HTTP {status}",
+            "refusedHint": "服务拒绝了这个测试请求。只验证真实签名的服务本来就会拒绝测试，这表示 bot 连得到它；要让它响应测试，请按测试签名（x-karyl-test）验证。",
+            "signatureHint": "响应的签名不符。测试请求的响应要用 test: 前缀、并绑定请求的 nonce 签名。",
+            "signedAsTest": "测试请求带「测试」签名、不带真实用户身份。",
+            "verified": {
+                "hmac": "响应签名正确（HMAC）。",
+                "token": "响应签名正确（token）。"
             }
         }
     },

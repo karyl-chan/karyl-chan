@@ -339,15 +339,34 @@ describe("behavior webhook + DM inbox E2E (PM-2.3, paths 4+5)", { skip: !DB_URL 
     return api("POST", `${botUrl}/api/behaviors/${id}/test`);
   }
 
-  it("path 4: forwards with no auth mode and relays the sink's content", async () => {
+  it("path 4: forwards with no auth mode and previews the sink's reply", async () => {
     const { id } = await createBehavior("none");
-    sink!.respondWith({ content: "ok from sink" });
+    // the reply model (#140): link buttons pass, anything else is noted
+    sink!.respondWith({
+      content: "ok from sink",
+      ephemeral: true,
+      components: [
+        { type: 1, components: [{ type: 2, style: 5, label: "Open", url: "https://example.com/x" }] },
+        { type: 1, components: [{ type: 2, style: 1, label: "Click", custom_id: "c" }] },
+      ],
+      tts: true,
+    });
 
     const fired = await testFire(id);
     assert.equal(fired.status, 200, JSON.stringify(fired.body));
-    const result = fired.body as { ok: boolean; relayContent: string };
+    const result = fired.body as {
+      ok: boolean;
+      reply: { content?: string; ephemeral?: boolean; components?: unknown[] };
+      notes: Array<{ kind: string }>;
+    };
     assert.equal(result.ok, true, JSON.stringify(result));
-    assert.equal(result.relayContent, "ok from sink");
+    assert.equal(result.reply.content, "ok from sink");
+    assert.equal(result.reply.ephemeral, true);
+    assert.equal(result.reply.components?.length, 1, "only the https link button survives");
+    assert.deepEqual(
+      result.notes.map((n) => n.kind).sort(),
+      ["components_dropped", "unknown_fields"],
+    );
 
     const hit = sink!.hits.at(-1)!;
     assert.equal(hit.path, "/hook/none");
@@ -369,9 +388,9 @@ describe("behavior webhook + DM inbox E2E (PM-2.3, paths 4+5)", { skip: !DB_URL 
     sink!.respondWith({ content: "token ok" });
 
     const fired = await testFire(id);
-    const result = fired.body as { ok: boolean; relayContent: string };
+    const result = fired.body as { ok: boolean; reply: { content?: string } };
     assert.equal(result.ok, true, JSON.stringify(fired.body));
-    assert.equal(result.relayContent, "token ok");
+    assert.equal(result.reply.content, "token ok");
 
     const hit = sink!.hits.at(-1)!;
     // a test-fire sends the token under the test header only (#101)
@@ -388,9 +407,9 @@ describe("behavior webhook + DM inbox E2E (PM-2.3, paths 4+5)", { skip: !DB_URL 
     //    the content is relayed.
     sink!.respondWith({ content: "bye" }, { signWithSecret: secret });
     const fired = await testFire(id);
-    const result = fired.body as { ok: boolean; relayContent: string };
+    const result = fired.body as { ok: boolean; reply: { content?: string } };
     assert.equal(result.ok, true, JSON.stringify(fired.body));
-    assert.equal(result.relayContent, "bye");
+    assert.equal(result.reply.content, "bye");
 
     // Verify the bot's request signature like a webhook author would.
     const hit = sink!.hits.at(-1)!;
@@ -447,9 +466,9 @@ describe("behavior webhook + DM inbox E2E (PM-2.3, paths 4+5)", { skip: !DB_URL 
     // A receiver still on the OLD secret: its signed response is accepted …
     sink!.respondWith({ content: "old receiver" }, { signWithSecret: oldSecret });
     const fired = await testFire(created.id);
-    const result = fired.body as { ok: boolean; relayContent: string };
+    const result = fired.body as { ok: boolean; reply: { content?: string } };
     assert.equal(result.ok, true, JSON.stringify(fired.body));
-    assert.equal(result.relayContent, "old receiver");
+    assert.equal(result.reply.content, "old receiver");
 
     // … and the request carries both signatures over the same ts / nonce.
     const hit = sink!.hits.at(-1)!;

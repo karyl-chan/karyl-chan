@@ -197,6 +197,23 @@ export function previewMatch(kind: BehaviorPatternKind, pattern: string, text: s
     return re.test(text) ? 'match' : 'no_match';
 }
 
+/**
+ * The capture groups a match sends to the service as `_meta.captures`
+ * (the bot's `triggerCaptures`): a regex match's groups, group 1 first,
+ * null for an optional group that took no part; [] otherwise.
+ */
+export function previewCaptures(kind: BehaviorPatternKind, pattern: string, text: string): Array<string | null> {
+    if (kind !== 'regex') return [];
+    let re: RegExp;
+    try {
+        re = new RegExp(pattern);
+    } catch {
+        return [];
+    }
+    const match = re.exec(text);
+    return match ? match.slice(1).map((g) => g ?? null) : [];
+}
+
 export const messageTriggerDraftModel: DraftModel<MessageTriggerView, MessageTriggerDraft> = {
     draftOf: draftFromTrigger,
     patchOf: toPatchBody,

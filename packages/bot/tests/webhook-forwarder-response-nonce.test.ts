@@ -51,13 +51,17 @@ describe("response signatures bind the request nonce", () => {
   it("accepts a response signed over the request's nonce", async () => {
     fakeReceiver({ secret: SECRET, nonce: "request" });
     const result = await new WebhookForwarder().forward(action("hmac"), { content: "hi" });
-    expect(result).toMatchObject({ ok: true, reply: { content: "pong" } });
+    expect(result).toMatchObject({ ok: true, reply: { content: "pong" }, verified: "hmac" });
   });
 
   it("refuses a response signed over a nonce of its own", async () => {
     fakeReceiver({ secret: SECRET, nonce: "own" });
     const result = await new WebhookForwarder().forward(action("hmac"), { content: "hi" });
-    expect(result).toMatchObject({ ok: false, error: "response nonce does not match the request" });
+    expect(result).toMatchObject({
+      ok: false,
+      error: "response nonce does not match the request",
+      errorCode: "response_signature",
+    });
   });
 
   it("refuses the nonce-less legacy form", async () => {
@@ -78,7 +82,10 @@ describe("response signatures bind the request nonce", () => {
 
   it("token mode sends a nonce and binds a signed response to it", async () => {
     const spy = fakeReceiver({ secret: SECRET, nonce: "request" });
-    expect(await new WebhookForwarder().forward(action("token"), {})).toMatchObject({ ok: true });
+    expect(await new WebhookForwarder().forward(action("token"), {})).toMatchObject({
+      ok: true,
+      verified: "token",
+    });
     expect(sentRequest(spy).headers["x-karyl-nonce"]).toMatch(/^[0-9a-f]{32}$/);
 
     vi.restoreAllMocks();

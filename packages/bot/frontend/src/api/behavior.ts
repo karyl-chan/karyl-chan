@@ -272,12 +272,49 @@ export async function rotateWebhookSecret(
   return jsonOrThrow(await send("POST", `/api/behaviors/${id}/webhook-secret/rotate`));
 }
 
+// Mirrors packages/bot/src/modules/command-system/behavior-reply.ts — the
+// Behavior Reply a webhook answers with (#140), after the bot's phase-1
+// rules, and what those rules dropped.
+export interface ReplyEmbedView {
+  title?: string;
+  description?: string;
+  [key: string]: unknown;
+}
+
+export interface ReplyLinkRowView {
+  type: 1;
+  components: Array<{ type: 2; style: 5; label: string; url: string }>;
+}
+
+export interface BehaviorReplyView {
+  content?: string;
+  embeds?: ReplyEmbedView[];
+  components?: ReplyLinkRowView[];
+  ephemeral?: boolean;
+  flags?: number;
+}
+
+export type ReplyNoteView =
+  | { kind: "content_truncated"; length: number }
+  | { kind: "embeds_dropped"; count: number }
+  | { kind: "unknown_fields"; fields: string[] }
+  | { kind: "invalid_field"; field: string }
+  | { kind: "components_dropped"; count: number }
+  | { kind: "flags_dropped"; flags: number };
+
+/** POST /api/behaviors/:id/test — a test-fire's outcome (#101, #140). */
 export interface TestFireResult {
   ok: boolean;
-  relayContent: string;
-  relayEmbeds: unknown[];
+  /** The reply as the bot would render it; `{}` when failed or empty. */
+  reply: BehaviorReplyView;
+  notes: ReplyNoteView[];
+  /** The webhook's HTTP status, when it answered with a failure. */
+  status: number | null;
   error: string | null;
+  /** e.g. a host-policy code, or `response_signature` */
   errorCode: string | null;
+  /** The key the response's signature verified with; null when unsigned. */
+  verified: "hmac" | "token" | null;
 }
 
 export async function testBehavior(id: number): Promise<TestFireResult> {

@@ -242,7 +242,8 @@ A refusal carries a machine `code` (`private_not_allowlisted`,
 `https_required`, `blocked_loopback`, `blocked_metadata`,
 `blocked_reserved`, `dns_failed`, …) next to a readable `error` that
 names the target and the setting — the save route returns it as a 400
-body, the test-fire route as `{ ok: false, error, errorCode }`.
+body, the test-fire route as `{ ok: false, error, errorCode }` (in its
+`{ ok, reply, notes, status, error, errorCode, verified }` answer).
 
 The legacy `WEBHOOK_ALLOW_PRIVATE=true` switch (allow every private
 address) still works for local development and the e2e harness, but is
@@ -316,6 +317,17 @@ test scheme and should answer with something harmless (never a real login
 link). A test-fire carries no real identity: `_meta.user` is the
 placeholder `{ id: "0", username: "karyl-test", … }`, not the admin who
 pressed the button.
+
+`POST /api/behaviors/:id/test` answers `{ ok, reply, notes, status,
+error, errorCode, verified }`: the reply after the phase-1 rules, what
+they changed (`notes`), and which key verified the response's signature
+(`"hmac"`, `"token"`, or `null` when the response was not signed). A
+signature that is missing, stale or does not match fails with
+`errorCode: "response_signature"`. The admin UI previews the reply —
+content, embeds, link buttons, who would see it on that trigger, "response
+signature verified" — and, when the service answers 401 / 403 or the
+signature fails, explains that a receiver refusing the test scheme is
+behaving as intended.
 
 ### Secret rotation
 

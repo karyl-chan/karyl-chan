@@ -159,9 +159,16 @@ export interface ForwardResult {
   status?: number;
   /** 錯誤描述（失敗時；只進 log / 統計 / admin，不給終端使用者） */
   error?: string;
-  /** host policy 拒絕時的機器碼（例如 private_not_allowlisted） */
-  errorCode?: HostPolicyCode;
+  /**
+   * 失敗的機器碼：host policy 拒絕（例如 private_not_allowlisted），或
+   * `response_signature`（回應簽章缺少、過期或不符）
+   */
+  errorCode?: ForwardErrorCode;
+  /** 回應簽章驗過時用的是哪種密鑰（admin 測試結果顯示）；沒驗就不帶 */
+  verified?: "hmac" | "token";
 }
+
+export type ForwardErrorCode = HostPolicyCode | "response_signature";
 
 // ── WebhookForwarder 輸入 payload 型別別名────────────────────────────────────
 

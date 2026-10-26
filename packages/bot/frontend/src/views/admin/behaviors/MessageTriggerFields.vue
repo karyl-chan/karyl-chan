@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { AppSelectField, AppTextField, Stack, type SelectOption } from '@karyl-chan/ui';
 import type { BehaviorAudienceKind, BehaviorPatternKind } from '../../../api/behavior';
 import TriggerLocationFields from './TriggerLocationFields.vue';
-import { previewMatch, type MessageTriggerDraft } from './message-trigger-draft';
+import { previewCaptures, previewMatch, type MessageTriggerDraft } from './message-trigger-draft';
 import type { LocationKind } from './message-trigger-location';
 
 /**
@@ -71,6 +71,14 @@ const preview = computed(() => {
     // a broken regex is worth saying before anything is typed
     return tryText.value === '' && result !== 'invalid' ? null : result;
 });
+/** The groups the service would get in `_meta.captures` (board 7). */
+const captured = computed(() =>
+    preview.value === 'match'
+        ? previewCaptures(props.draft.patternKind, props.draft.patternValue, tryText.value)
+              .map((value, i) => t('behaviors.trigger.preview.group', { n: i + 1, value: value ?? '' }))
+              .join(t('behaviors.trigger.preview.groupSeparator'))
+        : ''
+);
 </script>
 
 <template>
@@ -111,8 +119,12 @@ const preview = computed(() => {
 
         <div class="try">
             <AppTextField v-model="tryText" :label="t('behaviors.trigger.try')" :placeholder="t('behaviors.trigger.tryPlaceholder')" />
-            <span v-if="preview" role="status" :class="['try-result', preview]">
-                {{ t(`behaviors.trigger.preview.${preview}`) }}
+            <span v-if="preview" role="status" :class="['try-result', preview]" data-test="try-result">
+                {{
+                    captured
+                        ? t('behaviors.trigger.preview.matchWithGroups', { groups: captured })
+                        : t(`behaviors.trigger.preview.${preview}`)
+                }}
             </span>
         </div>
 

@@ -98,6 +98,14 @@ describe('MessageTriggerCard — editing', () => {
     });
 });
 
+describe('MessageTriggerCard — try it', () => {
+    it('shows the groups a regex captures, as the service will receive them', async () => {
+        const wrapper = await mountOpen(savedTrigger({ patternKind: 'regex', patternValue: '^天氣\\s+(.+)' }));
+        await wrapper.find('input[placeholder="behaviors.trigger.tryPlaceholder"]').setValue('天氣 台北');
+        expect(wrapper.find('[data-test="try-result"]').text()).toBe('behaviors.trigger.preview.matchWithGroups');
+    });
+});
+
 describe('MessageTriggerCard — errors', () => {
     it('refuses a draft the server schema refuses, on its field, without sending it', async () => {
         const wrapper = await mountOpen();
@@ -166,15 +174,69 @@ describe('MessageTriggerCard — the sole user of a group', () => {
 });
 
 describe('MessageTriggerCard — header actions', () => {
-    it('test-fires the webhook and shows the reply', async () => {
-        api.testBehavior.mockResolvedValue({ ok: true, relayContent: 'sunny', relayEmbeds: [], error: null, errorCode: null });
-        const wrapper = await mountOpen();
+    async function testFire(wrapper: VueWrapper): Promise<void> {
         await wrapper.find('.more-btn').trigger('click');
         await flushPromises();
         // the menu is teleported to <body>
         document.querySelector<HTMLElement>('[data-test="test-fire"]')!.click();
         await flushPromises();
+    }
+
+    it('test-fires the webhook and previews the reply as the bot would render it', async () => {
+        api.testBehavior.mockResolvedValue({
+            ok: true,
+            reply: {
+                content: 'sunny',
+                embeds: [{ title: 'Forecast' }],
+                components: [{ type: 1, components: [{ type: 2, style: 5, label: 'More', url: 'https://w.example' }] }],
+                ephemeral: true,
+            },
+            notes: [{ kind: 'unknown_fields', fields: ['tts'] }],
+            status: null,
+            error: null,
+            errorCode: null,
+            verified: 'hmac',
+        });
+        const wrapper = await mountOpen(savedTrigger({ surface: 'guild', section: 'guild:all' }));
+        await testFire(wrapper);
         expect(api.testBehavior).toHaveBeenCalledWith(7);
-        expect(wrapper.find('[data-test="test-result"]').text()).toContain('sunny');
+        const result = wrapper.find('[data-test="test-result"]');
+        expect(result.text()).toContain('sunny');
+        expect(result.find('[data-test="preview-embeds"]').exists()).toBe(true);
+        expect(result.findAll('[data-test="preview-button"]')).toHaveLength(1);
+        // a guild trigger's ephemeral reply goes to the author's DMs
+        expect(result.find('[data-test="preview-audience"]').text()).toBe('behaviors.testReply.audience.author_dm');
+        expect(result.find('[data-test="preview-notes"]').text()).toContain('behaviors.testReply.note.unknown_fields');
+        expect(result.find('[data-test="preview-verified"]').text()).toBe('behaviors.testReply.verified.hmac');
+    });
+
+    it('explains a response whose signature does not verify, by its code', async () => {
+        api.testBehavior.mockResolvedValue({
+            ok: false,
+            reply: {},
+            notes: [],
+            status: 200,
+            error: 'response nonce does not match the request',
+            errorCode: 'response_signature',
+            verified: null,
+        });
+        const wrapper = await mountOpen();
+        await testFire(wrapper);
+        expect(wrapper.find('[data-test="test-hint"]').text()).toBe('behaviors.testReply.signatureHint');
+    });
+
+    it('explains a receiver that refuses the test signature', async () => {
+        api.testBehavior.mockResolvedValue({
+            ok: false,
+            reply: {},
+            notes: [],
+            status: 401,
+            error: 'unauthorized',
+            errorCode: null,
+            verified: null,
+        });
+        const wrapper = await mountOpen();
+        await testFire(wrapper);
+        expect(wrapper.find('[data-test="test-hint"]').text()).toBe('behaviors.testReply.refusedHint');
     });
 });

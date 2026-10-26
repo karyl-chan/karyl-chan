@@ -1,15 +1,19 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { testBehavior, type TestFireResult } from '../../../api/behavior';
+import { testBehavior, type ReplyNoteView, type TestFireResult } from '../../../api/behavior';
 import { describeBehaviorError } from './behavior-errors';
+import { replyPreview, type ReplyTargetKind } from './reply-preview';
 
 /**
  * Test-firing a behavior's webhook (POST /api/behaviors/:id/test) and its
- * outcome — the reply on success, the error and its code otherwise. The
- * card's menu starts it with `run()`; it uses the saved settings.
+ * outcome. On success, the reply as the bot would render it (#140): its
+ * content, embeds, link buttons, who would see it and what the phase-1
+ * rules changed. Otherwise the error, its code, and a hint when the
+ * service refused the test signature (#101). The card's menu starts it
+ * with `run()`; it uses the saved settings.
  */
-const props = defineProps<{ behaviorId: number }>();
+const props = defineProps<{ behaviorId: number; target: ReplyTargetKind }>();
 
 const { t } = useI18n();
 const testing = ref(false);
@@ -23,10 +27,12 @@ async function run(): Promise<void> {
     } catch (err) {
         result.value = {
             ok: false,
-            relayContent: '',
-            relayEmbeds: [],
+            reply: {},
+            notes: [],
+            status: null,
             error: describeBehaviorError(t, err),
             errorCode: null,
+            verified: null,
         };
     } finally {
         testing.value = false;
@@ -34,6 +40,34 @@ async function run(): Promise<void> {
 }
 
 defineExpose({ run });
+
+const preview = computed(() => (result.value?.ok ? replyPreview(result.value.reply, props.target) : null));
+
+function noteText(note: ReplyNoteView): string {
+    switch (note.kind) {
+        case 'content_truncated':
+            return t('behaviors.testReply.note.content_truncated', { length: note.length });
+        case 'embeds_dropped':
+            return t('behaviors.testReply.note.embeds_dropped', { count: note.count });
+        case 'components_dropped':
+            return t('behaviors.testReply.note.components_dropped', { count: note.count });
+        case 'unknown_fields':
+            return t('behaviors.testReply.note.unknown_fields', { fields: note.fields.join(', ') });
+        case 'invalid_field':
+            return t('behaviors.testReply.note.invalid_field', { field: note.field });
+        case 'flags_dropped':
+            return t('behaviors.testReply.note.flags_dropped', { flags: note.flags });
+    }
+}
+
+/** Why a failure may be what a correctly built receiver does with a test. */
+const failureHint = computed(() => {
+    const r = result.value;
+    if (!r || r.ok) return null;
+    if (r.status === 401 || r.status === 403) return t('behaviors.testReply.refusedHint');
+    if (r.errorCode === 'response_signature') return t('behaviors.testReply.signatureHint');
+    return null;
+});
 </script>
 
 <template>
@@ -44,22 +78,49 @@ defineExpose({ run });
         data-test="test-result"
     >
         <template v-if="testing">{{ t('behaviors.card.testing') }}</template>
-        <template v-else-if="result?.ok">
-            {{ t('behaviors.card.testOk') }}
-            <code v-if="result.relayContent" class="relay">{{ result.relayContent }}</code>
+        <template v-else-if="result?.ok && preview">
+            <span>{{ t('behaviors.card.testOk') }}</span>
+            <div class="preview" data-test="reply-preview">
+                <span v-if="preview.empty" class="muted">{{ t('behaviors.testReply.empty') }}</span>
+                <template v-else>
+                    <code v-if="preview.content" class="relay">{{ preview.content }}</code>
+                    <span v-if="preview.embedTitles.length" data-test="preview-embeds">
+                        {{
+                            t('behaviors.testReply.embeds', {
+                                count: preview.embedTitles.length,
+                                titles: preview.embedTitles.map((x) => x ?? t('behaviors.testReply.untitled')).join(', '),
+                            })
+                        }}
+                    </span>
+                    <span v-for="(b, i) in preview.buttons" :key="i" data-test="preview-button">
+                        {{ t('behaviors.testReply.button', { label: b.label, url: b.url }) }}
+                    </span>
+                    <span class="audience" data-test="preview-audience">
+                        {{ t(`behaviors.testReply.audience.${preview.audience}`) }}
+                    </span>
+                </template>
+                <span v-if="result.verified" class="verified" data-test="preview-verified">
+                    {{ t(`behaviors.testReply.verified.${result.verified}`) }}
+                </span>
+                <ul v-if="result.notes.length" class="notes" data-test="preview-notes">
+                    <li v-for="(n, i) in result.notes" :key="i">{{ noteText(n) }}</li>
+                </ul>
+            </div>
         </template>
         <template v-else-if="result">
             {{ t('behaviors.card.testFailed', { error: result.error ?? '' }) }}
             <code v-if="result.errorCode">{{ result.errorCode }}</code>
+            <code v-else-if="result.status">{{ t('behaviors.testReply.status', { status: result.status }) }}</code>
+            <span v-if="failureHint" class="hint" data-test="test-hint">{{ failureHint }}</span>
         </template>
-        <span class="note">{{ t('behaviors.card.testSavedOnly') }}</span>
+        <span class="note">{{ t('behaviors.card.testSavedOnly') }} {{ t('behaviors.testReply.signedAsTest') }}</span>
     </div>
 </template>
 
 <style scoped>
 .test-result {
     /* a failed webhook may answer with a whole error page */
-    max-height: 8rem;
+    max-height: 14rem;
     overflow: auto;
     overflow-wrap: anywhere;
     display: flex;
@@ -73,6 +134,12 @@ defineExpose({ run });
 }
 .test-result.ok { border-color: var(--success-text, var(--border)); }
 .test-result.failed { border-color: var(--danger); color: var(--danger); }
+.preview { flex-basis: 100%; display: flex; flex-direction: column; gap: 0.25rem; }
+.audience { font-size: 0.8rem; color: var(--text-muted); }
+.verified { font-size: 0.8rem; color: var(--success-text, var(--text-muted)); }
+.muted { color: var(--text-muted); }
+.notes { margin: 0; padding-left: 1.1rem; font-size: 0.78rem; color: var(--text-muted); }
+.hint { flex-basis: 100%; font-size: 0.8rem; color: var(--text); }
 .note { flex-basis: 100%; font-size: 0.75rem; color: var(--text-muted); }
-.relay { overflow-wrap: anywhere; }
+.relay { overflow-wrap: anywhere; white-space: pre-wrap; }
 </style>

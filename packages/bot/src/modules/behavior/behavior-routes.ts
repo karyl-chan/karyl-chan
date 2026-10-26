@@ -187,12 +187,17 @@ function registerReadAndTestRoutes(
         payload,
         { test: true },
       );
+      // 回覆預覽（#140）：解析後的回覆與被規則改掉的部分，admin UI 依觸發
+      // 種類顯示誰看得到。
       return reply.send({
         ok: result.ok,
-        relayContent: result.reply.content ?? "",
-        relayEmbeds: result.reply.embeds ?? [],
+        reply: result.reply,
+        notes: result.notes,
+        status: result.status ?? null,
         error: result.error ?? null,
         errorCode: result.errorCode ?? null,
+        // which key verified the response's signature (null: unsigned)
+        verified: result.verified ?? null,
       });
     },
   );

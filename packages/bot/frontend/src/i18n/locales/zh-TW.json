@@ -1339,7 +1339,10 @@
             "preview": {
                 "match": "會觸發",
                 "no_match": "不會觸發",
-                "invalid": "正規表示式寫法有誤"
+                "invalid": "正規表示式寫法有誤",
+                "matchWithGroups": "會觸發，擷取 {groups}",
+                "group": "第 {n} 組「{value}」",
+                "groupSeparator": "、"
             },
             "ignoreBots": "略過其他 bot 與 webhook 的訊息",
             "stopOnMatch": "比對到之後停止，不再檢查後面的行為",
@@ -1586,6 +1589,35 @@
             "rule": {
                 "needsGuildInstall": "登入指令一定要包含「伺服器安裝」：只開放使用者安裝時，沒有自行安裝 app 的你會看不到它。",
                 "needsBotDm": "登入指令一定要能在「bot 私訊」使用：其他地方的話，沒有和 bot 同在伺服器時就用不到。"
+            }
+        },
+        "testReply": {
+            "title": "回覆預覽",
+            "empty": "服務沒有回覆任何內容，不會送出訊息。",
+            "embeds": "{count} 個 embed：{titles}",
+            "untitled": "（無標題）",
+            "button": "連結按鈕「{label}」→ {url}",
+            "audience": {
+                "invoker": "只有執行的人看得到",
+                "channel": "頻道裡所有人看得到",
+                "dm": "回在與 bot 的私訊裡",
+                "author_dm": "改私訊作者，不貼在頻道"
+            },
+            "note": {
+                "content_truncated": "內容有 {length} 字，超過 2000 字，已截斷。",
+                "embeds_dropped": "{count} 個 embed 被略過（格式不對、超過 10 個或總長超過 6000 字）。",
+                "unknown_fields": "略過不認得的欄位：{fields}",
+                "invalid_field": "欄位 {field} 的型別不對，已略過。",
+                "components_dropped": "{count} 個元件被略過（只接受 https 連結按鈕，最多 5 列各 5 個）。",
+                "flags_dropped": "略過不允許的 flags（{flags}）；只接受 SuppressEmbeds 與 SuppressNotifications。"
+            },
+            "status": "HTTP {status}",
+            "refusedHint": "服務拒絕了這個測試請求。只驗真實簽章的服務本來就會拒絕測試，這表示 bot 連得到它；要讓它回應測試，請依測試簽章（x-karyl-test）驗證。",
+            "signatureHint": "回應的簽章不符。測試請求的回應要用 test: 前綴、並綁定請求的 nonce 簽章。",
+            "signedAsTest": "測試請求帶「測試」簽章、不帶真實使用者身分。",
+            "verified": {
+                "hmac": "回應簽章正確（HMAC）。",
+                "token": "回應簽章正確（token）。"
             }
         }
     },

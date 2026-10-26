@@ -156,7 +156,7 @@ async function testFire() {
 
         <form v-if="open" class="leaf-body" :data-test="`leaf-form-${leaf.subcommand || 'root'}`" @submit.prevent="save">
             <Stack gap="3">
-                <WebhookTestResult ref="tester" :behavior-id="leaf.id" />
+                <WebhookTestResult ref="tester" :behavior-id="leaf.id" target="command" />
                 <CommandLeafFields
                     :draft="draft"
                     :kind="kind"

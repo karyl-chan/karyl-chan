@@ -1339,7 +1339,10 @@
             "preview": {
                 "match": "Fires",
                 "no_match": "Does not fire",
-                "invalid": "The regular expression is invalid"
+                "invalid": "The regular expression is invalid",
+                "matchWithGroups": "Matches, captures {groups}",
+                "group": "group {n} “{value}”",
+                "groupSeparator": ", "
             },
             "ignoreBots": "Skip messages from other bots and webhooks",
             "stopOnMatch": "Stop after a match; skip the behaviors below",
@@ -1586,6 +1589,35 @@
             "rule": {
                 "needsGuildInstall": "The login command must include server install: installed by users only, you would not see it without installing the app yourself.",
                 "needsBotDm": "The login command must be usable in DMs with the bot: elsewhere only, you could not reach it without sharing a server with the bot."
+            }
+        },
+        "testReply": {
+            "title": "Reply preview",
+            "empty": "The service answered nothing; no message would be sent.",
+            "embeds": "{count} embed(s): {titles}",
+            "untitled": "(untitled)",
+            "button": "Link button “{label}” → {url}",
+            "audience": {
+                "invoker": "Only the person who ran it sees it",
+                "channel": "Everyone in the channel sees it",
+                "dm": "Answered in the DM with the bot",
+                "author_dm": "DMed to the author, not posted in the channel"
+            },
+            "note": {
+                "content_truncated": "The content had {length} characters, over 2000; it was cut.",
+                "embeds_dropped": "{count} embed(s) skipped (malformed, past 10, or past 6000 characters in total).",
+                "unknown_fields": "Unknown fields ignored: {fields}",
+                "invalid_field": "Field {field} has the wrong type and was ignored.",
+                "components_dropped": "{count} component(s) skipped (only https link buttons, at most 5 rows of 5).",
+                "flags_dropped": "Disallowed flags ignored ({flags}); only SuppressEmbeds and SuppressNotifications are kept."
+            },
+            "status": "HTTP {status}",
+            "refusedHint": "The service refused this test request. A service that verifies only the real signature is expected to — it shows the bot can reach it. To answer tests, verify the test signature (x-karyl-test).",
+            "signatureHint": "The response signature did not match. A test request's response must be signed with the test: prefix over the request's nonce.",
+            "signedAsTest": "The test request is signed as a test and carries no real user identity.",
+            "verified": {
+                "hmac": "Response signature verified (HMAC).",
+                "token": "Response signature verified (token)."
             }
         }
     },

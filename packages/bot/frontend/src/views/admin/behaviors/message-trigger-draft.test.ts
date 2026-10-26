@@ -4,6 +4,7 @@ import {
     draftFromTrigger,
     draftLocation,
     emptyDraft,
+    previewCaptures,
     previewMatch,
     toCreateBody,
     toPatchBody,
@@ -155,5 +156,19 @@ describe('previewMatch — the "try it" box', () => {
         expect(previewMatch('startswith', '!w', 'say !w')).toBe('no_match');
         expect(previewMatch('regex', '^天氣\\s+(.+)', '天氣 台北')).toBe('match');
         expect(previewMatch('regex', '(', 'x')).toBe('invalid');
+    });
+});
+
+describe('previewCaptures — the groups the service will receive', () => {
+    it('lists the groups of a regex match, group 1 first', () => {
+        expect(previewCaptures('regex', '^天氣\\s+(.+)', '天氣 台北')).toEqual(['台北']);
+        expect(previewCaptures('regex', '^!go( fast)?(!)?$', '!go!')).toEqual([null, '!']);
+    });
+
+    it('is empty without groups, without a match, or for a broken regex', () => {
+        expect(previewCaptures('startswith', '!w', '!w x')).toEqual([]);
+        expect(previewCaptures('regex', '^!w', '!w')).toEqual([]);
+        expect(previewCaptures('regex', '^(x)', 'y')).toEqual([]);
+        expect(previewCaptures('regex', '(', 'x')).toEqual([]);
     });
 });

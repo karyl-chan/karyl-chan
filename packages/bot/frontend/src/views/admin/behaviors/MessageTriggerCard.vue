@@ -280,7 +280,7 @@ const savedGroup = computed(() =>
 
             <form class="editor" @submit.prevent="save">
                 <Stack gap="3">
-                    <WebhookTestResult ref="tester" :behavior-id="trigger.id" />
+                    <WebhookTestResult ref="tester" :behavior-id="trigger.id" :target="trigger.surface" />
 
                     <div class="grid">
                         <AppTextField v-model="draft.title" :label="t('behaviors.card.titleLabel')" :error="errors.fields.title" />

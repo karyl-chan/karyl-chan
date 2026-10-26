@@ -35,7 +35,6 @@ import { shouldRecord } from "../bot-events/bot-event-dedup.js";
 import {
   HostPolicyError,
   resolveWebhookTarget,
-  type HostPolicyCode,
   type WebhookTarget,
 } from "../../utils/host-policy.js";
 import { createPinnedAgent } from "../../utils/pinned-dispatcher.js";
@@ -43,7 +42,7 @@ import { webhookAllowlist } from "../../config.js";
 import type { AllowlistEntry } from "../../utils/webhook-allowlist.js";
 import { decryptSecret } from "../../utils/crypto.js";
 import type { BehaviorWebhookActionRow } from "../behavior/models/behavior-webhook-action.model.js";
-import type { ForwardResult } from "./types.js";
+import type { ForwardErrorCode, ForwardResult } from "./types.js";
 import {
   MAX_REPLY_BODY_BYTES,
   parseBehaviorReply,
@@ -110,7 +109,7 @@ function logReplyNotes(behaviorId: number, notes: readonly ReplyNote[]): void {
 }
 
 /** A failed forward: no reply, and the detail for the log / stats / admin. */
-function fail(error: string, status?: number, errorCode?: HostPolicyCode): ForwardResult {
+function fail(error: string, status?: number, errorCode?: ForwardErrorCode): ForwardResult {
   return {
     ok: false,
     reply: {},
@@ -401,6 +400,7 @@ export class WebhookForwarder {
     //  Webhook authors who want token-mode signing can use the same
     //  buildOutboundSignatureHeaders helper from utils/hmac.ts.
     const hasSignatureHeaders = res.headers.has(SIGNATURE_HEADER);
+    let verified: ForwardResult["verified"];
     if (rawSecret && (authMode === "hmac" || hasSignatureHeaders)) {
       const verdict = verifyInboundSignatureWithKeys(
         rawPrevious ? [rawSecret, rawPrevious] : [rawSecret],
@@ -412,8 +412,9 @@ export class WebhookForwarder {
         { boundNonce: nonce, prefix: scheme.signaturePrefix },
       );
       if (!verdict.ok) {
-        return fail(verdict.reason, res.status);
+        return fail(verdict.reason, res.status, "response_signature");
       }
+      verified = authMode === "hmac" ? "hmac" : "token";
     } else if (
       authMode === "token" &&
       rawText.length > 0 &&
@@ -429,7 +430,9 @@ export class WebhookForwarder {
 
     // 解析 response body（#140 回覆模型）。空 body = 動作選擇不回覆；
     // 非 JSON 或不是物件 = receiver 壞掉，算失敗（不再默默變成空回覆）。
-    if (rawText.length === 0) return { ok: true, reply: {}, notes: [] };
+    const okWith = (reply: ForwardResult["reply"], notes: ForwardResult["notes"]): ForwardResult =>
+      verified ? { ok: true, reply, notes, verified } : { ok: true, reply, notes };
+    if (rawText.length === 0) return okWith({}, []);
     let decoded: unknown;
     try {
       decoded = JSON.parse(rawText);
@@ -442,7 +445,7 @@ export class WebhookForwarder {
     }
     // a test-fire's notes go back to the admin, not into the log
     if (scheme === REAL_SCHEME) logReplyNotes(action.behaviorId, parsed.notes);
-    return { ok: true, reply: parsed.reply, notes: parsed.notes };
+    return okWith(parsed.reply, parsed.notes);
   }
 
   // ── 私有：安全解密（不讓解密失敗 crash forward）──────────────────────────

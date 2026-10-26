@@ -157,7 +157,15 @@ describe("POST /api/behaviors/:id/test", () => {
       url: `/api/behaviors/${ids.appLeaf}/test`,
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ ok: true, relayContent: "pong" });
+    expect(res.json()).toEqual({
+      ok: true,
+      reply: { content: "pong" },
+      notes: [],
+      status: null,
+      error: null,
+      errorCode: null,
+      verified: null,
+    });
     const calls = forward.mock.calls as unknown as Array<
       [unknown, { _meta: Record<string, unknown> }, { test?: boolean }]
     >;
