@@ -111,17 +111,11 @@ export interface ContractFixtures {
     readonly selectionField: string;
   };
   readonly behaviorWebhook: {
-    readonly endSentinel: string;
-    readonly endSentinelCaseInsensitive: boolean;
     readonly request: {
       readonly topLevelKeys: readonly string[];
       readonly patternMetaKeys: readonly string[];
       readonly slashMetaKeys: readonly string[];
       readonly userKeys: readonly string[];
-      readonly sessionKeys: {
-        readonly inactive: readonly string[];
-        readonly active: readonly string[];
-      };
       readonly attachmentKeys: readonly string[];
     };
     readonly response: {
@@ -410,8 +404,6 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
    * canonical schema.
    */
   behaviorWebhook: {
-    endSentinel: "[BEHAVIOR:END]",
-    endSentinelCaseInsensitive: true,
     request: {
       topLevelKeys: ["content", "username", "avatar_url", "_meta"],
       patternMetaKeys: [
@@ -420,7 +412,6 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
         "channel_id",
         "guild_id",
         "behavior_id",
-        "session",
         "attachments",
       ],
       slashMetaKeys: [
@@ -435,10 +426,6 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
         "behavior_id",
       ],
       userKeys: ["id", "username", "global_name", "discriminator", "avatar"],
-      sessionKeys: {
-        inactive: ["active"],
-        active: ["active", "started_at"],
-      },
       attachmentKeys: ["url", "filename", "content_type", "size"],
     },
     response: {

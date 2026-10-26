@@ -1,7 +1,7 @@
 /**
  * Regression：admin 把 source='system' behavior 切到 triggerType='message_pattern'
  * 後，collectApplicableBehaviorsForUser 在 includeSystem=true 下要回傳這條 row；
- * 預設（/manual 列表用）仍要排除 system。
+ * 預設仍要排除 system。
  *
  * 舊行為硬寫 source !== 'system'，導致使用者切換後行為沉默失效。
  */
@@ -27,7 +27,7 @@ beforeEach(async () => {
 async function seedSystemMessagePattern(): Promise<void> {
   await Behavior.create({
     id: 100,
-    title: "manual (message_pattern)",
+    title: "login (message_pattern)",
     enabled: true,
     sortOrder: -999,
     stopOnMatch: true,
@@ -35,7 +35,7 @@ async function seedSystemMessagePattern(): Promise<void> {
     source: "system",
     triggerType: "message_pattern",
     messagePatternKind: "startswith",
-    messagePatternValue: "?manual",
+    messagePatternValue: "?login",
     scope: "global",
     integrationTypes: "guild_install,user_install",
     contexts: "BotDM",
@@ -43,7 +43,7 @@ async function seedSystemMessagePattern(): Promise<void> {
     webhookUrl: null,
     webhookSecret: null,
     webhookAuthMode: null,
-    systemKey: "manual",
+    systemKey: "admin-login",
     scopeTabId: 1,
   } as Record<string, unknown>);
 }
@@ -70,7 +70,7 @@ async function seedCustomMessagePattern(): Promise<void> {
 }
 
 describe("collectApplicableBehaviorsForUser — system source visibility", () => {
-  it("excludes source='system' by default (preserves /manual list semantics)", async () => {
+  it("excludes source='system' by default", async () => {
     await seedSystemMessagePattern();
     await seedCustomMessagePattern();
     const rows = await collectApplicableBehaviorsForUser("u1", {

@@ -7,7 +7,6 @@ import BehaviorSourceNotice from './BehaviorSourceNotice.vue';
 import {
     type BehaviorRow,
     type BehaviorTriggerType,
-    type BehaviorForwardType,
     type BehaviorScope,
     type BehaviorWebhookAuthMode,
     type BehaviorPatchPayload,
@@ -50,10 +49,10 @@ const open = ref(!!props.initiallyOpen);
 
 const isCustom = computed(() => props.behavior.source === 'custom');
 const isSystem = computed(() => props.behavior.source === 'system');
-// admin-login / break 是逃生口（取得後台連結、結束 session），停用後找不回，
-// 由後端 403 + 前端 toggle disabled 雙層保護。manual 可關。
+// admin-login 是進後台的唯一入口，停用後找不回，由後端 403 + 前端 toggle
+// disabled 雙層保護。
 const isProtectedSystem = computed(
-    () => isSystem.value && (props.behavior.systemKey === 'admin-login' || props.behavior.systemKey === 'break'),
+    () => isSystem.value && props.behavior.systemKey === 'admin-login',
 );
 
 // ── draft（可編輯欄位）────────────────────────────────────────────────────────
@@ -63,10 +62,8 @@ interface Draft {
     title: string;
     description: string;
     enabled: boolean;
-    forwardType: BehaviorForwardType;
     stopOnMatch: boolean;
     ignoreBots: boolean;
-    sessionExpireHours: number | null;
     // trigger（custom 全可改；system 只能改 value）
     triggerType: BehaviorTriggerType;
     messagePatternKind: string;
@@ -108,10 +105,8 @@ function draftFrom(row: BehaviorRow): Draft {
         title: row.title,
         description: row.description,
         enabled: row.enabled,
-        forwardType: row.forwardType,
         stopOnMatch: row.stopOnMatch,
         ignoreBots: row.ignoreBots,
-        sessionExpireHours: row.sessionExpireHours,
         triggerType: row.triggerType,
         messagePatternKind: row.messagePatternKind ?? 'startswith',
         messagePatternValue: row.messagePatternValue ?? '',
@@ -163,11 +158,6 @@ const messagePatternKindOptions = [
     { value: 'endswith', label: t('behaviors.card.triggerEndsWith') },
     { value: 'regex', label: t('behaviors.card.triggerRegex') },
 ];
-
-const forwardTypeOptions = computed(() => [
-    { value: 'one_time' as BehaviorForwardType, label: t('behaviors.card.forwardOneTime') },
-    { value: 'continuous' as BehaviorForwardType, label: t('behaviors.card.forwardContinuous') },
-]);
 
 const scopeOptions = [
     { value: 'global' as BehaviorScope, label: 'global' },
@@ -236,7 +226,6 @@ async function onTestFire() {
             ok: false,
             relayContent: '',
             relayEmbeds: [],
-            ended: false,
             error: err instanceof Error ? err.message : String(err),
         };
     } finally {
@@ -274,16 +263,6 @@ function formatWhen(iso: string | null): string {
     const d = new Date(iso);
     return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString();
 }
-
-// ── TTL 數字輸入（continuous 才顯示）────────────────────────────────────────
-
-const sessionTtlInput = computed<string>({
-    get: () => (draft.sessionExpireHours == null ? '' : String(draft.sessionExpireHours)),
-    set: (v) => {
-        const n = parseInt(v, 10);
-        draft.sessionExpireHours = Number.isInteger(n) && n >= 1 && n <= 720 ? n : null;
-    },
-});
 
 // ── trigger summary（卡片頭部）───────────────────────────────────────────────
 
@@ -337,10 +316,8 @@ const dirty = computed(() => {
         draft.webhookUrl !== (b.webhookUrl ?? '') ||
         draft.webhookSecret !== (b.webhookSecret ?? '') ||
         draft.webhookAuthMode !== (b.webhookAuthMode ?? '') ||
-        draft.forwardType !== b.forwardType ||
         draft.stopOnMatch !== b.stopOnMatch ||
-        draft.ignoreBots !== b.ignoreBots ||
-        draft.sessionExpireHours !== b.sessionExpireHours
+        draft.ignoreBots !== b.ignoreBots
     );
 });
 
@@ -429,8 +406,6 @@ async function onSave() {
                 audienceKind: draft.audienceKind as BehaviorRow['audienceKind'],
                 audienceUserId: draft.audienceKind === 'user' ? (draft.audienceUserId.trim() || null) : null,
                 audienceGroupName: draft.audienceKind === 'group' ? (draft.audienceGroupName.trim() || null) : null,
-                forwardType: draft.forwardType,
-                sessionExpireHours: draft.sessionExpireHours,
             };
             // stopOnMatch / ignoreBots 是 pattern 專屬語意(BH-0.3/BH-3) — slash 不送。
             if (draft.triggerType === 'message_pattern') {
@@ -577,17 +552,6 @@ const saveLabel = computed(() => {
                 :title="t('behaviors.card.tagSystem')"
             >
                 {{ t('behaviors.card.tagSystemShort') }}
-            </AppBadge>
-
-            <!-- 連續對話 tag -->
-            <AppBadge
-                v-if="behavior.forwardType === 'continuous'"
-                size="sm"
-                tone="accent"
-                icon="material-symbols:loop-rounded"
-                :title="t('behaviors.card.tagContinuous')"
-            >
-                {{ t('behaviors.card.tagContinuousShort') }}
             </AppBadge>
 
             <!-- BH-6.4：連續失敗 ≥3 的健康警示 -->
@@ -761,22 +725,6 @@ const saveLabel = computed(() => {
                             muted
                         />
 
-                        <!-- 轉發設定 -->
-                        <div class="field">
-                            <span class="label">{{ t('behaviors.card.forwardType') }}</span>
-                            <AppSelectField v-model="draft.forwardType" :options="forwardTypeOptions" />
-                        </div>
-
-                        <!-- BH-4.2：continuous session TTL（小時，空 = 全域預設） -->
-                        <AppTextField
-                            v-if="draft.forwardType === 'continuous'"
-                            v-model="sessionTtlInput"
-                            :label="t('behaviors.card.sessionTtl')"
-                            :hint="t('behaviors.card.sessionTtlHint')"
-                            :maxlength="3"
-                            placeholder="—"
-                        />
-
                         <!-- webhook 設定 -->
                         <AppTextField
                             v-model="draft.webhookUrl"
@@ -803,8 +751,8 @@ const saveLabel = computed(() => {
 
                         <!-- stopOnMatch 是 message_pattern 專屬(BH-0.3)：
                              一則訊息依 sortOrder 比對所有 pattern,勾選後
-                             命中即擋住後續比對(continuous/system 命中必停,
-                             不受此欄位影響)。slash 指令名唯一,無此語意。 -->
+                             命中即擋住後續比對(system 命中必停,不受此欄位
+                             影響)。slash 指令名唯一,無此語意。 -->
                         <label
                             v-if="draft.triggerType === 'message_pattern'"
                             class="field full inline"

@@ -247,19 +247,14 @@ export class PluginCommandRegistry {
    * shadow. Static fallback used when the live Discord cache isn't
    * ready yet (early register-on-startup window).
    *
-   * `manual` / `break` / `login` are global commands hoisted in
-   * main.ts (manual/break: discordx decorators rebound; login: system
-   * behavior). The runtime check below also asks the live bot what
+   * `login` is the system behavior's default global command. The
+   * runtime check below also asks the live bot what
    * application commands it owns and merges those names in, so guild-
    * scoped discordx commands like `picture-only-channel`, `todo-channel`,
    * `role-emoji`, `rcon-forward-channel` are caught automatically as
    * the cache fills — without needing this list to be hand-maintained.
    */
-  private static readonly RESERVED_COMMAND_NAMES_STATIC = new Set([
-    "manual",
-    "break",
-    "login",
-  ]);
+  private static readonly RESERVED_COMMAND_NAMES_STATIC = new Set(["login"]);
 
   /**
    * Compute the live "names plugins can't use" set. Pulls every

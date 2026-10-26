@@ -1254,9 +1254,6 @@
             "messagePatternValue": "Pattern 值",
             "slashCommandName": "Slash 指令名稱",
             "slashCommandDescription": "Slash 指令說明",
-            "forwardType": "轉發類型",
-            "forwardOneTime": "一次性轉發",
-            "forwardContinuous": "持續轉發",
             "targetId": "目標對象",
             "triggerSection": "觸發設定",
             "integrationTypes": "可安裝範圍",
@@ -1271,8 +1268,6 @@
             "webhookSecretPlaceholder": "留空 = 不設定",
             "webhookAuthMode": "驗證模式",
             "stopOnMatch": "命中後阻止後續判定",
-            "tagContinuous": "持續轉發",
-            "tagContinuousShort": "持續",
             "tagStop": "命中後阻止後續判定",
             "tagStopShort": "停止後續",
             "tagPlugin": "由 Plugin 提供",
@@ -1324,9 +1319,7 @@
             "resyncDone": "指令已重新同步。",
             "unhealthy": "連續失敗",
             "statsLine": "上次觸發 {when} · 成功 {ok} / 失敗 {fail}",
-            "statsLastError": "最近錯誤：{error}",
-            "sessionTtl": "Session 時限（小時）",
-            "sessionTtlHint": "1–720；留空＝全域預設"
+            "statsLastError": "最近錯誤：{error}"
         },
         "addTab": {
             "title": "新增範圍分頁",
@@ -1361,17 +1354,6 @@
             "add": "加入",
             "remove": "移除",
             "invalidId": "無效的 Discord 使用者 ID。"
-        },
-        "sessions": {
-            "title": "進行中的 sessions",
-            "open": "Sessions",
-            "empty": "目前沒有進行中的 continuous session。",
-            "user": "使用者",
-            "behavior": "Behavior",
-            "channel": "頻道",
-            "started": "開始於",
-            "expires": "到期",
-            "end": "結束"
         }
     },
     "config": {

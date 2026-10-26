@@ -1,5 +1,6 @@
 /**
- * Idempotent seed for the three v2 system behaviors (admin-login / manual / break).
+ * Idempotent seed for the system behavior (admin-login — the only one
+ * since ADR 0003 removed manual / break).
  *
  * Uniqueness key: (source='system', systemKey) — aligned with unique index
  * `behaviors_system_uq`. Existing rows are never overwritten because admin
@@ -31,7 +32,7 @@ interface SystemBehaviorSeed {
   sortOrder: number;
 }
 
-// Home tab for the three system behaviours. Earlier seeds put them on
+// Home tab for the system behaviour. Earlier seeds put them on
 // `all_dms` (contexts = BotDM + PrivateChannel) which surfaced /login
 // in group DMs whenever a user user-installed the bot. PrivateChannel
 // added no real value over BotDM for any of these commands, so we
@@ -39,10 +40,9 @@ interface SystemBehaviorSeed {
 // self-heal block below migrates pre-existing rows from the old home.
 const SYSTEM_SCOPE_TAB_ID = FIXED_TAB_IDS.all_bot_dms;
 
-// sortOrder：受保護的 system behaviour（admin-login / break，不可停用）排前
-// 面，可調節的 manual 排後面。UI 端 workspace 直接照 sortOrder 渲染，沒有
-// 額外排序邏輯。Self-heal 在下方會把既存 row 的 sortOrder 拉回 seed 值，
-// 已部署環境 reboot 一次即同步。
+// sortOrder：system behaviour 排在最前面。UI 端 workspace 直接照 sortOrder
+// 渲染，沒有額外排序邏輯。Self-heal 在下方會把既存 row 的 sortOrder 拉回
+// seed 值，已部署環境 reboot 一次即同步。
 const SEEDS: SystemBehaviorSeed[] = [
   {
     systemKey: "admin-login",
@@ -53,28 +53,10 @@ const SEEDS: SystemBehaviorSeed[] = [
     slashCommandDescription: "取得 admin 後台一次性登入連結(僅授權使用者)",
     sortOrder: -1000,
   },
-  {
-    systemKey: "break",
-    slashCommandName: "break",
-    title: "結束持續轉發",
-    description:
-      "私訊 bot `/break`(或符合觸發條件)時,結束此使用者目前的持續轉發 session。系統行為,不可刪除或更換目標對象。",
-    slashCommandDescription: "結束目前正在進行的持續轉發",
-    sortOrder: -999,
-  },
-  {
-    systemKey: "manual",
-    slashCommandName: "manual",
-    title: "查看可用行為列表",
-    description:
-      "私訊 bot `/manual`(或符合觸發條件)時,列出此使用者在私訊可用的所有 behaviors。系統行為,不可刪除或更換目標對象。",
-    slashCommandDescription: "查看你在私訊可用的行為列表",
-    sortOrder: -998,
-  },
 ];
 
 /**
- * Idempotent upsert: ensure the three system behavior rows exist. Must run
+ * Idempotent upsert: ensure the system behavior row exists. Must run
  * after migrations and before commandReconciler.reconcileAll() so the
  * desired set includes them.
  */
@@ -85,7 +67,6 @@ export async function ensureSystemBehaviors(): Promise<{
   const created: BehaviorSystemKey[] = [];
   const existing: BehaviorSystemKey[] = [];
 
-  // 三個 system behaviour 共用同一個 home tab,所以 derive 一次重複用。
   // ensureFixedScopeTabs() 在 main.ts 早一步呼叫,target tab 必定存在;
   // 真的不在就 throw 讓 boot 失敗（比之後跑出怪事好）。
   const targetTabRow = await BehaviorScopeTab.findByPk(SYSTEM_SCOPE_TAB_ID);
@@ -223,7 +204,7 @@ export async function ensureSystemBehaviors(): Promise<{
   );
   if (missing.length > 0) {
     throw new Error(
-      `system-seed: 預期 3 條 system behavior 全部到位,但仍缺 ${missing.join(", ")}`,
+      `system-seed: 預期 system behavior 全部到位,但仍缺 ${missing.join(", ")}`,
     );
   }
 

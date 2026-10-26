@@ -4,8 +4,7 @@
  * `@karyl-chan/plugin-wire` — imported as a package, never read as a
  * file across a package boundary).
  *
- * If the bot changes the outbound payload shape, the END sentinel, or
- * the embed whitelist without updating the fixtures, this goes red —
+ * If the bot changes the outbound payload shape or the embed whitelist without updating the fixtures, this goes red —
  * external webhook authors read the fixtures as the canonical schema.
  */
 import { vi, describe, it, expect, beforeAll, type Mock } from "vitest";
@@ -53,7 +52,7 @@ beforeAll(async () => {
 
 function captureForwarder(): { forward: Mock } {
   return {
-    forward: vi.fn(async () => ({ ok: true, ended: false, relayContent: "" })),
+    forward: vi.fn(async () => ({ ok: true, relayContent: "" })),
   };
 }
 
@@ -119,9 +118,6 @@ describe("behavior webhook contract (BH-2.3)", () => {
     expect(Object.keys(meta.user as object).sort()).toEqual(
       [...C.request.userKeys].sort(),
     );
-    expect(Object.keys(meta.session as object).sort()).toEqual(
-      [...C.request.sessionKeys.inactive].sort(),
-    );
     const att = (meta.attachments as object[])[0];
     expect(Object.keys(att).sort()).toEqual([...C.request.attachmentKeys].sort());
   });
@@ -180,8 +176,7 @@ describe("behavior webhook contract (BH-2.3)", () => {
     );
   });
 
-  it("END sentinel and embed whitelist match the fixtures", () => {
-    expect(C.endSentinel).toBe("[BEHAVIOR:END]");
+  it("embed whitelist matches the fixtures", () => {
     const sanitized = sanitizeEmbeds([
       {
         title: "t",

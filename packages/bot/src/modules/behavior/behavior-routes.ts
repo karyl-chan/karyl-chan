@@ -41,10 +41,6 @@ import {
   scopeKeyOf,
   rowOf as tabRowOf,
 } from "./models/behavior-scope-tab.model.js";
-import {
-  BehaviorSession,
-  endSession,
-} from "./models/behavior-session.model.js";
 import { findStatsBulk } from "./models/behavior-stats.model.js";
 import type { BehaviorStatRow } from "./models/behavior-stats.model.js";
 import { WebhookForwarder } from "../command-system/webhook-forwarder.service.js";
@@ -63,14 +59,6 @@ export type { BehaviorRoutesOptions };
 /** The valid `messagePatternKind` values, single-sourced for every
  *  validation site in this module (create, PATCH switch, PATCH sub-field). */
 const MESSAGE_PATTERN_KINDS = ["startswith", "endswith", "regex"];
-
-/** BH-4.2：session TTL 驗證 — 1..720 小時的整數，其他一律當 null（全域預設）。 */
-function validSessionTtl(v: unknown): number | null {
-  if (typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= 720) {
-    return v;
-  }
-  return null;
-}
 
 // ── 主函式 ────────────────────────────────────────────────────────────────────
 
@@ -269,10 +257,8 @@ export async function registerBehaviorRoutes(
       webhookUrl?: string;
       webhookSecret?: string;
       webhookAuthMode?: BehaviorWebhookAuthMode;
-      forwardType?: string;
       stopOnMatch?: boolean;
       ignoreBots?: boolean;
-      sessionExpireHours?: number | null;
       enabled?: boolean;
       scopeTabId?: number;
     };
@@ -432,7 +418,9 @@ export async function registerBehaviorRoutes(
         ? (body.webhookAuthMode ?? "token")
         : null,
       systemKey: null,
-      forwardType: body.forwardType ?? "one_time",
+      // Continuous sessions were removed (ADR 0003); every behavior is
+      // one-time. The column stays until the trigger/action model rewrite.
+      forwardType: "one_time",
       // stopOnMatch 僅 message_pattern 有語意（BH-0.3）；slash 一律存 false
       stopOnMatch:
         body.triggerType === "message_pattern" ? !!body.stopOnMatch : false,
@@ -441,8 +429,7 @@ export async function registerBehaviorRoutes(
         body.triggerType === "message_pattern"
           ? (body.ignoreBots ?? true)
           : true,
-      // BH-4.2：per-behavior session TTL（null = 全域預設）
-      sessionExpireHours: validSessionTtl(body.sessionExpireHours),
+      sessionExpireHours: null,
       enabled: body.enabled !== undefined ? !!body.enabled : true,
       sortOrder: nextSortOrder,
       scopeTabId: resolvedTabId,
@@ -563,14 +550,8 @@ export async function registerBehaviorRoutes(
 
       if ("enabled" in body) {
         const nextEnabled = !!body["enabled"];
-        // admin-login / break 是 admin 後台與 session 收尾的唯一逃生口，
-        // 一旦被停用就找不回後台，也沒辦法手動結束 session。manual 可關
-        // （只是失去 DM 列表助理）。系統行為的 protected set 在此明列。
-        if (
-          !nextEnabled &&
-          (existingRow.systemKey === "admin-login" ||
-            existingRow.systemKey === "break")
-        ) {
+        // admin-login 是進後台的唯一入口，一旦被停用就找不回後台。
+        if (!nextEnabled && existingRow.systemKey === "admin-login") {
           return reply.code(403).send({
             error: `系統行為 ${existingRow.systemKey} 不可停用`,
           });
@@ -768,7 +749,6 @@ export async function registerBehaviorRoutes(
       if ("audienceGroupName" in body)
         patch["audienceGroupName"] = body["audienceGroupName"] ?? null;
       if ("enabled" in body) patch["enabled"] = !!body["enabled"];
-      if ("forwardType" in body) patch["forwardType"] = body["forwardType"];
       if ("stopOnMatch" in body) {
         // stopOnMatch 是 message_pattern 的 multi-match 停止旗標（BH-0.3）；
         // slash 指令名唯一、天然單一匹配，設定它沒有任何效果 — 拒絕。
@@ -794,15 +774,6 @@ export async function registerBehaviorRoutes(
           });
         }
         patch["ignoreBots"] = !!body["ignoreBots"];
-      }
-      if ("sessionExpireHours" in body) {
-        const v = body["sessionExpireHours"];
-        if (v !== null && (typeof v !== "number" || !Number.isInteger(v) || v < 1 || v > 720)) {
-          return reply
-            .code(400)
-            .send({ error: "sessionExpireHours 必須是 1–720 的整數或 null" });
-        }
-        patch["sessionExpireHours"] = v;
       }
       if ("webhookUrl" in body) {
         const url = (body["webhookUrl"] as string | null)?.trim();
@@ -844,26 +815,6 @@ export async function registerBehaviorRoutes(
     await existing.update(patch);
     const updated = decryptedView(rowOfBehavior(existing));
 
-    // H-3 修：forwardType 改成非 continuous（或 enabled 被關掉）後，殘留
-    // session 不應繼續吞 DM。matcher 也會在下一則訊息進來時自我修復，
-    // 但這裡眼前清掉避免 user 多吃一發 forward。
-    const wasContinuous = existingRow.forwardType === "continuous";
-    const stillContinuous = updated.forwardType === "continuous";
-    const becameDisabled = existingRow.enabled && updated.enabled === false;
-    if ((wasContinuous && !stillContinuous) || becameDisabled) {
-      const ended = await BehaviorSession.destroy({
-        where: { behaviorId: numId },
-      });
-      if (ended > 0) {
-        botEventLog.record(
-          "info",
-          "web",
-          `behavior 更新連帶結束 ${ended} 條 session id=${numId}`,
-          { behaviorId: numId, sessionsEnded: ended },
-        );
-      }
-    }
-
     botEventLog.record(
       "info",
       "web",
@@ -902,21 +853,11 @@ export async function registerBehaviorRoutes(
       return reply.code(403).send({ error: "system behavior 不可刪除" });
     }
 
-    // H-2 修：FK onDelete:CASCADE 會在 SQLite FK 開啟時靜默清掉 session，
-    // 但 admin 看不到「連帶結束 N 條 session」這件事。先顯式清、log 數量，
-    // 再 destroy；同時讓 FK pragma 萬一沒生效時行為仍正確。
-    const endedSessions = await BehaviorSession.destroy({
-      where: { behaviorId: numId },
-    });
-
     await existing.destroy();
 
-    botEventLog.record(
-      "info",
-      "web",
-      `behavior 已刪除 id=${numId}${endedSessions > 0 ? `（連帶結束 ${endedSessions} 條 session）` : ""}`,
-      { behaviorId: numId, sessionsEnded: endedSessions },
-    );
+    botEventLog.record("info", "web", `behavior 已刪除 id=${numId}`, {
+      behaviorId: numId,
+    });
 
     scheduleReconcileAfterMutation(`delete id=${numId}`);
 
@@ -1000,7 +941,7 @@ export async function registerBehaviorRoutes(
 
   // ── BH-6.2：test-fire ───────────────────────────────────────────────────────
   // 對 behavior 的 webhook 發一發測試 payload（_meta.test=true），把結果
-  // 直接回給 admin —— 「裝好了有沒有通」從猜變成按一下。不開 session、
+  // 直接回給 admin —— 「裝好了有沒有通」從猜變成按一下。不改任何狀態、
   // 不 relay 到任何頻道、不計入統計。
 
   server.post("/api/behaviors/:id/test", async (request, reply) => {
@@ -1051,66 +992,9 @@ export async function registerBehaviorRoutes(
       ok: result.ok,
       relayContent: result.relayContent,
       relayEmbeds: result.relayEmbeds ?? [],
-      ended: result.ended,
       error: result.error ?? null,
     });
   });
-
-  // ── BH-4.1：session 可見性 ──────────────────────────────────────────────────
-  // 全域 behavior.manage（session 跨 tab，不做 scoped 細分）。
-
-  server.get("/api/behavior-sessions", async (request, reply) => {
-    if (!requireBehaviorAdmin(request, reply)) return;
-    const rows = await BehaviorSession.findAll({
-      order: [["startedAt", "DESC"]],
-    });
-    const behaviorIds = Array.from(
-      new Set(rows.map((r) => r.getDataValue("behaviorId") as number)),
-    );
-    const titleRows = await Behavior.findAll({
-      where: { id: behaviorIds },
-      attributes: ["id", "title"],
-    });
-    const titles = new Map(
-      titleRows.map((b) => [
-        b.getDataValue("id") as number,
-        b.getDataValue("title") as string,
-      ]),
-    );
-    return reply.send({
-      sessions: rows.map((r) => ({
-        userId: r.getDataValue("userId") as string,
-        channelId: r.getDataValue("channelId") as string,
-        behaviorId: r.getDataValue("behaviorId") as number,
-        behaviorTitle:
-          titles.get(r.getDataValue("behaviorId") as number) ?? "(deleted)",
-        startedAt: r.getDataValue("startedAt") as string,
-        expiresAt: (r.getDataValue("expiresAt") as string | null) ?? null,
-      })),
-    });
-  });
-
-  server.delete(
-    "/api/behavior-sessions/:userId/:channelId",
-    async (request, reply) => {
-      if (!requireBehaviorAdmin(request, reply)) return;
-      const { userId, channelId } = request.params as {
-        userId: string;
-        channelId: string;
-      };
-      const ended = await endSession(userId, channelId);
-      if (!ended) {
-        return reply.code(404).send({ error: "Session 不存在" });
-      }
-      botEventLog.record(
-        "info",
-        "web",
-        `behavior-session: admin 強制結束 session userId=${userId} channelId=${channelId}`,
-        { userId, channelId, actor: request.authUserId ?? null },
-      );
-      return reply.send({ ok: true });
-    },
-  );
 
   // ── audience group 成員管理（BH-1）─────────────────────────────────────────
   //

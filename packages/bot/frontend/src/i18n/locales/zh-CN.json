@@ -1254,9 +1254,6 @@
             "messagePatternValue": "Pattern 值",
             "slashCommandName": "Slash 指令名称",
             "slashCommandDescription": "Slash 指令说明",
-            "forwardType": "转发类型",
-            "forwardOneTime": "一次性转发",
-            "forwardContinuous": "持续转发",
             "targetId": "目标对象",
             "triggerSection": "触发设定",
             "integrationTypes": "可安装范围",
@@ -1271,8 +1268,6 @@
             "webhookSecretPlaceholder": "留空 = 不设定",
             "webhookAuthMode": "验证模式",
             "stopOnMatch": "命中后阻止后续判定",
-            "tagContinuous": "持续转发",
-            "tagContinuousShort": "持续",
             "tagStop": "命中后阻止后续判定",
             "tagStopShort": "停止后续",
             "tagPlugin": "由 Plugin 提供",
@@ -1323,9 +1318,7 @@
             "resyncDone": "指令已重新同步。",
             "unhealthy": "连续失败",
             "statsLine": "上次触发 {when} · 成功 {ok} / 失败 {fail}",
-            "statsLastError": "最近错误：{error}",
-            "sessionTtl": "Session 时限（小时）",
-            "sessionTtlHint": "1–720；留空＝全局默认"
+            "statsLastError": "最近错误：{error}"
         },
         "addTab": {
             "title": "新增范围分页",
@@ -1360,17 +1353,6 @@
             "add": "加入",
             "remove": "移除",
             "invalidId": "无效的 Discord 用户 ID。"
-        },
-        "sessions": {
-            "title": "进行中的 sessions",
-            "open": "Sessions",
-            "empty": "当前没有进行中的 continuous session。",
-            "user": "用户",
-            "behavior": "Behavior",
-            "channel": "频道",
-            "started": "开始于",
-            "expires": "到期",
-            "end": "结束"
         }
     },
     "config": {

@@ -3,8 +3,7 @@
  *
  *   path 4: behavior created over the admin API → test-fire → REAL
  *           HTTP POST to a webhook sink → auth headers per mode
- *           (none / token / hmac) → signed-response verification →
- *           [BEHAVIOR:END] sentinel handling
+ *           (none / token / hmac) → signed-response verification
  *   path 5: synthetic DM → recordActivity → event bus → SSE frames on
  *           /api/dm/events → channel listed → reply fails CLEANLY
  *           without Discord
@@ -13,7 +12,7 @@
  * path 4, gateway messageCreate for path 5) are unit-covered in
  * packages/bot/tests; what only an E2E can prove is the cross-service
  * webhook contract over a real socket (header signing on BOTH legs,
- * sentinel semantics, fail-closed response verification) and the
+ * fail-closed response verification) and the
  * store → bus → SSE pipeline as wired in the real server.
  *
  * Webhook sink placement: assertExternalTarget unconditionally denies
@@ -310,14 +309,9 @@ describe("behavior webhook + DM inbox E2E (PM-2.3, paths 4+5)", { skip: !DB_URL 
 
     const fired = await testFire(id);
     assert.equal(fired.status, 200, JSON.stringify(fired.body));
-    const result = fired.body as {
-      ok: boolean;
-      relayContent: string;
-      ended: boolean;
-    };
+    const result = fired.body as { ok: boolean; relayContent: string };
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.equal(result.relayContent, "ok from sink");
-    assert.equal(result.ended, false);
 
     const hit = sink!.hits.at(-1)!;
     assert.equal(hit.path, "/hook/none");
@@ -349,28 +343,20 @@ describe("behavior webhook + DM inbox E2E (PM-2.3, paths 4+5)", { skip: !DB_URL 
     assert.equal(hit.headers["x-plugin-webhook-token"], secret);
   });
 
-  it("path 4: hmac mode signs the request, verifies the response fail-closed, and honors [BEHAVIOR:END]", async () => {
+  it("path 4: hmac mode signs the request and verifies the response fail-closed", async () => {
     const secret = randomBytes(16).toString("hex");
     const id = await createBehavior("hmac", {
       webhookAuthMode: "hmac",
       webhookSecret: secret,
     });
 
-    // 1. Signed request reaches the sink; sink answers SIGNED with the
-    //    END sentinel → ok, ended, sentinel stripped from the relay.
-    sink!.respondWith(
-      { content: "bye [BEHAVIOR:END]" },
-      { signWithSecret: secret },
-    );
+    // 1. Signed request reaches the sink; sink answers SIGNED → ok and
+    //    the content is relayed.
+    sink!.respondWith({ content: "bye" }, { signWithSecret: secret });
     const fired = await testFire(id);
-    const result = fired.body as {
-      ok: boolean;
-      relayContent: string;
-      ended: boolean;
-    };
+    const result = fired.body as { ok: boolean; relayContent: string };
     assert.equal(result.ok, true, JSON.stringify(fired.body));
-    assert.equal(result.ended, true, "END sentinel must set ended");
-    assert.equal(result.relayContent, "bye", "sentinel must be stripped");
+    assert.equal(result.relayContent, "bye");
 
     // Verify the bot's request signature like a webhook author would.
     const hit = sink!.hits.at(-1)!;

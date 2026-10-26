@@ -147,11 +147,11 @@ backbone.
 - `interaction-dispatcher.service.ts` — `InteractionDispatcher`:
   unified `interactionCreate` entry; in order, tries behaviors slash,
   plugin command, plugin component, then in-process command.
-- `message-pattern-matcher.service.ts` — `MessagePatternMatcher`: DM
-  `messageCreate` listener that handles `message_pattern` triggers and
-  continuous sessions.
+- `message-pattern-matcher.service.ts` — `MessagePatternMatcher`:
+  `messageCreate` listener that handles `message_pattern` triggers in
+  bot DMs and guild channels.
 - `webhook-forwarder.service.ts` — `WebhookForwarder`: webhook POST +
-  HMAC signing and verification + `[BEHAVIOR:END]` detection.
+  HMAC signing and verification.
 - `models/reconciler-owned-command.model.ts` — reconciler's command
   ownership ledger.
 

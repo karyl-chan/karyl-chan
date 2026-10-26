@@ -18,7 +18,7 @@ A **behavior** is a "Discord trigger → action" rule stored in the
 - **Sources (`source`)**
   - `custom` — pack the trigger as an HTTP webhook POST, forward to the
     configured URL, and relay the response back to the caller.
-  - `system` — built-in handler (`admin-login`, `manual`, `break`).
+  - `system` — built-in handler (`admin-login`).
 
 ## Concepts
 
@@ -48,43 +48,29 @@ re-attaches its `source='system'` rows to `global_all` and removes its
 
 ### System behaviors
 
-Three `source='system'` rows are seeded idempotently by
-`src/modules/behavior/system-seed.service.ts` and cannot be deleted through
-the API:
+One `source='system'` row is seeded idempotently by
+`src/modules/behavior/system-seed.service.ts`; it cannot be deleted or
+disabled through the API. (`manual` and `break` were removed together with
+continuous sessions — see [ADR 0003](../adr/0003-behavior-trigger-action-split.md).)
 
 | `systemKey` | Command | Action |
 |-------------|---------|--------|
 | `admin-login` | `/login` | Reply (ephemeral) with a one-time admin login link. Bot owners (`BOT_OWNER_IDS`) and any `authorized_users` row with ≥1 active capability succeed; everyone else gets a "not authorized" reply. |
-| `manual` | `/manual` | List the behaviors currently available to the caller. |
-| `break` | `/break` | End the caller's active continuous-forward session. |
 
-All three are registered globally with dual-install enabled, and
+It is registered globally with dual-install enabled, and
 `contexts` is restricted to `BotDM` (the seeded home is `all_bot_dms`;
 older `all_dms` rows that also carried `PrivateChannel` are self-migrated
-off it); they do not appear in the guild command UI.
-
-### Forward types (`forwardType`)
-
-- `one_time` — fire once on match, end.
-- `continuous` — fire on match, open a session in `behavior_sessions`
-  (keyed by `(userId, channelId)`, BH-4.3 — one per user per channel; a
-  user's DMs with the bot are one channel, so DM behaviour matches the
-  old one-per-user model, while guild patterns give the same user
-  independent sessions per channel). Subsequent messages from that user
-  in that channel go directly to the same webhook until the session
-  ends. Sessions persist across bot restarts.
+off it); it does not appear in the guild command UI. The admin can switch
+its trigger to a DM message pattern (production uses `!login`).
 
 ### Multi-match and `stopOnMatch` (message_pattern only)
 
 The DM matcher walks every applicable `message_pattern` behavior in
 `sortOrder` and can fire more than one per message:
 
-- `system` match → always stops (terminal UX: login link / manual / break).
-- `continuous` match → always stops (the new session owns the conversation;
-  evaluating further patterns would be meaningless).
-- `one_time` match → `stopOnMatch=true` stops the walk; `false` (default)
-  keeps evaluating, so several one_time behaviors can each fire on the same
-  message.
+- `system` match → always stops (terminal UX: the login link).
+- `custom` match → `stopOnMatch=true` stops the walk; `false` (default)
+  keeps evaluating, so several behaviors can each fire on the same message.
 
 `stopOnMatch` has no meaning for `slash_command` behaviors — dispatch is
 first-claim-wins over a unique `(slashCommandName, scope, contexts)` index,
@@ -110,30 +96,12 @@ by `CommandReconciler`; see the `command-system` module in
 
 `MessagePatternMatcher` mounts a `messageCreate` listener:
 
-1. If the caller has an active session in this channel, the message is
-   forwarded to that session's bound behavior directly.
-2. Otherwise, collect the `message_pattern` behaviors applicable to the
+1. Collect the `message_pattern` behaviors applicable to the
    caller (filtered by `audienceKind`, ordered by `sortOrder` ascending),
    then by surface (`contexts`), placement, and — for bot authors in
    guilds — `ignoreBots`.
-3. Evaluate each via `matchesTrigger` (`startswith` / `endswith` /
+2. Evaluate each via `matchesTrigger` (`startswith` / `endswith` /
    `regex`); forward per the multi-match rules above (`stopOnMatch`).
-4. If a matched behavior has `forwardType='continuous'`, open a session
-   for `(user, channel)` and stop the walk.
-
-### Ending a continuous forward
-
-Two independent end points:
-
-- **Caller side** — `/break` (or the break text pattern); ends the
-  current channel's session, falling back to all of the caller's
-  sessions so the escape hatch can never leave someone stuck.
-- **Webhook side** — the webhook's response `content` contains the token
-  `[BEHAVIOR:END]` (case-insensitive). The session ends and the token is
-  stripped from the content before relay.
-
-After a session ends, the next DM falls back to the normal trigger
-evaluation path.
 
 ## Webhook forwarding
 
@@ -148,9 +116,6 @@ obtain a synchronous response):
   - `user` — `{ id, username, global_name, discriminator, avatar }`. Use
     `user.id` to tell callers apart — `username` is mutable and not a key.
   - `message_id`, `channel_id`, `behavior_id`
-  - `session` — `{ active: false }` on the triggering match;
-    `{ active: true, started_at }` for messages routed through an open
-    continuous session.
   - `attachments` — `[{ url, filename, content_type, size }]` for any
     files attached to the DM.
 
@@ -174,8 +139,7 @@ in the admin UI, registered to Discord by the reconciler, and delivered to
 the webhook in `_meta.options` as `{ name, type, value }` entries.
 
 Failed dispatch (network error, non-2xx, signature failure) is recorded
-in `bot_events`; a continuous session is **not** auto-ended. The caller
-can always run `/break`. The POST has a 10-second timeout.
+in `bot_events`. The POST has a 10-second timeout.
 
 ### Authentication (`webhookAuthMode`)
 
@@ -266,7 +230,6 @@ direct DB exposure.
 | `behaviors` | The behavior row itself (trigger / source / reach / webhook config). |
 | `behavior_scope_tabs` | Scope tab. |
 | `behavior_audience_members` | Membership list when `audienceKind='group'`. |
-| `behavior_sessions` | Continuous forwarding session (PK = `userId`). |
 
 ## Source
 
@@ -275,15 +238,14 @@ direct DB exposure.
 | `src/modules/behavior/models/behavior.model.ts` | `behaviors` table; enums; cross-field invariants. |
 | `src/modules/behavior/models/behavior-scope-tab.model.ts` | Scope tab + `deriveFieldsFromTab` derivation. |
 | `src/modules/behavior/models/behavior-audience-member.model.ts` | Group membership. |
-| `src/modules/behavior/models/behavior-session.model.ts` | Continuous session. |
 | `src/modules/behavior/behavior-routes.ts` | `/api/behaviors/*` CRUD + resync. |
 | `src/modules/behavior/scope-tab-routes.ts` | `/api/behavior-tabs/*` CRUD. |
 | `src/modules/behavior/system-seed.service.ts` | System behavior seed. |
 | `src/modules/behavior/scope-tab-seed.service.ts` | Fixed scope tab seed. |
 | `src/modules/behavior/behavior-trigger.ts` | Pure `matchesTrigger` and `describeTrigger`. |
 | `src/modules/command-system/interaction-dispatcher.service.ts` | Slash command dispatch. |
-| `src/modules/command-system/message-pattern-matcher.service.ts` | DM pattern dispatch + session. |
-| `src/modules/command-system/webhook-forwarder.service.ts` | Webhook POST + HMAC + `[BEHAVIOR:END]`. |
+| `src/modules/command-system/message-pattern-matcher.service.ts` | DM + guild pattern dispatch. |
+| `src/modules/command-system/webhook-forwarder.service.ts` | Webhook POST + HMAC. |
 | `src/modules/command-system/reconcile.service.ts` | Slash command registration in Discord. |
 | `src/utils/hmac.ts` | HMAC scheme. |
 | `frontend/src/views/admin/behaviors/` | Admin UI. |

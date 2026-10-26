@@ -69,7 +69,7 @@ export async function runStartup(ctx: RuntimeContext): Promise<void> {
     // before any route is served. Routes (login exchange, plugin
     // register/heartbeat) call jwtService.{sign,verify,publicKeyPem}.
     await initJwtSigningAuthority();
-    // System behavior seed（admin-login / manual / break）：idempotent
+    // System behavior seed（admin-login）：idempotent
     // 補建 source='system' rows，必須在 reconcileAll（bot ready handler
     // 內）之前完成，否則 CommandReconciler 的 desired set 不含 /login，
     // Discord 不會註冊。

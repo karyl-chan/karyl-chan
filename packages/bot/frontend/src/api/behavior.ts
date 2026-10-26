@@ -5,7 +5,6 @@ import { authedFetch, jsonOrThrow } from "./client";
 export type BehaviorSource = "custom" | "system";
 export type BehaviorTriggerType = "slash_command" | "message_pattern";
 export type BehaviorMessagePatternKind = "startswith" | "endswith" | "regex";
-export type BehaviorForwardType = "one_time" | "continuous";
 export type BehaviorScope = "global" | "guild";
 export type BehaviorAudienceKind = "all" | "user" | "group";
 export type BehaviorWebhookAuthMode = "token" | "hmac";
@@ -30,8 +29,6 @@ export interface BehaviorRow {
   sortOrder: number;
   stopOnMatch: boolean;
   ignoreBots: boolean;
-  sessionExpireHours: number | null;
-  forwardType: BehaviorForwardType;
   source: BehaviorSource;
   triggerType: BehaviorTriggerType;
   messagePatternKind: BehaviorMessagePatternKind | null;
@@ -119,7 +116,6 @@ export interface BehaviorCreatePayload {
   webhookUrl?: string;
   webhookSecret?: string;
   webhookAuthMode?: BehaviorWebhookAuthMode;
-  forwardType?: BehaviorForwardType;
   stopOnMatch?: boolean;
   ignoreBots?: boolean;
   enabled?: boolean;
@@ -142,10 +138,8 @@ export interface BehaviorPatchPayload {
   audienceUserId?: string | null;
   audienceGroupName?: string | null;
   enabled?: boolean;
-  forwardType?: BehaviorForwardType;
   stopOnMatch?: boolean;
   ignoreBots?: boolean;
-  sessionExpireHours?: number | null;
   webhookUrl?: string | null;
   webhookSecret?: string | null;
   webhookAuthMode?: BehaviorWebhookAuthMode | null;
@@ -229,45 +223,18 @@ export async function reorderBehaviors(orderedIds: number[]): Promise<void> {
   await jsonOrThrow<unknown>(r);
 }
 
-// ── Test-fire / sessions（BH-6.2 / BH-4.1）──────────────────────────────────
+// ── Test-fire（BH-6.2）───────────────────────────────────────────────────────
 
 export interface BehaviorTestResult {
   ok: boolean;
   relayContent: string;
   relayEmbeds: unknown[];
-  ended: boolean;
   error: string | null;
 }
 
 export async function testBehavior(id: number): Promise<BehaviorTestResult> {
   const r = await authedFetch(`/api/behaviors/${id}/test`, { method: "POST" });
   return jsonOrThrow<BehaviorTestResult>(r);
-}
-
-export interface BehaviorSessionView {
-  userId: string;
-  channelId: string;
-  behaviorId: number;
-  behaviorTitle: string;
-  startedAt: string;
-  expiresAt: string | null;
-}
-
-export async function listBehaviorSessions(): Promise<BehaviorSessionView[]> {
-  const r = await authedFetch("/api/behavior-sessions");
-  const body = await jsonOrThrow<{ sessions: BehaviorSessionView[] }>(r);
-  return body.sessions;
-}
-
-export async function endBehaviorSession(
-  userId: string,
-  channelId: string,
-): Promise<void> {
-  const r = await authedFetch(
-    `/api/behavior-sessions/${encodeURIComponent(userId)}/${encodeURIComponent(channelId)}`,
-    { method: "DELETE" },
-  );
-  await jsonOrThrow<unknown>(r);
 }
 
 // ── Audience group members API（BH-1）───────────────────────────────────────
