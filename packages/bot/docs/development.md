@@ -57,7 +57,7 @@ src/
   modules/                     # 11 business modules
     plugin-system/             # external RPC plugin lifecycle
     behavior/                  # behaviors — "Discord trigger → action" rules
-    command-system/            # command reconcile + interaction dispatch + DM pattern
+    command-system/            # command reconcile + interaction dispatch + message triggers
     builtin-features/          # in-process Discord features (picture-only / rcon-forward / role-emoji / todo-channel / voice)
     feature-toggle/            # feature on/off state
     voice/                     # voice connection manager + voice RPC

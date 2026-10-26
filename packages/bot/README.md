@@ -6,7 +6,7 @@ A Discord bot that combines three concerns in one process:
   features (todo channel, picture-only channel, role emoji, RCON forward,
   voice).
 - **Admin web panel** — HTTP API plus a nested Vue SPA at
-  `packages/bot/frontend/` for managing guilds, the DM inbox, permissions,
+  `packages/bot/frontend/` for managing guilds, behaviors, the DM inbox, permissions,
   plugins, and system settings.
 - **Plugin host** — external plugins run as separate processes and interact
   with the bot through HMAC-signed RPC.
@@ -52,6 +52,7 @@ See [`docs/setup.md`](docs/setup.md) for the full setup walkthrough.
 | RCON forward channel | [`docs/features/rcon-forward-channel.md`](docs/features/rcon-forward-channel.md) |
 | Voice | [`docs/features/voice.md`](docs/features/voice.md) |
 | Behaviors (Discord trigger → action rules) | [`docs/features/behaviors.md`](docs/features/behaviors.md) |
+| Behavior webhook protocol (for webhook receiver authors) | [`docs/features/behavior-webhook-protocol.md`](docs/features/behavior-webhook-protocol.md) |
 
 ### Development
 

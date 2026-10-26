@@ -36,7 +36,7 @@ src/
 └── modules/                    # business modules (11)
     ├── plugin-system/          # external RPC plugin lifecycle
     ├── behavior/               # behaviors — "Discord trigger → action" rules
-    ├── command-system/         # slash command reconcile + interaction dispatch + DM pattern
+    ├── command-system/         # command reconcile + interaction dispatch + message triggers
     ├── builtin-features/       # in-process Discord features (5 subdirectories)
     │   ├── picture-only/
     │   ├── rcon-forward/

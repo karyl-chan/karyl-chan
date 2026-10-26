@@ -77,8 +77,7 @@ _Avoid_: scope（舊欄位，只分全域 / 伺服器）
 
 **Command Leaf（葉節點）**:
 指令底下一個可呼叫的路徑（指令本身或某個子指令），綁一個動作。根葉節點與子指令不並存。
-_Avoid_: subcommand behavior、子行為
-_Avoid_: slash behavior 的範圍、指定使用者的指令
+_Avoid_: subcommand behavior、子行為、slash behavior 的範圍、指定使用者的指令
 
 **Message Trigger（訊息觸發）**:
 比對 bot 收得到的訊息 —— 與 bot 的私訊，或伺服器的頻道。對象篩選只在與 bot 的私訊提供。
@@ -108,7 +107,7 @@ Behavior 被觸發後要做的事，由一個 Action Source 提供。
 _Avoid_: `source: custom / system`（舊稱）
 
 **System Behavior（系統指令）**:
-系統提供、固定存在的 behavior，目前只有登入；管理員只能改它的觸發方式（與 bot 私訊的訊息比對，或一個全域指令），不能新增、刪除或停用。換觸發方式時新的觸發先生效、舊的才停用，任何一步失敗都保留原本的觸發。它的動作在資料裡記為 `actionSource: builtin`，那只是持久化值，不是管理員可選的 Action Source。
+系統提供、固定存在的 behavior，目前只有登入；只能改它的觸發方式（與 bot 私訊的訊息比對，或一個全域指令），而且只有 bot owner 能改（它是 owner 進後台唯一的路）；不能新增、刪除或停用。換觸發方式時新的觸發先生效、舊的才停用，任何一步失敗都保留原本的觸發。它的動作在資料裡記為 `actionSource: builtin`，那只是持久化值，不是管理員可選的 Action Source。
 _Avoid_: 內建動作（它不是可選的動作來源）、admin-login
 
 **Behavior Reply（回覆）**:
