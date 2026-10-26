@@ -14,7 +14,7 @@
  *     X-Karyl-Signature-Previous（同一組 timestamp / nonce / body）；回應用
  *     新舊任一把簽都接受。標準 header 在輪換當下就改用新密鑰（格式不變），
  *     只認得舊密鑰又只讀標準 header 的 receiver 會立刻拒收 —— 無停機輪換
- *     要 receiver 先同時接受 -Previous header（docs/features/behaviors.md）。
+ *     要 receiver 先同時接受 -Previous header（docs/features/behavior-webhook-protocol.md）。
  *   - URL 解密後才用
  *   - 解析 response 成回覆模型（behavior-reply.ts，#140）
  *   - 回 ForwardResult { ok, reply, notes, status?, error? }
@@ -102,7 +102,7 @@ function logReplyNotes(behaviorId: number, notes: readonly ReplyNote[]): void {
     botEventLog.record(
       "warn",
       "bot",
-      `webhook-forwarder: behavior ${behaviorId}'s reply was adjusted (${note.kind}${detail ? `: ${detail}` : ""}) — see the reply contract in docs/features/behaviors.md`,
+      `webhook-forwarder: behavior ${behaviorId}'s reply was adjusted (${note.kind}${detail ? `: ${detail}` : ""}) — see the reply contract in docs/features/behavior-webhook-protocol.md`,
       { behaviorId, note },
     );
   }
@@ -385,7 +385,7 @@ export class WebhookForwarder {
     // (`<METHOD>:<path>:<ts>:<request nonce>:<body>`, #102), so a response
     // signed for another request (another user's) can't be swapped in. No
     // legacy nonce-less form: a hard switch, documented in
-    // docs/features/behaviors.md.
+    // docs/features/behavior-webhook-protocol.md.
     //
     //  - hmac mode → required, fail closed if missing/invalid.
     //  - token mode → optional but verified opportunistically: if the

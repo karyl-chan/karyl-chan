@@ -3,7 +3,7 @@
  * `<METHOD>:<path>:<ts>:<request nonce>:<body>`. A response signed for a
  * different request (another user's, within the replay window) no longer
  * verifies, and neither does the old nonce-less form — a hard switch
- * (production had no custom behaviors; see docs/features/behaviors.md).
+ * (production had no custom behaviors; see docs/features/behavior-webhook-protocol.md).
  * Token mode sends the nonce too, so a receiver that signs its responses
  * there can bind it.
  */
