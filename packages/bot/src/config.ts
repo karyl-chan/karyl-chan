@@ -17,6 +17,10 @@
 
 import { selectSecretProvider } from "./adapters/secret-provider.js";
 import { FileSecretProvider } from "./adapters/file-secret-provider.js";
+import {
+  parseAllowlistEntries,
+  type AllowlistEntry,
+} from "./utils/webhook-allowlist.js";
 
 // Provider used at config load to source the boot-time secrets. Selected
 // from SECRET_PROVIDER; defaults to the in-process env provider.
@@ -107,6 +111,13 @@ export interface AppConfig {
   };
   behavior: {
     profileCacheTtlMs: number;
+    /**
+     * WEBHOOK_PRIVATE_ALLOWLIST — LAN targets (hostname, IP or CIDR)
+     * behavior webhooks may call. Private addresses outside it are
+     * refused; loopback / metadata can never be listed. See
+     * utils/host-policy.ts `resolveWebhookTarget`.
+     */
+    webhookPrivateAllowlist: string[];
   };
   admin: {
     profileCacheTtlMs: number;
@@ -323,6 +334,7 @@ function loadConfig(): AppConfig {
         "BEHAVIOR_PROFILE_CACHE_TTL_MS",
         5 * 60 * 1000,
       ),
+      webhookPrivateAllowlist: parseCidrListEnv("WEBHOOK_PRIVATE_ALLOWLIST"),
     },
     admin: {
       profileCacheTtlMs: parseIntEnv(
@@ -419,6 +431,17 @@ function loadConfig(): AppConfig {
 }
 
 export const config: AppConfig = loadConfig();
+
+/**
+ * WEBHOOK_PRIVATE_ALLOWLIST parsed once at boot — callers of the webhook
+ * policy pass this (`config.behavior.webhookPrivateAllowlist` keeps the
+ * raw entries for the system-settings page). Fail-fast: a malformed
+ * entry throws "Config error: WEBHOOK_PRIVATE_ALLOWLIST …" at import
+ * instead of silently allowing nothing.
+ */
+export const webhookAllowlist: readonly AllowlistEntry[] = Object.freeze(
+  parseAllowlistEntries(config.behavior.webhookPrivateAllowlist),
+);
 
 /**
  * Compute the Fastify trustProxy value from the web config section and the

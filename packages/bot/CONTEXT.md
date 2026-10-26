@@ -71,14 +71,25 @@ Behavior 綁在某個 Command 的一個 Command Leaf 上；誰看得到、在哪
 Discord 註冊的單位，持有名稱與所有可見性設定，底下有一或多個 Command Leaf。
 _Avoid_: 用「指令」稱呼單一子指令
 
+**Registration Target（註冊目標）**:
+一個 Command 在 Discord 註冊到哪裡：全域、指定伺服器，或每個伺服器。Behavior 的指令只選全域或指定伺服器；「每個伺服器」給 plugin 在 manifest 寫死的指令與內建指令。指令名稱在重疊的註冊目標內不能重複；全域指令與任何同名指令衝突。
+_Avoid_: scope（舊欄位，只分全域 / 伺服器）
+
 **Command Leaf（葉節點）**:
 指令底下一個可呼叫的路徑（指令本身或某個子指令），綁一個動作。根葉節點與子指令不並存。
-_Avoid_: subcommand behavior、子行為
-_Avoid_: slash behavior 的範圍、指定使用者的指令
+_Avoid_: subcommand behavior、子行為、slash behavior 的範圍、指定使用者的指令
 
 **Message Trigger（訊息觸發）**:
 比對 bot 收得到的訊息 —— 與 bot 的私訊，或伺服器的頻道。對象篩選只在與 bot 的私訊提供。
 _Avoid_: DM pattern、message_pattern（舊稱，且不只限於私訊）
+
+**Message Trigger Location（訊息觸發位置）**:
+一個 Message Trigger 設在哪裡：surface + guildId + channelId，也就是與 bot 的私訊、全部伺服器、指定伺服器或指定頻道。訊息觸發的排序以位置為單位：管理員排的是同一個位置裡的觸發，比對時所有位置仍走同一條順序。位置的 key 寫成 `bot_dm`、`guild:all`、`guild:<id>`、`channel:<guildId>:<channelId>`（與訊息觸發的 Behavior Section key 相同，但位置是寫入用的識別，分區只是呈現）。
+_Avoid_: 用 section / 分區指稱排序或寫入的單位
+
+**Audience Group（對象群組）**:
+與 bot 私訊的 Message Trigger 可以只對一個群組的成員觸發。群組只是一個名字加一份名單，沒有自己的列：只有被訊息觸發引用的名字能設名單，同名的觸發共用同一份名單；最後一個引用它的觸發改掉對象或被刪除時，名單一起清掉。
+_Avoid_: 用群組指稱 Discord 身分組或群組私訊
 
 **Behavior Section（分區）**:
 Admin UI 依觸發的可用情境推導出的分組：App 指令、與 bot 的私訊、伺服器。只是呈現，不儲存、不影響行為。
@@ -92,12 +103,23 @@ _Avoid_: 用來泛稱所有 slash 指令
 Behavior 被觸發後要做的事，由一個 Action Source 提供。
 
 **Action Source（動作來源）**:
-管理員可選的動作提供者：webhook 或 plugin。
+管理員可選的動作提供者：webhook 或 plugin。資料裡的 `builtin` 只是 System Behavior 的持久化值，不是管理員可選的動作來源。
 _Avoid_: `source: custom / system`（舊稱）
 
 **System Behavior（系統指令）**:
-系統提供、固定存在的 behavior，目前只有登入；管理員只能改它的觸發方式，不能新增、刪除或停用。
+系統提供、固定存在的 behavior，目前只有登入；只能改它的觸發方式（與 bot 私訊的訊息比對，或一個全域指令），而且只有 bot owner 能改（它是 owner 進後台唯一的路）；不能新增、刪除或停用。換觸發方式時新的觸發先生效、舊的才停用，任何一步失敗都保留原本的觸發。它的動作在資料裡記為 `actionSource: builtin`，那只是持久化值，不是管理員可選的 Action Source。
 _Avoid_: 內建動作（它不是可選的動作來源）、admin-login
+
+**Behavior Reply（回覆）**:
+動作的回答：`{ content?, embeds?, components?, ephemeral?, flags? }`，與 plugin `interactions.respond` 同形。webhook 的回應與內建登入動作都產生它，由 Reply Renderer 送出；`ephemeral` 決定誰看得到（指令預設只有執行的人；伺服器訊息預設公開，`true` 改私訊作者；與 bot 的私訊不受影響）。
+誰看得到的順序：回應的 `ephemeral` → behavior 儲存的 Reply Visibility → 觸發本身的預設。
+_Avoid_: relay、轉發內容（舊稱，只有 content / embeds）
+
+**Reply Visibility（回覆給誰看）**:
+指令葉節點與伺服器訊息觸發儲存的回覆預設：`private`（指令只有執行的人；伺服器訊息私訊作者）、`public`（貼在頻道），null 沿用觸發本身的預設。回應的 `ephemeral` 可覆蓋；與 bot 的私訊與 System Behavior 不適用。
+
+**Reply Renderer**:
+把 Behavior Reply 送到 Discord 的唯一入口，目標是一個互動（指令觸發）或一則訊息（訊息觸發）。
 
 **Plugin Action**:
 Plugin 宣告、與觸發面無關的動作，由管理員綁到觸發上。

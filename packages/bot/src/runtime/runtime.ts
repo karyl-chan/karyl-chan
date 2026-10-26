@@ -2,7 +2,9 @@ import { createBotClient, patchRestSetToken } from "./discord-client.js";
 import { WebhookForwarder } from "../modules/command-system/webhook-forwarder.service.js";
 import { InteractionDispatcher } from "../modules/command-system/interaction-dispatcher.service.js";
 import { CommandReconciler } from "../modules/command-system/reconcile.service.js";
-import { MessagePatternMatcher } from "../modules/command-system/message-pattern-matcher.service.js";
+import { MessageTriggerMatcher } from "../modules/command-system/message-trigger-matcher.service.js";
+import { CommandNamespace } from "../modules/command-system/command-namespace.js";
+import { setPluginCommandNamespace } from "../modules/plugin-system/plugin-command-registry.service.js";
 import { installProcessErrorHandlers } from "./process-errors.js";
 import { installSignalHandlers } from "./shutdown.js";
 import { registerRuntimeEvents } from "./discord-runtime-events.js";
@@ -37,13 +39,17 @@ export function createRuntime(): Runtime {
   const commandReconciler = new CommandReconciler(() =>
     bot.isReady() ? bot : null,
   );
-  const messageMatcher = new MessagePatternMatcher(webhookForwarder);
+  const messageMatcher = new MessageTriggerMatcher(webhookForwarder);
+  // plugin 註冊與 behavior 指令寫入的名稱衝突檢查走同一個指令命名空間
+  const commandNamespace = new CommandNamespace();
+  setPluginCommandNamespace(commandNamespace);
 
   const ctx: RuntimeContext = {
     bot,
     webhookForwarder,
     interactionDispatcher,
     commandReconciler,
+    commandNamespace,
     messageMatcher,
     shuttingDown: false,
     dbReady: false,

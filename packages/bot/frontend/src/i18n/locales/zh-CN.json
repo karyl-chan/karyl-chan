@@ -286,7 +286,6 @@
         "capabilities": "权限词条",
         "note": "备注",
         "unavailable": "无法获取个人资料。",
-        "hint": "再次私信机器人「login」可刷新登录状态。",
         "settings": {
             "title": "偏好设置",
             "animatedEmoji": {
@@ -304,8 +303,16 @@
         "exchanging": "正在交换登录令牌…",
         "success": "已登录,正在跳转…",
         "noTokenLead": "如需登录,请向机器人发送私信:",
+        "noTokenLeadCommand": "如需登录，请使用机器人的这个指令：",
+        "noTokenLeadUnknown": "如需登录，请按管理员设置的方式向机器人获取登录链接。",
         "noTokenHint": "机器人会回复一次性登录链接,请在此浏览器打开。",
-        "errorHint": "再次向机器人发送 {login} 以获取新链接。"
+        "errorHint": "再次向机器人发送 {login} 以获取新链接。",
+        "errorHintCommand": "请再次使用 {login} 以获取新链接。",
+        "errorHintUnknown": "请再次向机器人获取新链接。",
+        "match": {
+            "endswith": "私信机器人任何以这段文字结尾的消息。",
+            "regex": "私信机器人任何符合这个正则表达式的消息。"
+        }
     },
     "dashboard": {
         "title": "仪表板",
@@ -894,8 +901,6 @@
                 "globalHint": "应用于 bot 所有服务器与所有功能界面。",
                 "perGuild": "单个服务器",
                 "perGuildHint": "将相同范围限定到单个服务器,与全局权限为相加关系,不会覆盖。",
-                "perBehaviorTab": "单个行为分页",
-                "perBehaviorTabHint": "授权该角色管理特定行为分页下的行为（不可增删分页本身，需 behavior.manage 才能调整分页列表）。",
                 "perPlugin": "插件",
                 "perPluginHint": "各已启用插件为自身需求声明的权限（例如 WebUI 存取）。插件被删除或重新注册后不再声明时会自动移除。"
             },
@@ -905,12 +910,6 @@
             "perGuildSummary": "已授予 {count} 个单服务器权限",
             "pendingChanges": "已修改 {count} 项",
             "confirmChanges": "确认变更",
-            "searchBehaviorTabs": "搜索行为分页…",
-            "noBehaviorTabs": "没有符合条件的行为分页。",
-            "perBehaviorTabSummary": "已授予 {count} 个行为分页权限",
-            "legacyBehaviorHeader": "旧版行为对象授权（迁移前）",
-            "legacyBehaviorDesc": "旧版 token — 建议撤销并改用上方的分页授权。",
-            "legacyBehaviorSummary": "{count} 个旧版行为授权",
             "searchPlugins": "搜索插件权限…",
             "noPluginCapabilities": "没有已启用的插件声明权限。",
             "noPluginCapabilitiesFiltered": "没有符合条件的插件权限。",
@@ -1142,17 +1141,6 @@
                     "configured": "Bot 选择",
                     "noReplica": "Bot 本次启动后，尚无存活 replica 回报传输状态。"
                 },
-                "behaviors": {
-                    "intro": "以下是此 Plugin 声明的 behaviors。可在此页启用或停用各个 behavior；停用后 reconciler 不会将其 slash 指令注册至 Discord。",
-                    "empty": "此 Plugin 未声明任何 Behavior",
-                    "toggleOn": "启用此 behavior",
-                    "toggleOff": "停用此 behavior",
-                    "toggleSuccess": "已更新 behavior 状态",
-                    "toggleError": "更新失败，请重试",
-                    "supportsContinuous": "支持连续对话",
-                    "axesReadonly": "三轴由 manifest 锁定",
-                    "slashOptions": "{count} 个选项"
-                },
                 "commands": {
                     "intro": "以下为此 Plugin 声明的自定义 slash 指令。三轴由 Plugin manifest 写死，admin 只能启用或停用。",
                     "empty": "此 Plugin 未声明任何自定义指令",
@@ -1197,162 +1185,442 @@
         "noGuildStickers": "没有可用的服务器贴纸。"
     },
     "behaviors": {
-        "page": {
-            "pickTarget": "请从左侧选择一个目标对象。"
-        },
         "sidebar": {
             "title": "行为",
-            "addTabTooltip": "新增范围分页",
-            "globalAll": "全范围",
-            "globalAllHint": "所有平台与情境皆适用",
-            "allDms": "所有私信",
-            "allDmsHint": "所有私信用户皆适用",
-            "allBotDms": "所有与 Bot 的私信",
-            "allBotDmsHint": "仅 Bot 私信频道",
-            "allGuilds": "全 Guild",
-            "allGuildsHint": "所有 Guild 皆适用",
-            "behaviorCount": "{count} 个行为",
-            "guildSection": "Guild",
-            "dmSection": "Bot 私信",
-            "noGuildTabs": "尚无 Guild 专属分页",
-            "noDmTabs": "尚无用户专属分页"
-        },
-        "addPlugin": {
-            "title": "新增 Plugin 行为",
-            "defaultTitle": "{plugin}: {behavior}",
-            "noEligible": "没有可用的 plugin。请先在插件页启用至少一个提供 dm_behavior 的 plugin。",
-            "pickPlugin": "选择 plugin",
-            "pickPluginPlaceholder": "—",
-            "pickBehavior": "选择行为",
-            "create": "创建"
+            "app": "App 指令",
+            "appHint": "跨多处可用或开放用户安装的指令",
+            "botDm": "与 bot 的私信",
+            "botDmHint": "bot 私信里的消息触发与指令",
+            "guildSection": "服务器",
+            "guildAll": "全部服务器",
+            "guildAllHint": "bot 所在的每个服务器",
+            "behaviorCount": "{count} 个行为"
         },
         "workspace": {
-            "kindGlobalAll": "全范围",
-            "kindAllDms": "所有私信",
-            "kindAllBotDms": "Bot 私信",
-            "kindAllGuilds": "全 Guild",
-            "kindGuild": "指定 Guild",
-            "kindChannel": "指定频道",
-            "kindUser": "个别用户",
-            "kindGroup": "用户组",
-            "addBehavior": "新增行为",
-            "deleteTabTooltip": "删除此分页",
-            "deleteTabTitle": "删除分页",
-            "deleteTabConfirm": "确定要删除分页「{label}」？其下所有行为将一并移除。",
-            "empty": "目前没有设定行为。"
+            "kind": {
+                "app": "App 指令",
+                "bot_dm": "bot 私信",
+                "guild_all": "全部服务器",
+                "guild": "指定服务器",
+                "channel": "指定频道"
+            },
+            "loadError": "无法加载行为：{error}",
+            "empty": "这里还没有行为。",
+            "commands": "指令",
+            "messageTriggers": "消息触发",
+            "note": {
+                "guild": "要限制这个服务器里哪些身份组或频道能用指令，请到 Discord 的“服务器设置 → 整合”。",
+                "channel": "Discord 无法把指令限定在单一频道，所以这里只有消息匹配。"
+            },
+            "reorderHandle": "拖动排序“{title}”",
+            "reorderHint": "拖动排序，或按 Alt + ↑／↓",
+            "reorderStale": "这个位置的行为刚被其他人更改，已重新载入；请再排一次。"
         },
         "card": {
-            "title": "标题",
-            "description": "说明",
-            "triggerType": "触发类型",
-            "triggerStartsWith": "开头符合",
-            "triggerEndsWith": "结尾符合",
-            "triggerRegex": "正则表达式",
-            "triggerPattern": "消息 Pattern",
-            "triggerValue": "触发内容",
-            "messagePatternKind": "Pattern 类型",
-            "messagePatternValue": "Pattern 值",
-            "slashCommandName": "Slash 指令名称",
-            "slashCommandDescription": "Slash 指令说明",
-            "targetId": "目标对象",
-            "triggerSection": "触发设定",
-            "integrationTypes": "可安装范围",
-            "integrationTypesLocked": "（由范围分页决定）",
-            "integrationBoth": "服务器 + 用户都可安装",
-            "integrationGuildOnly": "仅服务器可安装",
-            "integrationUserOnly": "仅用户可安装",
-            "webhookUrl": "Webhook URL",
-            "webhookUrlRequired": "请输入 Webhook URL。",
-            "webhookSecret": "Webhook Secret",
-            "webhookSecretHint": "（可选，设定后启用验证）",
-            "webhookSecretPlaceholder": "留空 = 不设定",
-            "webhookAuthMode": "验证模式",
-            "stopOnMatch": "命中后阻止后续判定",
-            "tagStop": "命中后阻止后续判定",
-            "tagStopShort": "停止后续",
-            "tagPlugin": "由 Plugin 提供",
-            "tagPluginShort": "Plugin",
-            "tagSystem": "系统内建",
+            "systemRowLocked": "系统行为，固定排在最前面",
+            "systemNotice": "系统行为：不能新增、删除或停用，只能改触发方式。",
+            "pattern": {
+                "startswith": "开头为 {value}",
+                "endswith": "结尾为 {value}",
+                "regex": "正则表达式 {value}"
+            },
+            "triggerMessage": "消息",
+            "triggerCommand": "指令",
+            "subcommandCount": "{count} 个子指令",
+            "tagSystem": "系统行为",
             "tagSystemShort": "系统",
-            "systemRowLocked": "此为系统行为，不可拖曳排序",
-            "pluginRowLocked": "此 behavior 由 Plugin 管理，不可拖曳排序",
-            "triggerSlashCommand": "Slash 指令",
-            "pluginPick": "选择 Plugin",
-            "pluginNoneAvailable": "目前无可用 Plugin",
-            "pluginBehaviorKey": "选择 behavior",
-            "pluginRequired": "请选择 Plugin",
-            "pluginBehaviorKeyRequired": "请选择 behavior",
-            "toggleEnabled": "已启用（点击停用）",
-            "toggleDisabled": "已停用（点击启用）",
-            "previewStartsWith": "开头：{value}",
-            "previewEndsWith": "结尾：{value}",
-            "previewRegex": "regex：{value}",
-            "previewSlashCommand": "/{value}",
-            "titleRequired": "请输入标题。",
-            "triggerValueRequired": "请输入触发内容。",
-            "regexInvalid": "正则表达式格式错误。",
-            "deleteConfirm": "确定要删除行为「{title}」？",
-            "dragHint": "拖曳排序",
-            "moreActions": "更多操作",
-            "sourceCustom": "自定义",
-            "sourcePlugin": "Plugin",
-            "sourceSystem": "系统",
-            "sourceNoticPlugin": "此 behavior 由 Plugin「{name}」提供，部分字段不可修改",
-            "sourceNoticPluginLink": "查看 Plugin 详情",
-            "sourceNoticSystem": "系统内建 behavior，可修改触发类型与内容（其余字段锁定）",
-            "saveTrigger": "保存触发",
-            "stopOnMatchHint": "命中后，这条消息不再比对后续 pattern。",
-            "ignoreBots": "忽略 bot 消息",
-            "ignoreBotsHint": "bot／webhook 发的消息不触发此 pattern。本 bot 自身的消息无论如何都会被忽略。",
-            "options": "指令参数",
-            "optionName": "名称",
-            "optionDescription": "说明",
-            "optionRequired": "必填",
-            "optionAdd": "新增参数",
-            "optionInvalid": "参数「{name}」无效：名称须为 1-32 字的 [a-z0-9_-]，且说明必填。",
-            "testFire": "测试 webhook",
-            "testRunning": "测试中…",
-            "testOk": "Webhook 正常——响应：{content}",
-            "testFail": "Webhook 失败：{error}",
-            "resync": "重新同步 Discord 指令",
-            "resyncDone": "指令已重新同步。",
+            "tagStop": "命中后停止后续匹配",
+            "tagStopShort": "停止",
             "unhealthy": "连续失败",
+            "toggleProtected": "系统行为不可停用",
+            "enabled": "已启用",
+            "disabled": "已停用",
+            "audienceUser": "用户 {user}",
+            "audienceGroup": "群组 {group}",
+            "registrationGlobal": "全局",
+            "registrationGuild": "服务器 {guild}",
+            "contexts": "可用情境",
+            "context": {
+                "Guild": "服务器",
+                "BotDM": "bot 私信",
+                "PrivateChannel": "其他私信"
+            },
+            "integrationTypes": "安装方式",
+            "integration": {
+                "guild_install": "服务器安装",
+                "user_install": "用户安装"
+            },
+            "defaultMemberPermissions": "默认成员权限",
+            "permissionsNone": "不限制",
+            "options": "参数",
+            "action": "动作",
+            "actionBuiltin": "内置（admin 登录链接）",
+            "actionMissing": "尚未设置动作",
+            "webhookUrlUnreadable": "（网址无法解密）",
+            "auth": {
+                "none": "不签名",
+                "token": "token",
+                "hmac": "HMAC"
+            },
+            "secretSet": "已设置密钥",
+            "secretUnset": "未设置密钥",
+            "stats": "触发记录",
             "statsLine": "上次触发 {when} · 成功 {ok} / 失败 {fail}",
-            "statsLastError": "最近错误：{error}"
+            "statsLastError": "最近错误：{error}",
+            "unsaved": "未保存",
+            "more": "更多操作",
+            "test": "测试 webhook",
+            "testing": "正在发送测试…",
+            "testOk": "测试成功，服务回复：",
+            "testFailed": "测试失败：{error}",
+            "testSavedOnly": "测试的是已保存的设置，未保存的修改不会用到。",
+            "delete": "删除",
+            "deleteTitle": "删除这个行为？",
+            "deleteMessage": "“{title}”会被删除，无法恢复。",
+            "titleLabel": "标题",
+            "descriptionLabel": "说明",
+            "descriptionHint": "只给管理员看，不会发送到 Discord。",
+            "conflict": "这个行为已经被其他人修改，现在保存会被拒绝。你的修改还在。",
+            "conflictKeep": "保留我的修改，应用到最新版本",
+            "conflictDiscard": "放弃我的修改，载入最新版本",
+            "staleRebased": "刚才的保存没有成功：其他人在你编辑时改过这个行为（不是你正在编辑的字段）。已载入最新版本，你的修改还在，请再点一次保存。"
         },
-        "addTab": {
-            "title": "新增范围分页",
-            "typeLabel": "分页类型",
-            "type_specific_guild": "指定 Guild",
-            "type_specific_channel": "指定频道",
-            "type_specific_user": "指定用户",
-            "type_specific_group": "用户组",
-            "labelField": "显示名称（选填）",
-            "labelPlaceholder": "留空则使用 ID 显示",
-            "groupNameLabel": "组名称",
-            "groupNamePlaceholder": "例：VIP",
-            "submit": "创建分页"
+        "validation": {
+            "required": "必填",
+            "tooShort": "至少 {min} 个字",
+            "tooLong": "最多 {max} 个字",
+            "tooMany": "最多 {max} 项",
+            "format": "格式不正确",
+            "invalid": "值无效",
+            "tooFew": "至少选 {min} 项"
         },
-        "addModal": {
-            "title": "新增 Behavior",
-            "subtitle": "建立由管理员定义的 behavior：选择触发方式，再决定要转发到哪里。",
-            "create": "创建",
-            "triggerSlash": "Slash 指令",
-            "triggerPattern": "消息 Pattern",
-            "nameLabel": "Behavior 名称",
-            "namePlaceholder": "例：问答助手",
-            "forwardLabel": "转发设定",
-            "forwardWebhook": "Webhook",
-            "forwardPlugin": "Plugin"
+        "unsaved": {
+            "title": "放弃未保存的修改？",
+            "message": "有行为的修改还没保存，离开后会丢失。",
+            "leave": "放弃并离开"
         },
-        "groupMembers": {
-            "title": "群组成员",
-            "count": "{count} 位成员",
-            "empty": "尚无成员——加入成员前，该分页上的 behaviors 不会对任何人触发。",
-            "placeholder": "Discord 用户 ID",
+        "location": {
+            "label": "位置",
+            "bot_dm": "与 bot 的私信",
+            "guild_all": "全部服务器",
+            "guild": "指定服务器",
+            "channel": "指定频道",
+            "guildPicker": "服务器",
+            "channelPicker": "频道",
+            "guildPlaceholder": "选择服务器",
+            "channelPlaceholder": "选择频道",
+            "idHint": "Discord ID（17–20 位数字）"
+        },
+        "trigger": {
+            "title": "触发",
+            "moved": "保存后，这一行会移到“{section}”。",
+            "patternKind": "匹配方式",
+            "patternValue": "匹配内容",
+            "patternPlaceholder": "例：!weather",
+            "kind": {
+                "startswith": "开头匹配",
+                "endswith": "结尾匹配",
+                "regex": "正则表达式"
+            },
+            "try": "试试看",
+            "tryPlaceholder": "输入一条消息，看会不会触发",
+            "preview": {
+                "match": "会触发",
+                "no_match": "不会触发",
+                "invalid": "正则表达式写法有误",
+                "matchWithGroups": "会触发，捕获 {groups}",
+                "group": "第 {n} 组「{value}」",
+                "groupSeparator": "、"
+            },
+            "ignoreBots": "忽略其他 bot 与 webhook 的消息",
+            "stopOnMatch": "匹配到之后停止，不再检查后面的行为",
+            "movedPublic": "回复会发在频道里，所有人都看得到。"
+        },
+        "audience": {
+            "title": "对象",
+            "label": "谁私信时触发",
+            "all": "所有人",
+            "user": "指定用户",
+            "group": "群组",
+            "groupPlaceholder": "选择群组",
+            "newGroup": "＋ 新增群组…",
+            "newGroupName": "新群组名称",
+            "newGroupHint": "保存后就能设置这个群组的成员。"
+        },
+        "group": {
+            "membersTitle": "群组“{group}”的成员",
+            "count": "{count} 人",
+            "shared": "这份名单由 {count} 个行为共用，修改会应用到全部。",
+            "empty": "还没有成员。",
+            "remove": "移除 {user}",
+            "addPlaceholder": "Discord 用户 ID",
             "add": "加入",
-            "remove": "移除",
-            "invalidId": "无效的 Discord 用户 ID。"
+            "saveFirst": "保存后就能设置这个群组的成员。",
+            "dropOnSave": "保存后没有其他行为使用群组“{group}”，它的 {count} 位成员名单会一起被清除。",
+            "dropOnDelete": "它是群组“{group}”唯一的使用者，这个群组的 {count} 位成员名单也会一起被清除。"
+        },
+        "action": {
+            "title": "转发设置",
+            "source": "动作来源",
+            "sourceWebhook": "Webhook",
+            "sourcePluginLater": "Plugin 动作会在第二阶段开放。",
+            "url": "Webhook URL",
+            "urlHint": "公开网址需用 https；局域网地址需在 bot 的局域网白名单上。",
+            "authLabel": "验证模式",
+            "auth": {
+                "hmac": "HMAC（推荐）",
+                "token": "Token",
+                "none": "不验证"
+            },
+            "authNoteDrop": "保存后会移除密钥，webhook 不再签名。",
+            "authNoteIssue": "保存后 bot 会生成密钥，只显示一次。",
+            "replyVisibility": {
+                "label": "回复给谁看",
+                "command": {
+                    "private": "只有执行的人",
+                    "public": "频道里所有人"
+                },
+                "guild": {
+                    "private": "私信给触发的人",
+                    "public": "频道里所有人"
+                },
+                "defaultMark": "（默认）",
+                "hint": "服务的响应也可以自己指定（ephemeral）；这里是默认值。",
+                "notApplicable": "不适用：与 bot 的私信里只有对方看得到"
+            }
+        },
+        "secret": {
+            "label": "Webhook 密钥",
+            "set": "已设置",
+            "unset": "未设置",
+            "rotate": "生成新密钥",
+            "rotateTitle": "生成新的 webhook 密钥？",
+            "rotateMessage": "新密钥立即生效并只显示一次；旧密钥在 24 小时内仍然有效，请在这段时间内把新密钥设置到你的服务。",
+            "grace": "旧密钥在 {time} 前仍然有效。",
+            "shownOnce": "这是新的密钥，只会显示这一次，请现在复制保存。",
+            "copy": "复制",
+            "copied": "已复制",
+            "saved": "我已保存"
+        },
+        "errors": {
+            "withDetail": "{reason}（{detail}）",
+            "validation_failed": "输入不正确",
+            "name_conflict": "名称已被使用",
+            "system_immutable": "系统行为不能这样修改",
+            "registration_failed": "Discord 注册失败",
+            "not_found": "找不到这个项目",
+            "invalid_tree": "指令结构不正确"
+        },
+        "add": {
+            "open": "新增行为",
+            "title": "新增行为",
+            "intro": "在“{section}”创建行为：选择触发方式，再决定要转发到哪里。",
+            "name": "行为名称",
+            "namePlaceholder": "例：天气查询",
+            "kind": "触发类型",
+            "kinds": {
+                "command": "指令",
+                "message": "消息匹配"
+            },
+            "reason": {
+                "messageInApp": "App 指令区只能创建指令：bot 收不到用户之间的私信，也收不到它没加入的服务器里的消息。",
+                "commandInChannel": "Discord 无法把指令限定在单一频道。请到上层的服务器新增，再到 Discord 的“服务器设置 → 整合”限制频道。"
+            },
+            "create": "创建",
+            "created": "已创建“{title}”。",
+            "done": "完成",
+            "commandNamePlaceholder": "例：status",
+            "commandPreset": "可见性（依分区默认，建立后可在卡片调整）"
+        },
+        "command": {
+            "resync": "重新同步到 Discord",
+            "name": "Slash 指令名称",
+            "nameHint": "1–32 个小写英数、- 与 _，不含 /。",
+            "description": "Slash 指令说明",
+            "descriptionHint": "Discord 指令菜单会显示（1–100 字）。",
+            "reservedName": "/login 保留给系统登录。",
+            "saveAndSync": "保存并同步到 Discord",
+            "visibility": "可见性",
+            "registration": {
+                "label": "注册目标",
+                "global": "全局",
+                "guild": "指定服务器"
+            },
+            "permissions": {
+                "label": "默认成员权限（只在服务器生效）",
+                "everyone": "所有人",
+                "manageGuild": "管理服务器",
+                "administrator": "管理员",
+                "custom": "自定义（{value}）"
+            },
+            "guildFixed": "服务器指令只能在该服务器使用、由服务器安装，这是 Discord 的规定。",
+            "sectionHere": "归在「{section}」。",
+            "sectionMoves": "保存后，这个指令会移到「{section}」。",
+            "sectionPending": "选好服务器后，就会显示这个指令归在哪一区。",
+            "visibleRuns": "看得到就能执行。要限制服务器里的身份组或频道，请到 Discord 的「服务器设置 → 整合」。",
+            "rule": {
+                "guildNeedsGuildId": "请选择服务器。",
+                "guildContextsOnlyGuild": "服务器指令只能在该服务器使用。",
+                "guildInstallOnly": "服务器指令只能由服务器安装。",
+                "globalHasNoGuild": "全局指令不指定服务器。",
+                "privateChannelNeedsUserInstall": "「其他私信」需要开启用户安装；只有服务器安装时，Discord 不会在那里显示这个指令。"
+            },
+            "delete": "删除指令",
+            "deleteTitle": "删除这个指令？",
+            "deleteMessage": "/{command} 和它所有的子指令都会删除，并从 Discord 移除，无法恢复。",
+            "deleted": "已删除 /{command}。",
+            "optionRule": {
+                "tooMany": "最多 25 个参数。",
+                "duplicateName": "已经有参数用了这个名称。",
+                "requiredAfterOptional": "Discord 会先列必填参数：请把这个参数移到选填参数前面。"
+            }
+        },
+        "registration": {
+            "registered": "已同步到 Discord。",
+            "deferred": "已保存，但还没同步到 Discord；bot 连上 Discord 后会自动注册。",
+            "removed": "已从 Discord 移除。",
+            "failed": "Discord 没有接受：",
+            "target": {
+                "global": "全局"
+            },
+            "outcome": {
+                "created": "已创建",
+                "patched": "已更新",
+                "unchanged": "已是最新",
+                "skipped": "没有注册：bot 不在这个服务器",
+                "failed": "失败"
+            }
+        },
+        "option": {
+            "title": "指令参数",
+            "none": "没有参数。",
+            "name": "参数名称",
+            "description": "参数说明",
+            "required": "必填",
+            "add": "新增参数",
+            "remove": "移除参数 {name}",
+            "moveUp": "把参数 {name} 往上移",
+            "moveDown": "把参数 {name} 往下移",
+            "type": {
+                "label": "参数类型",
+                "string": "字符串",
+                "integer": "整数",
+                "number": "数字",
+                "boolean": "是／否",
+                "user": "用户",
+                "channel": "频道",
+                "role": "身份组",
+                "mentionable": "用户或身份组",
+                "attachment": "附件"
+            }
+        },
+        "leaf": {
+            "rootTitle": "指令内容",
+            "listTitle": "子指令",
+            "count": "{count} / {max}",
+            "chars": "指令文字总长 {count} / {max}",
+            "subcommand": "子指令名称（/{command} …）",
+            "leafDescription": "子指令说明",
+            "leafDescriptionHint": "Discord 指令菜单会显示；留空就用标题。",
+            "titleHint": "子指令说明留空时，也当作它的说明。",
+            "toggle": "启用或停用 {path}",
+            "more": "{path} 的更多操作",
+            "save": "保存子指令",
+            "saveRoot": "保存",
+            "delete": "删除子指令",
+            "deleteTitle": "删除这个子指令？",
+            "deleteMessage": "{path} 会被删除，并从 Discord 移除，无法恢复。",
+            "lastTitle": "要删除整个指令吗？",
+            "lastMessage": "指令至少要有一个子指令，所以不能只删最后一个。要改成删除整个 /{command} 吗？",
+            "add": "加入子指令",
+            "addTitle": "/{command} 的新子指令",
+            "create": "加入并同步到 Discord",
+            "convertHint": "/{command} 是单一指令：加入子指令时，会先替它现在的动作取一个子指令名称。"
+        },
+        "convert": {
+            "title": "替 /{command} 加入子指令",
+            "intro": "Discord 规定：指令有子指令之后，/{command} 本身就不能再直接执行。所以要先替它现在的动作取一个子指令名称，把它搬到下一层。",
+            "name": "现有动作的新名称",
+            "now": "现在",
+            "after": "转换后",
+            "sameAction": "（动作不变）",
+            "nextLeaf": "接着设置的新子指令",
+            "note": "同步后，用户原本输入的 /{command} 会变成要再选子指令。指令的可见性设置不变。",
+            "submit": "转换并新增子指令"
+        },
+        "system": {
+            "triggerKind": "触发类型",
+            "kindMessage": "消息 Pattern（与 bot 的私信）",
+            "kindCommand": "Slash 指令",
+            "messageNote": "登录的消息匹配只能用在与 bot 的私信：服务器频道里的回复所有人都看得到，登录链接会外泄。只能用开头匹配或结尾匹配（不能用正则表达式）；消息前后的空白会被 Discord 去掉，所以 pattern 不能以空白开头或结尾。",
+            "commandName": "Slash 指令名称",
+            "commandDescription": "Slash 指令说明",
+            "commandNote": "登录一律注册为全局指令，不设默认成员权限，并且一定保留「服务器安装」与「bot 私信」，确保你随时找得到它；不需要参数，回复一律只有执行的人看得到。",
+            "switchToCommandHint": "改变触发方式会先把 {command} 注册到 Discord，成功后才停用 {old}。",
+            "switchToMessageHint": "改变触发方式会先启用 {pattern}，再从 Discord 移除 {old}。",
+            "save": "保存触发方式",
+            "whereMessage": "消息 Pattern · 与 bot 的私信",
+            "whereCommand": "Slash 指令 · {section}",
+            "steps": {
+                "register": "把 {command} 注册到 Discord",
+                "registerSub": "按你设置的可见性注册",
+                "confirm": "确认注册成功",
+                "confirmSub": "Discord 返回成功，指令已存在",
+                "disable": "停用 {old}",
+                "disableSub": "只有前两步都成功才会执行",
+                "enable": "启用 {pattern}",
+                "enableSub": "与 bot 的私信，保存后立即生效",
+                "remove": "从 Discord 移除 {command}",
+                "removeSub": "移除失败时留给下一次同步，登录不受影响",
+                "notRun": "未执行"
+            },
+            "switch": {
+                "title": "改变登录的触发方式",
+                "intro": "登录是唯一能进后台的方式，所以切换会按下面的顺序进行，任何一步失败都会保留 {old}：",
+                "start": "开始切换",
+                "failed": "{old} 保持启用，没有任何变更。",
+                "done": "切换完成。登录现在是 {trigger}，这一行在「{section}」的最上方。",
+                "sampleNote": "已用你的示例私信「{sample}」确认 {pattern} 会触发。"
+            },
+            "sample": "示例私信（必填）",
+            "sampleHint": "写一条你登录时会发给 bot 的私信。保存前会用它确认 pattern 真的会触发，避免打错字把自己锁在门外；示例不会被保存。",
+            "sampleRequired": "请填一条示例私信，用来确认 pattern 会触发。",
+            "sampleNoMatch": "这条示例私信不会触发这个 pattern；照这样保存，你将无法登录。",
+            "ownerOnly": "只有 bot 所有者能修改登录的触发方式。",
+            "mustKeep": "登录指令一定要保留这一项，否则你可能看不到它。",
+            "rule": {
+                "needsGuildInstall": "登录指令一定要包含「服务器安装」：只开放用户安装时，没有自行安装 app 的你会看不到它。",
+                "needsBotDm": "登录指令一定要能在「bot 私信」使用：其他地方的话，没有和 bot 同在服务器时就用不到。"
+            }
+        },
+        "testReply": {
+            "title": "回复预览",
+            "empty": "服务没有回复任何内容，不会发送消息。",
+            "embeds": "{count} 个 embed：{titles}",
+            "untitled": "（无标题）",
+            "button": "链接按钮「{label}」→ {url}",
+            "audience": {
+                "invoker": "只有执行的人看得到",
+                "channel": "频道里所有人看得到",
+                "dm": "回在与 bot 的私信里",
+                "author_dm": "改为私信作者，不发在频道"
+            },
+            "note": {
+                "content_truncated": "内容有 {length} 字，超过 2000 字，已截断。",
+                "embeds_dropped": "{count} 个 embed 被忽略（格式不对、超过 10 个或总长超过 6000 字）。",
+                "unknown_fields": "忽略不认识的字段：{fields}",
+                "invalid_field": "字段 {field} 的类型不对，已忽略。",
+                "components_dropped": "{count} 个组件被忽略（只接受 https 链接按钮，最多 5 行各 5 个）。",
+                "flags_dropped": "忽略不允许的 flags（{flags}）；只接受 SuppressEmbeds 与 SuppressNotifications。"
+            },
+            "status": "HTTP {status}",
+            "refusedHint": "服务拒绝了这个测试请求。只验证真实签名的服务本来就会拒绝测试，这表示 bot 连得到它；要让它响应测试，请按测试签名（x-karyl-test）验证。",
+            "signatureHint": "响应的签名不符。测试请求的响应要用 test: 前缀、并绑定请求的 nonce 签名。",
+            "signedAsTest": "测试请求带「测试」签名、不带真实用户身份。",
+            "verified": {
+                "hmac": "响应签名正确（HMAC）。",
+                "token": "响应签名正确（token）。"
+            }
         }
     },
     "config": {
@@ -1391,6 +1659,7 @@
         "behavior": {
             "enabled": "行为模块是否启用",
             "webhookTimeout": "Webhook 请求超时（毫秒）",
+            "webhookPrivateAllowlist": "Webhook 局域网允许清单（主机 / CIDR；清单内可用 http）",
             "maxRetries": "Webhook 最大重试次数"
         },
         "admin": {

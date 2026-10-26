@@ -7,7 +7,6 @@ import { isAuthenticated } from "./auth";
 import { guildFeatureRoutes } from "./modules/guild-features/routes";
 import { useCurrentUserStore } from "./stores/currentUserStore";
 import {
-  accessibleBehaviorTargetIds,
   accessibleGuildIds,
   hasAdminCapability,
   type GlobalCapability,
@@ -15,14 +14,13 @@ import {
 
 /**
  * Optional capability gate for a route. Pass either a literal global
- * capability key (`admin`, `dm.message`, `system.read`), `'guild-any'`
- * for routes that just require some guild access, or `'behavior-any'`
- * for routes that accept any per-target behavior token. The router's
+ * capability key (`admin`, `dm.message`, `system.read`) or `'guild-any'`
+ * for routes that just require some guild access. The router's
  * beforeEach checks `meta.requiresCapability` against the current
  * user's grants and bounces unauthorized callers back to the
  * dashboard.
  */
-type RouteCapability = GlobalCapability | "guild-any" | "behavior-any";
+type RouteCapability = GlobalCapability | "guild-any";
 
 // Route names stay stable so programmatic `router.replace({ name: '...' })`
 // calls elsewhere keep working — only paths moved under /admin. The root
@@ -81,15 +79,11 @@ const routes: RouteRecordRaw[] = [
     path: "/admin/behaviors",
     name: "behaviors",
     component: () => import("./views/admin/behaviors/BehaviorsPage.vue"),
-    // Admin / behavior.manage / any per-target token unlocks the
-    // page; the page itself filters the sidebar to the targets the
-    // current user is allowed to see.
     meta: {
       requiresAuth: true,
       requiresCapability: [
         "admin",
         "behavior.manage",
-        "behavior-any",
       ] satisfies RouteCapability[],
     },
   },
@@ -165,10 +159,6 @@ router.beforeEach(async (to) => {
   const satisfied = required.some((req) => {
     if (req === "guild-any") {
       const access = accessibleGuildIds(caps);
-      return access === "all" || access.size > 0;
-    }
-    if (req === "behavior-any") {
-      const access = accessibleBehaviorTargetIds(caps);
       return access === "all" || access.size > 0;
     }
     return hasAdminCapability(caps, req);

@@ -286,7 +286,6 @@
         "capabilities": "Capabilities",
         "note": "Note",
         "unavailable": "Profile is not available.",
-        "hint": "DM the bot with \"login\" again to refresh your session.",
         "settings": {
             "title": "Preferences",
             "animatedEmoji": {
@@ -304,8 +303,16 @@
         "exchanging": "Exchanging login token…",
         "success": "Signed in. Redirecting…",
         "noTokenLead": "To sign in, send a direct message to the bot:",
+        "noTokenLeadCommand": "To sign in, use this command of the bot:",
+        "noTokenLeadUnknown": "To sign in, ask the bot for a login link the way your admin set up.",
         "noTokenHint": "The bot will reply with a single-use login link. Open the link in this browser.",
-        "errorHint": "Request a new link by sending {login} to the bot."
+        "errorHint": "Request a new link by sending {login} to the bot.",
+        "errorHintCommand": "Request a new link by using {login}.",
+        "errorHintUnknown": "Request a new link from the bot.",
+        "match": {
+            "endswith": "Any DM to the bot that ends with this text.",
+            "regex": "Any DM to the bot that matches this regular expression."
+        }
     },
     "dashboard": {
         "title": "Dashboard",
@@ -894,8 +901,6 @@
                 "globalHint": "Apply to every server and surface the bot reaches.",
                 "perGuild": "Per-server",
                 "perGuildHint": "Restrict the same scopes to a single server — these add to global tokens, they don't replace them.",
-                "perBehaviorTab": "Per-behavior-tab",
-                "perBehaviorTabHint": "Grant the role CRUD over behaviors within specific scope tabs only. Adding/removing tabs themselves still requires behavior.manage.",
                 "perPlugin": "Per-plugin",
                 "perPluginHint": "Capabilities each enabled plugin declared for its own use (e.g. WebUI access). These are removed automatically when a plugin is deleted or re-registered without them."
             },
@@ -905,12 +910,6 @@
             "perGuildSummary": "{count} per-server grant(s)",
             "pendingChanges": "{count} change(s) pending",
             "confirmChanges": "Confirm",
-            "searchBehaviorTabs": "Search scope tabs…",
-            "noBehaviorTabs": "No behavior scope tabs match this filter.",
-            "perBehaviorTabSummary": "{count} per-tab grant(s)",
-            "legacyBehaviorHeader": "Legacy audience grants (pre-migration)",
-            "legacyBehaviorDesc": "Legacy token — revoke and replace with a per-tab grant above.",
-            "legacyBehaviorSummary": "{count} legacy behavior grant(s)",
             "searchPlugins": "Search plugin capabilities…",
             "noPluginCapabilities": "No enabled plugin declares any capabilities.",
             "noPluginCapabilitiesFiltered": "No plugin capabilities match this filter.",
@@ -1142,17 +1141,6 @@
                     "configured": "Bot selection",
                     "noReplica": "No live replica has reported transport state since this bot started."
                 },
-                "behaviors": {
-                    "intro": "The behaviors below are declared by this plugin. You can enable or disable each behavior here; disabled behaviors will not be registered as Discord slash commands by the reconciler.",
-                    "empty": "This plugin declares no behaviors",
-                    "toggleOn": "Enable this behavior",
-                    "toggleOff": "Disable this behavior",
-                    "toggleSuccess": "Behavior status updated",
-                    "toggleError": "Update failed, please try again",
-                    "supportsContinuous": "Supports continuous conversation",
-                    "axesReadonly": "Axes locked by manifest",
-                    "slashOptions": "{count} option(s)"
-                },
                 "commands": {
                     "intro": "The slash commands below are declared by this plugin. Axes are locked by the plugin manifest — admin can only enable or disable individual commands.",
                     "empty": "This plugin declares no custom commands",
@@ -1197,163 +1185,442 @@
         "noGuildStickers": "No server stickers available."
     },
     "behaviors": {
-        "page": {
-            "pickTarget": "Pick a target from the sidebar."
-        },
         "sidebar": {
             "title": "Behaviors",
-            "addTabTooltip": "Add scope tab",
-            "globalAll": "All Scope",
-            "globalAllHint": "Applies to all platforms and contexts",
-            "allDms": "All DMs",
-            "allDmsHint": "Applies to every DM sender",
-            "allBotDms": "All Bot DMs",
-            "allBotDmsHint": "Bot DM channels only",
-            "allGuilds": "All Guilds",
-            "allGuildsHint": "Applies to every guild",
-            "behaviorCount": "{count} behaviors",
-            "guildSection": "Guild",
-            "dmSection": "Bot DMs",
-            "noGuildTabs": "No guild-specific tabs yet",
-            "noDmTabs": "No user-specific tabs yet"
-        },
-        "addPlugin": {
-            "title": "Add plugin behavior",
-            "defaultTitle": "{plugin}: {behavior}",
-            "noEligible": "No eligible plugins. Enable a plugin that exposes a dm_behavior on the Plugins page first.",
-            "pickPlugin": "Pick plugin",
-            "pickPluginPlaceholder": "—",
-            "pickBehavior": "Pick behavior",
-            "create": "Create"
+            "app": "App commands",
+            "appHint": "Commands usable in several places or by user install",
+            "botDm": "DMs with the bot",
+            "botDmHint": "Message triggers and commands in bot DMs",
+            "guildSection": "Servers",
+            "guildAll": "All servers",
+            "guildAllHint": "Every server the bot is in",
+            "behaviorCount": "{count} behavior(s)"
         },
         "workspace": {
-            "kindGlobalAll": "All Scope",
-            "kindAllDms": "All DMs",
-            "kindAllBotDms": "Bot DMs",
-            "kindAllGuilds": "All Guilds",
-            "kindGuild": "Specific Guild",
-            "kindChannel": "Specific Channel",
-            "kindUser": "Individual user",
-            "kindGroup": "User group",
-            "addBehavior": "Add behavior",
-            "deleteTabTooltip": "Delete this tab",
-            "deleteTabTitle": "Delete tab",
-            "deleteTabConfirm": "Delete tab \"{label}\"? All behaviors in this tab will also be removed.",
-            "empty": "No behaviors configured yet."
+            "kind": {
+                "app": "App commands",
+                "bot_dm": "Bot DMs",
+                "guild_all": "All servers",
+                "guild": "Server",
+                "channel": "Channel"
+            },
+            "loadError": "Could not load behaviors: {error}",
+            "empty": "No behaviors here yet.",
+            "commands": "Commands",
+            "messageTriggers": "Message triggers",
+            "note": {
+                "guild": "To limit which roles or channels in this server can use a command, use Discord’s Server Settings → Integrations.",
+                "channel": "Discord cannot limit a command to one channel, so only message triggers live here."
+            },
+            "reorderHandle": "Reorder “{title}”",
+            "reorderHint": "Drag to reorder, or press Alt + ↑/↓",
+            "reorderStale": "Someone just changed the behaviors here, so the list was reloaded. Please reorder again."
         },
         "card": {
-            "title": "Title",
-            "description": "Description",
-            "triggerType": "Trigger type",
-            "triggerStartsWith": "Starts with",
-            "triggerEndsWith": "Ends with",
-            "triggerRegex": "Regular expression",
-            "triggerPattern": "Message pattern",
-            "triggerValue": "Trigger value",
-            "messagePatternKind": "Pattern kind",
-            "messagePatternValue": "Pattern value",
-            "slashCommandName": "Slash command name",
-            "slashCommandDescription": "Slash command description",
-            "targetId": "Target",
-            "triggerSection": "Trigger",
-            "integrationTypes": "Where can be installed",
-            "integrationTypesLocked": "(set by scope tab)",
-            "integrationBoth": "Both guild and user install",
-            "integrationGuildOnly": "Guild install only",
-            "integrationUserOnly": "User install only",
-            "webhookUrl": "Webhook URL",
-            "webhookUrlRequired": "Webhook URL is required.",
-            "webhookSecret": "Webhook secret",
-            "webhookSecretHint": "(optional, enables auth)",
-            "webhookSecretPlaceholder": "Leave blank to disable",
-            "webhookAuthMode": "Auth mode",
-            "stopOnMatch": "Stop on match",
-            "tagPlugin": "Provided by Plugin",
-            "tagPluginShort": "Plugin",
-            "tagSystem": "System built-in",
+            "systemRowLocked": "System behavior — always listed first",
+            "systemNotice": "System behavior: it cannot be added, deleted or disabled; only its trigger can change.",
+            "pattern": {
+                "startswith": "starts with {value}",
+                "endswith": "ends with {value}",
+                "regex": "regex {value}"
+            },
+            "triggerMessage": "message",
+            "triggerCommand": "command",
+            "subcommandCount": "{count} subcommand(s)",
+            "tagSystem": "System behavior",
             "tagSystemShort": "System",
-            "systemRowLocked": "System behavior, cannot be reordered",
-            "pluginRowLocked": "Plugin behavior, cannot be reordered",
-            "triggerSlashCommand": "Slash command",
-            "pluginPick": "Pick plugin",
-            "pluginNoneAvailable": "No active plugins available",
-            "pluginBehaviorKey": "Pick behavior",
-            "pluginRequired": "Pick a plugin",
-            "pluginBehaviorKeyRequired": "Pick a behavior",
-            "tagStop": "Stop on match",
+            "tagStop": "Stops later matches",
             "tagStopShort": "Stop",
-            "toggleEnabled": "Enabled (click to disable)",
-            "toggleDisabled": "Disabled (click to enable)",
-            "toggleProtected": "System behavior — cannot be disabled",
-            "previewStartsWith": "starts: {value}",
-            "previewEndsWith": "ends: {value}",
-            "previewRegex": "regex: {value}",
-            "previewSlashCommand": "/{value}",
-            "titleRequired": "Title is required.",
-            "triggerValueRequired": "Trigger value is required.",
-            "regexInvalid": "Trigger value is not a valid regex.",
-            "deleteConfirm": "Delete behavior \"{title}\"?",
-            "dragHint": "Drag to reorder",
-            "moreActions": "More actions",
-            "sourceCustom": "Custom",
-            "sourcePlugin": "Plugin",
-            "sourceSystem": "System",
-            "sourceNoticPlugin": "This behavior is provided by Plugin \"{name}\". Some fields are read-only.",
-            "sourceNoticPluginLink": "View Plugin details",
-            "sourceNoticSystem": "System built-in behavior. The trigger type and its values can be edited; other fields are locked.",
-            "saveTrigger": "Save trigger",
-            "stopOnMatchHint": "Block later patterns from also firing on this message.",
-            "ignoreBots": "Ignore bot messages",
-            "ignoreBotsHint": "Messages from bots and webhooks won't trigger this pattern. The bot always ignores its own messages.",
-            "options": "Command options",
-            "optionName": "name",
-            "optionDescription": "description",
-            "optionRequired": "required",
-            "optionAdd": "Add option",
-            "optionInvalid": "Option '{name}' is invalid: name must be 1-32 [a-z0-9_-] chars and description is required.",
-            "testFire": "Test webhook",
-            "testRunning": "Testing webhook…",
-            "testOk": "Webhook OK — response: {content}",
-            "testFail": "Webhook failed: {error}",
-            "resync": "Resync Discord command",
-            "resyncDone": "Command resynced.",
-            "unhealthy": "failing",
-            "statsLine": "Last fired {when} · {ok} ok / {fail} failed",
-            "statsLastError": "last error: {error}"
+            "unhealthy": "Failing",
+            "toggleProtected": "The system behavior cannot be disabled",
+            "enabled": "Enabled",
+            "disabled": "Disabled",
+            "audienceUser": "User {user}",
+            "audienceGroup": "Group {group}",
+            "registrationGlobal": "Globally",
+            "registrationGuild": "In server {guild}",
+            "contexts": "Usable in",
+            "context": {
+                "Guild": "servers",
+                "BotDM": "bot DMs",
+                "PrivateChannel": "other DMs"
+            },
+            "integrationTypes": "Install types",
+            "integration": {
+                "guild_install": "server install",
+                "user_install": "user install"
+            },
+            "defaultMemberPermissions": "Default member permissions",
+            "permissionsNone": "Not restricted",
+            "options": "Options",
+            "action": "Action",
+            "actionBuiltin": "Built-in (admin login link)",
+            "actionMissing": "No action configured",
+            "webhookUrlUnreadable": "(URL cannot be decrypted)",
+            "auth": {
+                "none": "no signing",
+                "token": "token",
+                "hmac": "HMAC"
+            },
+            "secretSet": "secret set",
+            "secretUnset": "no secret",
+            "stats": "Activity",
+            "statsLine": "Last fired {when} · ok {ok} / failed {fail}",
+            "statsLastError": "Last error: {error}",
+            "unsaved": "Unsaved",
+            "more": "More actions",
+            "test": "Test webhook",
+            "testing": "Sending a test…",
+            "testOk": "Test succeeded. The service replied:",
+            "testFailed": "Test failed: {error}",
+            "testSavedOnly": "The test uses the saved settings, not unsaved edits.",
+            "delete": "Delete",
+            "deleteTitle": "Delete this behavior?",
+            "deleteMessage": "“{title}” will be deleted. This cannot be undone.",
+            "titleLabel": "Title",
+            "descriptionLabel": "Description",
+            "descriptionHint": "For admins only; never sent to Discord.",
+            "conflict": "Someone else changed this behavior, so saving now would be refused. Your edits are still here.",
+            "conflictKeep": "Keep my edits on the latest version",
+            "conflictDiscard": "Discard my edits and load the latest",
+            "staleRebased": "That save did not go through: someone changed this behavior while you were editing (not the fields you edited). The latest version is loaded under your edits; save again."
         },
-        "addTab": {
-            "title": "Add Scope Tab",
-            "typeLabel": "Tab type",
-            "type_specific_guild": "Specific Guild",
-            "type_specific_channel": "Specific Channel",
-            "type_specific_user": "Specific User",
-            "type_specific_group": "User Group",
-            "labelField": "Display name (optional)",
-            "labelPlaceholder": "Leave blank to show ID",
-            "groupNameLabel": "Group name",
-            "groupNamePlaceholder": "e.g. VIP",
-            "submit": "Create tab"
+        "validation": {
+            "required": "Required",
+            "tooShort": "At least {min} characters",
+            "tooLong": "At most {max} characters",
+            "tooMany": "At most {max} entries",
+            "format": "Invalid format",
+            "invalid": "Invalid value",
+            "tooFew": "Pick at least {min}"
         },
-        "addModal": {
-            "title": "Add Behavior",
-            "subtitle": "Create an operator-defined behavior: pick a trigger, then choose where it's forwarded.",
-            "create": "Create",
-            "triggerSlash": "Slash command",
-            "triggerPattern": "Message pattern",
-            "nameLabel": "Behavior name",
-            "namePlaceholder": "e.g. Q&A assistant",
-            "forwardLabel": "Forward",
-            "forwardWebhook": "Webhook",
-            "forwardPlugin": "Plugin"
+        "unsaved": {
+            "title": "Discard unsaved edits?",
+            "message": "Some behavior edits are not saved yet and will be lost.",
+            "leave": "Discard and leave"
         },
-        "groupMembers": {
-            "title": "Group members",
-            "count": "{count} member(s)",
-            "empty": "No members yet — behaviors on this tab won't fire for anyone until you add some.",
-            "placeholder": "Discord user ID",
+        "location": {
+            "label": "Location",
+            "bot_dm": "DMs with the bot",
+            "guild_all": "All servers",
+            "guild": "One server",
+            "channel": "One channel",
+            "guildPicker": "Server",
+            "channelPicker": "Channel",
+            "guildPlaceholder": "Pick a server",
+            "channelPlaceholder": "Pick a channel",
+            "idHint": "Discord ID (17–20 digits)"
+        },
+        "trigger": {
+            "title": "Trigger",
+            "moved": "Once saved, this row moves to “{section}”.",
+            "patternKind": "Match",
+            "patternValue": "Pattern",
+            "patternPlaceholder": "e.g. !weather",
+            "kind": {
+                "startswith": "Starts with",
+                "endswith": "Ends with",
+                "regex": "Regular expression"
+            },
+            "try": "Try it",
+            "tryPlaceholder": "Type a message to see whether it fires",
+            "preview": {
+                "match": "Fires",
+                "no_match": "Does not fire",
+                "invalid": "The regular expression is invalid",
+                "matchWithGroups": "Matches, captures {groups}",
+                "group": "group {n} “{value}”",
+                "groupSeparator": ", "
+            },
+            "ignoreBots": "Skip messages from other bots and webhooks",
+            "stopOnMatch": "Stop after a match; skip the behaviors below",
+            "movedPublic": "Replies will be posted in the channel, where everyone can see them."
+        },
+        "audience": {
+            "title": "Audience",
+            "label": "Who triggers it in DMs",
+            "all": "Everyone",
+            "user": "One user",
+            "group": "Group",
+            "groupPlaceholder": "Pick a group",
+            "newGroup": "+ New group…",
+            "newGroupName": "New group name",
+            "newGroupHint": "Once saved, you can set the group’s members."
+        },
+        "group": {
+            "membersTitle": "Members of “{group}”",
+            "count": "{count} members",
+            "shared": "{count} behaviors share this list; changes apply to all of them.",
+            "empty": "No members yet.",
+            "remove": "Remove {user}",
+            "addPlaceholder": "Discord user ID",
             "add": "Add",
-            "remove": "Remove",
-            "invalidId": "Invalid Discord user ID."
+            "saveFirst": "Once saved, you can set the group’s members.",
+            "dropOnSave": "Once saved, no behavior uses the group “{group}” any more, so its list of {count} members is deleted with it.",
+            "dropOnDelete": "It is the only behavior using the group “{group}”, so that group's list of {count} members is deleted too."
+        },
+        "action": {
+            "title": "Forwarding",
+            "source": "Action source",
+            "sourceWebhook": "Webhook",
+            "sourcePluginLater": "Plugin actions arrive in phase 2.",
+            "url": "Webhook URL",
+            "urlHint": "Public URLs need https; LAN addresses must be on the bot’s LAN allowlist.",
+            "authLabel": "Authentication",
+            "auth": {
+                "hmac": "HMAC (recommended)",
+                "token": "Token",
+                "none": "None"
+            },
+            "authNoteDrop": "Saving removes the secret; requests are no longer signed.",
+            "authNoteIssue": "Saving makes the bot generate a secret, shown once.",
+            "replyVisibility": {
+                "label": "Who sees the reply",
+                "command": {
+                    "private": "Only the person who ran it",
+                    "public": "Everyone in the channel"
+                },
+                "guild": {
+                    "private": "A DM to whoever triggered it",
+                    "public": "Everyone in the channel"
+                },
+                "defaultMark": " (default)",
+                "hint": "The service's response can choose too (ephemeral); this is the default.",
+                "notApplicable": "Not applicable: only they see a DM with the bot"
+            }
+        },
+        "secret": {
+            "label": "Webhook secret",
+            "set": "Set",
+            "unset": "Not set",
+            "rotate": "Generate new secret",
+            "rotateTitle": "Generate a new webhook secret?",
+            "rotateMessage": "The new secret takes effect now and is shown once. The old one keeps working for 24 hours — give your service the new secret within that time.",
+            "grace": "The old secret keeps working until {time}.",
+            "shownOnce": "This new secret is shown only once. Copy it now.",
+            "copy": "Copy",
+            "copied": "Copied",
+            "saved": "I saved it"
+        },
+        "errors": {
+            "withDetail": "{reason} ({detail})",
+            "validation_failed": "Invalid input",
+            "name_conflict": "Name already in use",
+            "system_immutable": "The system behavior cannot be changed this way",
+            "registration_failed": "Discord registration failed",
+            "not_found": "Not found",
+            "invalid_tree": "Invalid command structure"
+        },
+        "add": {
+            "open": "New behavior",
+            "title": "New behavior",
+            "intro": "Create a behavior in “{section}”: pick how it is triggered, then where it forwards to.",
+            "name": "Behavior name",
+            "namePlaceholder": "e.g. Weather lookup",
+            "kind": "Trigger",
+            "kinds": {
+                "command": "Command",
+                "message": "Message match"
+            },
+            "reason": {
+                "messageInApp": "App commands holds commands only: the bot cannot read DMs between users or messages in servers it is not in.",
+                "commandInChannel": "Discord cannot limit a command to one channel. Add it in the server above, then limit channels in Discord’s Server Settings → Integrations."
+            },
+            "create": "Create",
+            "created": "Created “{title}”.",
+            "done": "Done",
+            "commandNamePlaceholder": "e.g. status",
+            "commandPreset": "Visibility (set by this section; change it in the card afterwards)"
+        },
+        "command": {
+            "resync": "Sync to Discord again",
+            "name": "Command name",
+            "nameHint": "1–32 lower-case letters, digits, - and _; without the /.",
+            "description": "Command description",
+            "descriptionHint": "Shown in Discord's command menu (1–100 characters).",
+            "reservedName": "/login is reserved for the system login.",
+            "saveAndSync": "Save and sync to Discord",
+            "visibility": "Visibility",
+            "registration": {
+                "label": "Registration target",
+                "global": "Everywhere (global)",
+                "guild": "One server"
+            },
+            "permissions": {
+                "label": "Default member permissions (servers only)",
+                "everyone": "Everyone",
+                "manageGuild": "Manage Server",
+                "administrator": "Administrator",
+                "custom": "Custom ({value})"
+            },
+            "guildFixed": "A server command can only be used in its server and is installed by the server — Discord's rule.",
+            "sectionHere": "Listed under “{section}”.",
+            "sectionMoves": "After saving, this command moves to “{section}”.",
+            "sectionPending": "Pick the server to see where this command is listed.",
+            "visibleRuns": "Whoever can see it can run it. To limit roles or channels in a server, use Discord's Server Settings → Integrations.",
+            "rule": {
+                "guildNeedsGuildId": "Pick the server.",
+                "guildContextsOnlyGuild": "A server command can only be used in its server.",
+                "guildInstallOnly": "A server command is installed by the server only.",
+                "globalHasNoGuild": "A global command has no server.",
+                "privateChannelNeedsUserInstall": "Other DMs need user install: with server install only, Discord does not show the command there."
+            },
+            "delete": "Delete command",
+            "deleteTitle": "Delete this command?",
+            "deleteMessage": "/{command} and all its subcommands are deleted and removed from Discord. This cannot be undone.",
+            "deleted": "/{command} was deleted.",
+            "optionRule": {
+                "tooMany": "At most 25 options.",
+                "duplicateName": "Another option already has this name.",
+                "requiredAfterOptional": "Discord lists required options first: move this one above the optional ones."
+            }
+        },
+        "registration": {
+            "registered": "Synced to Discord.",
+            "deferred": "Saved, but not on Discord yet; the bot registers it once it connects.",
+            "removed": "Removed from Discord.",
+            "failed": "Discord did not accept it:",
+            "target": {
+                "global": "Global"
+            },
+            "outcome": {
+                "created": "created",
+                "patched": "updated",
+                "unchanged": "already up to date",
+                "skipped": "not registered: the bot is not in this server",
+                "failed": "failed"
+            }
+        },
+        "option": {
+            "title": "Command options",
+            "none": "No options.",
+            "name": "Option name",
+            "description": "Option description",
+            "required": "Required",
+            "add": "Add option",
+            "remove": "Remove option {name}",
+            "moveUp": "Move option {name} up",
+            "moveDown": "Move option {name} down",
+            "type": {
+                "label": "Option type",
+                "string": "Text",
+                "integer": "Integer",
+                "number": "Number",
+                "boolean": "Yes / no",
+                "user": "User",
+                "channel": "Channel",
+                "role": "Role",
+                "mentionable": "User or role",
+                "attachment": "Attachment"
+            }
+        },
+        "leaf": {
+            "rootTitle": "Command",
+            "listTitle": "Subcommands",
+            "count": "{count} / {max}",
+            "chars": "{count} / {max} characters",
+            "subcommand": "Subcommand name (/{command} …)",
+            "leafDescription": "Subcommand description",
+            "leafDescriptionHint": "Shown in Discord's command menu; empty uses the title.",
+            "titleHint": "Also the subcommand's description when that is empty.",
+            "toggle": "Turn {path} on or off",
+            "more": "More actions for {path}",
+            "save": "Save subcommand",
+            "saveRoot": "Save",
+            "delete": "Delete subcommand",
+            "deleteTitle": "Delete this subcommand?",
+            "deleteMessage": "{path} is deleted and removed from Discord. This cannot be undone.",
+            "lastTitle": "Delete the whole command?",
+            "lastMessage": "A command needs at least one subcommand, so the last one cannot be deleted alone. Delete /{command} instead?",
+            "add": "Add subcommand",
+            "addTitle": "New subcommand of /{command}",
+            "create": "Add and sync to Discord",
+            "convertHint": "/{command} is a single command: adding a subcommand first moves its current action under a subcommand name."
+        },
+        "convert": {
+            "title": "Add subcommands to /{command}",
+            "intro": "Discord's rule: once a command has subcommands, /{command} itself can no longer be run. So its current action first gets a subcommand name and moves one level down.",
+            "name": "New name for the current action",
+            "now": "Now",
+            "after": "After",
+            "sameAction": "(same action)",
+            "nextLeaf": "The new subcommand you set up next",
+            "note": "Once synced, people who type /{command} have to pick a subcommand. The command's visibility does not change.",
+            "submit": "Convert and add a subcommand"
+        },
+        "system": {
+            "triggerKind": "Trigger type",
+            "kindMessage": "Message pattern (DMs with the bot)",
+            "kindCommand": "Slash command",
+            "messageNote": "The login's message pattern only works in DMs with the bot: a reply in a server channel is visible to everyone, and would leak the login link. It is starts-with or ends-with only (no regex); Discord trims spaces around a message, so the pattern cannot start or end with whitespace.",
+            "commandName": "Slash command name",
+            "commandDescription": "Slash command description",
+            "commandNote": "The login is always a global command with no default member permissions, and it always keeps server install and bot DMs, so you can always reach it; it takes no options, and its reply is only ever visible to whoever ran it.",
+            "switchToCommandHint": "Changing the trigger registers {command} on Discord first, and only then turns off {old}.",
+            "switchToMessageHint": "Changing the trigger turns on {pattern} first, then removes {old} from Discord.",
+            "save": "Save trigger",
+            "whereMessage": "Message pattern · DMs with the bot",
+            "whereCommand": "Slash command · {section}",
+            "steps": {
+                "register": "Register {command} on Discord",
+                "registerSub": "With the visibility you set",
+                "confirm": "Confirm the registration",
+                "confirmSub": "Discord answered: the command exists",
+                "disable": "Turn off {old}",
+                "disableSub": "Only once both steps above succeeded",
+                "enable": "Turn on {pattern}",
+                "enableSub": "DMs with the bot, in effect as soon as it is saved",
+                "remove": "Remove {command} from Discord",
+                "removeSub": "If that fails, the next sync removes it; the login is not affected",
+                "notRun": "Not run"
+            },
+            "switch": {
+                "title": "Change the login's trigger",
+                "intro": "The login is the only way into the admin UI, so the switch runs in this order, and a failure at any step keeps {old}:",
+                "start": "Start the switch",
+                "failed": "{old} stays on; nothing changed.",
+                "done": "Done. The login is now {trigger}, pinned on top of “{section}”.",
+                "sampleNote": "Your sample DM “{sample}” was checked: {pattern} matches it."
+            },
+            "sample": "Sample DM (required)",
+            "sampleHint": "A DM you would send the bot to log in. Before saving it is checked against the pattern, so a typo cannot lock you out; the sample is not stored.",
+            "sampleRequired": "Write a sample DM to check the pattern against.",
+            "sampleNoMatch": "This sample DM does not match the pattern; saved like this, you could not log in.",
+            "ownerOnly": "Only a bot owner can change the login's trigger.",
+            "mustKeep": "The login command always keeps this, or you might not see it.",
+            "rule": {
+                "needsGuildInstall": "The login command must include server install: installed by users only, you would not see it without installing the app yourself.",
+                "needsBotDm": "The login command must be usable in DMs with the bot: elsewhere only, you could not reach it without sharing a server with the bot."
+            }
+        },
+        "testReply": {
+            "title": "Reply preview",
+            "empty": "The service answered nothing; no message would be sent.",
+            "embeds": "{count} embed(s): {titles}",
+            "untitled": "(untitled)",
+            "button": "Link button “{label}” → {url}",
+            "audience": {
+                "invoker": "Only the person who ran it sees it",
+                "channel": "Everyone in the channel sees it",
+                "dm": "Answered in the DM with the bot",
+                "author_dm": "DMed to the author, not posted in the channel"
+            },
+            "note": {
+                "content_truncated": "The content had {length} characters, over 2000; it was cut.",
+                "embeds_dropped": "{count} embed(s) skipped (malformed, past 10, or past 6000 characters in total).",
+                "unknown_fields": "Unknown fields ignored: {fields}",
+                "invalid_field": "Field {field} has the wrong type and was ignored.",
+                "components_dropped": "{count} component(s) skipped (only https link buttons, at most 5 rows of 5).",
+                "flags_dropped": "Disallowed flags ignored ({flags}); only SuppressEmbeds and SuppressNotifications are kept."
+            },
+            "status": "HTTP {status}",
+            "refusedHint": "The service refused this test request. A service that verifies only the real signature is expected to — it shows the bot can reach it. To answer tests, verify the test signature (x-karyl-test).",
+            "signatureHint": "The response signature did not match. A test request's response must be signed with the test: prefix over the request's nonce.",
+            "signedAsTest": "The test request is signed as a test and carries no real user identity.",
+            "verified": {
+                "hmac": "Response signature verified (HMAC).",
+                "token": "Response signature verified (token)."
+            }
         }
     },
     "config": {
@@ -1392,6 +1659,7 @@
         "behavior": {
             "enabled": "Behavior module enabled",
             "webhookTimeout": "Webhook request timeout (ms)",
+            "webhookPrivateAllowlist": "Webhook LAN allowlist (hosts / CIDRs; http allowed for these)",
             "maxRetries": "Webhook max retries"
         },
         "admin": {

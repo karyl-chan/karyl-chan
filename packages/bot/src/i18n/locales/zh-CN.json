@@ -13,11 +13,11 @@
     "unknown-error": "未知错误",
     "internal-error": "⚠ 内部错误：{{msg}}"
   },
+  "behavior": {
+    "action-failed": "⚠ 目前无法完成，请稍后再试。"
+  },
   "system": {
-    "unknown-system-command": "⚙ 未知的系统指令。",
-    "webhook-failed": "⚠ Behavior 转发失败：{{error}}",
-    "behavior-wrong-place": "该指令不能在此处使用。",
-    "behavior-not-allowed": "你没有使用该指令的权限。"
+    "unknown-system-command": "⚙ 未知的系统指令。"
   },
   "role-emoji": {
     "command": {

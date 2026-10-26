@@ -139,7 +139,7 @@ export function registerRuntimeEvents(ctx: RuntimeContext): void {
     // the raw MESSAGE_CREATE fallback below now generically rehydrates
     // un-cached DMs from any user. So this owner-specific warmup is now
     // an optimisation only — bot→owner DM sends and the first owner-side
-    // message_pattern trigger skip the fallback's fetch+re-emit hop.
+    // message trigger skip the fallback's fetch+re-emit hop.
     for (const ownerId of config.bot.ownerIds) {
       try {
         const owner = await bot.users.fetch(ownerId);
@@ -195,7 +195,7 @@ export function registerRuntimeEvents(ctx: RuntimeContext): void {
       );
     }
 
-    // MessagePatternMatcher 掛載 messageCreate listener（DM behaviors）。
+    // MessageTriggerMatcher 掛載 messageCreate listener（DM behaviors）。
     messageMatcher.register(bot);
 
     log.info({ stage: "boot" }, "bot started");
@@ -265,7 +265,7 @@ export function registerRuntimeEvents(ctx: RuntimeContext): void {
   bot.on("interactionCreate", async (interaction: Interaction) => {
     // 統一的 InteractionDispatcher 接管所有 interaction dispatch。
     // 派發順序（C-runtime §4.1）：
-    //   [1] behaviors 表 slash_command trigger（source: system / custom / plugin）
+    //   [1] behavior 指令（Command Trigger → 葉節點 → 動作）
     //   [2] plugin_commands（軌三）── plugin-interaction-dispatch.service.ts
     //   [3] in-process registry（builtin-features）
     //   fallback：claimed=false，log warn

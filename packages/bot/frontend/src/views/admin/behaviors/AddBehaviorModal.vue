@@ -1,351 +1,410 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@iconify/vue';
-import { AppButton, AppModal, AppSelectField, AppTextField } from '@karyl-chan/ui';
+import { AppButton, AppModal, AppTextField, Stack } from '@karyl-chan/ui';
 import {
-    createBehavior,
-    type BehaviorRow,
-    type BehaviorTriggerType,
-    type BehaviorWebhookAuthMode,
-    type ScopeTabRow,
+    createBehaviorCommand,
+    createMessageTrigger,
+    type BehaviorSection,
+    type CommandView,
+    type MessageTriggerView,
 } from '../../../api/behavior';
+import CommandRegistrationResult from './CommandRegistrationResult.vue';
+import MessageTriggerFields from './MessageTriggerFields.vue';
+import OneTimeSecret from './OneTimeSecret.vue';
+import WebhookActionFields from './WebhookActionFields.vue';
+import { NO_ERRORS, errorsFromRefusal, hasErrors, onFields, type FormErrors } from './behavior-errors';
+import { checkCommandDraft } from './command-check';
+import { commandBody, commandPath, newCommandVisibility, type CommandDraft } from './command-draft';
+import { checkLeafDraft } from './leaf-check';
+import { emptyLeafDraft } from './leaf-draft';
+import {
+    checkMessageTriggerDraft,
+    fieldsWithErrorLine,
+    type TriggerFormLayout,
+} from './message-trigger-check';
+import { emptyDraft, toCreateBody, type MessageTriggerDraft } from './message-trigger-draft';
+import { newBehaviorOptions } from './new-behavior-options';
+import {
+    isRegistrationRefusal,
+    registrationFailure,
+    registrationResult,
+    type RegistrationResult,
+} from './registration-result';
+import { sectionLabel } from './section-labels';
+import { draftPatcher } from './use-draft-form';
+import { webhookBody } from './webhook-draft';
 
 /**
- * AddBehaviorModal — admin-defined behaviors.
+ * "New behavior" in a section (board 2): only what the section can hold is
+ * offered, and a disabled choice says why.
  *
- * Pick a trigger (slash command or message pattern), then point it at a
- * webhook URL (optionally signed). Plugins that want to power a behavior
- * simply expose the webhook URL the operator points at here.
+ * A message trigger is created where the section is. A command is created
+ * as a single command (its root leaf) with the visibility that keeps it in
+ * the section (newCommandVisibility); the card changes it afterwards. The
+ * name is checked against the namespace on the server (`name_conflict`
+ * lands on the name field) and `login` is refused before sending.
+ *
+ * After a create the dialog shows the secret the bot generated, once —
+ * for a command also what Discord answered — before closing.
  */
-
-const { t } = useI18n();
-
 const props = defineProps<{
     visible: boolean;
-    scopeTabId: number;
-    scopeTab: ScopeTabRow | null;
+    section: BehaviorSection;
+    guildNames: ReadonlyMap<string, string>;
+    /** Audience Groups some trigger already uses. */
+    groupNames?: readonly string[];
 }>();
 
 const emit = defineEmits<{
     (e: 'close'): void;
-    (e: 'created', row: BehaviorRow): void;
+    (e: 'created', item: MessageTriggerView | CommandView): void;
+    /** The list may have changed without a `created` (a refused create whose undo failed). */
+    (e: 'reload'): void;
 }>();
 
-// ── reset on open ─────────────────────────────────────────────────────────────
+const { t } = useI18n();
 
-watch(() => props.visible, (open) => {
-    if (open) {
-        resetForm();
-        error.value = null;
-    }
-});
+type Kind = 'command' | 'message';
 
-// ── form state ────────────────────────────────────────────────────────────────
+const options = computed(() => newBehaviorOptions(props.section));
+const choices = computed(() => ({ command: options.value.command, message: options.value.message }));
 
-const form = ref({
-    title: '',
-    description: '',
-    triggerType: 'message_pattern' as BehaviorTriggerType,
-    messagePatternKind: 'startswith',
-    messagePatternValue: '',
-    slashCommandName: '',
-    slashCommandDescription: '',
-    integrationTypes: 'guild_install,user_install',
-    webhookUrl: '',
-    webhookSecret: '',
-    webhookAuthMode: '' as BehaviorWebhookAuthMode | '',
-});
+const kind = ref<Kind | null>(null);
+/** The message trigger draft; its title and webhook are a new command's too. */
+const draft = ref<MessageTriggerDraft>(emptyDraft({ kind: 'bot_dm' }));
+const applyPatch = draftPatcher(draft);
+const command = ref({ name: '', description: '' });
+const errors = ref<FormErrors>(NO_ERRORS);
+const creating = ref(false);
+/** A command Discord refused: nothing was created. */
+const refused = ref<RegistrationResult | null>(null);
 
-function resetForm() {
-    form.value = {
-        title: '',
-        description: '',
-        triggerType: 'message_pattern',
-        messagePatternKind: 'startswith',
-        messagePatternValue: '',
-        slashCommandName: '',
-        slashCommandDescription: '',
-        integrationTypes: 'guild_install,user_install',
-        webhookUrl: '',
-        webhookSecret: '',
-        webhookAuthMode: '',
-    };
+interface Created {
+    title: string;
+    registration: RegistrationResult | null;
+    secrets: Array<{ label: string; secret: string }>;
+}
+const created = ref<Created | null>(null);
+
+function reset() {
+    const message = options.value.message;
+    kind.value = (['message', 'command'] as const).find((k) => choices.value[k].possible) ?? null;
+    draft.value = emptyDraft({
+        kind: message.locations[0] ?? 'bot_dm',
+        guildId: message.guildId,
+        channelId: message.channelId,
+    });
+    command.value = { name: '', description: '' };
+    errors.value = NO_ERRORS;
+    refused.value = null;
+    created.value = null;
 }
 
-// ── select options ────────────────────────────────────────────────────────────
-
-const messagePatternKindOptions = [
-    { value: 'startswith', label: t('behaviors.card.triggerStartsWith') },
-    { value: 'endswith', label: t('behaviors.card.triggerEndsWith') },
-    { value: 'regex', label: t('behaviors.card.triggerRegex') },
-];
-
-const webhookAuthModeOptions = [
-    { value: 'token' as BehaviorWebhookAuthMode, label: 'Token' },
-    { value: 'hmac' as BehaviorWebhookAuthMode, label: 'HMAC' },
-];
-
-// Integration types — 跟 BehaviorCard 一樣的 3 種組合下拉。
-// 只有 global_all tab + slash trigger 顯示這個 field;其他 tab 由
-// deriveFieldsFromTab() 寫死,message_pattern 則沒有安裝面(BH-0.2)。
-const canEditIntegrationTypes = computed(
-    () =>
-        props.scopeTab?.tabType === 'global_all' &&
-        form.value.triggerType === 'slash_command',
+// Start fresh each time the dialog opens — only then: after a create the
+// page follows the new item to its section while the one-time secret
+// is still on screen, and that must not wipe it.
+watch(
+    () => props.visible,
+    (visible) => {
+        if (visible) reset();
+    },
+    { immediate: true }
 );
-type IntegrationMode = 'both' | 'guild_only' | 'user_only';
-const integrationModeOptions = computed<{ value: IntegrationMode; label: string }[]>(() => [
-    { value: 'both', label: t('behaviors.card.integrationBoth') },
-    { value: 'guild_only', label: t('behaviors.card.integrationGuildOnly') },
-    { value: 'user_only', label: t('behaviors.card.integrationUserOnly') },
-]);
-const integrationMode = computed<IntegrationMode>({
-    get() {
-        const parts = new Set(
-            form.value.integrationTypes.split(',').map((s) => s.trim()).filter(Boolean),
-        );
-        if (parts.has('guild_install') && parts.has('user_install')) return 'both';
-        if (parts.has('user_install')) return 'user_only';
-        return 'guild_only';
-    },
-    set(mode) {
-        form.value.integrationTypes =
-            mode === 'both'
-                ? 'guild_install,user_install'
-                : mode === 'user_only'
-                  ? 'user_install'
-                  : 'guild_install';
-    },
+
+watch(kind, () => {
+    errors.value = NO_ERRORS;
+    refused.value = null;
 });
 
-// ── submit ────────────────────────────────────────────────────────────────────
+/** What the dialog shows: the section fixes what it fixes; no description field. */
+const layout = computed<TriggerFormLayout>(() => ({
+    kinds: options.value.message.locations,
+    lockGuild: options.value.message.lockGuild,
+    lockChannel: options.value.message.lockChannel,
+    description: false,
+}));
 
-const submitting = ref(false);
-const error = ref<string | null>(null);
+const denied = computed(() =>
+    (['command', 'message'] as const)
+        .map((k) => choices.value[k].reason)
+        .filter((r): r is string => r !== null)
+        .map((r) => t(r))
+);
 
-async function onSubmit() {
-    if (submitting.value) return;
-    error.value = null;
+// ── a new command ───────────────────────────────────────────────────────────
 
-    const f = form.value;
-    if (!f.title.trim()) { error.value = t('behaviors.card.titleRequired'); return; }
-    if (f.triggerType === 'slash_command' && !f.slashCommandName.trim()) {
-        error.value = t('behaviors.card.triggerValueRequired'); return;
-    }
-    if (f.triggerType === 'message_pattern' && !f.messagePatternValue.trim()) {
-        error.value = t('behaviors.card.triggerValueRequired'); return;
-    }
-    if (!f.webhookUrl.trim()) {
-        error.value = t('behaviors.card.webhookUrlRequired'); return;
-    }
+const preset = computed(() => newCommandVisibility(props.section));
 
-    submitting.value = true;
+/** The visibility the section gives a new command, in words (board 2). */
+const presetSummary = computed(() => {
+    const p = preset.value;
+    if (!p) return '';
+    return [
+        p.registration === 'guild'
+            ? t('behaviors.card.registrationGuild', { guild: props.guildNames.get(p.guildId) ?? p.guildId })
+            : t('behaviors.card.registrationGlobal'),
+        p.integrationTypes.map((i) => t(`behaviors.card.integration.${i}`)).join('＋'),
+        p.contexts.map((c) => t(`behaviors.card.context.${c}`)).join('、'),
+    ].join(' · ');
+});
+
+/** The fields the command form shows an error line on. */
+const COMMAND_FIELDS = ['title', 'name', 'description', 'webhook.url', 'webhook.authMode'];
+
+/** `leaves.0.title` → `title`: the dialog's one leaf is its own fields. */
+const leafField = (field: string) => field.replace(/^leaves\.0\./, '');
+
+function commandDraft(): CommandDraft {
+    return { ...preset.value!, ...command.value, defaultMemberPermissions: '' };
+}
+
+async function createCommand() {
+    const cmd = commandDraft();
+    const leaf = { ...emptyLeafDraft(), title: draft.value.title, webhookUrl: draft.value.webhookUrl, authMode: draft.value.authMode };
+    const [commandErrors, leafErrors] = await Promise.all([checkCommandDraft(t, cmd), checkLeafDraft(t, leaf, 'root')]);
+    const found = onFields(
+        {
+            fields: { ...leafErrors.fields, ...commandErrors.fields },
+            general: commandErrors.general ?? leafErrors.general,
+        },
+        COMMAND_FIELDS
+    );
+    errors.value = found;
+    if (hasErrors(found)) return;
+
     try {
-        const created = await createBehavior({
-            title: f.title.trim(),
-            description: f.description,
-            triggerType: f.triggerType,
-            ...(f.triggerType === 'slash_command'
-                ? { slashCommandName: f.slashCommandName.trim(), slashCommandDescription: f.slashCommandDescription }
-                : { messagePatternKind: f.messagePatternKind as 'startswith' | 'endswith' | 'regex', messagePatternValue: f.messagePatternValue.trim() }),
-            // message_pattern 沒有安裝面 — 不送 integrationTypes(BH-0.2)
-            ...(f.triggerType === 'slash_command'
-                ? { integrationTypes: f.integrationTypes }
-                : {}),
-            scopeTabId: props.scopeTabId,
-            webhookUrl: f.webhookUrl.trim(),
-            ...(f.webhookSecret
-                ? { webhookSecret: f.webhookSecret, webhookAuthMode: (f.webhookAuthMode as BehaviorWebhookAuthMode) || 'token' }
-                : {}),
+        const result = await createBehaviorCommand({
+            ...commandBody(cmd),
+            leaves: [
+                {
+                    subcommand: '',
+                    title: leaf.title.trim(),
+                    replyVisibility: draft.value.replyVisibility,
+                    webhook: webhookBody(leaf),
+                },
+            ],
         });
-        emit('created', created);
-        emit('close');
+        emit('created', result.command);
+        created.value = {
+            title: leaf.title.trim(),
+            registration: registrationResult(t, result.registration, props.guildNames),
+            secrets: (result.secrets ?? []).map((s) => ({
+                label: commandPath(result.command.name, s.subcommand),
+                secret: s.secret,
+            })),
+        };
     } catch (err) {
-        error.value = err instanceof Error ? err.message : String(err);
-    } finally {
-        submitting.value = false;
+        if (isRegistrationRefusal(err)) {
+            refused.value = registrationFailure(t, err, props.guildNames);
+            // Discord refused and the rows are normally taken back — unless
+            // that undo failed ("the change is still stored"): reload so the
+            // list shows what the server holds either way
+            emit('reload');
+        } else {
+            errors.value = errorsFromRefusal(t, err, COMMAND_FIELDS, leafField);
+        }
     }
 }
 
-const showAuthMode = computed(() => form.value.webhookSecret.length > 0);
+// ── a new message trigger ───────────────────────────────────────────────────
+
+async function createTrigger() {
+    const found = await checkMessageTriggerDraft(t, draft.value, layout.value);
+    errors.value = found;
+    if (hasErrors(found)) return;
+    try {
+        const body = toCreateBody(draft.value);
+        const result = await createMessageTrigger(body);
+        emit('created', result.behavior);
+        if (result.secret) {
+            created.value = { title: body.title, registration: null, secrets: [{ label: '', secret: result.secret }] };
+        } else emit('close');
+    } catch (err) {
+        errors.value = errorsFromRefusal(t, err, fieldsWithErrorLine(draft.value, layout.value));
+    }
+}
+
+async function create() {
+    if (kind.value === null || creating.value) return;
+    creating.value = true;
+    refused.value = null;
+    try {
+        if (kind.value === 'command') await createCommand();
+        else await createTrigger();
+    } finally {
+        creating.value = false;
+    }
+}
 </script>
 
 <template>
-    <AppModal :visible="visible" :title="t('behaviors.addModal.title')" width="min(560px, 94vw)" @close="emit('close')">
-        <div class="modal-body">
-            <p class="step-hint">{{ t('behaviors.addModal.subtitle') }}</p>
-
-            <div class="form-section">
-                <AppTextField
-                    v-model="form.title"
-                    :label="t('behaviors.addModal.nameLabel') + ' *'"
-                    :placeholder="t('behaviors.addModal.namePlaceholder')"
-                    :maxlength="200"
-                />
-
-                <!-- 觸發方式 -->
-                <div class="section-heading">{{ t('behaviors.card.triggerType') }}</div>
-                <div class="trigger-type-cards">
-                    <button
-                        type="button"
-                        :class="['trigger-card', { selected: form.triggerType === 'slash_command' }]"
-                        @click="form.triggerType = 'slash_command'"
-                    >
-                        <Icon icon="material-symbols:bolt-outline-rounded" width="20" height="20" />
-                        {{ t('behaviors.addModal.triggerSlash') }}
-                    </button>
-                    <button
-                        type="button"
-                        :class="['trigger-card', { selected: form.triggerType === 'message_pattern' }]"
-                        @click="form.triggerType = 'message_pattern'"
-                    >
-                        <Icon icon="material-symbols:article-outline" width="20" height="20" />
-                        {{ t('behaviors.addModal.triggerPattern') }}
-                    </button>
-                </div>
-
-                <template v-if="form.triggerType === 'slash_command'">
-                    <AppTextField
-                        v-model="form.slashCommandName"
-                        :label="t('behaviors.card.slashCommandName') + ' *'"
-                        placeholder="指令名稱（不含 /）"
-                        :maxlength="100"
-                    />
-                </template>
-                <template v-else>
-                    <div class="field">
-                        <span class="label">{{ t('behaviors.card.messagePatternKind') }}</span>
-                        <AppSelectField v-model="form.messagePatternKind" :options="messagePatternKindOptions" />
-                    </div>
-                    <AppTextField
-                        v-model="form.messagePatternValue"
-                        :label="t('behaviors.card.messagePatternValue') + ' *'"
-                        placeholder="觸發詞"
-                        :maxlength="2000"
-                    />
-                </template>
-
-                <!-- 可安裝範圍 — 只有 global_all tab 才顯示自選下拉,
-                     其他 tab 由 scope tab 自動決定。 -->
-                <template v-if="canEditIntegrationTypes">
-                    <div class="section-heading">{{ t('behaviors.card.integrationTypes') }}</div>
-                    <div class="field">
-                        <AppSelectField v-model="integrationMode" :options="integrationModeOptions" />
-                    </div>
-                </template>
-
-                <!-- Webhook 設定 -->
-                <div class="section-heading">{{ t('behaviors.addModal.forwardLabel') }}</div>
-                <AppTextField
-                    v-model="form.webhookUrl"
-                    label="Webhook URL *"
-                    placeholder="https://…"
-                    :maxlength="1000"
-                />
-                <AppTextField
-                    v-model="form.webhookSecret"
-                    :label="t('behaviors.card.webhookSecret')"
-                    :hint="t('behaviors.card.webhookSecretHint')"
-                    :placeholder="t('behaviors.card.webhookSecretPlaceholder')"
-                    :maxlength="200"
-                />
-                <div v-if="showAuthMode" class="field">
-                    <span class="label">{{ t('behaviors.card.webhookAuthMode') }}</span>
-                    <AppSelectField v-model="form.webhookAuthMode" :options="webhookAuthModeOptions" />
-                </div>
-            </div>
-
-            <p v-if="error" class="error" role="alert">{{ error }}</p>
-
-            <footer class="actions">
-                <AppButton variant="ghost" :disabled="submitting" @click="emit('close')">{{ t('common.cancel') }}</AppButton>
-                <AppButton variant="primary" :loading="submitting" @click="onSubmit">
-                    {{ t('behaviors.addModal.create') }}
-                </AppButton>
+    <AppModal
+        :visible="visible"
+        :title="t('behaviors.add.title')"
+        :close-label="t('common.close')"
+        width="min(560px, 95vw)"
+        @close="emit('close')"
+    >
+        <Stack v-if="created" gap="3">
+            <p class="intro">{{ t('behaviors.add.created', { title: created.title }) }}</p>
+            <CommandRegistrationResult v-if="created.registration" :result="created.registration" @dismiss="created.registration = null" />
+            <Stack v-for="s in created.secrets" :key="s.label" gap="1">
+                <code v-if="s.label" class="secret-for">{{ s.label }}</code>
+                <OneTimeSecret :secret="s.secret" @dismiss="created.secrets = created.secrets.filter((x) => x !== s)" />
+            </Stack>
+            <footer class="footer">
+                <AppButton data-test="done" @click="emit('close')">{{ t('behaviors.add.done') }}</AppButton>
             </footer>
-        </div>
+        </Stack>
+
+        <form v-else @submit.prevent="create">
+            <Stack gap="3">
+                <p class="intro">{{ t('behaviors.add.intro', { section: sectionLabel(t, section, guildNames) }) }}</p>
+
+                <AppTextField
+                    v-model="draft.title"
+                    :label="t('behaviors.add.name')"
+                    :placeholder="t('behaviors.add.namePlaceholder')"
+                    :error="errors.fields.title"
+                    autofocus
+                />
+
+                <Stack gap="1">
+                    <span class="field-label" id="nb-kind">{{ t('behaviors.add.kind') }}</span>
+                    <div class="kind-grid" role="radiogroup" aria-labelledby="nb-kind">
+                        <button
+                            v-for="k in (['command', 'message'] as const)"
+                            :key="k"
+                            type="button"
+                            role="radio"
+                            :data-test="`kind-${k}`"
+                            :class="['kind', { on: kind === k }]"
+                            :aria-checked="kind === k ? 'true' : 'false'"
+                            :disabled="!choices[k].possible"
+                            @click="kind = k"
+                        >
+                            <Icon
+                                :icon="k === 'command' ? 'material-symbols:bolt-outline-rounded' : 'material-symbols:article-outline'"
+                                width="16"
+                                height="16"
+                                aria-hidden="true"
+                            />
+                            {{ t(`behaviors.add.kinds.${k}`) }}
+                        </button>
+                    </div>
+                    <p v-for="reason in denied" :key="reason" class="denied" data-test="denied">{{ reason }}</p>
+                </Stack>
+
+                <template v-if="kind === 'command'">
+                    <AppTextField
+                        v-model="command.name"
+                        class="mono"
+                        :label="t('behaviors.command.name')"
+                        :placeholder="t('behaviors.add.commandNamePlaceholder')"
+                        :hint="t('behaviors.command.nameHint')"
+                        :error="errors.fields.name"
+                    />
+                    <AppTextField
+                        v-model="command.description"
+                        :label="t('behaviors.command.description')"
+                        :hint="t('behaviors.command.descriptionHint')"
+                        :error="errors.fields.description"
+                    />
+                    <div class="preset" data-test="command-preset">
+                        <span class="field-label">{{ t('behaviors.add.commandPreset') }}</span>
+                        <span class="preset-value">{{ presetSummary }}</span>
+                    </div>
+                </template>
+
+                <MessageTriggerFields
+                    v-if="kind === 'message'"
+                    :draft="draft"
+                    :kinds="layout.kinds"
+                    :lock-guild="layout.lockGuild"
+                    :lock-channel="layout.lockChannel"
+                    :errors="errors.fields"
+                    :group-names="groupNames ?? []"
+                    @patch="applyPatch"
+                />
+                <WebhookActionFields
+                    v-if="kind !== null"
+                    :draft="draft"
+                    :errors="errors.fields"
+                    :saved="null"
+                    :behavior-id="null"
+                    :issued-secret="null"
+                    :reply-target="kind === 'command' ? 'command' : draft.locationKind === 'bot_dm' ? 'bot_dm' : 'guild'"
+                    :reply-visibility="draft.replyVisibility"
+                    @patch="applyPatch"
+                />
+
+                <CommandRegistrationResult v-if="refused" :result="refused" @dismiss="refused = null" />
+                <p v-if="errors.general" class="error" role="alert">{{ errors.general }}</p>
+
+                <footer class="footer">
+                    <AppButton variant="secondary" @click="emit('close')">{{ t('common.cancel') }}</AppButton>
+                    <AppButton
+                        type="submit"
+                        data-test="create"
+                        :loading="creating"
+                        :disabled="kind === null || creating"
+                    >
+                        {{ t('behaviors.add.create') }}
+                    </AppButton>
+                </footer>
+            </Stack>
+        </form>
     </AppModal>
 </template>
 
 <style scoped>
-.modal-body {
-    display: flex;
-    flex-direction: column;
-    gap: 0.9rem;
-}
-
-.step-hint {
-    margin: 0;
-    font-size: 0.9rem;
-    color: var(--text-muted);
-}
-
-/* ── form fields ─────────────────────────────────────────────── */
-.form-section {
-    display: flex;
-    flex-direction: column;
-    gap: 0.65rem;
-}
-.field { display: flex; flex-direction: column; gap: 0.25rem; }
-.label {
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: var(--text-muted);
-    display: flex;
-    gap: 0.4rem;
-    align-items: center;
-}
-
-.section-heading {
-    font-size: 0.72rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--text-muted);
-    padding-bottom: 0.2rem;
-    border-bottom: 1px solid var(--border);
-}
-
-/* trigger-type 小卡片 */
-.trigger-type-cards {
+.intro { margin: 0; color: var(--text); font-size: 0.9rem; }
+.field-label { font-size: 0.75rem; color: var(--text-muted); font-weight: 600; }
+.kind-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.4rem;
 }
-.trigger-card {
-    display: flex;
+.kind {
+    display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: 0.35rem;
-    padding: 0.6rem 0.5rem;
-    border-radius: var(--radius-sm);
+    min-height: 2.25rem;
     border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
     background: var(--bg-page);
-    cursor: pointer;
+    color: var(--text);
     font: inherit;
-    font-size: 0.85rem;
-    color: var(--text-muted);
-    transition: background 0.1s, border-color 0.1s, color 0.1s;
+    font-size: 0.86rem;
+    cursor: pointer;
 }
-.trigger-card:hover { background: var(--bg-surface-hover); color: var(--text); }
-.trigger-card.selected {
-    background: var(--accent-bg);
+.kind.on {
     border-color: var(--accent);
-    color: var(--accent-text-strong);
-    font-weight: 600;
+    background: var(--accent);
+    color: var(--accent-contrast, #fff);
 }
-
-/* ── footer actions ──────────────────────────────────────────── */
-.error { color: var(--danger); font-size: 0.85rem; margin: 0; }
-.actions {
+.kind:disabled {
+    cursor: not-allowed;
+    border-style: dashed;
+    background: transparent;
+    color: var(--text-muted);
+}
+.denied { margin: 0; font-size: 0.78rem; line-height: 1.5; color: var(--text-muted); }
+.mono :deep(input) { font-family: var(--font-mono, ui-monospace, monospace); }
+.preset {
     display: flex;
-    justify-content: flex-end;
-    gap: 0.5rem;
-    padding-top: 0.25rem;
+    flex-direction: column;
+    gap: 0.15rem;
+    padding: 0.5rem 0.65rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-page);
 }
-
-@media (max-width: 480px) {
-    .trigger-type-cards { grid-template-columns: 1fr; }
-}
+.preset-value { font-size: 0.85rem; color: var(--text-strong); }
+.secret-for { font-size: 0.8rem; color: var(--text-muted); }
+.error { margin: 0; font-size: 0.82rem; color: var(--danger); }
+.footer { display: flex; justify-content: flex-end; gap: 0.5rem; }
 </style>

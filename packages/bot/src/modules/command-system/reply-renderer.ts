@@ -1,0 +1,204 @@
+/**
+ * command-system/reply-renderer.ts
+ *
+ * ReplyRenderer (#140): the one place a BehaviorReply reaches Discord, for
+ * both targets a behavior answers.
+ *
+ *   interaction — a Command Trigger. Only the invoker sees the reply unless
+ *     it says `ephemeral: false`. A command that was deferred (ephemeral,
+ *     while the webhook ran) is answered through the plugin defer table
+ *     (`planRespond`): same visibility → fill the placeholder in place;
+ *     public → follow up publicly, then delete the placeholder. Not yet
+ *     acknowledged (the built-in login answers at once) → reply directly.
+ *   message — a Message Trigger. In a DM with the bot `ephemeral` changes
+ *     nothing; in a guild channel the reply is public by default and
+ *     `ephemeral: true` DMs the author instead — never the channel, also
+ *     when the DM fails.
+ *
+ * Mentions are never parsed (a reply comes from an external service). A
+ * Discord refusal comes back as `{ ok: false }` for the caller to log and
+ * count — nothing here swallows it.
+ *
+ * renderFailure is what the end user sees when an action fails (#114): a
+ * generic localized line, never the receiver's error text — that goes to
+ * the log and the behavior's stats only — and never in a guild channel.
+ */
+
+import {
+  ChannelType,
+  MessageFlags,
+  type ChatInputCommandInteraction,
+  type Message,
+  type SendableChannels,
+} from "discord.js";
+import { planRespond } from "../plugin-system/plugin-defer-state.js";
+import { botEventLog } from "../bot-events/bot-event-log.js";
+import { resolveLocale, t } from "../../i18n/index.js";
+import { hasVisibleReply, type BehaviorReply } from "./behavior-reply.js";
+import type { ReplyVisibility } from "../behavior/models/behavior-definition.model.js";
+
+export type ReplyTarget =
+  | { kind: "interaction"; interaction: ChatInputCommandInteraction }
+  | { kind: "message"; message: Message };
+
+export type RenderOutcome =
+  | { ok: true; via: "interaction" | "channel" | "dm" | "none" }
+  /** `dmFailed`: an ephemeral guild reply could not reach the author. */
+  | { ok: false; error: string; dmFailed?: true };
+
+const errorText = (err: unknown): string =>
+  err instanceof Error ? err.message : String(err);
+
+/** content / embeds / components with mentions off — what every send shares. */
+function messageBody(reply: BehaviorReply) {
+  return {
+    ...(reply.content ? { content: reply.content } : {}),
+    ...(reply.embeds?.length ? { embeds: reply.embeds } : {}),
+    ...(reply.components?.length ? { components: reply.components } : {}),
+    allowedMentions: { parse: [] as [] },
+  };
+}
+
+const withFlags = <T extends object>(body: T, flags: number) =>
+  flags !== 0 ? { ...body, flags } : body;
+
+export interface RenderOptions {
+  /**
+   * The behavior's stored default (replyVisibility): used when the reply
+   * itself does not say `ephemeral`; null = the target's own default.
+   */
+  visibility?: ReplyVisibility | null;
+}
+
+/**
+ * Who the reply is for: the response's `ephemeral` first, then the stored
+ * default (`private` = ephemeral), then the target's own default (left
+ * undefined).
+ */
+export function effectiveEphemeral(
+  reply: BehaviorReply,
+  visibility: ReplyVisibility | null | undefined,
+): boolean | undefined {
+  if (reply.ephemeral !== undefined) return reply.ephemeral;
+  return visibility ? visibility === "private" : undefined;
+}
+
+export async function renderReply(
+  reply: BehaviorReply,
+  target: ReplyTarget,
+  opts: RenderOptions = {},
+): Promise<RenderOutcome> {
+  const resolved: BehaviorReply = { ...reply, ephemeral: effectiveEphemeral(reply, opts.visibility) };
+  if (resolved.ephemeral === undefined) delete resolved.ephemeral;
+  try {
+    return target.kind === "interaction"
+      ? await renderToInteraction(resolved, target.interaction)
+      : await renderToMessage(resolved, target.message);
+  } catch (err) {
+    return { ok: false, error: errorText(err) };
+  }
+}
+
+async function renderToInteraction(
+  reply: BehaviorReply,
+  interaction: ChatInputCommandInteraction,
+): Promise<RenderOutcome> {
+  const acked = interaction.deferred || interaction.replied;
+  const extraFlags = reply.flags ?? 0;
+
+  if (!hasVisibleReply(reply)) {
+    if (acked) await interaction.deleteReply();
+    return { ok: true, via: "none" };
+  }
+
+  const body = messageBody(reply);
+  if (!acked) {
+    const ephemeral = reply.ephemeral ?? true;
+    await interaction.reply(
+      withFlags(body, (ephemeral ? MessageFlags.Ephemeral : 0) | extraFlags),
+    );
+    return { ok: true, via: "interaction" };
+  }
+
+  // Deferred: Discord fixed the placeholder's visibility at defer time.
+  const plan = planRespond(
+    { kind: "reply", ephemeral: interaction.ephemeral ?? true },
+    reply.ephemeral,
+  );
+  if (plan.action === "patch-original") {
+    // an edit can only carry SuppressEmbeds
+    await interaction.editReply(
+      withFlags(body, extraFlags & MessageFlags.SuppressEmbeds),
+    );
+    return { ok: true, via: "interaction" };
+  }
+  await interaction.followUp(
+    withFlags(body, (plan.ephemeral ? MessageFlags.Ephemeral : 0) | extraFlags),
+  );
+  // The reply already landed; a placeholder left behind only lingers
+  // until Discord expires it.
+  await interaction.deleteReply().catch(() => {});
+  return { ok: true, via: "interaction" };
+}
+
+async function renderToMessage(
+  reply: BehaviorReply,
+  message: Message,
+): Promise<RenderOutcome> {
+  if (!hasVisibleReply(reply)) return { ok: true, via: "none" };
+  const body = withFlags(messageBody(reply), reply.flags ?? 0);
+  const inBotDm = message.channel.type === ChannelType.DM;
+
+  if (!inBotDm && reply.ephemeral === true) {
+    try {
+      await message.author.send(body);
+    } catch (err) {
+      return { ok: false, error: errorText(err), dmFailed: true };
+    }
+    return { ok: true, via: "dm" };
+  }
+  await (message.channel as SendableChannels).send(body);
+  return { ok: true, via: "channel" };
+}
+
+/**
+ * Tell the user the action failed, without saying why (#114): a command's
+ * invoker only (a private placeholder is filled with it; a public one is
+ * deleted and the line follows up privately), a message author in
+ * the DM with the bot, or — for a guild message — in a DM to the author.
+ * A guild channel never hears about a failure: it would be noise on a
+ * broad trigger and could undo a reply meant to be private. If the DM
+ * fails too, nothing is said; the caller has logged it. Never throws.
+ */
+export async function renderFailure(target: ReplyTarget): Promise<void> {
+  try {
+    if (target.kind === "interaction") {
+      const { interaction } = target;
+      const content = t(resolveLocale(interaction), "behavior.action-failed");
+      if ((interaction.deferred || interaction.replied) && interaction.ephemeral === false) {
+        // a public placeholder (a leaf stored 'public'): the failure goes
+        // to the invoker alone, and the public "thinking…" goes away
+        await interaction.followUp({ content, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+        await interaction.deleteReply().catch(() => {});
+      } else if (interaction.deferred || interaction.replied) {
+        await interaction.editReply({ content, embeds: [], components: [], allowedMentions: { parse: [] } });
+      } else {
+        await interaction.reply({ content, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+      }
+      return;
+    }
+    const { message } = target;
+    const content = t(
+      resolveLocale({ guildLocale: message.guild?.preferredLocale ?? null }),
+      "behavior.action-failed",
+    );
+    const body = { content, allowedMentions: { parse: [] as [] } };
+    if (message.channel.type === ChannelType.DM) {
+      await (message.channel as SendableChannels).send(body);
+    } else {
+      await message.author.send(body);
+    }
+  } catch (err) {
+    botEventLog.record("warn", "bot", `reply-renderer: could not tell the user an action failed: ${errorText(err)}`);
+  }
+}

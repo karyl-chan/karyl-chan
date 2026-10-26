@@ -15,22 +15,26 @@ vi.hoisted(() => {
 // Let the host-policy check pass so the test exercises the fetch/redirect
 // path rather than the (separately-tested) host validation.
 vi.mock("../src/utils/host-policy.js", () => ({
-  assertExternalTarget: vi.fn().mockResolvedValue(undefined),
+  resolveWebhookTarget: vi.fn(async (u: string | URL) => ({
+    url: new URL(u),
+    addresses: [{ address: "203.0.113.10", family: 4 }],
+  })),
   HostPolicyError: class HostPolicyError extends Error {},
 }));
 
 import { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
 import { encryptSecret } from "../src/utils/crypto.js";
-import type { BehaviorRow } from "../src/modules/behavior/models/behavior.model.js";
+import type { BehaviorWebhookActionRow } from "../src/modules/behavior/models/behavior-webhook-action.model.js";
 
-function customBehavior(url: string): BehaviorRow {
+function customBehavior(url: string): BehaviorWebhookActionRow {
   return {
-    id: 1,
-    source: "custom",
-    webhookUrl: encryptSecret(url),
-    webhookSecret: null,
-    webhookAuthMode: null,
-  } as unknown as BehaviorRow;
+    behaviorId: 1,
+    url: encryptSecret(url),
+    secret: null,
+    authMode: null,
+    previousSecret: null,
+    previousSecretExpiresAt: null,
+  };
 }
 
 describe("WebhookForwarder redirect / SSRF handling", () => {
