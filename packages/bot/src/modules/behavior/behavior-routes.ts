@@ -10,7 +10,8 @@
  * 寫入路由（新增 / 修改 / 刪除 / 排序 / resync）在 S4（#136）以新模型重新
  * 提供；這個切片的 admin UI 是唯讀的。
  *
- * 權限：requireBehaviorAdmin（behavior.manage 或 admin）。
+ * 權限：requireBehaviorAdmin（behavior.manage 或 admin），在 schema 驗證之前。
+ * 拒絕一律是 `{ error: { code, message, field? } }`（behavior-api-error.ts）。
  */
 
 import type { FastifyInstance } from "fastify";
@@ -35,6 +36,11 @@ import {
   replaceGroupMembers,
 } from "./models/behavior-group-member.model.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
+import {
+  BehaviorApiError,
+  installBehaviorRouteValidation,
+} from "./behavior-api-error.js";
+import { idParams, parseRowId, snowflake } from "./behavior-schemas.js";
 
 export type { BehaviorRoutesOptions };
 
@@ -42,10 +48,27 @@ export async function registerBehaviorRoutes(
   server: FastifyInstance,
   options: BehaviorRoutesOptions = {},
 ): Promise<void> {
+  // One encapsulated scope: the strict validator and the uniform error
+  // body apply to the behavior routes and to nothing else.
+  await server.register(async (scope) => {
+    installBehaviorRouteValidation(scope);
+    // The gate runs before validation, so a caller without the
+    // capability learns nothing about the request shape.
+    scope.addHook("preValidation", async (request, reply) => {
+      if (!requireBehaviorAdmin(request, reply)) return reply;
+    });
+    registerReadAndTestRoutes(scope, options);
+    registerGroupMemberRoutes(scope);
+  });
+}
+
+function registerReadAndTestRoutes(
+  server: FastifyInstance,
+  options: BehaviorRoutesOptions,
+): void {
   // ── GET /api/behaviors ──────────────────────────────────────────────────────
 
   server.get("/api/behaviors", async (request, reply) => {
-    if (!requireBehaviorAdmin(request, reply)) return;
     const catalog = await loadBehaviorCatalog();
     // BH-6.1：附上 forward 統計（admin UI 顯示 last-fired / 健康警示）
     const ids = [
@@ -61,111 +84,118 @@ export async function registerBehaviorRoutes(
   // 直接回給 admin —— 「裝好了有沒有通」從猜變成按一下。不改任何狀態、
   // 不 relay 到任何頻道、不計入統計。
 
-  server.post("/api/behaviors/:id/test", async (request, reply) => {
-    if (!requireBehaviorAdmin(request, reply)) return;
-    const { id } = request.params as { id: string };
-    const numId = parseInt(id, 10);
-    if (isNaN(numId)) {
-      return reply.code(400).send({ error: "無效的 behavior ID" });
-    }
-    const row = await BehaviorDefinition.findByPk(numId);
-    if (!row) {
-      return reply.code(404).send({ error: "Behavior 不存在" });
-    }
-    const behavior = rowOfBehaviorDefinition(row);
-    const action = await BehaviorWebhookAction.findByPk(numId);
-    if (behavior.actionSource !== "webhook" || !action) {
-      return reply
-        .code(400)
-        .send({ error: "這個 behavior 沒有 webhook 動作可測（系統行為走內建動作）" });
-    }
-    const forwarder = options.forwarder ?? new WebhookForwarder();
-    const payload = {
-      content: "(test fire from admin UI)",
-      username: "karyl-admin-test",
-      avatar_url: "",
-      _meta: {
-        test: true,
-        behavior_id: behavior.id,
-        user: {
-          id: request.authUserId ?? "admin",
-          username: "admin-test",
-          global_name: null,
-          discriminator: "0",
-          avatar: null,
+  server.post(
+    "/api/behaviors/:id/test",
+    { schema: { params: idParams } },
+    async (request, reply) => {
+      const numId = parseRowId(request.params);
+      const row = await BehaviorDefinition.findByPk(numId);
+      if (!row) {
+        throw new BehaviorApiError("not_found", `behavior ${numId} does not exist`);
+      }
+      const behavior = rowOfBehaviorDefinition(row);
+      const action = await BehaviorWebhookAction.findByPk(numId);
+      if (behavior.actionSource !== "webhook" || !action) {
+        throw new BehaviorApiError(
+          "validation_failed",
+          "this behavior has no webhook action to test (the system behavior runs a built-in action)",
+        );
+      }
+      const forwarder = options.forwarder ?? new WebhookForwarder();
+      const payload = {
+        content: "(test fire from admin UI)",
+        username: "karyl-admin-test",
+        avatar_url: "",
+        _meta: {
+          test: true,
+          behavior_id: behavior.id,
+          user: {
+            id: request.authUserId ?? "admin",
+            username: "admin-test",
+            global_name: null,
+            discriminator: "0",
+            avatar: null,
+          },
         },
-      },
-    };
-    const result = await forwarder.forward(
-      rowOfBehaviorWebhookAction(action),
-      payload,
-    );
-    return reply.send({
-      ok: result.ok,
-      relayContent: result.relayContent,
-      relayEmbeds: result.relayEmbeds ?? [],
-      error: result.error ?? null,
-      errorCode: result.errorCode ?? null,
-    });
-  });
+      };
+      const result = await forwarder.forward(
+        rowOfBehaviorWebhookAction(action),
+        payload,
+      );
+      return reply.send({
+        ok: result.ok,
+        relayContent: result.relayContent,
+        relayEmbeds: result.relayEmbeds ?? [],
+        error: result.error ?? null,
+        errorCode: result.errorCode ?? null,
+      });
+    },
+  );
+}
 
-  // ── audience group 成員管理（BH-1）─────────────────────────────────────────
-  //
-  // group 以名字為單位（訊息觸發的 audienceGroupName），名單存
-  // behavior_group_members，同名 group 的 behaviors 共享。
+// ── audience group 成員管理（BH-1）─────────────────────────────────────────
+//
+// group 以名字為單位（訊息觸發的 audienceGroupName），名單存
+// behavior_group_members，同名 group 的 behaviors 共享。
 
+const groupParams = {
+  type: "object",
+  properties: { groupName: { type: "string", minLength: 1, maxLength: 200 } },
+  required: ["groupName"],
+  additionalProperties: false,
+} as const;
+
+const MAX_GROUP_MEMBERS = 1000;
+
+function groupNameOf(params: unknown): string {
+  const groupName = (params as { groupName: string }).groupName.trim();
+  if (!groupName) {
+    throw new BehaviorApiError("validation_failed", "groupName is required", "groupName");
+  }
+  return groupName;
+}
+
+function registerGroupMemberRoutes(server: FastifyInstance): void {
   // GET /api/behavior-groups/:groupName/members
-  server.get("/api/behavior-groups/:groupName/members", async (request, reply) => {
-    if (!requireBehaviorAdmin(request, reply)) return;
-    const groupName = decodeURIComponent(
-      (request.params as { groupName: string }).groupName,
-    ).trim();
-    if (!groupName) {
-      return reply.code(400).send({ error: "groupName 為必填" });
-    }
-    const members = await findGroupMembers(groupName);
-    return reply.send({ groupName, members });
-  });
+  server.get(
+    "/api/behavior-groups/:groupName/members",
+    { schema: { params: groupParams } },
+    async (request, reply) => {
+      const groupName = groupNameOf(request.params);
+      const members = await findGroupMembers(groupName);
+      return reply.send({ groupName, members });
+    },
+  );
 
   // PUT /api/behavior-groups/:groupName/members { userIds: string[] }
   // 全量替換（與 UI 的編輯-儲存模型一致；增/刪都走同一條）。
-  server.put("/api/behavior-groups/:groupName/members", async (request, reply) => {
-    if (!requireBehaviorAdmin(request, reply)) return;
-    const groupName = decodeURIComponent(
-      (request.params as { groupName: string }).groupName,
-    ).trim();
-    if (!groupName || groupName.length > 200) {
-      return reply.code(400).send({ error: "groupName 為必填（max 200）" });
-    }
-    const body = request.body as { userIds?: unknown };
-    if (!Array.isArray(body?.userIds)) {
-      return reply.code(400).send({ error: "userIds 為必填陣列" });
-    }
-    if (body.userIds.length > 1000) {
-      return reply.code(400).send({ error: "userIds 過長 (max 1000)" });
-    }
-    const userIds: string[] = [];
-    for (const raw of body.userIds) {
-      if (typeof raw !== "string") {
-        return reply.code(400).send({ error: "userIds 必須是字串陣列" });
-      }
-      const id = raw.trim();
-      if (!id) continue;
-      if (!/^\d{5,25}$/.test(id)) {
-        return reply
-          .code(400)
-          .send({ error: `無效的 user id：${id.slice(0, 30)}` });
-      }
-      userIds.push(id);
-    }
-    await replaceGroupMembers(groupName, userIds);
-    const members = await findGroupMembers(groupName);
-    botEventLog.record(
-      "info",
-      "bot",
-      `behavior-group: '${groupName}' 成員更新為 ${members.length} 人`,
-      { groupName, count: members.length, actor: request.authUserId ?? null },
-    );
-    return reply.send({ groupName, members });
-  });
+  server.put(
+    "/api/behavior-groups/:groupName/members",
+    {
+      schema: {
+        params: groupParams,
+        body: {
+          type: "object",
+          properties: {
+            userIds: { type: "array", maxItems: MAX_GROUP_MEMBERS, items: snowflake },
+          },
+          required: ["userIds"],
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request, reply) => {
+      const groupName = groupNameOf(request.params);
+      const { userIds } = request.body as { userIds: string[] };
+      await replaceGroupMembers(groupName, userIds);
+      const members = await findGroupMembers(groupName);
+      botEventLog.record(
+        "info",
+        "bot",
+        `behavior-group: '${groupName}' 成員更新為 ${members.length} 人`,
+        { groupName, count: members.length, actor: request.authUserId ?? null },
+      );
+      return reply.send({ groupName, members });
+    },
+  );
 }
