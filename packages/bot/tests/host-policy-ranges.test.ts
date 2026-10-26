@@ -163,3 +163,11 @@ describe("an empty DNS answer fails closed", () => {
     await expect(check()).rejects.toThrow(/解析/);
   });
 });
+
+describe("assertPublicMediaTarget wording", () => {
+  it("refuses as a media URL, not a webhook", async () => {
+    const err = await assertPublicMediaTarget("10.0.0.5", 443).catch((e: Error) => e);
+    expect(err).toBeInstanceOf(HostPolicyError);
+    expect((err as Error).message).toBe("媒體 URL 目標不被允許");
+  });
+});

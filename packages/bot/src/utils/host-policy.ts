@@ -244,7 +244,7 @@ export async function assertPublicMediaTarget(
       if (cls === "private") return !allowPrivate;
       return true;
     },
-    "Webhook 目標不被允許",
+    "媒體 URL 目標不被允許",
   );
 }
 
