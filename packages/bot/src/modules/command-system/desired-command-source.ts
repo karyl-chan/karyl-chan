@@ -29,6 +29,7 @@ import type {
   ManifestCommandOption,
   ManifestPluginCommand,
 } from "../plugin-system/plugin-registry.service.js";
+import { resolveDefaultMemberPermissions } from "../plugin-system/plugin-command-registry.service.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import {
   deriveRegistrationCall,
@@ -201,6 +202,10 @@ function pluginCommandDefinition(
     integrationTypes: parseIntegrationTypes(cmd.integration_types ?? []),
     contexts: parseContexts(cmd.contexts ?? []),
     options: cmd.options,
+    defaultMemberPermissions: resolveDefaultMemberPermissions(
+      cmd.default_member_permissions,
+      cmd.name,
+    ),
     localizations: {
       ...(descLoc ? { description_localizations: descLoc } : {}),
       ...(nameLoc ? { name_localizations: nameLoc } : {}),

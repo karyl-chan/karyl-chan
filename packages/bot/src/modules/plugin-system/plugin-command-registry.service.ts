@@ -151,6 +151,39 @@ const INTEGRATION_MAP: Record<string, ApplicationIntegrationType> = {
   user_install: ApplicationIntegrationType.UserInstall,
 };
 
+/**
+ * Manifest 的 default_member_permissions（權限旗標名稱）→ Discord 需要的
+ * bitfield 十進位字串。未設定或無法辨識時回 null（無法辨識記 warn）。
+ * 軌一（guild feature）與軌三（CommandReconciler）共用。
+ */
+export function resolveDefaultMemberPermissions(
+  raw: string | undefined,
+  cmdName: string,
+): string | null {
+  if (typeof raw !== "string" || raw.length === 0) return null;
+  // Discord's API expects defaultMemberPermissions as a bigint string.
+  // Plugin authors typically write the SCREAMING_SNAKE form from
+  // Discord's docs ("MANAGE_GUILD"), but discord.js v14's
+  // PermissionFlagsBits keys are PascalCase ("ManageGuild"). Accept
+  // both: try the literal key first, then convert SNAKE → Pascal.
+  const flags = PermissionFlagsBits as Record<string, bigint>;
+  const pascal = raw.includes("_")
+    ? raw
+        .toLowerCase()
+        .split("_")
+        .map((s) => (s.length === 0 ? "" : s[0].toUpperCase() + s.slice(1)))
+        .join("")
+    : raw;
+  const flag = flags[raw] ?? flags[pascal];
+  if (typeof flag === "bigint") return flag.toString();
+  botEventLog.record(
+    "warn",
+    "bot",
+    `plugin-commands: unknown default_member_permissions '${raw}' on command '${cmdName}'; skipped`,
+  );
+  return null;
+}
+
 function manifestToApplicationCommand(
   cmd: ManifestCommand,
 ): ApplicationCommandData {
@@ -185,35 +218,11 @@ function manifestToApplicationCommand(
       .filter((t): t is ApplicationIntegrationType => t !== undefined);
     if (mapped.length > 0) data.integrationTypes = mapped;
   }
-  if (
-    typeof cmd.default_member_permissions === "string" &&
-    cmd.default_member_permissions.length > 0
-  ) {
-    // Discord's API expects defaultMemberPermissions as a bigint string.
-    // Plugin authors typically write the SCREAMING_SNAKE form from
-    // Discord's docs ("MANAGE_GUILD"), but discord.js v14's
-    // PermissionFlagsBits keys are PascalCase ("ManageGuild"). Accept
-    // both: try the literal key first, then convert SNAKE → Pascal.
-    const flags = PermissionFlagsBits as Record<string, bigint>;
-    const raw = cmd.default_member_permissions;
-    const pascal = raw.includes("_")
-      ? raw
-          .toLowerCase()
-          .split("_")
-          .map((s) => (s.length === 0 ? "" : s[0].toUpperCase() + s.slice(1)))
-          .join("")
-      : raw;
-    const flag = flags[raw] ?? flags[pascal];
-    if (typeof flag === "bigint") {
-      data.defaultMemberPermissions = flag.toString();
-    } else {
-      botEventLog.record(
-        "warn",
-        "bot",
-        `plugin-commands: unknown default_member_permissions '${raw}' on command '${cmd.name}'; skipped`,
-      );
-    }
-  }
+  const perms = resolveDefaultMemberPermissions(
+    cmd.default_member_permissions,
+    cmd.name,
+  );
+  if (perms !== null) data.defaultMemberPermissions = perms;
   return data as unknown as ApplicationCommandData;
 }
 

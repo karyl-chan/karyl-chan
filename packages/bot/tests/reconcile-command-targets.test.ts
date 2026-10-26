@@ -199,6 +199,46 @@ describe("reconcile — registration targets", () => {
     expect(world.app.names()).toEqual([]);
   });
 
+  it("a track-3 plugin command carries its manifest default_member_permissions", async () => {
+    const { Plugin } = await import(
+      "../src/modules/plugin-system/models/plugin.model.js"
+    );
+    await Plugin.destroy({ where: {} });
+    const plugin = await Plugin.create({
+      pluginKey: "p2",
+      name: "p2",
+      version: "1.0.0",
+      url: "http://p2.invalid",
+      enabled: true,
+      status: "active",
+      manifestJson: JSON.stringify({ schema_version: "1" }),
+    } as Record<string, unknown>);
+    await PluginCommand.create({
+      pluginId: plugin.getDataValue("id"),
+      guildId: null,
+      name: "admin-tool",
+      featureKey: null,
+      manifestJson: JSON.stringify({
+        name: "admin-tool",
+        description: "admin tool",
+        scope: "global",
+        integration_types: ["guild_install"],
+        contexts: ["Guild"],
+        default_member_permissions: "MANAGE_GUILD",
+      }),
+    } as Record<string, unknown>);
+    const world = makeWorld(["g1"]);
+    const reconciler = new CommandReconciler(() => world.client);
+
+    await reconciler.reconcileAll();
+    const [created] = [...world.app.store.values()];
+    expect(created?.defaultMemberPermissions?.bitfield).toBe(32n);
+
+    // 第二次 reconcile：Discord 現況已一致，不應再 patch
+    await reconciler.reconcileAll();
+    expect(world.app.edit).not.toHaveBeenCalled();
+  });
+
   it("reconcileForGuild only registers commands whose target covers that guild", async () => {
     await seedSlashBehavior({ placementGuildId: "g1", slashCommandName: "one" });
     await seedSlashBehavior({ slashCommandName: "every" });
