@@ -32,7 +32,7 @@ vi.mock("../src/modules/admin/admin-login.service.js", () => ({
 import { ChannelType } from "discord.js";
 import { sequelize } from "../src/db.js";
 import { BehaviorDefinition } from "../src/modules/behavior/models/behavior-definition.model.js";
-import { addGroupMember } from "../src/modules/behavior/models/behavior-group-member.model.js";
+import { BehaviorGroupMember } from "../src/modules/behavior/models/behavior-group-member.model.js";
 import { BehaviorStat } from "../src/modules/behavior/models/behavior-stats.model.js";
 import { mintLoginLink } from "../src/modules/admin/admin-login.service.js";
 import {
@@ -176,7 +176,7 @@ describe("bot DM triggers", () => {
       audienceKind: "group",
       audienceGroupName: "vip",
     });
-    await addGroupMember("vip", "U2");
+    await BehaviorGroupMember.create({ groupName: "vip", userId: "U2" });
     const forwarder = makeForwarder();
     const m = matcherWith(forwarder);
 

@@ -449,7 +449,9 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
    * BH-2.3 — the behavior custom-webhook contract. The bot-side test
    * (`behavior-webhook-contract.test.ts`) locks payload/response shape
    * against these; external webhook authors can read this block as the
-   * canonical schema.
+   * canonical schema. The prose version, with a reference receiver that
+   * is tested against these vectors, is
+   * packages/bot/docs/features/behavior-webhook-protocol.md.
    */
   behaviorWebhook: {
     signing: {

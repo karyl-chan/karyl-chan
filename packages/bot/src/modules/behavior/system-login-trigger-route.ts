@@ -420,7 +420,8 @@ export function registerSystemLoginTriggerRoute(
     "/api/behaviors/system/login/trigger",
     {
       schema: { body: loginTriggerSchema },
-      // before the body is even read: only an owner may touch the login
+      // before the body is validated: only an owner may touch the login,
+      // and a caller who is not one learns nothing about its shape
       preValidation: async (request, reply) => {
         if (!requireOwner(request, reply, deps.ownerIds, "change the login trigger")) return reply;
       },

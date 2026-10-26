@@ -13,9 +13,6 @@
  *   GET  /api/behavior-groups/:groupName/members — 群組名單
  *   PUT  /api/behavior-groups/:groupName/members — 全量替換群組名單
  *
- * 寫入路由（新增 / 修改 / 刪除 / 排序 / resync）在 S4（#136）以新模型重新
- * 提供；這個切片的 admin UI 是唯讀的。
- *
  * 權限：requireBehaviorAdmin（behavior.manage 或 admin），在 schema 驗證之前。
  * 拒絕一律是 `{ error: { code, message, field? } }`（behavior-api-error.ts）。
  */

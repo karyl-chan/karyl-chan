@@ -185,10 +185,6 @@ export function toPatchBody(saved: MessageTriggerView, draft: MessageTriggerDraf
     return { ...(patch as BehaviorPatch), ifUpdatedAt: saved.updatedAt };
 }
 
-export function isDirty(saved: MessageTriggerView, draft: MessageTriggerDraft): boolean {
-    return toPatchBody(saved, draft) !== null;
-}
-
 /**
  * Whether a message would fire the pattern — the same test the bot makes
  * (behavior-trigger.ts `matchesTrigger`); 'invalid' for a regex that does

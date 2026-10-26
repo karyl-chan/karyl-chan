@@ -144,7 +144,7 @@ const presetSummary = computed(() => {
     return [
         p.registration === 'guild'
             ? t('behaviors.card.registrationGuild', { guild: props.guildNames.get(p.guildId) ?? p.guildId })
-            : t('behaviors.command.registration.global'),
+            : t('behaviors.card.registrationGlobal'),
         p.integrationTypes.map((i) => t(`behaviors.card.integration.${i}`)).join('＋'),
         p.contexts.map((c) => t(`behaviors.card.context.${c}`)).join('、'),
     ].join(' · ');
