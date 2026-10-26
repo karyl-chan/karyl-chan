@@ -92,12 +92,12 @@ _Avoid_: 用來泛稱所有 slash 指令
 Behavior 被觸發後要做的事，由一個 Action Source 提供。
 
 **Action Source（動作來源）**:
-動作的提供者：內建、webhook 或 plugin。
+管理員可選的動作提供者：webhook 或 plugin。
 _Avoid_: `source: custom / system`（舊稱）
 
-**Login Action（登入動作）**:
-唯一的內建動作：回覆管理介面的一次性登入連結。系統永遠保有至少一個啟用中的登入綁定。
-_Avoid_: admin-login 系統 behavior
+**System Behavior（系統指令）**:
+系統提供、固定存在的 behavior，目前只有登入；管理員只能改它的觸發方式，不能新增、刪除或停用。
+_Avoid_: 內建動作（它不是可選的動作來源）、admin-login
 
 **Plugin Action**:
 Plugin 宣告、與觸發面無關的動作，由管理員綁到觸發上。
