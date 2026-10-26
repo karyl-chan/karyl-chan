@@ -9,8 +9,14 @@ import {
 } from "../../utils/host-policy.js";
 
 export interface BehaviorRoutesOptions {
-  /** BH-6.2 test-fire 用；未提供時 route 自建（測試注入 stub 用）。 */
-  forwarder?: import("../command-system/webhook-forwarder.service.js").WebhookForwarder;
+  /**
+   * BH-6.2 test-fire 用（runtime 的 WebhookForwarder，由 route wiring 注入；
+   * 測試注入 stub）。test-fire 必填。
+   */
+  forwarder?: Pick<
+    import("../command-system/webhook-forwarder.service.js").WebhookForwarder,
+    "forward"
+  >;
   /**
    * 指令寫入向 Discord 註冊用（CommandReconciler）；未提供時註冊延後到
    * 下一次 reconcile。

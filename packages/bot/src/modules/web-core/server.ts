@@ -125,6 +125,8 @@ export interface WebServerOptions {
   reconciler?: import("../command-system/reconcile.service.js").CommandReconciler;
   /** Shared Discord command namespace (behavior command name checks). */
   commandNamespace?: import("../command-system/command-namespace.js").CommandNamespace;
+  /** The runtime's webhook forwarder (behavior test-fire). */
+  webhookForwarder?: import("../command-system/webhook-forwarder.service.js").WebhookForwarder;
 }
 
 export interface CreateWebServerOptions {
@@ -140,6 +142,8 @@ export interface CreateWebServerOptions {
   reconciler?: import("../command-system/reconcile.service.js").CommandReconciler;
   /** Shared Discord command namespace (behavior command name checks). */
   commandNamespace?: import("../command-system/command-namespace.js").CommandNamespace;
+  /** The runtime's webhook forwarder (behavior test-fire). */
+  webhookForwarder?: import("../command-system/webhook-forwarder.service.js").WebhookForwarder;
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -699,6 +703,7 @@ export async function createWebServer(
     bot,
     reconciler: options.reconciler,
     commandNamespace: options.commandNamespace,
+    webhookForwarder: options.webhookForwarder,
     dmInbox: options.dmInbox,
     dmLimiter: options.dmLimiter,
   });
@@ -747,6 +752,7 @@ export async function startWebServer(
     dmInbox: options.dmInbox,
     reconciler: options.reconciler,
     commandNamespace: options.commandNamespace,
+    webhookForwarder: options.webhookForwarder,
   });
   await server.listen({
     port: options.port,

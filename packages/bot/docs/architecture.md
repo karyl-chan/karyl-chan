@@ -169,10 +169,12 @@ is stored.
 `ensureSystemBehaviors` (startup); `getBehaviorCatalog` (read by
 command-system).
 
-**Depends on.** web-core; admin (audit + capability); command-system
-types only — the `CommandReconciler` and `CommandNamespace` are
-injected by the route wiring (`runtime.ts` → web server → module
-routes).
+**Depends on.** web-core; admin (audit + capability); bot-events;
+command-system types only — the `CommandReconciler`, `CommandNamespace`
+and `WebhookForwarder` are injected by the route wiring (`runtime.ts` →
+web server → module routes), so the command-system → behavior edge
+(command-system reads the catalog) is the only runtime one between the
+two modules.
 
 > Behavior **dispatch** (trigger → action) lives in `command-system`,
 > not here. This module is only the rule store and CRUD.
@@ -447,7 +449,7 @@ admin → bot-events                                           OK   (admin actio
 behavior → admin                                             OK   (audit + capability)
 command-system → behavior / plugin-system                    OK   (reads rules, dispatches)
 plugin-system ⇢ command-system (import type only)             OK   (CommandTarget / CommandNamespace types)
-behavior ⇢ command-system (import type only)                  OK   (CommandReconciler / CommandNamespace types; injected)
+behavior ⇢ command-system (import type only)                  OK   (CommandReconciler / CommandNamespace / WebhookForwarder; injected)
 plugin-system → feature-toggle / voice                       OK
 builtin-features → feature-toggle / bot-events / voice        OK
 builtin-features ↔ guild-management                           OK   (facade; builtin imports type only)
@@ -459,8 +461,8 @@ close a runtime cycle with the edge above. Where plugin registration
 needs a command-system service it gets it injected: `runtime.ts` builds
 the `CommandNamespace` and hands it over with
 `setPluginCommandNamespace()`; plugin-system only holds the type. The
-behavior write routes get the same `CommandNamespace` and the
-`CommandReconciler` through the web server's route deps.
+behavior routes get the same `CommandNamespace`, the `CommandReconciler`
+and the `WebhookForwarder` through the web server's route deps.
 
 ### Forbidden
 

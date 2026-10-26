@@ -15,6 +15,7 @@ vi.hoisted(() => {
 import Fastify, { type FastifyInstance } from "fastify";
 import { sequelize } from "../src/db.js";
 import { registerBehaviorRoutes } from "../src/modules/behavior/behavior-routes.js";
+import { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
 import { isValidWebhookUrl } from "../src/modules/behavior/behavior-helpers.js";
 import { encryptSecret } from "../src/utils/crypto.js";
 import { clearBehaviors, seedMessageTrigger } from "./behavior-fixtures.js";
@@ -28,7 +29,7 @@ beforeAll(async () => {
     request.authUserId = "test";
     request.authCapabilities = new Set(["admin"]);
   });
-  await registerBehaviorRoutes(server);
+  await registerBehaviorRoutes(server, { forwarder: new WebhookForwarder() });
   await server.ready();
 });
 

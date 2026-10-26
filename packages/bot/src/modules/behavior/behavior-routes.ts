@@ -34,7 +34,6 @@ import {
   rowOfBehaviorWebhookAction,
 } from "./models/behavior-webhook-action.model.js";
 import { findStatsBulk } from "./models/behavior-stats.model.js";
-import { WebhookForwarder } from "../command-system/webhook-forwarder.service.js";
 import {
   findGroupMembers,
   replaceGroupMembers,
@@ -114,7 +113,10 @@ function registerReadAndTestRoutes(
           "this behavior has no webhook action to test (the system behavior runs a built-in action)",
         );
       }
-      const forwarder = options.forwarder ?? new WebhookForwarder();
+      // injected (runtime.ts builds the one WebhookForwarder): behavior
+      // holds only command-system types, so the module edge stays one-way
+      const forwarder = options.forwarder;
+      if (!forwarder) throw new Error("WebhookForwarder not provided to behavior routes");
       const payload = {
         content: "(test fire from admin UI)",
         username: "karyl-admin-test",
