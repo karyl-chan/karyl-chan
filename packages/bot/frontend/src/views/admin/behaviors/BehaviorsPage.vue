@@ -127,6 +127,7 @@ async function onSelect(section: BehaviorSection) {
             :group-names="groupNames"
             @close="adding = false"
             @created="showCreated($event, mayDropDrafts)"
+            @reload="load"
         />
     </SidebarLayout>
 </template>

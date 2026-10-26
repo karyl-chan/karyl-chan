@@ -1411,12 +1411,13 @@
             },
             "reason": {
                 "messageInApp": "App commands holds commands only: the bot cannot read DMs between users or messages in servers it is not in.",
-                "commandInChannel": "Discord cannot limit a command to one channel. Add it in the server above, then limit channels in Discord’s Server Settings → Integrations.",
-                "commandLater": "Creating commands comes in a later update."
+                "commandInChannel": "Discord cannot limit a command to one channel. Add it in the server above, then limit channels in Discord’s Server Settings → Integrations."
             },
             "create": "Create",
             "created": "Created “{title}”.",
-            "done": "Done"
+            "done": "Done",
+            "commandNamePlaceholder": "e.g. status",
+            "commandPreset": "Visibility (set by this section; change it in the card afterwards)"
         },
         "command": {
             "resync": "Sync to Discord again",

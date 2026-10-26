@@ -1411,12 +1411,13 @@
             },
             "reason": {
                 "messageInApp": "App 指令區只能建立指令：bot 收不到使用者之間的私訊，也收不到它沒加入的伺服器裡的訊息。",
-                "commandInChannel": "Discord 無法把指令限定在單一頻道。請到上層的伺服器新增，再到 Discord 的「伺服器設定 → 整合」限制頻道。",
-                "commandLater": "指令的新增會在之後的更新開放。"
+                "commandInChannel": "Discord 無法把指令限定在單一頻道。請到上層的伺服器新增，再到 Discord 的「伺服器設定 → 整合」限制頻道。"
             },
             "create": "建立",
             "created": "已建立「{title}」。",
-            "done": "完成"
+            "done": "完成",
+            "commandNamePlaceholder": "例：status",
+            "commandPreset": "可見性（依分區預設，建立後可在卡片調整）"
         },
         "command": {
             "resync": "重新同步到 Discord",
