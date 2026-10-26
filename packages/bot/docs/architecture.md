@@ -143,7 +143,22 @@ backbone.
 - `reconcile.service.ts` — `CommandReconciler`: compute the desired
   set, diff against Discord's current state, create / patch / delete.
   `reconciler_owned_commands` records which commands the reconciler
-  owns so it cannot mistakenly delete track-1 in-process commands.
+  owns so it cannot mistakenly delete track-1 in-process commands; the
+  stale sweep is keyed by name + registration target. `registerOne(key)`
+  registers a single desired command inside the reconcile lock and
+  returns a typed per-target result.
+- `desired-command-source.ts` — `DesiredCommandSource` adapters that feed
+  the desired set: one for behaviors, one for track-3 `plugin_commands`.
+- `command-target.ts` — registration targets (`global`, `guild:<id>`,
+  `all_guilds`), their expansion over the guild cache, and the name
+  conflict rule. Pure.
+- `command-registration.ts` — `deriveRegistrationCall` (command
+  definition + leaves → Discord data, incl. the subcommand tree and
+  `defaultMemberPermissions`) and `commandNeedsPatch`. Pure.
+- `command-namespace.ts` — `CommandNamespace.check(name, target,
+  exclude)`: whether a command name is free in a target across built-in
+  commands, `plugin_commands` and every behavior command (disabled
+  included). Injected into plugin registration by `runtime.ts`.
 - `interaction-dispatcher.service.ts` — `InteractionDispatcher`:
   unified `interactionCreate` entry; in order, tries behaviors slash,
   plugin command, plugin component, then in-process command.
@@ -384,11 +399,18 @@ any module → web-core / utils / db.ts / config / logger     OK
 admin → bot-events                                           OK   (admin actions write log)
 behavior → admin                                             OK   (audit + capability)
 command-system → behavior / plugin-system                    OK   (reads rules, dispatches)
+plugin-system ⇢ command-system (import type only)             OK   (CommandTarget / CommandNamespace types)
 plugin-system → feature-toggle / voice                       OK
 builtin-features → feature-toggle / bot-events / voice        OK
 builtin-features ↔ guild-management                           OK   (facade; builtin imports type only)
 dm-inbox → admin / guild-management / bot-events              OK
 ```
+
+`plugin-system` never imports `command-system` at runtime — that would
+close a runtime cycle with the edge above. Where plugin registration
+needs a command-system service it gets it injected: `runtime.ts` builds
+the `CommandNamespace` and hands it over with
+`setPluginCommandNamespace()`; plugin-system only holds the type.
 
 ### Forbidden
 

@@ -71,6 +71,10 @@ Behavior 綁在某個 Command 的一個 Command Leaf 上；誰看得到、在哪
 Discord 註冊的單位，持有名稱與所有可見性設定，底下有一或多個 Command Leaf。
 _Avoid_: 用「指令」稱呼單一子指令
 
+**Registration Target（註冊目標）**:
+一個 Command 在 Discord 註冊到哪裡：全域、指定伺服器，或每個伺服器。Behavior 的指令只選全域或指定伺服器；「每個伺服器」給 plugin 在 manifest 寫死的指令與內建指令（舊 all_guilds 分頁的 behavior 在換表前暫時也是）。指令名稱在重疊的註冊目標內不能重複；全域指令與任何同名指令衝突。
+_Avoid_: scope（舊欄位，只分全域 / 伺服器）
+
 **Command Leaf（葉節點）**:
 指令底下一個可呼叫的路徑（指令本身或某個子指令），綁一個動作。根葉節點與子指令不並存。
 _Avoid_: subcommand behavior、子行為
