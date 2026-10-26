@@ -187,7 +187,7 @@ async function create() {
             </Stack>
         </form>
         <button
-            v-else-if="!isRoot"
+            v-else
             type="button"
             class="add"
             data-test="add-leaf"
@@ -196,6 +196,7 @@ async function create() {
         >
             ＋ {{ t('behaviors.leaf.add') }}
         </button>
+        <p v-if="isRoot && !adding" class="hint">{{ t('behaviors.leaf.convertHint', { command: command.name }) }}</p>
     </Stack>
 </template>
 

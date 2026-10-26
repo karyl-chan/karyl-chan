@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@iconify/vue';
 import {
@@ -29,6 +29,7 @@ import BehaviorActionDetails from './BehaviorActionDetails.vue';
 import BehaviorSourceNotice from './BehaviorSourceNotice.vue';
 import CommandRegistrationResult from './CommandRegistrationResult.vue';
 import CommandVisibilityFields from './CommandVisibilityFields.vue';
+import ConvertToSubcommandDialog from './ConvertToSubcommandDialog.vue';
 import SubcommandList from './SubcommandList.vue';
 import { NO_ERRORS, errorsFromRefusal, isStale, type FormErrors } from './behavior-errors';
 import { checkCommandDraft, commandDraftErrors, commandFieldsWithErrorLine } from './command-check';
@@ -107,6 +108,19 @@ function onLeafWrote(result: { command: CommandView; registration?: Registration
 
 function onRefused(err: unknown) {
     showRegistration(registrationFailure(t, err, props.guildNames));
+}
+
+// ── board 6: a single command gains subcommands ─────────────────────────────
+
+const converting = ref(false);
+const leafList = ref<InstanceType<typeof SubcommandList> | null>(null);
+
+async function onConverted(result: { command: CommandView; registration: RegistrationReport }) {
+    converting.value = false;
+    onLeafWrote(result);
+    // "convert and add a subcommand": straight on to the new one
+    await nextTick();
+    leafList.value?.openAdd();
 }
 
 async function resync() {
@@ -419,15 +433,25 @@ const registrationTarget = computed(() =>
 
                 <SubcommandList
                     v-if="!isSystem"
+                    ref="leafList"
                     :command="command"
                     @wrote="onLeafWrote"
                     @refused="onRefused"
                     @removed="showRegistration(registrationResult(t, $event, guildNames))"
                     @reload="emit('reload')"
                     @delete-command="removeCommand"
+                    @convert="converting = true"
+                />
+                <ConvertToSubcommandDialog
+                    v-if="!isSystem && isRoot"
+                    :visible="converting"
+                    :command="command"
+                    :guild-names="guildNames"
+                    @close="converting = false"
+                    @converted="onConverted"
                 />
 
-                <ul v-else class="leaves">
+                <ul v-if="isSystem" class="leaves">
                     <li v-for="leaf in command.leaves" :key="leaf.id" class="leaf">
                         <header class="leaf-head">
                             <code class="leaf-path">/{{ leafPath(leaf) }}</code>

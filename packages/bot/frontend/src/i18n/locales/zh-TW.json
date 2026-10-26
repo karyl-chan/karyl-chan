@@ -1520,7 +1520,19 @@
             "lastMessage": "指令至少要有一個子指令，所以不能只刪最後一個。要改成刪除整個 /{command} 嗎？",
             "add": "加入子指令",
             "addTitle": "/{command} 的新子指令",
-            "create": "加入並同步到 Discord"
+            "create": "加入並同步到 Discord",
+            "convertHint": "/{command} 是單一指令：加入子指令時，會先替它現在的動作取一個子指令名稱。"
+        },
+        "convert": {
+            "title": "替 /{command} 加入子指令",
+            "intro": "Discord 規定：指令有子指令之後，/{command} 本身就不能再直接執行。所以要先替它現在的動作取一個子指令名稱，把它搬到下一層。",
+            "name": "現有動作的新名稱",
+            "now": "現在",
+            "after": "轉換後",
+            "sameAction": "（動作不變）",
+            "nextLeaf": "接著設定的新子指令",
+            "note": "同步後，使用者原本輸入的 /{command} 會變成要再選子指令。指令的可見性設定不變。",
+            "submit": "轉換並新增子指令"
         }
     },
     "config": {

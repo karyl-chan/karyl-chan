@@ -1520,7 +1520,19 @@
             "lastMessage": "A command needs at least one subcommand, so the last one cannot be deleted alone. Delete /{command} instead?",
             "add": "Add subcommand",
             "addTitle": "New subcommand of /{command}",
-            "create": "Add and sync to Discord"
+            "create": "Add and sync to Discord",
+            "convertHint": "/{command} is a single command: adding a subcommand first moves its current action under a subcommand name."
+        },
+        "convert": {
+            "title": "Add subcommands to /{command}",
+            "intro": "Discord's rule: once a command has subcommands, /{command} itself can no longer be run. So its current action first gets a subcommand name and moves one level down.",
+            "name": "New name for the current action",
+            "now": "Now",
+            "after": "After",
+            "sameAction": "(same action)",
+            "nextLeaf": "The new subcommand you set up next",
+            "note": "Once synced, people who type /{command} have to pick a subcommand. The command's visibility does not change.",
+            "submit": "Convert and add a subcommand"
         }
     },
     "config": {
