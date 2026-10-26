@@ -6,6 +6,8 @@ import {
   type AdminCapability,
 } from "../admin/admin-capabilities.js";
 import { decryptSecret } from "../../utils/crypto.js";
+import { webhookAllowlist } from "../../config.js";
+import type { AllowlistEntry } from "../../utils/webhook-allowlist.js";
 import type { BehaviorRow } from "./models/behavior.model.js";
 import {
   HostPolicyError,
@@ -108,9 +110,10 @@ export function requireBehaviorScope(
  */
 export async function isValidWebhookUrl(
   value: string,
+  allowlist: readonly AllowlistEntry[] = webhookAllowlist,
 ): Promise<{ ok: true } | { ok: false; reason: string; code: HostPolicyCode }> {
   try {
-    await resolveWebhookTarget(value);
+    await resolveWebhookTarget(value, allowlist);
   } catch (err) {
     if (err instanceof HostPolicyError) {
       return { ok: false, reason: err.message, code: err.code };

@@ -1,7 +1,6 @@
 import { lookup } from "dns/promises";
 import { isIP } from "net";
 import { moduleLogger } from "../logger.js";
-import { config } from "../config.js";
 import type { PinnedAddress } from "./pinned-dispatcher.js";
 import {
   classifyAddress,
@@ -11,7 +10,6 @@ import {
 import {
   allowlistMatches,
   normalizeHostname,
-  parseAllowlistEntries,
   type AllowlistEntry,
 } from "./webhook-allowlist.js";
 
@@ -384,9 +382,7 @@ function judgeWebhookAddress(
  */
 export async function resolveWebhookTarget(
   rawUrl: string | URL,
-  allowlist: readonly AllowlistEntry[] = parseAllowlistEntries(
-    config.behavior.webhookPrivateAllowlist,
-  ),
+  allowlist: readonly AllowlistEntry[],
 ): Promise<WebhookTarget> {
   let url: URL;
   try {

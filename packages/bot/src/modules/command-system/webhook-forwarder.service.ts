@@ -28,6 +28,8 @@ import {
   type WebhookTarget,
 } from "../../utils/host-policy.js";
 import { createPinnedAgent } from "../../utils/pinned-dispatcher.js";
+import { webhookAllowlist } from "../../config.js";
+import type { AllowlistEntry } from "../../utils/webhook-allowlist.js";
 import { decryptSecret } from "../../utils/crypto.js";
 import type { BehaviorRow } from "../behavior/models/behavior.model.js";
 import type { ForwardResult, SanitizedEmbed } from "./types.js";
@@ -113,6 +115,15 @@ const PLUGIN_WEBHOOK_TOKEN_HEADER = "x-plugin-webhook-token";
 // ── WebhookForwarder ─────────────────────────────────────────────────────────
 
 export class WebhookForwarder {
+  /**
+   * @param allowlist  WEBHOOK_PRIVATE_ALLOWLIST entries the target policy
+   *                   applies; defaults to the boot-parsed config value
+   *                   (tests inject their own).
+   */
+  constructor(
+    private readonly allowlist: readonly AllowlistEntry[] = webhookAllowlist,
+  ) {}
+
   /**
    * 轉發 behavior webhook POST。
    *
@@ -252,7 +263,7 @@ export class WebhookForwarder {
     // 回傳的 addresses 是實際檢查過的 IP，下面的連線只會打這些 IP。
     let target: WebhookTarget;
     try {
-      target = await resolveWebhookTarget(url);
+      target = await resolveWebhookTarget(url, this.allowlist);
     } catch (err) {
       if (!(err instanceof HostPolicyError)) throw err;
       return {

@@ -17,7 +17,10 @@
 
 import { selectSecretProvider } from "./adapters/secret-provider.js";
 import { FileSecretProvider } from "./adapters/file-secret-provider.js";
-import { parseAllowlistEntries } from "./utils/webhook-allowlist.js";
+import {
+  parseAllowlistEntries,
+  type AllowlistEntry,
+} from "./utils/webhook-allowlist.js";
 
 // Provider used at config load to source the boot-time secrets. Selected
 // from SECRET_PROVIDER; defaults to the in-process env provider.
@@ -412,10 +415,6 @@ function loadConfig(): AppConfig {
     }
   }
 
-  // Fail-fast: a malformed allowlist entry would otherwise silently
-  // allow nothing (throws "Config error: WEBHOOK_PRIVATE_ALLOWLIST …").
-  parseAllowlistEntries(cfg.behavior.webhookPrivateAllowlist);
-
   // production 額外強制檢查（對齊既有 main.ts / server.ts 的安全要求）
   if (env === "production") {
     if (cfg.bot.ownerIds.length === 0) {
@@ -432,6 +431,17 @@ function loadConfig(): AppConfig {
 }
 
 export const config: AppConfig = loadConfig();
+
+/**
+ * WEBHOOK_PRIVATE_ALLOWLIST parsed once at boot — callers of the webhook
+ * policy pass this (`config.behavior.webhookPrivateAllowlist` keeps the
+ * raw entries for the system-settings page). Fail-fast: a malformed
+ * entry throws "Config error: WEBHOOK_PRIVATE_ALLOWLIST …" at import
+ * instead of silently allowing nothing.
+ */
+export const webhookAllowlist: readonly AllowlistEntry[] = Object.freeze(
+  parseAllowlistEntries(config.behavior.webhookPrivateAllowlist),
+);
 
 /**
  * Compute the Fastify trustProxy value from the web config section and the
