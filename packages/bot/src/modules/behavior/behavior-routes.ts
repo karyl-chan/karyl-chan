@@ -67,6 +67,15 @@ import {
 
 export type { BehaviorRoutesOptions };
 
+/** The placeholder user a test-fire carries instead of a real identity (#101). */
+const TEST_FIRE_USER = {
+  id: "0",
+  username: "karyl-test",
+  global_name: null,
+  discriminator: "0",
+  avatar: null,
+} as const;
+
 export async function registerBehaviorRoutes(
   server: FastifyInstance,
   options: BehaviorRoutesOptions = {},
@@ -128,6 +137,10 @@ function registerReadAndTestRoutes(
   // 對 behavior 的 webhook 動作發一發測試 payload（_meta.test=true），把結果
   // 直接回給 admin —— 「裝好了有沒有通」從猜變成按一下。不改任何狀態、
   // 不 relay 到任何頻道、不計入統計。
+  //
+  // #101：測試請求不能被當成真的使用者 —— 以獨立的簽章前綴 / token header
+  // 送出（WebhookForwarder 的 test 選項），且不帶任何真實身分：_meta.user
+  // 是固定的佔位使用者，不是按下按鈕的管理員。
 
   server.post(
     "/api/behaviors/:id/test",
@@ -157,18 +170,13 @@ function registerReadAndTestRoutes(
         _meta: {
           test: true,
           behavior_id: behavior.id,
-          user: {
-            id: request.authUserId ?? "admin",
-            username: "admin-test",
-            global_name: null,
-            discriminator: "0",
-            avatar: null,
-          },
+          user: TEST_FIRE_USER,
         },
       };
       const result = await forwarder.forward(
         rowOfBehaviorWebhookAction(action),
         payload,
+        { test: true },
       );
       return reply.send({
         ok: result.ok,

@@ -136,6 +136,11 @@ migrations are tracked in the `SequelizeMeta` table:
   nonce-less form is refused with no transition window. Update every
   self-hosted receiver before upgrading — see
   [behaviors.md](features/behaviors.md#authentication-webhookauthmode).
+- **Behavior test-fires are signed as tests (2.0.0, #101).** The admin's
+  "test webhook" now signs under a `test:` prefix (token mode: the
+  `X-Plugin-Webhook-Test-Token` header) and sends a placeholder user, so a
+  receiver that verifies only real requests answers it with 401 — expected;
+  see [behaviors.md](features/behaviors.md#test-fire-requests).
 - **Pre-v2 DB compatibility.** The one-time encryption-v2 uplift
   migration is gone; this build can only decrypt v2 ciphertexts.
   Restoring a pre-v2 backup will throw when reading an encrypted

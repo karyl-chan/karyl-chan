@@ -158,9 +158,21 @@ describe("POST /api/behaviors/:id/test", () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ ok: true, relayContent: "pong" });
-    const calls = forward.mock.calls as unknown as Array<[unknown, { _meta: Record<string, unknown> }]>;
+    const calls = forward.mock.calls as unknown as Array<
+      [unknown, { _meta: Record<string, unknown> }, { test?: boolean }]
+    >;
     expect(calls[0][0]).toMatchObject({ behaviorId: ids.appLeaf });
     expect(calls[0][1]._meta).toMatchObject({ test: true, behavior_id: ids.appLeaf });
+    // #101: signed as a test, never as the admin who pressed the button
+    expect(calls[0][2]).toEqual({ test: true });
+    expect(calls[0][1]._meta.user).toEqual({
+      id: "0",
+      username: "karyl-test",
+      global_name: null,
+      discriminator: "0",
+      avatar: null,
+    });
+    expect(JSON.stringify(calls[0][1])).not.toContain('"admin"');
   });
 
   it("refuses the system behavior and unknown ids", async () => {

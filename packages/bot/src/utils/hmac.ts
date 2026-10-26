@@ -57,6 +57,8 @@ export const REPLAY_WINDOW_SECONDS = 300;
  * verification keeps accepting it).
  * `method` should be upper-cased (e.g. "POST").
  * `path` should be the URL pathname only (e.g. "/dm/greet/dispatch").
+ * `opts.prefix` is prepended to the signed string, so a signature made for
+ * one purpose never verifies for another that shares the key.
  * Returns the raw hex digest.
  */
 export function signBody(
@@ -66,11 +68,13 @@ export function signBody(
   timestamp: string,
   nonce: string | null,
   body: string,
+  opts: { prefix?: string } = {},
 ): string {
   const payload =
-    nonce === null
+    (opts.prefix ?? "") +
+    (nonce === null
       ? `${method.toUpperCase()}:${path}:${timestamp}:${body}`
-      : `${method.toUpperCase()}:${path}:${timestamp}:${nonce}:${body}`;
+      : `${method.toUpperCase()}:${path}:${timestamp}:${nonce}:${body}`);
   return createHmac("sha256", secret).update(payload).digest("hex");
 }
 
@@ -116,12 +120,13 @@ function constantTimeEq(a: string, b: string): boolean {
  * @param method   HTTP method, e.g. "POST"
  * @param urlPath  URL pathname, e.g. "/dm/greet/dispatch"
  * @param body     Request body string (already serialised)
- * @param opts     `ts` (unix-epoch-seconds string, default now) and `nonce`
- *                 (default a fresh one)
+ * @param opts     `ts` (unix-epoch-seconds string, default now), `nonce`
+ *                 (default a fresh one) and `prefix` (see signBody)
  */
 export interface OutboundSignatureOptions {
   ts?: string;
   nonce?: string;
+  prefix?: string;
 }
 
 export function buildOutboundSignatureHeaders(
@@ -133,7 +138,9 @@ export function buildOutboundSignatureHeaders(
 ): Record<string, string> {
   const timestamp = opts.ts ?? Math.floor(Date.now() / 1000).toString();
   const n = opts.nonce ?? generateNonce();
-  const sig = signBody(secret, method, urlPath, timestamp, n, body);
+  const sig = signBody(secret, method, urlPath, timestamp, n, body, {
+    prefix: opts.prefix,
+  });
   return {
     [TIMESTAMP_HEADER]: timestamp,
     [SIGNATURE_HEADER]: sig,
@@ -154,6 +161,8 @@ export interface InboundVerifyOptions {
    * the response, if any, must equal it.
    */
   boundNonce?: string;
+  /** The signed string's prefix (see signBody). */
+  prefix?: string;
 }
 
 /**
@@ -213,6 +222,7 @@ export function verifyInboundSignature(
     tsHeader,
     opts?.boundNonce ?? nonceHeader ?? null,
     rawBody,
+    { prefix: opts?.prefix },
   );
   if (!constantTimeEq(sigHeader, expected)) {
     return { ok: false, reason: "response signature mismatch" };

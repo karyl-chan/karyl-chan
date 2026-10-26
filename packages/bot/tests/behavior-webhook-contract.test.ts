@@ -54,6 +54,12 @@ import {
 import { CONTRACT_FIXTURES } from "@karyl-chan/plugin-wire";
 import { signBody, verifyInboundSignature } from "../src/utils/hmac.js";
 import { encryptSecret } from "../src/utils/crypto.js";
+import {
+  TEST_HEADER,
+  TEST_PREVIOUS_TOKEN_HEADER,
+  TEST_SIGNATURE_PREFIX,
+  TEST_TOKEN_HEADER,
+} from "../src/modules/command-system/webhook-forwarder.service.js";
 
 const C = CONTRACT_FIXTURES.behaviorWebhook;
 
@@ -243,6 +249,34 @@ describe("behavior webhook contract (BH-2.3)", () => {
     } finally {
       fetchSpy.mockRestore();
       resolve.mockRestore();
+    }
+  });
+
+  it("a test-fire is signed under the fixtures' prefix and headers", () => {
+    expect(TEST_SIGNATURE_PREFIX).toBe(C.signing.testPrefix);
+    expect(TEST_HEADER).toBe(C.signing.testHeader);
+    expect(TEST_TOKEN_HEADER).toBe(C.signing.testTokenHeader);
+    expect(TEST_PREVIOUS_TOKEN_HEADER).toBe(C.signing.testPreviousTokenHeader);
+    const prefix = { prefix: C.signing.testPrefix };
+    for (const g of [...C.signing.testGolden, ...C.signing.testResponseGolden]) {
+      expect(signBody(g.secret, g.method, g.path, g.ts, g.nonce, g.body, prefix)).toBe(g.expectedHex);
+    }
+  });
+
+  it("a golden test-fire response verifies only as a test, bound to its request nonce", () => {
+    for (const g of C.signing.testResponseGolden) {
+      const headers = new Headers({
+        [CONTRACT_FIXTURES.hmac.timestampHeader]: g.ts,
+        [CONTRACT_FIXTURES.hmac.signatureHeader]: g.expectedHex,
+      });
+      const verify = (boundNonce: string, prefix?: string) =>
+        verifyInboundSignature(g.secret, headers, g.body, Number(g.ts), g.method, g.path, {
+          boundNonce,
+          prefix,
+        });
+      expect(verify(g.nonce, C.signing.testPrefix)).toEqual({ ok: true });
+      expect(verify(g.nonce).ok).toBe(false);
+      expect(verify("f".repeat(32), C.signing.testPrefix).ok).toBe(false);
     }
   });
 

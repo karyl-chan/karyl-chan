@@ -130,6 +130,23 @@ export interface ContractFixtures {
       readonly responsePayloadFormat: string;
       /** Response vectors: `nonce` is the nonce the request carried. */
       readonly responseGolden: readonly HmacGoldenVector[];
+      /**
+       * An admin test-fire (#101) is marked with `testHeader: 1` and signed
+       * so it never verifies as a real request: in hmac mode the signed
+       * string (request and response alike) starts with `testPrefix`; in
+       * token mode the token travels in `testTokenHeader` instead of
+       * `x-plugin-webhook-token`. Its `_meta.user` is a placeholder, never
+       * the admin's identity.
+       */
+      readonly testPrefix: string;
+      readonly testHeader: string;
+      readonly testTokenHeader: string;
+      /** The previous token, during a rotation's grace period. */
+      readonly testPreviousTokenHeader: string;
+      /** A test-fire request vector, prefix included. */
+      readonly testGolden: readonly HmacGoldenVector[];
+      /** A test-fire response vector: prefix included, over the request nonce. */
+      readonly testResponseGolden: readonly HmacGoldenVector[];
     };
     readonly request: {
       readonly topLevelKeys: readonly string[];
@@ -453,6 +470,38 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
           body: '{"content":"pong"}',
           expectedHex:
             "6792665cfb2dfcee8737f07b587934ee0c5b85a93140b903e663a89778c8b9fc",
+        },
+      ],
+      testPrefix: "test:",
+      testHeader: "x-karyl-test",
+      testTokenHeader: "x-plugin-webhook-test-token",
+      testPreviousTokenHeader: "x-plugin-webhook-test-token-previous",
+      testGolden: [
+        {
+          // HMAC(secret, "test:" + "<METHOD>:<path>:<ts>:<nonce>:<body>")
+          name: "test-fire-request",
+          secret: "behavior-secret",
+          method: "POST",
+          path: "/hook",
+          ts: "1700000000",
+          nonce: "cafe0000000000000000000000000011",
+          body: '{"content":"(test fire from admin UI)"}',
+          expectedHex:
+            "33dd2bee9a0e44e715b86efd5c128f2919abaf11a4a69240a08c46255b8f7b34",
+        },
+      ],
+      testResponseGolden: [
+        {
+          // HMAC(secret, "test:" + "<METHOD>:<path>:<ts>:<request nonce>:<body>")
+          name: "test-fire-response",
+          secret: "behavior-secret",
+          method: "POST",
+          path: "/hook",
+          ts: "1700000000",
+          nonce: "cafe0000000000000000000000000011",
+          body: '{"content":"test ok"}',
+          expectedHex:
+            "bb0b792abcf9b9c94baa8eb30fdbd5766d468a8eab3f6015b5c59a7e8494a3da",
         },
       ],
     },

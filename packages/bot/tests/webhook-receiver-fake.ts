@@ -1,7 +1,8 @@
 /**
  * A fake behavior webhook receiver for forwarder tests: stubs `fetch` with
  * a 200 JSON response, optionally signed the way the reply contract asks —
- * over `<METHOD>:<path>:<ts>:<request nonce>:<body>` (#102).
+ * over `<METHOD>:<path>:<ts>:<request nonce>:<body>` (#102), with the
+ * `test:` prefix when it answers a test-fire (#101).
  */
 import { vi } from "vitest";
 import { signBody } from "../src/utils/hmac.js";
@@ -16,6 +17,8 @@ export interface FakeReceiverOptions {
    * legacy nonce-less form).
    */
   nonce?: "request" | "own" | "none";
+  /** Prepended to the signed string (`test:` for a test-fire). */
+  prefix?: string;
 }
 
 export function fakeReceiver(opts: FakeReceiverOptions) {
@@ -38,6 +41,7 @@ export function fakeReceiver(opts: FakeReceiverOptions) {
         ts,
         nonce,
         raw,
+        { prefix: opts.prefix },
       );
     }
     return new Response(raw, { status: 200, headers });

@@ -128,6 +128,56 @@ const PLUGIN_WEBHOOK_TOKEN_HEADER = "x-plugin-webhook-token";
 export const PREVIOUS_TOKEN_HEADER = "x-plugin-webhook-token-previous";
 export const PREVIOUS_SIGNATURE_HEADER = "x-karyl-signature-previous";
 
+/**
+ * Test-fire (#101): a marker header, where token mode puts the token
+ * instead, and the prefix of every signed string (request and response).
+ * A receiver that verifies only the real scheme thus refuses a test at the
+ * signature level. Published in CONTRACT_FIXTURES.behaviorWebhook.signing.
+ */
+export const TEST_HEADER = "x-karyl-test";
+export const TEST_TOKEN_HEADER = "x-plugin-webhook-test-token";
+export const TEST_PREVIOUS_TOKEN_HEADER = "x-plugin-webhook-test-token-previous";
+export const TEST_SIGNATURE_PREFIX = "test:";
+
+/** How one request is authenticated: a real one, or an admin test-fire. */
+interface SigningScheme {
+  tokenHeader: string;
+  previousTokenHeader: string;
+  signaturePrefix: string;
+  /** Extra headers that mark the request. */
+  marker: Record<string, string>;
+}
+
+const REAL_SCHEME: SigningScheme = {
+  tokenHeader: PLUGIN_WEBHOOK_TOKEN_HEADER,
+  previousTokenHeader: PREVIOUS_TOKEN_HEADER,
+  signaturePrefix: "",
+  marker: {},
+};
+
+const TEST_SCHEME: SigningScheme = {
+  tokenHeader: TEST_TOKEN_HEADER,
+  previousTokenHeader: TEST_PREVIOUS_TOKEN_HEADER,
+  signaturePrefix: TEST_SIGNATURE_PREFIX,
+  marker: { [TEST_HEADER]: "1" },
+};
+
+/** One POST: where, what, and with which keys and scheme. */
+interface PostRequest {
+  webhookUrl: string;
+  payload: Record<string, unknown>;
+  action: BehaviorWebhookActionRow;
+  secret: string | null;
+  /** The previous secret during a rotation's grace period. */
+  previous: string | null;
+  scheme: SigningScheme;
+}
+
+export interface ForwardOptions {
+  /** An admin test-fire: signed under the test prefix / test headers. */
+  test?: boolean;
+}
+
 // ── WebhookForwarder ─────────────────────────────────────────────────────────
 
 export class WebhookForwarder {
@@ -150,6 +200,7 @@ export class WebhookForwarder {
   async forward(
     action: BehaviorWebhookActionRow,
     payload: Record<string, unknown>,
+    opts: ForwardOptions = {},
   ): Promise<ForwardResult> {
     let webhookUrl: string;
     try {
@@ -193,18 +244,22 @@ export class WebhookForwarder {
         ? this.safeDecrypt(action.previousSecret, action.behaviorId)
         : null;
 
-    return this.doPost(webhookUrl, payload, action, rawSecret, rawPrevious);
+    return this.doPost({
+      webhookUrl,
+      payload,
+      action,
+      secret: rawSecret,
+      previous: rawPrevious,
+      scheme: opts.test ? TEST_SCHEME : REAL_SCHEME,
+    });
   }
 
   // ── 私有：HTTP POST ───────────────────────────────────────────────────────
 
-  private async doPost(
-    webhookUrl: string,
-    payload: Record<string, unknown>,
-    action: BehaviorWebhookActionRow,
-    rawSecret: string | null,
-    rawPrevious: string | null,
-  ): Promise<ForwardResult> {
+  private async doPost(request: PostRequest): Promise<ForwardResult> {
+    const { webhookUrl, payload, action, scheme } = request;
+    const rawSecret = request.secret;
+    const rawPrevious = request.previous;
     let url: URL;
     try {
       url = new URL(webhookUrl);
@@ -217,6 +272,7 @@ export class WebhookForwarder {
     const body = JSON.stringify(payload);
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
+      ...scheme.marker,
     };
 
     // HMAC 簽署（CR-2 兩 mode）。每個請求一個 nonce；回應的簽章必須綁定
@@ -225,9 +281,10 @@ export class WebhookForwarder {
     const nonce = generateNonce();
     if (rawSecret) {
       if (authMode === "token") {
-        // token mode：X-Plugin-Webhook-Token: <secret>（裸 shared secret）
-        headers[PLUGIN_WEBHOOK_TOKEN_HEADER] = rawSecret;
-        if (rawPrevious) headers[PREVIOUS_TOKEN_HEADER] = rawPrevious;
+        // token mode：X-Plugin-Webhook-Token: <secret>（裸 shared secret）；
+        // test-fire 改放 X-Plugin-Webhook-Test-Token（scheme 決定）
+        headers[scheme.tokenHeader] = rawSecret;
+        if (rawPrevious) headers[scheme.previousTokenHeader] = rawPrevious;
         headers[NONCE_HEADER] = nonce;
       } else if (authMode === "hmac") {
         const sigHeaders = buildOutboundSignatureHeaders(
@@ -235,7 +292,7 @@ export class WebhookForwarder {
           "POST",
           url.pathname,
           body,
-          { nonce },
+          { nonce, prefix: scheme.signaturePrefix },
         );
         Object.assign(headers, sigHeaders);
         if (rawPrevious) {
@@ -246,6 +303,7 @@ export class WebhookForwarder {
             sigHeaders[TIMESTAMP_HEADER]!,
             sigHeaders[NONCE_HEADER]!,
             body,
+            { prefix: scheme.signaturePrefix },
           );
         }
       }
@@ -351,7 +409,7 @@ export class WebhookForwarder {
         Math.floor(Date.now() / 1000),
         "POST",
         url.pathname,
-        { boundNonce: nonce },
+        { boundNonce: nonce, prefix: scheme.signaturePrefix },
       );
       if (!verdict.ok) {
         return fail(verdict.reason, res.status);
@@ -382,7 +440,8 @@ export class WebhookForwarder {
     if (!parsed.ok) {
       return fail(parsed.error, res.status);
     }
-    logReplyNotes(action.behaviorId, parsed.notes);
+    // a test-fire's notes go back to the admin, not into the log
+    if (scheme === REAL_SCHEME) logReplyNotes(action.behaviorId, parsed.notes);
     return { ok: true, reply: parsed.reply, notes: parsed.notes };
   }
 

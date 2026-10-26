@@ -4,7 +4,9 @@
  *   path 4: message trigger created over the admin write API (#136) →
  *           test-fire → REAL HTTP POST to a webhook sink → auth headers
  *           per mode (none / token / hmac, with the secret the API issued
- *           once) → signed-response verification → secret rotation: both
+ *           once; a test-fire is signed under the `test:` prefix / test
+ *           token header and carries no real identity, #101) →
+ *           signed-response verification → secret rotation: both
  *           signatures during the grace period, a response signed with the
  *           old secret still accepted
  *           + the command write API on Postgres: a command saved while the
@@ -131,7 +133,10 @@ async function api(
   return { status: res.status, body: await res.json().catch(() => null) };
 }
 
-/** The shared `<METHOD>:<path>:<ts>:<nonce>:<body>` HMAC-SHA256 scheme. */
+/**
+ * The shared `<METHOD>:<path>:<ts>:<nonce>:<body>` HMAC-SHA256 scheme; a
+ * test-fire signs it under the `test:` prefix (#101).
+ */
 function hmacSign(
   secret: string,
   method: string,
@@ -139,11 +144,15 @@ function hmacSign(
   ts: string,
   nonce: string,
   body: string,
+  prefix = "",
 ): string {
   return createHmac("sha256", secret)
-    .update(`${method.toUpperCase()}:${urlPath}:${ts}:${nonce}:${body}`)
+    .update(`${prefix}${method.toUpperCase()}:${urlPath}:${ts}:${nonce}:${body}`)
     .digest("hex");
 }
+
+/** Every request in this suite is an admin test-fire. */
+const TEST_PREFIX = "test:";
 
 // ─── Webhook sink ────────────────────────────────────────────────────────────
 
@@ -192,6 +201,7 @@ async function startSink(): Promise<Sink> {
         const ts = String(Math.floor(Date.now() / 1000));
         const nonce = nextForeignNonce ?? (req.headers["x-karyl-nonce"] as string);
         headers["x-karyl-timestamp"] = ts;
+        // a test-fire is answered under the same `test:` prefix
         headers["x-karyl-signature"] = hmacSign(
           nextSignSecret,
           "POST",
@@ -199,6 +209,7 @@ async function startSink(): Promise<Sink> {
           ts,
           nonce,
           payload,
+          req.headers["x-karyl-test"] === "1" ? TEST_PREFIX : "",
         );
       }
       res.writeHead(200, headers);
@@ -342,10 +353,12 @@ describe("behavior webhook + DM inbox E2E (PM-2.3, paths 4+5)", { skip: !DB_URL 
     assert.equal(hit.path, "/hook/none");
     const payload = JSON.parse(hit.body) as {
       content: string;
-      _meta: { test: boolean; behavior_id: number };
+      _meta: { test: boolean; behavior_id: number; user: { id: string } };
     };
     assert.equal(payload._meta.test, true);
     assert.equal(payload._meta.behavior_id, id);
+    assert.equal(payload._meta.user.id, "0", "a test-fire carries a placeholder user, not the admin");
+    assert.equal(hit.headers["x-karyl-test"], "1");
     assert.ok(payload.content.includes("test fire"));
     assert.equal(hit.headers["x-plugin-webhook-token"], undefined);
     assert.equal(hit.headers["x-karyl-signature"], undefined);
@@ -361,7 +374,9 @@ describe("behavior webhook + DM inbox E2E (PM-2.3, paths 4+5)", { skip: !DB_URL 
     assert.equal(result.relayContent, "token ok");
 
     const hit = sink!.hits.at(-1)!;
-    assert.equal(hit.headers["x-plugin-webhook-token"], secret);
+    // a test-fire sends the token under the test header only (#101)
+    assert.equal(hit.headers["x-plugin-webhook-test-token"], secret);
+    assert.equal(hit.headers["x-plugin-webhook-token"], undefined);
   });
 
   it("path 4: hmac mode signs the request and verifies the response fail-closed", async () => {
@@ -385,8 +400,13 @@ describe("behavior webhook + DM inbox E2E (PM-2.3, paths 4+5)", { skip: !DB_URL 
     assert.ok(ts && nonce && sig, "hmac mode must send all three headers");
     assert.equal(
       sig,
+      hmacSign(secret, "POST", "/hook/hmac", ts, nonce, hit.body, TEST_PREFIX),
+      "a test-fire's signature verifies under the test prefix",
+    );
+    assert.notEqual(
+      sig,
       hmacSign(secret, "POST", "/hook/hmac", ts, nonce, hit.body),
-      "request signature must verify with the shared scheme",
+      "… and never as a real request",
     );
 
     // 2. A response signed for ANOTHER request (its nonce) is refused —
@@ -437,12 +457,12 @@ describe("behavior webhook + DM inbox E2E (PM-2.3, paths 4+5)", { skip: !DB_URL 
     const nonce = hit.headers["x-karyl-nonce"] as string;
     assert.equal(
       hit.headers["x-karyl-signature"],
-      hmacSign(newSecret, "POST", "/hook/rotate", ts, nonce, hit.body),
+      hmacSign(newSecret, "POST", "/hook/rotate", ts, nonce, hit.body, TEST_PREFIX),
       "the standard header is signed with the NEW secret",
     );
     assert.equal(
       hit.headers["x-karyl-signature-previous"],
-      hmacSign(oldSecret, "POST", "/hook/rotate", ts, nonce, hit.body),
+      hmacSign(oldSecret, "POST", "/hook/rotate", ts, nonce, hit.body, TEST_PREFIX),
       "the previous secret's signature rides along during the grace period",
     );
   });
