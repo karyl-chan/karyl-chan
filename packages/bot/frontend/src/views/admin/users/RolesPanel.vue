@@ -12,7 +12,7 @@ import {
     type AdminRole
 } from '../../../api/admin';
 import { ApiError } from '../../../api/client';
-import { GLOBAL_CAPABILITY_KEYS, isBehaviorScopeToken, isPluginCapabilityToken } from '../../../libs/admin-capabilities';
+import { GLOBAL_CAPABILITY_KEYS, isPluginCapabilityToken } from '../../../libs/admin-capabilities';
 import { AppModal, AppTextField, useConfirm } from '@karyl-chan/ui';
 import RoleCapabilityModal from './RoleCapabilityModal.vue';
 
@@ -218,13 +218,10 @@ async function submitAdd() {
 // the modal now owns the granular editing surface. Splits the role's
 // stored capabilities into global tokens + per-guild grant counts.
 const SCOPED_GUILD_RE = /^guild:([^.:]+)\.(message|manage)$/;
-const SCOPED_BEHAVIOR_RE = /^behavior:.+\.manage$/;
 
 interface CapSummary {
     global: string[];
     perGuildCount: number;
-    perBehaviorTabCount: number;
-    legacyBehaviorCount: number;
     pluginCount: number;
     unknown: string[];
 }
@@ -232,8 +229,6 @@ interface CapSummary {
 function summariseCaps(role: AdminRole): CapSummary {
     const global: string[] = [];
     let perGuild = 0;
-    let perBehaviorTab = 0;
-    let legacyBehavior = 0;
     let plugin = 0;
     const unknown: string[] = [];
     const knownGlobal = new Set<string>(GLOBAL_CAPABILITY_KEYS);
@@ -241,11 +236,9 @@ function summariseCaps(role: AdminRole): CapSummary {
         if (knownGlobal.has(cap)) global.push(cap);
         else if (SCOPED_GUILD_RE.test(cap)) perGuild += 1;
         else if (isPluginCapabilityToken(cap)) plugin += 1;
-        else if (isBehaviorScopeToken(cap)) perBehaviorTab += 1;
-        else if (SCOPED_BEHAVIOR_RE.test(cap)) legacyBehavior += 1;
         else unknown.push(cap);
     }
-    return { global, perGuildCount: perGuild, perBehaviorTabCount: perBehaviorTab, legacyBehaviorCount: legacyBehavior, pluginCount: plugin, unknown };
+    return { global, perGuildCount: perGuild, pluginCount: plugin, unknown };
 }
 </script>
 
@@ -332,20 +325,6 @@ function summariseCaps(role: AdminRole): CapSummary {
                             {{ $t('admin.roles.pluginCapabilitySummary', { count: summariseCaps(role).pluginCount }) }}
                         </span>
                         <span
-                            v-if="summariseCaps(role).perBehaviorTabCount > 0"
-                            class="cap-tag scoped"
-                        >
-                            <Icon icon="material-symbols:forum-outline-rounded" width="14" height="14" />
-                            {{ $t('admin.roles.perBehaviorTabSummary', { count: summariseCaps(role).perBehaviorTabCount }) }}
-                        </span>
-                        <span
-                            v-if="summariseCaps(role).legacyBehaviorCount > 0"
-                            class="cap-tag legacy"
-                        >
-                            <Icon icon="material-symbols:history-rounded" width="14" height="14" />
-                            {{ $t('admin.roles.legacyBehaviorSummary', { count: summariseCaps(role).legacyBehaviorCount }) }}
-                        </span>
-                        <span
                             v-for="cap in summariseCaps(role).unknown"
                             :key="cap"
                             class="cap-tag unknown"
@@ -354,8 +333,6 @@ function summariseCaps(role: AdminRole): CapSummary {
                         <span
                             v-if="summariseCaps(role).global.length === 0
                                 && summariseCaps(role).perGuildCount === 0
-                                && summariseCaps(role).perBehaviorTabCount === 0
-                                && summariseCaps(role).legacyBehaviorCount === 0
                                 && summariseCaps(role).pluginCount === 0
                                 && summariseCaps(role).unknown.length === 0"
                             class="muted"
@@ -554,11 +531,6 @@ function summariseCaps(role: AdminRole): CapSummary {
 .cap-tag.scoped {
     background: var(--bg-surface-2);
     color: var(--text);
-    font-family: inherit;
-}
-.cap-tag.legacy {
-    background: rgba(245, 158, 11, 0.12);
-    color: var(--warning, #d97706);
     font-family: inherit;
 }
 .cap-tag.unknown {

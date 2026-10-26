@@ -90,17 +90,13 @@ The tokens form three concentric layers, plus two extensions:
 | `guild.message` | Read and write channel messages and reactions across all guilds. |
 | `guild.manage` | Manage members, roles, settings, and bot features across all guilds. |
 | `system.read` | View system events and statistics. |
-| `behavior.manage` | Manage all behaviors and scope tabs. |
+| `behavior.manage` | Manage all behaviors. |
 
 **3. Guild-scoped tokens** restrict the guild range to one guild:
 `guild:<guildId>.message`, `guild:<guildId>.manage`. For example, a
 role that only holds `guild:123.manage` can manage guild `123` only.
 
-**4. Behavior-scoped tokens** — `behavior:<scopeKey>.manage`. Can CRUD
-behaviors under one scope tab, but cannot add or delete the tab itself
-(those operations belong to `admin` / `behavior.manage`).
-
-**5. Plugin-scoped tokens** — `plugin:<pluginKey>:<capKey>`. Capabilities
+**4. Plugin-scoped tokens** — `plugin:<pluginKey>:<capKey>`. Capabilities
 declared by a plugin. They form the full **plugin authorisation loop**:
 
 - The plugin lists its capabilities in its manifest with

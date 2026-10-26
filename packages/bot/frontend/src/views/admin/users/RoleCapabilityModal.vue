@@ -6,18 +6,14 @@ import { AppModal } from '@karyl-chan/ui';
 import { AppTabs } from '@karyl-chan/ui';
 import { AppButton } from '@karyl-chan/ui';
 import { useGuildListStore } from '../../../stores/guildListStore';
-import { listScopeTabs, type ScopeTabRow } from '../../../api/behavior';
 import { listPluginCapabilities, type PluginCapabilityGroup } from '../../../api/admin';
 import {
     GLOBAL_CAPABILITY_KEYS,
-    makeBehaviorScopeToken,
     makeGuildScopedCapability,
-    isBehaviorScopeToken,
     isPluginCapabilityToken,
     parsePluginCapabilityToken,
     type GuildScope
 } from '../../../libs/admin-capabilities';
-import { useUserSummaries } from '../../../composables/use-user-summaries';
 
 interface RoleLite {
     name: string;
@@ -46,12 +42,11 @@ const { t } = useI18n();
 
 const visible = computed(() => props.role !== null);
 
-const tab = ref<'global' | 'per-guild' | 'per-plugin' | 'per-behavior-tab'>('global');
+const tab = ref<'global' | 'per-guild' | 'per-plugin'>('global');
 const tabs = computed(() => [
     { key: 'global', label: t('admin.roles.capabilityTabs.global'), icon: 'material-symbols:tune-rounded' },
     { key: 'per-guild', label: t('admin.roles.capabilityTabs.perGuild'), icon: 'material-symbols:groups-outline-rounded' },
-    { key: 'per-plugin', label: t('admin.roles.capabilityTabs.perPlugin'), icon: 'material-symbols:extension-outline-rounded' },
-    { key: 'per-behavior-tab', label: t('admin.roles.capabilityTabs.perBehaviorTab'), icon: 'material-symbols:forum-outline-rounded' }
+    { key: 'per-plugin', label: t('admin.roles.capabilityTabs.perPlugin'), icon: 'material-symbols:extension-outline-rounded' }
 ]);
 
 // Guild list is shared across opens — fetched once on first show. The
@@ -63,26 +58,11 @@ const guilds = computed(() => guildListStore.guilds);
 const guildsLoading = ref(false);
 const search = ref('');
 
-// Behavior scope tabs — same lazy-fetch pattern as guilds. The opening
-// admin user always carries `admin` (this modal is reachable only
-// from the user-management page, itself admin-gated), so listScopeTabs
-// returns the full catalog regardless of the editor's per-tab
-// grants on their own account.
-const behaviorTabs = ref<ScopeTabRow[]>([]);
-const behaviorTabsLoading = ref(false);
-const behaviorTabsFetched = ref(false);
-
 // Plugin-declared capabilities — same lazy-fetch pattern. Catalog comes
 // from GET /api/admin/plugin-capabilities (only currently-enabled plugins).
 const pluginCaps = ref<PluginCapabilityGroup[]>([]);
 const pluginCapsLoading = ref(false);
 const pluginCapsFetched = ref(false);
-
-// Resolve display names for specific_user tabs.
-const behaviorUserIds = computed(() =>
-    behaviorTabs.value.filter(t => t.tabType === 'specific_user' && t.userId).map(t => t.userId!)
-);
-const { getDisplayName: getBehaviorDisplayName } = useUserSummaries(behaviorUserIds);
 
 // ── Pending edits — committed only on Confirm ────────────────────────
 //
@@ -116,17 +96,6 @@ watch(visible, async (open) => {
             // page level. The list just stays empty.
         } finally {
             guildsLoading.value = false;
-        }
-    }
-    if (!behaviorTabsFetched.value) {
-        behaviorTabsLoading.value = true;
-        try {
-            behaviorTabs.value = await listScopeTabs();
-            behaviorTabsFetched.value = true;
-        } catch {
-            // Same: silent — empty list is OK as a fallback.
-        } finally {
-            behaviorTabsLoading.value = false;
         }
     }
     if (!pluginCapsFetched.value) {
@@ -203,67 +172,6 @@ const filteredGuilds = computed(() => {
 function scopedToken(guildId: string, scope: GuildScope): string {
     return makeGuildScopedCapability(guildId, scope);
 }
-
-function behaviorTabToken(scopeKey: string): string {
-    return makeBehaviorScopeToken(scopeKey);
-}
-
-function tabIcon(tab: ScopeTabRow): string {
-    // material-symbols 的 `public` 與 `dns` 沒有 `-rounded` 變體 — 用 outline。
-    switch (tab.tabType) {
-        case 'global_all': return 'material-symbols:public';
-        case 'all_dms': return 'material-symbols:forum-outline-rounded';
-        case 'all_bot_dms': return 'material-symbols:smart-toy-outline-rounded';
-        case 'all_guilds': return 'material-symbols:dns-outline';
-        case 'specific_guild': return 'material-symbols:shield-outline-rounded';
-        case 'specific_channel': return 'material-symbols:tag-rounded';
-        case 'specific_user': return 'material-symbols:person-outline-rounded';
-        case 'specific_group': return 'material-symbols:groups-outline-rounded';
-    }
-}
-
-function tabLabel(tab: ScopeTabRow): string {
-    switch (tab.tabType) {
-        case 'global_all': return t('behaviors.sidebar.globalAll');
-        case 'all_dms': return t('behaviors.sidebar.allDms');
-        case 'all_bot_dms': return t('behaviors.sidebar.allBotDms');
-        case 'all_guilds': return t('behaviors.sidebar.allGuilds');
-        case 'specific_guild': return tab.label || tab.guildId || '?';
-        case 'specific_channel': return tab.label || tab.channelId || '?';
-        case 'specific_user': {
-            const name = tab.userId ? getBehaviorDisplayName(tab.userId) : null;
-            return name ?? tab.label ?? tab.userId ?? '?';
-        }
-        case 'specific_group': return tab.label || tab.groupName || '?';
-    }
-}
-
-function tabSubtext(tab: ScopeTabRow): string {
-    return t('behaviors.sidebar.behaviorCount', { count: tab.behaviorCount });
-}
-
-const filteredBehaviorTabs = computed(() => {
-    const needle = search.value.trim().toLowerCase();
-    if (!needle) return behaviorTabs.value;
-    return behaviorTabs.value.filter(row => {
-        const label = tabLabel(row).toLowerCase();
-        const token = behaviorTabToken(row.scopeKey).toLowerCase();
-        return label.includes(needle) || token.includes(needle);
-    });
-});
-
-const legacyBehaviorTokens = computed(() => {
-    if (!props.role) return [];
-    const BEHAVIOR_RE = /^behavior:.+\.manage$/;
-    const allTokens = new Set([
-        ...props.role.capabilities,
-        ...pendingGrants.value
-    ]);
-    for (const r of pendingRevokes.value) allTokens.delete(r);
-    return [...allTokens].filter(cap =>
-        BEHAVIOR_RE.test(cap) && !isBehaviorScopeToken(cap)
-    );
-});
 
 // ── Plugin capability tab ────────────────────────────────────────────
 const filteredPluginCaps = computed(() => {
@@ -519,90 +427,6 @@ function onConfirm() {
                         </ul>
                     </template>
                 </section>
-
-                <!-- Per-tab behavior capabilities. Granting one of
-                     these lets the holder CRUD behaviors within that
-                     scope tab without giving them the full
-                     `behavior.manage` token; adding/removing tabs
-                     stays admin-only. -->
-                <section v-else class="pane">
-                    <p class="hint">{{ t('admin.roles.capabilityTabs.perBehaviorTabHint') }}</p>
-                    <input
-                        v-model="search"
-                        type="search"
-                        class="search"
-                        :placeholder="t('admin.roles.searchBehaviorTabs')"
-                    />
-                    <p v-if="behaviorTabsLoading" class="muted">{{ t('common.loading') }}</p>
-                    <p v-else-if="filteredBehaviorTabs.length === 0" class="muted">
-                        {{ t('admin.roles.noBehaviorTabs') }}
-                    </p>
-                    <ul v-else class="cap-list">
-                        <li
-                            v-for="entry in filteredBehaviorTabs"
-                            :key="entry.id"
-                            :class="[
-                                'cap',
-                                {
-                                    granted: isGranted(behaviorTabToken(entry.scopeKey)),
-                                    pending: pendingGrants.has(behaviorTabToken(entry.scopeKey)) || pendingRevokes.has(behaviorTabToken(entry.scopeKey))
-                                }
-                            ]"
-                            @click="toggle(behaviorTabToken(entry.scopeKey))"
-                        >
-                            <input
-                                type="checkbox"
-                                tabindex="-1"
-                                :checked="isGranted(behaviorTabToken(entry.scopeKey))"
-                                :disabled="pending"
-                                @click.stop
-                                @change="toggle(behaviorTabToken(entry.scopeKey))"
-                            />
-                            <Icon :icon="tabIcon(entry)" width="18" height="18" class="cap-tab-icon" />
-                            <div class="cap-text">
-                                <code class="cap-key">{{ behaviorTabToken(entry.scopeKey) }}</code>
-                                <span class="cap-desc">
-                                    {{ tabLabel(entry) }}
-                                    <span class="cap-kind">· {{ tabSubtext(entry) }}</span>
-                                </span>
-                            </div>
-                        </li>
-                    </ul>
-
-                    <!-- Legacy audience-scoped tokens (pre-tab migration).
-                         Shown so admins can revoke them; new grants use tab tokens. -->
-                    <template v-if="legacyBehaviorTokens.length > 0">
-                        <p class="legacy-header">{{ t('admin.roles.legacyBehaviorHeader') }}</p>
-                        <ul class="cap-list">
-                            <li
-                                v-for="token in legacyBehaviorTokens"
-                                :key="token"
-                                :class="[
-                                    'cap', 'legacy',
-                                    {
-                                        granted: isGranted(token),
-                                        pending: pendingGrants.has(token) || pendingRevokes.has(token)
-                                    }
-                                ]"
-                                @click="toggle(token)"
-                            >
-                                <input
-                                    type="checkbox"
-                                    tabindex="-1"
-                                    :checked="isGranted(token)"
-                                    :disabled="pending"
-                                    @click.stop
-                                    @change="toggle(token)"
-                                />
-                                <Icon icon="material-symbols:history-rounded" width="18" height="18" class="cap-tab-icon" />
-                                <div class="cap-text">
-                                    <code class="cap-key">{{ token }}</code>
-                                    <span class="cap-desc">{{ t('admin.roles.legacyBehaviorDesc') }}</span>
-                                </div>
-                            </li>
-                        </ul>
-                    </template>
-                </section>
             </AppTabs>
 
             <footer class="actions">
@@ -709,11 +533,6 @@ function onConfirm() {
     font-size: 0.76rem;
     color: var(--text-muted);
     line-height: 1.4;
-}
-.cap-kind {
-    color: var(--text-faint);
-    font-size: 0.72rem;
-    margin-left: 0.15rem;
 }
 .cap-tab-icon {
     color: var(--text-muted);
