@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.0.0](https://github.com/karyl-chan/karyl-chan/compare/bot-v1.13.0...bot-v2.0.0) (2026-10-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* **behaviors:** behavior webhooks no longer receive `_meta.session` and the `[BEHAVIOR:END]` sentinel is relayed as plain text; continuous behaviors run as one-time; `!break` / `/break` and `!manual` / `/manual` no longer exist; the /api/behavior-sessions endpoints are removed.
+
+### Bug Fixes
+
+* **behaviors:** filter removed systemKeys in JS in migration 010 ([f9dcd5e](https://github.com/karyl-chan/karyl-chan/commit/f9dcd5e0fb3791578d536a2748ac479a8e0407f8))
+
+
+### Code Refactoring
+
+* **behaviors:** remove continuous sessions, break and manual ([8d8247d](https://github.com/karyl-chan/karyl-chan/commit/8d8247d3bd85501855f5ee7018312a80d96cec31))
+
 ## [1.13.0](https://github.com/karyl-chan/karyl-chan/compare/bot-v1.12.1...bot-v1.13.0) (2026-10-25)
 
 
