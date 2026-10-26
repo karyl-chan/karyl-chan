@@ -1285,6 +1285,28 @@
             "tooMany": "最多 {max} 項",
             "format": "格式不正確",
             "invalid": "值無效"
+        },
+        "secret": {
+            "label": "Webhook 密鑰",
+            "set": "已設定",
+            "unset": "未設定",
+            "rotate": "產生新密鑰",
+            "rotateTitle": "產生新的 webhook 密鑰？",
+            "rotateMessage": "新密鑰立刻生效並只顯示一次；舊密鑰在 24 小時內仍然有效，請在這段時間內把新密鑰設定到你的服務。",
+            "grace": "舊密鑰在 {time} 前仍然有效。",
+            "shownOnce": "這是新的密鑰，只會顯示這一次，請現在複製保存。",
+            "copy": "複製",
+            "copied": "已複製",
+            "saved": "我已保存"
+        },
+        "errors": {
+            "withDetail": "{reason}（{detail}）",
+            "validation_failed": "輸入不正確",
+            "name_conflict": "名稱已被使用",
+            "system_immutable": "系統行為不能這樣修改",
+            "registration_failed": "Discord 註冊失敗",
+            "not_found": "找不到這個項目",
+            "invalid_tree": "指令結構不正確"
         }
     },
     "config": {

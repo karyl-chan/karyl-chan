@@ -1285,6 +1285,28 @@
             "tooMany": "At most {max} entries",
             "format": "Invalid format",
             "invalid": "Invalid value"
+        },
+        "secret": {
+            "label": "Webhook secret",
+            "set": "Set",
+            "unset": "Not set",
+            "rotate": "Generate new secret",
+            "rotateTitle": "Generate a new webhook secret?",
+            "rotateMessage": "The new secret takes effect now and is shown once. The old one keeps working for 24 hours — give your service the new secret within that time.",
+            "grace": "The old secret keeps working until {time}.",
+            "shownOnce": "This new secret is shown only once. Copy it now.",
+            "copy": "Copy",
+            "copied": "Copied",
+            "saved": "I saved it"
+        },
+        "errors": {
+            "withDetail": "{reason} ({detail})",
+            "validation_failed": "Invalid input",
+            "name_conflict": "Name already in use",
+            "system_immutable": "The system behavior cannot be changed this way",
+            "registration_failed": "Discord registration failed",
+            "not_found": "Not found",
+            "invalid_tree": "Invalid command structure"
         }
     },
     "config": {
