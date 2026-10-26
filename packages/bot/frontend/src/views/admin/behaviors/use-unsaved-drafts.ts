@@ -32,6 +32,8 @@ export function provideUnsavedDrafts() {
 export function trackUnsavedDraft(key: string, dirty: Ref<boolean>): void {
     const registry = inject(KEY, null);
     if (!registry) return;
-    watch(dirty, (value) => registry.mark(key, value), { immediate: true });
+    // sync: a save clears the draft and emits the saved item in one tick,
+    // and the page asks right then whether following it would drop drafts
+    watch(dirty, (value) => registry.mark(key, value), { immediate: true, flush: 'sync' });
     onBeforeUnmount(() => registry.mark(key, false));
 }
