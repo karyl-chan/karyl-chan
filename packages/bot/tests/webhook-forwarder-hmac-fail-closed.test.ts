@@ -84,6 +84,6 @@ describe("WebhookForwarder hmac fail-closed", () => {
 
     expect(fetchSpy).toHaveBeenCalledTimes(1); // guard did NOT block a valid hmac behavior
     expect(result.ok).toBe(true);
-    expect(result.relayContent).toBe("pong");
+    expect(result.reply).toEqual({ content: "pong" });
   });
 });

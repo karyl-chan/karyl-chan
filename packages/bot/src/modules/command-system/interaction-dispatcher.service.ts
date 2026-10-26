@@ -19,6 +19,7 @@
 
 import {
   ApplicationCommandOptionType,
+  MessageFlags,
   type Interaction,
   type ChatInputCommandInteraction,
 } from "discord.js";
@@ -36,7 +37,8 @@ import { dispatchInteractionToPlugin } from "../plugin-system/plugin-interaction
 import { dispatchComponentToPlugin } from "../plugin-system/plugin-component-dispatch.service.js";
 import { dispatchModalToPlugin } from "../plugin-system/plugin-modal-dispatch.service.js";
 import { dispatchInProcessInteraction } from "../builtin-features/in-process-command-registry.service.js";
-import { issueLoginLinkForInteraction } from "../admin/admin-login.service.js";
+import { runLoginAction } from "./builtin-login-action.js";
+import { renderReply } from "./reply-renderer.js";
 import { recordForwardOutcome } from "../behavior/models/behavior-stats.model.js";
 import type { DispatchOutcome } from "./types.js";
 import type { WebhookForwarder } from "./webhook-forwarder.service.js";
@@ -260,7 +262,7 @@ export class InteractionDispatcher {
 
   /**
    * 內建動作（actionSource='builtin'）：只給 System Behavior，目前只有登入
-   * （admin-login → issueLoginLinkForInteraction）。
+   * （admin-login → loginActionReply → ReplyRenderer）。
    */
   private async dispatchSystemBehavior(
     interaction: ChatInputCommandInteraction,
@@ -269,7 +271,7 @@ export class InteractionDispatcher {
     const systemKey = leaf.systemKey;
 
     if (systemKey === "admin-login") {
-      await issueLoginLinkForInteraction(interaction);
+      await runLoginAction({ kind: "interaction", interaction });
       return { claimed: true, claimedBy: "behavior_system" };
     }
 
@@ -327,7 +329,7 @@ export class InteractionDispatcher {
 
     // Defer reply（slash command 需要在 3s 內 ack）
     try {
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     } catch {
       return { claimed: true, claimedBy: "behavior_custom" };
     }
@@ -355,20 +357,19 @@ export class InteractionDispatcher {
         return { claimed: true, claimedBy: "behavior_custom" };
       }
 
-      if (result.relayContent || result.relayEmbeds) {
-        // relay 內容來自外部 webhook，不可信，strip mentions 防止
-        // user/role ping 經 bot relay 放大（與 message-trigger-matcher
-        // 同個威脅模型）。embeds 已在 forwarder 白名單清洗（BH-2.2A）。
-        await interaction
-          .editReply({
-            content: result.relayContent ?? "",
-            embeds: result.relayEmbeds ?? [],
-            allowedMentions: { parse: [] },
-          })
-          .catch(() => {});
-      } else {
-        // 無回覆內容則刪除 deferred reply
-        await interaction.deleteReply().catch(() => {});
+      // 回覆模型（#140）：forwarder 已清洗（content / embeds / 連結按鈕 /
+      // flags），ReplyRenderer 依 ephemeral 走 defer 狀態機；mentions 一律不解析。
+      const rendered = await renderReply(result.reply, {
+        kind: "interaction",
+        interaction,
+      });
+      if (!rendered.ok) {
+        botEventLog.record(
+          "warn",
+          "bot",
+          `interaction-dispatcher: webhook behavior ${leaf.id} reply was refused by Discord: ${rendered.error}`,
+          { behaviorId: leaf.id, commandName: interaction.commandName },
+        );
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

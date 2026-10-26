@@ -25,7 +25,7 @@ import { clearBehaviors, seedSystemLogin } from "./behavior-fixtures.js";
 const HOOK = "https://203.0.113.10/hook";
 const DAY = 24 * 3600_000;
 
-const forward = vi.fn(async () => ({ ok: true, relayContent: "" }));
+const forward = vi.fn(async () => ({ ok: true, reply: {}, notes: [] }));
 let server: FastifyInstance;
 
 beforeAll(async () => {

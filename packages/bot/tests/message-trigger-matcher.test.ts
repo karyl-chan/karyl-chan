@@ -21,8 +21,12 @@ vi.mock("../src/modules/bot-events/bot-event-log.js", () => ({
   botEventLog: { record: vi.fn() },
 }));
 vi.mock("../src/modules/admin/admin-login.service.js", () => ({
-  issueLoginLinkAndReply: vi.fn(async () => true),
-  issueLoginLinkForInteraction: vi.fn(async () => undefined),
+  mintLoginLink: vi.fn(async () => ({
+    ok: true,
+    url: "https://admin.example/admin/auth?token=t",
+    minutesUntilExpiry: 5,
+    role: "owner",
+  })),
 }));
 
 import { ChannelType } from "discord.js";
@@ -30,7 +34,7 @@ import { sequelize } from "../src/db.js";
 import { BehaviorDefinition } from "../src/modules/behavior/models/behavior-definition.model.js";
 import { addGroupMember } from "../src/modules/behavior/models/behavior-group-member.model.js";
 import { BehaviorStat } from "../src/modules/behavior/models/behavior-stats.model.js";
-import { issueLoginLinkAndReply } from "../src/modules/admin/admin-login.service.js";
+import { mintLoginLink } from "../src/modules/admin/admin-login.service.js";
 import {
   MessageTriggerMatcher,
   __resetGuildForwardWindowsForTests,
@@ -55,7 +59,7 @@ beforeEach(async () => {
 });
 
 function makeForwarder(relay = ""): { forward: Mock } {
-  return { forward: vi.fn(async () => ({ ok: true, relayContent: relay })) };
+  return { forward: vi.fn(async () => ({ ok: true, reply: relay ? { content: relay } : {}, notes: [] })) };
 }
 
 function matcherWith(forwarder: { forward: Mock }): MessageTriggerMatcher {
@@ -289,12 +293,27 @@ describe("the system login", () => {
     const login = await seedSystemLogin();
     await seedMessageTrigger({ sortOrder: 0, patternValue: "!login" });
     const forwarder = makeForwarder();
-    const { message } = dmMsg("U1", "!login");
+    const { message, send } = dmMsg("U1", "!login");
     const outcome = await matcherWith(forwarder).onMessage(message);
 
     expect(outcome).toEqual({ handled: true, behaviorId: login });
-    expect(issueLoginLinkAndReply).toHaveBeenCalledWith(message);
+    expect(mintLoginLink).toHaveBeenCalledWith("U1", expect.objectContaining({ messageId: "MSG-1" }));
     expect(forwarder.forward).not.toHaveBeenCalled();
+    // the login reply goes back in the DM: an embed and a link button
+    const sent = (send as Mock).mock.calls[0][0] as {
+      embeds: unknown[];
+      components: Array<{ components: Array<{ url: string }> }>;
+    };
+    expect(sent.embeds).toHaveLength(1);
+    expect(sent.components[0].components[0].url).toBe("https://admin.example/admin/auth?token=t");
+  });
+
+  it("stays silent in the DM for someone who is not authorised", async () => {
+    await seedSystemLogin();
+    (mintLoginLink as Mock).mockResolvedValueOnce({ ok: false, reason: "not authorized" });
+    const { message, send } = dmMsg("U1", "!login");
+    expect((await matcherWith(makeForwarder()).onMessage(message)).handled).toBe(true);
+    expect(send).not.toHaveBeenCalled();
   });
 });
 

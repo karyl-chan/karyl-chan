@@ -172,8 +172,8 @@ function registerReadAndTestRoutes(
       );
       return reply.send({
         ok: result.ok,
-        relayContent: result.relayContent,
-        relayEmbeds: result.relayEmbeds ?? [],
+        relayContent: result.reply.content ?? "",
+        relayEmbeds: result.reply.embeds ?? [],
         error: result.error ?? null,
         errorCode: result.errorCode ?? null,
       });

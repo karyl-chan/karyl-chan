@@ -16,7 +16,6 @@
 import {
   type Client,
   type Message as DjsMessage,
-  type SendableChannels,
   ChannelType,
 } from "discord.js";
 import {
@@ -28,7 +27,8 @@ import { matchesTrigger } from "../behavior/behavior-trigger.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import type { MessageMatchOutcome } from "./types.js";
 import type { WebhookForwarder } from "./webhook-forwarder.service.js";
-import { issueLoginLinkAndReply } from "../admin/admin-login.service.js";
+import { runLoginAction } from "./builtin-login-action.js";
+import { renderReply } from "./reply-renderer.js";
 
 // BH-0.3 multi-match：一則訊息可以連發多條 behavior，
 // outcome 取聯集；behaviorId 報第一條命中的（log 用途）。
@@ -238,20 +238,21 @@ export class MessageTriggerMatcher {
     const payload = this.buildPayload(djsMessage, behavior);
     const result = await this.forwarder.forward(behavior.webhook, payload);
     await recordForwardOutcome(behavior.id, result.ok, result.error);
-    const channel = djsMessage.channel as SendableChannels;
-
     if (result.ok) {
-      if (result.relayContent || result.relayEmbeds) {
-        // No allowed_mentions parsing — the response content comes from
-        // an external webhook server, which we don't trust to set ping
-        // policy (guild channels would honour @everyone / role pings).
-        await channel
-          .send({
-            content: result.relayContent,
-            embeds: result.relayEmbeds ?? [],
-            allowedMentions: { parse: [] },
-          })
-          .catch(() => {});
+      // 回覆模型（#140）：forwarder 已清洗；ReplyRenderer 決定貼在哪
+      // （私訊照常回；伺服器預設貼頻道，ephemeral=true 改私訊作者）。
+      // mentions 一律不解析 —— 外部服務不能決定 ping 誰。
+      const rendered = await renderReply(result.reply, {
+        kind: "message",
+        message: djsMessage,
+      });
+      if (!rendered.ok) {
+        botEventLog.record(
+          "warn",
+          "bot",
+          `message-trigger-matcher: behavior ${behavior.id} reply was refused by Discord: ${rendered.error}`,
+          { userId, behaviorId: behavior.id },
+        );
       }
     } else {
       botEventLog.record(
@@ -273,7 +274,7 @@ export class MessageTriggerMatcher {
     userId: string,
   ): Promise<MessageMatchOutcome> {
     if (behavior.systemKey === "admin-login") {
-      await issueLoginLinkAndReply(djsMessage).catch(() => false);
+      await runLoginAction({ kind: "message", message: djsMessage });
       return { handled: true, behaviorId: behavior.id };
     }
 

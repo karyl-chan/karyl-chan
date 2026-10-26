@@ -36,16 +36,20 @@ vi.mock("../src/modules/bot-events/bot-event-log.js", () => ({
   botEventLog: { record: vi.fn() },
 }));
 vi.mock("../src/modules/admin/admin-login.service.js", () => ({
-  issueLoginLinkAndReply: vi.fn(async () => true),
-  issueLoginLinkForInteraction: vi.fn(async () => undefined),
+  mintLoginLink: vi.fn(async () => ({
+    ok: true,
+    url: "https://admin.example/admin/auth?token=t",
+    minutesUntilExpiry: 5,
+    role: "owner",
+  })),
 }));
 
-import { ApplicationCommandOptionType, type Interaction } from "discord.js";
+import { ApplicationCommandOptionType, MessageFlags, type Interaction } from "discord.js";
 import { sequelize } from "../src/db.js";
 import { BehaviorStat } from "../src/modules/behavior/models/behavior-stats.model.js";
 import { InteractionDispatcher } from "../src/modules/command-system/interaction-dispatcher.service.js";
 import { dispatchInteractionToPlugin } from "../src/modules/plugin-system/plugin-interaction-dispatch.service.js";
-import { issueLoginLinkForInteraction } from "../src/modules/admin/admin-login.service.js";
+import { mintLoginLink } from "../src/modules/admin/admin-login.service.js";
 import type { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
 import {
   clearBehaviors,
@@ -63,7 +67,7 @@ beforeEach(async () => {
 });
 
 function makeForwarder(): { forward: Mock } {
-  return { forward: vi.fn(async () => ({ ok: true, relayContent: "hi" })) };
+  return { forward: vi.fn(async () => ({ ok: true, reply: { content: "hi" }, notes: [] })) };
 }
 
 function dispatcherWith(forwarder: { forward: Mock }): InteractionDispatcher {
@@ -90,7 +94,7 @@ function fakeSlash(opts: {
         },
       ]
     : values;
-  const interaction = {
+  const interaction: Record<string, unknown> & { deferred: boolean; ephemeral: boolean | null } = {
     isChatInputCommand: () => true,
     isAutocomplete: () => false,
     isButton: () => false,
@@ -117,12 +121,20 @@ function fakeSlash(opts: {
       getSubcommand: () => opts.subcommand ?? null,
       getSubcommandGroup: () => null,
     },
+    deferred: false,
+    replied: false,
+    ephemeral: null as boolean | null,
     reply,
-    deferReply: vi.fn(async () => {}),
+    // like discord.js: a deferral fixes the placeholder's visibility
+    deferReply: vi.fn(async (o: { flags?: number }) => {
+      interaction.deferred = true;
+      interaction.ephemeral = ((o.flags ?? 0) & MessageFlags.Ephemeral) !== 0;
+    }),
     editReply: vi.fn(async () => {}),
+    followUp: vi.fn(async () => {}),
     deleteReply: vi.fn(async () => {}),
-  } as unknown as Interaction;
-  return { interaction, reply };
+  };
+  return { interaction: interaction as unknown as Interaction, reply, raw: interaction };
 }
 
 type Payload = {
@@ -159,6 +171,28 @@ describe("root leaf", () => {
     expect(payload._meta.options).toEqual([{ name: "q", type: 3, value: "hello" }]);
     expect(payload._meta).not.toHaveProperty("interaction_token");
     expect((await BehaviorStat.findByPk(leaf))?.get("successCount")).toBe(1);
+  });
+
+  it("fills the private placeholder with the webhook's reply", async () => {
+    const commandId = await seedCommand({ name: "ping" });
+    await seedLeaf(commandId);
+    const { interaction, raw } = fakeSlash({ commandName: "ping" });
+    await dispatcherWith(makeForwarder()).dispatch(interaction);
+    expect(raw.deferReply).toHaveBeenCalledWith({ flags: MessageFlags.Ephemeral });
+    expect(raw.editReply).toHaveBeenCalledWith({ content: "hi", allowedMentions: { parse: [] } });
+    expect(raw.followUp).not.toHaveBeenCalled();
+  });
+
+  it("posts publicly when the webhook answers ephemeral:false", async () => {
+    const commandId = await seedCommand({ name: "ping" });
+    await seedLeaf(commandId);
+    const forwarder = {
+      forward: vi.fn(async () => ({ ok: true, reply: { content: "all", ephemeral: false }, notes: [] })),
+    };
+    const { interaction, raw } = fakeSlash({ commandName: "ping" });
+    await dispatcherWith(forwarder).dispatch(interaction);
+    expect(raw.followUp).toHaveBeenCalledWith({ content: "all", allowedMentions: { parse: [] } });
+    expect(raw.deleteReply).toHaveBeenCalledTimes(1);
   });
 
   it("a disabled leaf is not claimed", async () => {
@@ -246,12 +280,41 @@ describe("the system login on a command", () => {
     });
     await seedLeaf(commandId, { systemKey: "admin-login", actionSource: "builtin" });
     const forwarder = makeForwarder();
-    const { interaction } = fakeSlash({ commandName: "login" });
+    const { interaction, reply } = fakeSlash({ commandName: "login", userId: "OWNER" });
 
     const outcome = await dispatcherWith(forwarder).dispatch(interaction);
 
     expect(outcome).toEqual({ claimed: true, claimedBy: "behavior_system" });
-    expect(issueLoginLinkForInteraction).toHaveBeenCalledWith(interaction);
+    expect(mintLoginLink).toHaveBeenCalledWith("OWNER", expect.objectContaining({ messageId: null }));
     expect(forwarder.forward).not.toHaveBeenCalled();
+    // the same reply model as a webhook: an embed and a link button, and
+    // only the invoker sees it
+    const sent = (reply as Mock).mock.calls[0][0] as {
+      embeds: unknown[];
+      components: Array<{ components: Array<{ url: string }> }>;
+      flags: number;
+    };
+    expect(sent.embeds).toHaveLength(1);
+    expect(sent.components[0].components[0].url).toBe("https://admin.example/admin/auth?token=t");
+    expect(sent.flags & MessageFlags.Ephemeral).toBe(MessageFlags.Ephemeral);
+  });
+
+  it("tells an unauthorised invoker so, privately", async () => {
+    const commandId = await seedCommand({
+      name: "login",
+      isSystem: true,
+      contexts: "BotDM",
+      integrationTypes: "guild_install,user_install",
+    });
+    await seedLeaf(commandId, { systemKey: "admin-login", actionSource: "builtin" });
+    (mintLoginLink as Mock).mockResolvedValueOnce({ ok: false, reason: "not authorized" });
+    const { interaction, reply } = fakeSlash({ commandName: "login" });
+
+    await dispatcherWith(makeForwarder()).dispatch(interaction);
+
+    const sent = (reply as Mock).mock.calls[0][0] as { content: string; components?: unknown; flags: number };
+    expect(sent.content).toMatch(/授權/);
+    expect(sent.components).toBeUndefined();
+    expect(sent.flags & MessageFlags.Ephemeral).toBe(MessageFlags.Ephemeral);
   });
 });

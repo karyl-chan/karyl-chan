@@ -30,7 +30,7 @@ import {
 } from "./behavior-fixtures.js";
 
 const SECRET = "very-secret-value";
-const forward = vi.fn(async () => ({ ok: true, relayContent: "pong" }));
+const forward = vi.fn(async () => ({ ok: true, reply: { content: "pong" }, notes: [] }));
 
 let server: FastifyInstance;
 const ids: Record<string, number> = {};

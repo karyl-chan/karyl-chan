@@ -37,7 +37,10 @@ import { ChannelType } from "discord.js";
 import { sequelize } from "../src/db.js";
 import { MessageTriggerMatcher } from "../src/modules/command-system/message-trigger-matcher.service.js";
 import { InteractionDispatcher } from "../src/modules/command-system/interaction-dispatcher.service.js";
-import { sanitizeEmbeds } from "../src/modules/command-system/webhook-forwarder.service.js";
+import {
+  ALLOWED_REPLY_FLAGS,
+  parseBehaviorReply,
+} from "../src/modules/command-system/behavior-reply.js";
 import type { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
 import {
   clearBehaviors,
@@ -56,7 +59,7 @@ beforeAll(async () => {
 
 function captureForwarder(): { forward: Mock } {
   return {
-    forward: vi.fn(async () => ({ ok: true, relayContent: "" })),
+    forward: vi.fn(async () => ({ ok: true, reply: {}, notes: [] })),
   };
 }
 
@@ -157,8 +160,32 @@ describe("behavior webhook contract (BH-2.3)", () => {
     );
   });
 
+  it("the response fields are the reply model's", () => {
+    const parsed = parseBehaviorReply({
+      content: "c",
+      embeds: [{ title: "t" }],
+      components: [{ type: 1, components: [{ type: 2, style: 5, label: "l", url: "https://x.example" }] }],
+      ephemeral: false,
+      flags: 4,
+    });
+    expect(parsed.ok && Object.keys(parsed.reply).sort()).toEqual([...C.response.fields].sort());
+    expect(C.response.allowedFlags.reduce((a, b) => a | b, 0)).toBe(ALLOWED_REPLY_FLAGS);
+    const row = {
+      type: 1,
+      components: Array.from({ length: 9 }, () => ({ type: 2, style: 5, label: "l", url: "https://x.example" })),
+    };
+    const many = parseBehaviorReply({ components: Array.from({ length: 9 }, () => row) });
+    const rows = many.ok ? many.reply.components! : [];
+    expect(rows).toHaveLength(C.response.maxComponentRows);
+    expect(rows[0].components).toHaveLength(C.response.maxButtonsPerRow);
+  });
+
   it("embed whitelist matches the fixtures", () => {
-    const sanitized = sanitizeEmbeds([
+    const embedsOf = (raw: unknown[]) => {
+      const parsed = parseBehaviorReply({ embeds: raw });
+      return parsed.ok ? (parsed.reply.embeds ?? []) : [];
+    };
+    const sanitized = embedsOf([
       {
         title: "t",
         description: "d",
@@ -177,7 +204,7 @@ describe("behavior webhook contract (BH-2.3)", () => {
       [...C.response.embedWhitelist].sort(),
     );
     expect(
-      sanitizeEmbeds(Array.from({ length: 99 }, () => ({ title: "x" }))).length,
+      embedsOf(Array.from({ length: 99 }, () => ({ title: "x" }))).length,
     ).toBe(C.response.maxEmbeds);
   });
 });

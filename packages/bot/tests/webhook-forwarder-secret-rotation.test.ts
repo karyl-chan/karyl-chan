@@ -94,7 +94,7 @@ describe("webhook secret rotation grace", () => {
       action("hmac", new Date(Date.now() + HOUR)),
       { content: "hi" },
     );
-    expect(result).toMatchObject({ ok: true, relayContent: "pong" });
+    expect(result).toMatchObject({ ok: true, reply: { content: "pong" } });
   });
 
   it("hmac: after the grace period only the current secret counts", async () => {

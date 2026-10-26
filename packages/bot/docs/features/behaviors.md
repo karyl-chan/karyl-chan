@@ -129,12 +129,37 @@ applied to the bot's *response* relayed back into the DM, not to this
 outbound webhook call. The slash path's `_meta` additionally carries the
 interaction fields and now also `behavior_id`.)
 
-Webhook → bot — the response's `content` is relayed back to the caller.
-The response may also carry `embeds` (BH-2.2A): an array of Discord-shaped
-embed objects, sanitized through a whitelist (title/description/url/color/
-timestamp/footer/image/thumbnail/author/fields), truncated to Discord's
-length limits, capped at 10, with non-http(s) urls dropped. A response may
-be embeds-only.
+### Reply contract (v1)
+
+Webhook → bot — the response body is a **Behavior Reply**, the same shape
+a plugin sends to `interactions.respond` (without the token). The earlier
+`{ content, embeds }` response is a subset of it, so there is no version
+field. The built-in login action answers with the same structure. The
+canonical lists live in `CONTRACT_FIXTURES.behaviorWebhook.response`
+(`@karyl-chan/plugin-wire`).
+
+| Field | Type | Phase-1 rule |
+|-------|------|--------------|
+| `content` | string | Trimmed. |
+| `embeds` | array | Whitelisted fields (title / description / url / color / timestamp / footer / image / thumbnail / author / fields), Discord's per-field lengths, non-http(s) urls dropped, at most 10. |
+| `components` | array | Action rows (`type: 1`) of **link buttons only** (`type: 2, style: 5`, an `https://` `url` ≤ 512 characters, a non-empty `label`, cut to 80). At most 5 rows of 5. Anything else is dropped. |
+| `ephemeral` | boolean | Who sees the reply — see below. |
+| `flags` | integer | Only `SuppressEmbeds` (4) and `SuppressNotifications` (4096) are kept. Visibility is never a flag. |
+
+A field of the wrong type is ignored. An empty body (or an object with
+nothing to show) means "no reply".
+
+`ephemeral`, per trigger:
+
+| Trigger | Default | `ephemeral: false` | `ephemeral: true` |
+|---------|---------|--------------------|-------------------|
+| Command | only the invoker sees it | posted publicly (the bot follows up publicly and deletes its private "thinking…" placeholder — the plugin defer table) | only the invoker |
+| Message in a DM with the bot | in the DM | in the DM | in the DM (ignored) |
+| Message in a guild channel | in the channel | in the channel | DMed to the author; never in the channel |
+
+Mentions in a reply are never parsed. There is no `[BEHAVIOR:END]` marker
+any more: it ended a conversation session, and sessions were removed
+with ADR 0003 (S1), so a reply never ends anything.
 
 Slash behaviors may define command options (BH-2.2C,
 `slashCommandOptions`): a flat list of scalar options (string / integer /

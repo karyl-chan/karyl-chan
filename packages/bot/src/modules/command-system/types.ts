@@ -15,6 +15,7 @@ import type {
   RESTPostAPIWebhookWithTokenJSONBody,
 } from "discord.js";
 import type { CommandTarget, ConcreteTarget } from "./command-target.js";
+import type { BehaviorReply, ReplyNote } from "./behavior-reply.js";
 
 // ── 三軸核心型別（C-runtime §2.1）────────────────────────────────────────────
 
@@ -147,13 +148,16 @@ export interface SanitizedEmbed {
 
 export interface ForwardResult {
   ok: boolean;
-  /** 已 trim 的 content，可直接 relay 給用戶 */
-  relayContent: string;
-  /** BH-2.2A：webhook 回應的 embeds（已白名單清洗 + 截斷），可直接 relay */
-  relayEmbeds?: SanitizedEmbed[];
+  /**
+   * 解析並清洗過的回覆（#140 回覆模型），交給 ReplyRenderer；失敗或 receiver
+   * 沒回任何東西時為 `{}`。
+   */
+  reply: BehaviorReply;
+  /** 清洗時丟掉或改掉的東西（admin 測試結果顯示，live 路徑記 log） */
+  notes: ReplyNote[];
   /** HTTP 狀態（失敗時） */
   status?: number;
-  /** 錯誤描述（失敗時） */
+  /** 錯誤描述（失敗時；只進 log / 統計 / admin，不給終端使用者） */
   error?: string;
   /** host policy 拒絕時的機器碼（例如 private_not_allowlisted） */
   errorCode?: HostPolicyCode;

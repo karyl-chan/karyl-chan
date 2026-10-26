@@ -123,6 +123,11 @@ export interface ContractFixtures {
       readonly embedWhitelist: readonly string[];
       readonly maxEmbeds: number;
       readonly maxFields: number;
+      /** Only link buttons (type 2, style 5) with an https url, in action rows. */
+      readonly maxComponentRows: number;
+      readonly maxButtonsPerRow: number;
+      /** MessageFlags a response may set; visibility is `ephemeral`, never a flag. */
+      readonly allowedFlags: readonly number[];
     };
   };
 }
@@ -428,8 +433,16 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
       userKeys: ["id", "username", "global_name", "discriminator", "avatar"],
       attachmentKeys: ["url", "filename", "content_type", "size"],
     },
+    /**
+     * The reply model (#140) — the plugin `interactions.respond` body
+     * without the token. `{ content, embeds }` (the pre-#140 response) is
+     * a subset, so the shape carries no version. `ephemeral`: a command
+     * defaults to true (false posts publicly); a guild message trigger
+     * defaults to public (true DMs the author instead); ignored in a DM
+     * with the bot.
+     */
     response: {
-      fields: ["content", "embeds"],
+      fields: ["content", "embeds", "components", "ephemeral", "flags"],
       embedWhitelist: [
         "title",
         "description",
@@ -444,6 +457,10 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
       ],
       maxEmbeds: 10,
       maxFields: 25,
+      maxComponentRows: 5,
+      maxButtonsPerRow: 5,
+      // SuppressEmbeds, SuppressNotifications
+      allowedFlags: [4, 4096],
     },
   },
 };

@@ -2,9 +2,9 @@
  * #139 — after the system login's trigger switch, the runtime follows it
  * at once (the catalog snapshot is invalidated by the write):
  *
- *   - on a command: `/login` is dispatched to the built-in login handler
- *     (issueLoginLinkForInteraction, which replies ephemerally) and a DM
- *     `!login` no longer fires
+ *   - on a command: `/login` is dispatched to the built-in login action
+ *     (which mints the link and replies ephemerally) and a DM `!login` no
+ *     longer fires
  *   - back on a message: `!login` fires again and `/login` is not claimed
  */
 import { vi, describe, it, expect, beforeAll, beforeEach } from "vitest";
@@ -18,8 +18,12 @@ vi.mock("../src/modules/bot-events/bot-event-log.js", () => ({
   botEventLog: { record: vi.fn() },
 }));
 vi.mock("../src/modules/admin/admin-login.service.js", () => ({
-  issueLoginLinkAndReply: vi.fn(async () => true),
-  issueLoginLinkForInteraction: vi.fn(async () => true),
+  mintLoginLink: vi.fn(async () => ({
+    ok: true,
+    url: "https://admin.example/admin/auth?token=t",
+    minutesUntilExpiry: 5,
+    role: "owner",
+  })),
 }));
 vi.mock("../src/modules/plugin-system/plugin-interaction-dispatch.service.js", () => ({
   dispatchInteractionToPlugin: vi.fn(async () => false),
@@ -33,10 +37,7 @@ import { ChannelType, type Client, type Interaction } from "discord.js";
 import Fastify, { type FastifyInstance } from "fastify";
 import { sequelize } from "../src/db.js";
 import { registerBehaviorRoutes } from "../src/modules/behavior/behavior-routes.js";
-import {
-  issueLoginLinkAndReply,
-  issueLoginLinkForInteraction,
-} from "../src/modules/admin/admin-login.service.js";
+import { mintLoginLink } from "../src/modules/admin/admin-login.service.js";
 import { CommandReconciler } from "../src/modules/command-system/reconcile.service.js";
 import { CommandNamespace } from "../src/modules/command-system/command-namespace.js";
 import { InteractionDispatcher } from "../src/modules/command-system/interaction-dispatcher.service.js";
@@ -144,7 +145,7 @@ const toCommand = {
 describe("the login follows its trigger", () => {
   it("on the default message trigger: !login fires, /login is not claimed", async () => {
     expect((await matcher.onMessage(dm("!login"))).handled).toBe(true);
-    expect(issueLoginLinkAndReply).toHaveBeenCalledTimes(1);
+    expect(mintLoginLink).toHaveBeenCalledTimes(1);
     expect((await dispatcher.dispatch(slash("login"))).claimed).toBe(false);
   });
 
@@ -155,10 +156,10 @@ describe("the login follows its trigger", () => {
       claimed: true,
       claimedBy: "behavior_system",
     });
-    expect(issueLoginLinkForInteraction).toHaveBeenCalledTimes(1);
+    expect(mintLoginLink).toHaveBeenCalledTimes(1);
 
     expect((await matcher.onMessage(dm("!login"))).handled).toBe(false);
-    expect(issueLoginLinkAndReply).not.toHaveBeenCalled();
+    expect(mintLoginLink).toHaveBeenCalledTimes(1);
   });
 
   it("switched back to a message: !login fires again, /login is not claimed", async () => {
@@ -166,9 +167,9 @@ describe("the login follows its trigger", () => {
     expect((await switchTo({ kind: "message", patternKind: "startswith", patternValue: "!login", sample: "!login" })).statusCode).toBe(200);
 
     expect((await matcher.onMessage(dm("!login"))).handled).toBe(true);
-    expect(issueLoginLinkAndReply).toHaveBeenCalledTimes(1);
+    expect(mintLoginLink).toHaveBeenCalledTimes(1);
     expect((await dispatcher.dispatch(slash("login"))).claimed).toBe(false);
-    expect(issueLoginLinkForInteraction).not.toHaveBeenCalled();
+    expect(mintLoginLink).toHaveBeenCalledTimes(1);
   });
 
   it("a refused switch leaves !login answering", async () => {

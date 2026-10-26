@@ -70,8 +70,8 @@ describe("BH-6.2 test-fire", () => {
     const id = await seedMessageTrigger();
     const forward: Mock = vi.fn(async () => ({
       ok: true,
-      relayContent: "pong",
-      relayEmbeds: [],
+      reply: { content: "pong" },
+      notes: [],
     }));
     const server = await buildServer({ forward });
     const res = await server.inject({ method: "POST", url: `/api/behaviors/${id}/test` });

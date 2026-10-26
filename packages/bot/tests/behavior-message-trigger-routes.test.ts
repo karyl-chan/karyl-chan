@@ -29,7 +29,7 @@ const GUILD = "123456789012345678";
 const CHANNEL = "223456789012345678";
 const USER = "323456789012345678";
 
-const forward = vi.fn(async () => ({ ok: true, relayContent: "" }));
+const forward = vi.fn(async () => ({ ok: true, reply: {}, notes: [] }));
 let server: FastifyInstance;
 
 beforeAll(async () => {

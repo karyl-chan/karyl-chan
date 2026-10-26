@@ -16,8 +16,8 @@
  *     只認得舊密鑰又只讀標準 header 的 receiver 會立刻拒收 —— 無停機輪換
  *     要 receiver 先同時接受 -Previous header（docs/features/behaviors.md）。
  *   - URL 解密後才用
- *   - 解析 response 拿 relayContent / relayEmbeds
- *   - 回 ForwardResult { ok, relayContent, relayEmbeds?, status?, error? }
+ *   - 解析 response 成回覆模型（behavior-reply.ts，#140）
+ *   - 回 ForwardResult { ok, reply, notes, status?, error? }
  */
 
 import type { RESTPostAPIWebhookWithTokenJSONBody } from "discord.js";
@@ -34,6 +34,7 @@ import { shouldRecord } from "../bot-events/bot-event-dedup.js";
 import {
   HostPolicyError,
   resolveWebhookTarget,
+  type HostPolicyCode,
   type WebhookTarget,
 } from "../../utils/host-policy.js";
 import { createPinnedAgent } from "../../utils/pinned-dispatcher.js";
@@ -41,81 +42,19 @@ import { webhookAllowlist } from "../../config.js";
 import type { AllowlistEntry } from "../../utils/webhook-allowlist.js";
 import { decryptSecret } from "../../utils/crypto.js";
 import type { BehaviorWebhookActionRow } from "../behavior/models/behavior-webhook-action.model.js";
-import type { ForwardResult, SanitizedEmbed } from "./types.js";
+import type { ForwardResult } from "./types.js";
+import { parseBehaviorReply } from "./behavior-reply.js";
 
-// ── BH-2.2A：embeds 白名單清洗 ───────────────────────────────────────────────
-// webhook 回應來自外部服務，不可信：只搬白名單欄位、強制型別、按 Discord
-// 上限截斷。壞形狀的個別 embed 靜默丟棄（content 仍照常 relay）。
-
-const MAX_EMBEDS = 10;
-const MAX_FIELDS = 25;
-
-function clampStr(v: unknown, max: number): string | undefined {
-  if (typeof v !== "string" || v.length === 0) return undefined;
-  return v.length > max ? v.slice(0, max) : v;
-}
-
-function sanitizeOneEmbed(raw: unknown): SanitizedEmbed | null {
-  if (typeof raw !== "object" || raw === null) return null;
-  const e = raw as Record<string, unknown>;
-  const out: SanitizedEmbed = {};
-  const title = clampStr(e["title"], 256);
-  if (title) out.title = title;
-  const description = clampStr(e["description"], 4096);
-  if (description) out.description = description;
-  const url = clampStr(e["url"], 2048);
-  if (url && /^https?:\/\//i.test(url)) out.url = url;
-  if (typeof e["color"] === "number" && Number.isInteger(e["color"])) {
-    out.color = Math.max(0, Math.min(0xffffff, e["color"]));
-  }
-  const ts = clampStr(e["timestamp"], 64);
-  if (ts && !Number.isNaN(new Date(ts).getTime())) out.timestamp = ts;
-  const footer = e["footer"] as Record<string, unknown> | undefined;
-  const footerText = footer ? clampStr(footer["text"], 2048) : undefined;
-  if (footerText) {
-    out.footer = { text: footerText };
-    const icon = footer ? clampStr(footer["icon_url"], 2048) : undefined;
-    if (icon && /^https?:\/\//i.test(icon)) out.footer.icon_url = icon;
-  }
-  for (const key of ["image", "thumbnail"] as const) {
-    const obj = e[key] as Record<string, unknown> | undefined;
-    const u = obj ? clampStr(obj["url"], 2048) : undefined;
-    if (u && /^https?:\/\//i.test(u)) out[key] = { url: u };
-  }
-  const author = e["author"] as Record<string, unknown> | undefined;
-  const authorName = author ? clampStr(author["name"], 256) : undefined;
-  if (authorName) {
-    out.author = { name: authorName };
-    const aUrl = author ? clampStr(author["url"], 2048) : undefined;
-    if (aUrl && /^https?:\/\//i.test(aUrl)) out.author.url = aUrl;
-    const aIcon = author ? clampStr(author["icon_url"], 2048) : undefined;
-    if (aIcon && /^https?:\/\//i.test(aIcon)) out.author.icon_url = aIcon;
-  }
-  if (Array.isArray(e["fields"])) {
-    const fields: NonNullable<SanitizedEmbed["fields"]> = [];
-    for (const f of e["fields"] as unknown[]) {
-      if (typeof f !== "object" || f === null) continue;
-      const fr = f as Record<string, unknown>;
-      const name = clampStr(fr["name"], 256);
-      const value = clampStr(fr["value"], 1024);
-      if (!name || !value) continue;
-      fields.push({ name, value, inline: !!fr["inline"] });
-      if (fields.length >= MAX_FIELDS) break;
-    }
-    if (fields.length > 0) out.fields = fields;
-  }
-  return Object.keys(out).length > 0 ? out : null;
-}
-
-export function sanitizeEmbeds(raw: unknown): SanitizedEmbed[] {
-  if (!Array.isArray(raw)) return [];
-  const out: SanitizedEmbed[] = [];
-  for (const item of raw) {
-    const e = sanitizeOneEmbed(item);
-    if (e) out.push(e);
-    if (out.length >= MAX_EMBEDS) break;
-  }
-  return out;
+/** A failed forward: no reply, and the detail for the log / stats / admin. */
+function fail(error: string, status?: number, errorCode?: HostPolicyCode): ForwardResult {
+  return {
+    ok: false,
+    reply: {},
+    notes: [],
+    error,
+    ...(status !== undefined ? { status } : {}),
+    ...(errorCode !== undefined ? { errorCode } : {}),
+  };
 }
 
 /** X-Plugin-Webhook-Token header name（CR-2 token mode）。 */
@@ -142,7 +81,7 @@ export class WebhookForwarder {
    *
    * @param action   behavior_webhook_actions 的列（url / secret 為密文）
    * @param payload  Discord webhook 形狀的 body（RESTPostAPIWebhookWithTokenJSONBody 相容）
-   * @returns        含 relayContent / relayEmbeds 的結果
+   * @returns        含解析後回覆（reply / notes）的結果
    */
   async forward(
     action: BehaviorWebhookActionRow,
@@ -152,11 +91,9 @@ export class WebhookForwarder {
     try {
       webhookUrl = decryptSecret(action.url);
     } catch (err) {
-      return {
-        ok: false,
-        relayContent: "",
-        error: `webhookUrl 解密失敗：${err instanceof Error ? err.message : String(err)}`,
-      };
+      return fail(
+        `webhookUrl 解密失敗：${err instanceof Error ? err.message : String(err)}`,
+      );
     }
 
     // 計算 secret（需在解密後才能簽署）
@@ -178,12 +115,9 @@ export class WebhookForwarder {
         `webhook-forwarder: behavior ${action.behaviorId} is hmac mode but its webhookSecret could not be decrypted — refusing to forward (fail closed).`,
         { behaviorId: action.behaviorId },
       );
-      return {
-        ok: false,
-        relayContent: "",
-        error:
-          "hmac mode: webhook secret unavailable (rotated key or corrupt ciphertext) — refusing to forward unsigned",
-      };
+      return fail(
+        "hmac mode: webhook secret unavailable (rotated key or corrupt ciphertext) — refusing to forward unsigned",
+      );
     }
 
     // 輪換寬限期內的舊密鑰；過期或解不開就當作沒有
@@ -211,11 +145,7 @@ export class WebhookForwarder {
     try {
       url = new URL(webhookUrl);
     } catch {
-      return {
-        ok: false,
-        relayContent: "",
-        error: "無效的 webhook URL",
-      };
+      return fail("無效的 webhook URL");
     }
 
     url.searchParams.set("wait", "true");
@@ -261,12 +191,7 @@ export class WebhookForwarder {
       target = await resolveWebhookTarget(url, this.allowlist);
     } catch (err) {
       if (!(err instanceof HostPolicyError)) throw err;
-      return {
-        ok: false,
-        relayContent: "",
-        error: err.message,
-        errorCode: err.code,
-      };
+      return fail(err.message, undefined, err.code);
     }
 
     // 發送 HTTP POST —— connection pinned to the checked addresses so a DNS
@@ -293,23 +218,17 @@ export class WebhookForwarder {
         } as RequestInit);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        return {
-          ok: false,
-          relayContent: "",
-          error: `network error: ${msg}`,
-        };
+        return fail(`network error: ${msg}`);
       }
 
       // A webhook endpoint redirecting is not a success — and with
       // redirect: "manual" we won't have followed it. Treat any 3xx as a
       // failed delivery rather than reading the redirect body as content.
       if (res.status >= 300 && res.status < 400) {
-        return {
-          ok: false,
-          relayContent: "",
-          status: res.status,
-          error: `webhook returned a redirect (HTTP ${res.status}); redirects are not followed`,
-        };
+        return fail(
+          `webhook returned a redirect (HTTP ${res.status}); redirects are not followed`,
+          res.status,
+        );
       }
 
       rawText = await res.text().catch(() => "");
@@ -320,12 +239,10 @@ export class WebhookForwarder {
     }
 
     if (!res.ok) {
-      return {
-        ok: false,
-        relayContent: "",
-        status: res.status,
-        error: rawText ? rawText.slice(0, 500) : `HTTP ${res.status}`,
-      };
+      return fail(
+        rawText ? rawText.slice(0, 500) : `HTTP ${res.status}`,
+        res.status,
+      );
     }
 
     // Response signature verification:
@@ -353,12 +270,7 @@ export class WebhookForwarder {
         url.pathname,
       );
       if (!verdict.ok) {
-        return {
-          ok: false,
-          relayContent: "",
-          status: res.status,
-          error: verdict.reason,
-        };
+        return fail(verdict.reason, res.status);
       }
     } else if (
       authMode === "token" &&
@@ -373,28 +285,18 @@ export class WebhookForwarder {
       );
     }
 
-    // 解析 response body
-    let responseContent = "";
-    let relayEmbeds: SanitizedEmbed[] | undefined;
-    if (rawText.length > 0) {
-      try {
-        const parsed = JSON.parse(rawText) as {
-          content?: unknown;
-          embeds?: unknown;
-        };
-        if (typeof parsed.content === "string") {
-          responseContent = parsed.content;
-        }
-        // BH-2.2A：embeds（白名單清洗；壞形狀靜默丟個別 embed）
-        const sanitized = sanitizeEmbeds(parsed.embeds);
-        if (sanitized.length > 0) relayEmbeds = sanitized;
-      } catch {
-        // wait=true 應永遠回 JSON，misbehaving webhook server 回純文字時視為無 content
-        return { ok: true, relayContent: "" };
-      }
+    // 解析 response body（#140 回覆模型）
+    if (rawText.length === 0) return { ok: true, reply: {}, notes: [] };
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(rawText);
+    } catch {
+      // wait=true 應永遠回 JSON，misbehaving webhook server 回純文字時視為無 content
+      return { ok: true, reply: {}, notes: [] };
     }
-
-    return { ok: true, relayContent: responseContent.trim(), relayEmbeds };
+    const parsed = parseBehaviorReply(decoded);
+    if (!parsed.ok) return { ok: true, reply: {}, notes: [] };
+    return { ok: true, reply: parsed.reply, notes: parsed.notes };
   }
 
   // ── 私有：安全解密（不讓解密失敗 crash forward）──────────────────────────
