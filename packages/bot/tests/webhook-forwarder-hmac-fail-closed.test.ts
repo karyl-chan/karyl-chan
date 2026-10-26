@@ -24,7 +24,7 @@ vi.mock("../src/utils/host-policy.js", () => ({
 import type { BehaviorWebhookActionRow } from "../src/modules/behavior/models/behavior-webhook-action.model.js";
 import { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
 import { encryptSecret } from "../src/utils/crypto.js";
-import { buildOutboundSignatureHeaders } from "../src/utils/hmac.js";
+import { fakeReceiver } from "./webhook-receiver-fake.js";
 
 const HOOK_URL = "http://203.0.113.10/hook";
 
@@ -64,18 +64,10 @@ describe("WebhookForwarder hmac fail-closed", () => {
 
   it("still delivers when the hmac secret is valid and the response is signed", async () => {
     const secret = "shared-hmac-secret";
-    const responseBody = JSON.stringify({ content: "pong" });
     // The webhook signs its response with the shared secret over the SAME
-    // canonical form the forwarder verifies (POST + the URL path + body).
-    const headers = buildOutboundSignatureHeaders(
-      secret,
-      "POST",
-      "/hook",
-      responseBody,
-    );
-    const fetchSpy = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(new Response(responseBody, { status: 200, headers }));
+    // canonical form the forwarder verifies (POST + the URL path + the
+    // request's nonce + body).
+    const fetchSpy = fakeReceiver({ secret, body: { content: "pong" } });
 
     const result = await new WebhookForwarder().forward(
       hmacBehavior(encryptSecret(secret)),

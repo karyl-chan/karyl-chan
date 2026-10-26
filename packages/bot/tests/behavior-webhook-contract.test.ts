@@ -44,7 +44,7 @@ import {
   MAX_REPLY_EMBED_CHARS,
   parseBehaviorReply,
 } from "../src/modules/command-system/behavior-reply.js";
-import type { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
+import { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
 import {
   clearBehaviors,
   seedCommand,
@@ -52,6 +52,8 @@ import {
   seedMessageTrigger,
 } from "./behavior-fixtures.js";
 import { CONTRACT_FIXTURES } from "@karyl-chan/plugin-wire";
+import { signBody, verifyInboundSignature } from "../src/utils/hmac.js";
+import { encryptSecret } from "../src/utils/crypto.js";
 
 const C = CONTRACT_FIXTURES.behaviorWebhook;
 
@@ -189,6 +191,59 @@ describe("behavior webhook contract (BH-2.3)", () => {
     expect(MAX_REPLY_BODY_BYTES).toBe(C.response.maxBodyBytes);
     const long = parseBehaviorReply({ content: "x".repeat(C.response.maxContentLength + 1) });
     expect(long.ok && long.reply.content!.length).toBe(C.response.maxContentLength);
+  });
+
+  it("a response signature over the request nonce reproduces the golden vectors", () => {
+    for (const g of C.signing.responseGolden) {
+      expect(signBody(g.secret, g.method, g.path, g.ts, g.nonce, g.body)).toBe(g.expectedHex);
+    }
+  });
+
+  it("a golden response verifies against its request's nonce and no other", () => {
+    for (const g of C.signing.responseGolden) {
+      const headers = new Headers({
+        [CONTRACT_FIXTURES.hmac.timestampHeader]: g.ts,
+        [CONTRACT_FIXTURES.hmac.signatureHeader]: g.expectedHex,
+      });
+      const verify = (boundNonce: string) =>
+        verifyInboundSignature(g.secret, headers, g.body, Number(g.ts), g.method, g.path, {
+          boundNonce,
+        });
+      expect(verify(g.nonce)).toEqual({ ok: true });
+      expect(verify("f".repeat(32))).toEqual({ ok: false, reason: "response signature mismatch" });
+    }
+  });
+
+  it("each auth mode sends the fixtures' request headers", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => new Response("", { status: 200 }));
+    const host = await import("../src/utils/host-policy.js");
+    const resolve = vi.spyOn(host, "resolveWebhookTarget").mockImplementation(async (u) => ({
+      url: new URL(u),
+      addresses: [{ address: "203.0.113.10", family: 4 }],
+    }));
+    try {
+      for (const mode of ["hmac", "token"] as const) {
+        fetchSpy.mockClear();
+        await new WebhookForwarder().forward(
+          {
+            behaviorId: 1,
+            url: encryptSecret("https://203.0.113.10/hook"),
+            secret: encryptSecret("s"),
+            authMode: mode,
+            previousSecret: null,
+            previousSecretExpiresAt: null,
+          },
+          {},
+        );
+        const sent = (fetchSpy.mock.calls[0]![1] as { headers: Record<string, string> }).headers;
+        for (const h of C.signing.requestHeaders[mode]) expect(sent).toHaveProperty(h);
+      }
+    } finally {
+      fetchSpy.mockRestore();
+      resolve.mockRestore();
+    }
   });
 
   it("embed whitelist matches the fixtures", () => {

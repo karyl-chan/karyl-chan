@@ -24,6 +24,7 @@ import type { RESTPostAPIWebhookWithTokenJSONBody } from "discord.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import {
   buildOutboundSignatureHeaders,
+  generateNonce,
   signBody,
   verifyInboundSignatureWithKeys,
   NONCE_HEADER,
@@ -218,19 +219,23 @@ export class WebhookForwarder {
       "Content-Type": "application/json",
     };
 
-    // HMAC 簽署（CR-2 兩 mode）
+    // HMAC 簽署（CR-2 兩 mode）。每個請求一個 nonce；回應的簽章必須綁定
+    // 它（#102），token mode 也送，讓有簽回應的 receiver 能綁。
     const authMode = action.authMode;
+    const nonce = generateNonce();
     if (rawSecret) {
       if (authMode === "token") {
         // token mode：X-Plugin-Webhook-Token: <secret>（裸 shared secret）
         headers[PLUGIN_WEBHOOK_TOKEN_HEADER] = rawSecret;
         if (rawPrevious) headers[PREVIOUS_TOKEN_HEADER] = rawPrevious;
+        headers[NONCE_HEADER] = nonce;
       } else if (authMode === "hmac") {
         const sigHeaders = buildOutboundSignatureHeaders(
           rawSecret,
           "POST",
           url.pathname,
           body,
+          { nonce },
         );
         Object.assign(headers, sigHeaders);
         if (rawPrevious) {
@@ -319,7 +324,11 @@ export class WebhookForwarder {
       );
     }
 
-    // Response signature verification:
+    // Response signature verification — over the REQUEST's nonce
+    // (`<METHOD>:<path>:<ts>:<request nonce>:<body>`, #102), so a response
+    // signed for another request (another user's) can't be swapped in. No
+    // legacy nonce-less form: a hard switch, documented in
+    // docs/features/behaviors.md.
     //
     //  - hmac mode → required, fail closed if missing/invalid.
     //  - token mode → optional but verified opportunistically: if the
@@ -342,6 +351,7 @@ export class WebhookForwarder {
         Math.floor(Date.now() / 1000),
         "POST",
         url.pathname,
+        { boundNonce: nonce },
       );
       if (!verdict.ok) {
         return fail(verdict.reason, res.status);

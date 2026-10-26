@@ -34,7 +34,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { spawn, type ChildProcess } from "node:child_process";
-import { createHmac, randomBytes } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { createServer as createHttpServer, type Server } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import { networkInterfaces } from "node:os";
@@ -156,8 +156,11 @@ interface SinkHit {
 interface Sink {
   url(path: string): string;
   hits: SinkHit[];
-  /** Next response: JSON body + optionally sign it with `secret`. */
-  respondWith(body: unknown, opts?: { signWithSecret?: string }): void;
+  /**
+   * Next response: JSON body + optionally sign it with `secret`, over the
+   * request's nonce unless `foreignNonce` says to sign another one.
+   */
+  respondWith(body: unknown, opts?: { signWithSecret?: string; foreignNonce?: string }): void;
   close(): Promise<void>;
 }
 
@@ -166,6 +169,7 @@ async function startSink(): Promise<Sink> {
   const hits: SinkHit[] = [];
   let nextBody: unknown = { content: "" };
   let nextSignSecret: string | null = null;
+  let nextForeignNonce: string | null = null;
 
   const server: Server = createHttpServer((req, res) => {
     const chunks: Buffer[] = [];
@@ -183,11 +187,11 @@ async function startSink(): Promise<Sink> {
       };
       if (nextSignSecret) {
         // hmac-mode behaviors verify the RESPONSE fail-closed, with the
-        // same scheme and the REQUEST's method+path as the bound context.
+        // same scheme and the REQUEST's method + path + nonce as the bound
+        // context (#102: a response signed for another request is refused).
         const ts = String(Math.floor(Date.now() / 1000));
-        const nonce = randomBytes(16).toString("hex");
+        const nonce = nextForeignNonce ?? (req.headers["x-karyl-nonce"] as string);
         headers["x-karyl-timestamp"] = ts;
-        headers["x-karyl-nonce"] = nonce;
         headers["x-karyl-signature"] = hmacSign(
           nextSignSecret,
           "POST",
@@ -214,6 +218,7 @@ async function startSink(): Promise<Sink> {
     respondWith(body, opts) {
       nextBody = body;
       nextSignSecret = opts?.signWithSecret ?? null;
+      nextForeignNonce = opts?.foreignNonce ?? null;
     },
     close: () =>
       new Promise<void>((resolve) => {
@@ -384,7 +389,16 @@ describe("behavior webhook + DM inbox E2E (PM-2.3, paths 4+5)", { skip: !DB_URL 
       "request signature must verify with the shared scheme",
     );
 
-    // 2. An UNSIGNED response in hmac mode must be rejected (fail closed).
+    // 2. A response signed for ANOTHER request (its nonce) is refused —
+    //    the swap #102 closes.
+    sink!.respondWith({ content: "someone else's link" }, {
+      signWithSecret: secret,
+      foreignNonce: nonce === "f".repeat(32) ? "e".repeat(32) : "f".repeat(32),
+    });
+    const swapped = await testFire(id);
+    assert.equal((swapped.body as { ok: boolean }).ok, false, "a response bound to another nonce must not verify");
+
+    // 3. An UNSIGNED response in hmac mode must be rejected (fail closed).
     sink!.respondWith({ content: "unsigned imposter" });
     const rejected = await testFire(id);
     const verdict = rejected.body as { ok: boolean; error: string | null };

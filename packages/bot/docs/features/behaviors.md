@@ -261,18 +261,34 @@ In `hmac` mode the bot sends three headers on the outbound request:
 
 Receivers verifying requests should include the nonce in the signed
 string and remember seen nonces for the 300 s window to reject replays.
+`<path>` is the pathname of the configured webhook URL — the query
+string (including the `?wait=true` the bot adds) is not signed. A receiver
+behind a reverse proxy that rewrites the path must verify against the
+path as configured on the bot, not the one it receives.
 
-The webhook **response** is verified the same way (the bot binds the
-original request's method + path into the expected payload, which blocks
-cross-endpoint replay). For responses the nonce is OPTIONAL — a response
-rides the request's own connection, so response replay isn't a
-stored-request attack; sign with the legacy
-`"<METHOD>:<path>:<ts>:<body>"` form or include an `X-Karyl-Nonce`
-header and the nonced form, either verifies. Timestamps that differ from
-local time by more than 300 seconds are rejected; comparisons use
-`timingSafeEqual`. In `hmac` mode a missing or invalid response
-signature counts as a dispatch failure and **content is not relayed**
-to the caller.
+The webhook **response** is signed with the same secret over the
+**request's** method, path and **nonce** (#102):
+
+```
+X-Karyl-Signature = HMAC_SHA256(secret, "<METHOD>:<path>:<ts>:<request nonce>:<body>")
+```
+
+with `X-Karyl-Timestamp` set to the response's own time. Binding the
+request nonce means a response signed for one request — one user's login
+link — can't be swapped into another's. Sending `X-Karyl-Nonce` on the
+response is optional; if sent it must equal the request's. Timestamps that
+differ from local time by more than 300 seconds are rejected; comparisons
+use `timingSafeEqual`. In `hmac` mode a missing or invalid response
+signature fails the action and **nothing is shown** to the caller but the
+generic failure line. In `token` mode the bot also sends `X-Karyl-Nonce`,
+and a response that carries a signature is verified the same way.
+
+This was a hard switch: the earlier nonce-less response form
+(`"<METHOD>:<path>:<ts>:<body>"`) and responses signed over a nonce of the
+receiver's own no longer verify. A transition window would have kept the
+swap open for its whole length, and when it shipped production had no
+custom behaviors (only the built-in login), so no receiver depended on the
+old form.
 
 ### Secret rotation
 
@@ -331,6 +347,15 @@ function sameHex(a, b) {
     a.length === b.length &&
     crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b))
   );
+}
+
+// The response: sign over the REQUEST's nonce (the bot rejects anything else).
+function signResponse(secret, method, path, requestNonce, body) {
+  const ts = String(Math.floor(Date.now() / 1000));
+  return {
+    'x-karyl-timestamp': ts,
+    'x-karyl-signature': sign(secret, method, path, ts, requestNonce, body),
+  };
 }
 
 function verify(headers, body, method, path, secret) {

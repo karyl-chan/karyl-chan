@@ -29,7 +29,8 @@ vi.mock("../src/modules/bot-events/bot-event-log.js", () => ({
 import type { BehaviorWebhookActionRow } from "../src/modules/behavior/models/behavior-webhook-action.model.js";
 import { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
 import { encryptSecret } from "../src/utils/crypto.js";
-import { buildOutboundSignatureHeaders, signBody } from "../src/utils/hmac.js";
+import { signBody } from "../src/utils/hmac.js";
+import { fakeReceiver, sentRequest } from "./webhook-receiver-fake.js";
 
 const HOOK_URL = "https://203.0.113.10/hook";
 const CURRENT = "current-secret";
@@ -50,21 +51,8 @@ function action(
   };
 }
 
-function respondSignedWith(secret: string | null) {
-  const body = JSON.stringify({ content: "pong" });
-  const headers = secret ? buildOutboundSignatureHeaders(secret, "POST", "/hook", body) : {};
-  return vi
-    .spyOn(globalThis, "fetch")
-    .mockResolvedValue(new Response(body, { status: 200, headers }));
-}
-
-function sentHeaders(fetchSpy: ReturnType<typeof respondSignedWith>): {
-  headers: Record<string, string>;
-  body: string;
-} {
-  const init = fetchSpy.mock.calls[0]![1] as { headers: Record<string, string>; body: string };
-  return init;
-}
+const respondSignedWith = (secret: string | null) => fakeReceiver({ secret });
+const sentHeaders = sentRequest;
 
 describe("webhook secret rotation grace", () => {
   beforeEach(() => {

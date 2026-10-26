@@ -111,6 +111,26 @@ export interface ContractFixtures {
     readonly selectionField: string;
   };
   readonly behaviorWebhook: {
+    readonly signing: {
+      /** hmac mode request: the shared scheme (`hmac.payloadFormat`). */
+      readonly requestPayloadFormat: string;
+      /**
+       * The auth headers on every request, per mode. Token mode sends
+       * X-Karyl-Nonce too, so a receiver that signs its responses there
+       * can bind the request nonce like hmac mode does.
+       */
+      readonly requestHeaders: {
+        readonly hmac: readonly string[];
+        readonly token: readonly string[];
+      };
+      /**
+       * A signed response covers the REQUEST's nonce (#102); an
+       * X-Karyl-Nonce on the response, if sent, must equal it.
+       */
+      readonly responsePayloadFormat: string;
+      /** Response vectors: `nonce` is the nonce the request carried. */
+      readonly responseGolden: readonly HmacGoldenVector[];
+    };
     readonly request: {
       readonly topLevelKeys: readonly string[];
       readonly patternMetaKeys: readonly string[];
@@ -415,6 +435,27 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
    * canonical schema.
    */
   behaviorWebhook: {
+    signing: {
+      requestPayloadFormat: "<METHOD>:<path>:<ts>:<nonce>:<body>",
+      requestHeaders: {
+        hmac: ["x-karyl-timestamp", "x-karyl-nonce", "x-karyl-signature"],
+        token: ["x-plugin-webhook-token", "x-karyl-nonce"],
+      },
+      responsePayloadFormat: "<METHOD>:<path>:<ts>:<request nonce>:<body>",
+      responseGolden: [
+        {
+          name: "reply-bound-to-request-nonce",
+          secret: "behavior-secret",
+          method: "POST",
+          path: "/hook",
+          ts: "1700000000",
+          nonce: "cafe0000000000000000000000000010",
+          body: '{"content":"pong"}',
+          expectedHex:
+            "6792665cfb2dfcee8737f07b587934ee0c5b85a93140b903e663a89778c8b9fc",
+        },
+      ],
+    },
     request: {
       topLevelKeys: ["content", "username", "avatar_url", "_meta"],
       patternMetaKeys: [
