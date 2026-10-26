@@ -1,216 +1,294 @@
 # Behaviors
 
-> **此頁描述舊模型（`behaviors` 表與範圍分頁），將於 #141 改寫。** 目前的模型見
-> [ADR 0003](../adr/0003-behavior-trigger-action-split.md) 與
-> [architecture.md](../architecture.md#modulesbehavior--behaviors)。
+A **behavior** is one trigger bound to one action
+([ADR 0003](../adr/0003-behavior-trigger-action-split.md)): when a user
+runs one of the bot's commands, or sends a message that matches a
+pattern, the bot calls a webhook and shows its answer.
 
-A **behavior** is a "Discord trigger → action" rule stored in the
-`behaviors` table. Each behavior has one trigger type and one source:
+This page is the admin's and operator's view. If you are writing the
+service a webhook calls, read the
+[behavior webhook protocol](behavior-webhook-protocol.md) instead. The
+domain terms (Behavior, Command Leaf, Message Trigger Location, …) are
+defined in the bot's [CONTEXT.md](../../CONTEXT.md#behaviors).
 
-- **Trigger types (`triggerType`)**
-  - `slash_command` — fires when a specific slash command is invoked.
-  - `message_pattern` — fires when a message matches a pattern
-    (startswith, endswith, or regex). The behavior's `contexts` decide
-    the surface: `BotDM` patterns match DMs, `Guild` patterns match
-    guild text channels (BH-3), narrowed further by placement
-    (specific_guild / specific_channel tabs) and audience.
+## Contents
 
-    Guild guardrails: the bot's own messages never trigger anything;
-    other bot/webhook authors are skipped unless the behavior unchecks
-    `ignoreBots` (default on); forwards are rate-limited per channel
-    (5 per 10 s window, silently dropped and noted in `bot_events`).
-- **Sources (`source`)**
-  - `custom` — pack the trigger as an HTTP webhook POST, forward to the
-    configured URL, and relay the response back to the caller.
-  - `system` — built-in handler (`admin-login`).
+- [The model](#the-model)
+- [Command triggers](#command-triggers)
+- [Message triggers](#message-triggers)
+- [Behavior Sections](#behavior-sections)
+- [The system login](#the-system-login)
+- [Webhook actions](#webhook-actions)
+- [Who sees the reply](#who-sees-the-reply)
+- [Admin UI](#admin-ui)
+- [Write API](#write-api)
+- [Storage](#storage)
+- [Source](#source)
 
-## Concepts
+## The model
 
-### Scope tab
+| Part | What it is |
+|------|------------|
+| **Trigger** | How the behavior starts. A **command trigger** is one leaf of a Discord command; a **message trigger** matches messages the bot can read. |
+| **Action** | What the behavior does. Admins choose a **webhook**. The system login runs a login action of the bot's own, which is not on offer to admins (stored as `actionSource: builtin`). Plugin actions are planned (phase 2), not available yet. |
+| **Reply** | The action's answer, shown to the user: text, embeds and link buttons. One reply model serves every trigger. |
 
-Every behavior hangs off one **scope tab** (`scopeTabId`). A scope tab is
-both a grouping unit in the admin UI and the source of the behavior's
-"reach" five-tuple (`scope` / `contexts` / `audienceKind` /
-`audienceUserId` or `audienceGroupName` / `placementGuildId` or
-`placementChannelId`). Picking a tab derives the five fields automatically.
+A behavior has a title (at most 100 characters), an optional admin note
+(at most 1000 characters, never sent to Discord), and an on/off switch.
 
-| Tab type | Fixed | Derived reach |
-|----------|-------|---------------|
-| `global_all` | yes (`id=1`) | global scope, all contexts, all audiences |
-| `all_dms` | yes (`id=2`) | global scope, BotDM + PrivateChannel, all audiences |
-| `all_bot_dms` | yes (`id=3`) | global scope, BotDM only, all audiences |
-| `all_guilds` | yes (`id=4`) | guild scope, Guild context, all audiences |
-| `specific_guild` | no | one specific guild |
-| `specific_channel` | no | one channel within a guild |
-| `specific_user` | no | one user's DM |
-| `specific_group` | no | members of a named group |
+## Command triggers
 
-The four fixed tabs cannot be deleted and are seeded idempotently at boot.
-The four `specific_*` tabs are created by admins. Deleting a dynamic tab
-re-attaches its `source='system'` rows to `global_all` and removes its
-`source='custom'` rows.
+A **command** is what Discord registers: a name, a description and the
+settings that decide who sees it and where. Each runnable path of the
+command is a **command leaf**, and each leaf is one behavior with its own
+action:
 
-### System behaviors
+- a command without subcommands has one leaf, the **root leaf** (`/nas`);
+- a command with subcommands has one leaf per subcommand (`/nas wake`,
+  `/nas status`), and no root leaf. Discord does not allow both.
 
-One `source='system'` row is seeded idempotently by
-`src/modules/behavior/system-seed.service.ts`; it cannot be deleted or
-disabled through the API. (`manual` and `break` were removed together with
-continuous sessions — see [ADR 0003](../adr/0003-behavior-trigger-action-split.md).)
+Subcommand groups (`/nas power on`) are reserved for later and cannot be
+created yet.
 
-| `systemKey` | Command | Action |
-|-------------|---------|--------|
-| `admin-login` | `/login` | Reply (ephemeral) with a one-time admin login link. Bot owners (`BOT_OWNER_IDS`) and any `authorized_users` row with ≥1 active capability succeed; everyone else gets a "not authorized" reply. |
+### Visibility belongs to Discord
 
-It is registered globally with dual-install enabled, and
-`contexts` is restricted to `BotDM` (the seeded home is `all_bot_dms`;
-older `all_dms` rows that also carried `PrivateChannel` are self-migrated
-off it); it does not appear in the guild command UI. The admin can switch
-its trigger to a DM message pattern (production uses `!login`).
+Who sees a command and where it can be used is decided by Discord, from
+the command's settings, and by each server's admins (**Server Settings →
+Integrations**). The bot does no check of its own when a command runs: if
+a user can see it, they can run it. Visibility is set on the command, not
+on a leaf, so to offer a subcommand to fewer people, make it a separate
+command. A webhook that serves only some users must check
+`_meta.user.id` itself.
 
-### Multi-match and `stopOnMatch` (message_pattern only)
+| Setting | Values |
+|---------|--------|
+| Name | 1–32 characters of `a-z`, `0-9`, `_`, `-`. |
+| Description | 1–100 characters, not blank. |
+| Registration target | **Global**, or **one server** (a guild id). |
+| Install types | `guild_install` (installed with a server), `user_install` (installed by a user). |
+| Contexts | `Guild` (servers), `BotDM` (DMs with the bot), `PrivateChannel` (other DMs and group DMs). |
+| Default member permissions | A Discord permission bitfield, or none. It only applies in servers; server admins can override it. |
 
-The DM matcher walks every applicable `message_pattern` behavior in
-`sortOrder` and can fire more than one per message:
+The bot refuses a command that Discord would refuse, before anything is
+stored or sent:
 
-- `system` match → always stops (terminal UX: the login link).
-- `custom` match → `stopOnMatch=true` stops the walk; `false` (default)
-  keeps evaluating, so several behaviors can each fire on the same message.
+- A one-server command can only be used in that server: contexts exactly
+  `[Guild]`, install types exactly `[guild_install]`.
+- A global command offered in `PrivateChannel` needs `user_install`:
+  Discord shows commands in other DMs only for an app the user installed.
+- At most 25 subcommands; at most 25 options per leaf, with unique names
+  and required options before optional ones; at most 8000 characters
+  across the command's names, descriptions and options.
+- The root leaf and subcommands never coexist; one leaf per path.
 
-`stopOnMatch` has no meaning for `slash_command` behaviors — dispatch is
-first-claim-wins over a unique `(slashCommandName, scope, contexts)` index,
-so there is never a "next behavior" to keep or skip. The API rejects setting
-it on slash behaviors and the editor only shows it for patterns.
+### Leaves
 
-## Evaluation and dispatch
+A leaf has the behavior's title, an optional Discord description (a
+subcommand without one shows its title), its options, its webhook action,
+its [reply visibility](#who-sees-the-reply), and an on/off switch.
+Options are flat values of type `string`, `integer`, `number`,
+`boolean`, `user`, `channel`, `role`, `mentionable` or `attachment`.
 
-### Slash command trigger
+A disabled leaf is left out of the command registered on Discord, but it
+still counts for every rule above, so that turning it back on cannot
+break the command. A command with no enabled leaf is removed from
+Discord.
 
-`interactionCreate` → `InteractionDispatcher` queries `behaviors` for
-`triggerType='slash_command' AND slashCommandName=<name> AND enabled`:
+**Convert to subcommands** turns a root leaf into the command's first
+subcommand: the leaf keeps its id, webhook, secret and statistics, and
+further subcommands can then be added.
 
-- `source='system'` — route to the built-in handler keyed by `systemKey`.
-- `source='custom'` — call `deferReply`, run the webhook forward, then
-  `editReply` with the response content.
+### Names
 
-The slash command registration and synchronisation in Discord are handled
-by `CommandReconciler`; see the `command-system` module in
-[`../architecture.md`](../architecture.md).
+All commands share Discord's name space, so a name must be free among the
+built-in commands, every plugin command (manifest commands and guild
+feature commands) and every behavior command, disabled ones included,
+compared without case. A global command conflicts with any command of the
+same name; two commands for two different servers may share a name.
+`login` is reserved for the [system login](#the-system-login).
 
-### message_pattern trigger (DMs + guild channels)
+### Registration
 
-`MessageTriggerMatcher` mounts a `messageCreate` listener:
+Saving a command (or one of its leaves) registers it with Discord right
+away. The answer reports what happened for each target:
 
-1. Collect the `message_pattern` behaviors applicable to the
-   caller (filtered by `audienceKind`, ordered by `sortOrder` ascending),
-   then by surface (`contexts`), placement, and — for bot authors in
-   guilds — `ignoreBots`.
-2. Evaluate each via `matchesTrigger` (`startswith` / `endswith` /
-   `regex`); forward per the multi-match rules above (`stopOnMatch`).
+| Status | Meaning |
+|--------|---------|
+| `registered` | Discord accepted it. |
+| `removed` | The command is gone from Discord (deleted, or no enabled leaf left). |
+| `deferred` | The bot is not connected to Discord, or the removal could not reach it. The next full sync, which runs each time the bot connects to Discord, applies it. |
 
-## Webhook forwarding
+When Discord refuses, the bot puts the stored rows back as they were and
+answers `502 registration_failed` with Discord's own error. A rename
+registers the new name first and only then removes the old one.
 
-### Payload
+**Resync** registers a command again exactly as stored, for example after
+someone deleted it on Discord.
 
-Bot → webhook (the URL is automatically suffixed with `?wait=true` to
-obtain a synchronous response):
+## Message triggers
 
-- `content` — the DM message body (`message.content`, verbatim).
-- `username` and `avatar_url` — caller's display name and avatar.
-- `_meta` — structured metadata (BH-2.1), aligned with the slash path:
-  - `user` — `{ id, username, global_name, discriminator, avatar }`. Use
-    `user.id` to tell callers apart — `username` is mutable and not a key.
-  - `message_id`, `channel_id`, `behavior_id`
-  - `attachments` — `[{ url, filename, content_type, size }]` for any
-    files attached to the DM.
-  - `captures` — a regex trigger's capture groups, group 1 first (a named
-    group counts by its position; `null` for an optional group that took
-    no part). `天氣 台北` against `^天氣\s+(.+)` sends `["台北"]`. Always
-    `[]` for `startswith` / `endswith`.
+A message trigger matches messages the bot receives. It has a
+**location**:
 
-(The top-level shape stays Discord-webhook compatible — no `embeds` or
-`allowed_mentions` outbound. The `allowed_mentions: { parse: [] }` guard is
-applied to the bot's *response* relayed back into the DM, not to this
-outbound webhook call. The slash path's `_meta` additionally carries the
-interaction fields, `behavior_id`, and the invoked leaf's path as
-`sub_command_name` / `sub_command_group` — the names the plugin command
-payload uses, `null` on a root leaf; `content` keeps reading
-`/name sub`.)
+| Location | Matches |
+|----------|---------|
+| DMs with the bot | Messages users send the bot directly. |
+| All servers | Messages in every channel of every server the bot is in. |
+| One server | Messages in that server's channels. |
+| One channel | Messages in that channel only. A thread has its own channel id, so a channel trigger does not fire in the channel's threads. |
 
-### Reply contract (v1)
+The bot cannot read messages between other users, so there is no message
+trigger for other DMs.
 
-Webhook → bot — the response body is a **Behavior Reply**, the same shape
-a plugin sends to `interactions.respond` (without the token). The earlier
-`{ content, embeds }` response is a subset of it, so there is no version
-field. The built-in login action answers with the same structure. The
-canonical lists live in `CONTRACT_FIXTURES.behaviorWebhook.response`
-(`@karyl-chan/plugin-wire`).
+| Setting | Rule |
+|---------|------|
+| Pattern | `startswith`, `endswith` or `regex`, 1–500 characters. A regex is a JavaScript regular expression without flags (so it is case-sensitive) and must compile. `startswith` and `endswith` compare exactly, case included. |
+| Audience | DMs with the bot only: **everyone**, **one user** (a user id), or an **audience group**. In servers a trigger always applies to everyone. |
+| Skip other bots (`ignoreBots`) | Servers only, on by default: skip messages from other bots and webhooks. The bot's own messages are always skipped, and in DMs messages from bots always are. |
+| Stop after a match (`stopOnMatch`) | Off by default. See [matching order](#matching-order). |
 
-| Field | Type | Phase-1 rule |
-|-------|------|--------------|
-| `content` | string | Trimmed. Over 2000 characters it is cut and ends with a new line and `…(truncated)`. |
-| `embeds` | array | Whitelisted fields (title / description / url / color / timestamp / footer / image / thumbnail / author / fields), Discord's per-field lengths, non-http(s) urls dropped. At most 10, and at most 6000 characters across all of them — an embed that would pass 6000 is dropped, later smaller ones may still fit. |
-| `components` | array | Action rows (`type: 1`) of **link buttons only** (`type: 2, style: 5`, an `https://` `url` ≤ 512 characters, a non-empty `label`, cut to 80). At most 5 rows of 5. Anything else is dropped. |
-| `ephemeral` | boolean | Who sees the reply — see below. |
-| `flags` | integer | Only `SuppressEmbeds` (4) and `SuppressNotifications` (4096) are kept. Visibility is never a flag. |
+An **audience group** is a name with a member list. Triggers that use the
+same name share one list. A group exists only while a trigger uses it:
+its list can be set only then, and it is deleted with the last trigger
+that uses it (the admin UI warns before that happens).
 
-Any other top-level field is ignored, and the bot logs it once per
-behavior. A field of the wrong type is ignored the same way. The body may
-be at most **64 KiB**; a larger body, a non-empty body that is not JSON, or
-JSON that is not an object fails the action. An empty body (or an object
-with nothing to show) means "no reply".
+### Matching order
 
-`ephemeral`, per trigger:
+Every message is checked against the message triggers in one order:
+the trigger's position (`sortOrder`), then its id. The order spans every
+location, because a server message is checked against "all servers", its
+server and its channel together. The admin orders the triggers of one
+location at a time; this keeps the slots that location's triggers hold in
+the overall order.
 
-| Trigger | Default | `ephemeral: false` | `ephemeral: true` |
-|---------|---------|--------------------|-------------------|
-| Command | only the invoker sees it | posted publicly (the bot follows up publicly and deletes its private "thinking…" placeholder — the plugin defer table) | only the invoker |
-| Message in a DM with the bot | in the DM | in the DM | in the DM (ignored) |
-| Message in a guild channel | in the channel | in the channel | DMed to the author; never in the channel |
+For one message, several triggers can fire, one after another:
 
-The "Default" column can be changed per behavior: a command leaf and a
-guild message trigger store `replyVisibility` (admin UI: 「回覆給誰看」) —
-`private` (a command: only the invoker; a guild trigger: the author's
-DMs), `public` (the channel), or `null` for the default above. Who sees a
-reply is decided in this order: the response's `ephemeral`, then the
-stored `replyVisibility`, then the trigger's default. A command stored
-`public` defers in the open, so a public answer fills the "thinking…"
-message in place. Not used in a DM with the bot, nor by the system login.
+- A trigger with **Stop after a match** stops the walk when it matches
+  (also when the rate limit below dropped its request).
+- The system login always stops the walk, and is always checked first.
 
-Mentions in a reply are never parsed. There is no `[BEHAVIOR:END]` marker
-any more: it ended a conversation session, and sessions were removed
-with ADR 0003 (S1), so a reply never ends anything.
+Other limits:
 
-When an action fails — the webhook is unreachable, answers non-2xx, fails
-signature checks, sends a body the rules above refuse, or Discord refuses
-the reply — the user gets a generic localized line ("couldn't be completed
-right now"), never the receiver's error text:
+- In servers, each channel fires at most 5 webhook requests per 10
+  seconds. Further matches in that window are dropped and noted once in
+  the bot event log. DMs are not limited.
+- One user's messages are handled one at a time, in order. A slow webhook
+  therefore delays that user's next message, but not other users.
 
-| Trigger | Where the failure line goes |
-|---------|-----------------------------|
-| Command | the invoker only: a private "thinking…" placeholder is filled with it; a public one (a leaf stored `public`) is deleted and the line follows up privately |
-| Message in a DM with the bot | the DM |
-| Message in a guild channel | a DM to the author; if that DM fails, nothing — the channel never hears about it |
+## Behavior Sections
 
-An ephemeral guild reply that can't be DMed is a failure too, and also
-says nothing in the channel. The system login never speaks in a guild
-channel at all. The detail goes only to the log (`bot_events`) and the
-behavior's stats (`lastError`), which the admin UI shows.
+The admin UI groups behaviors into three **sections**, derived from each
+trigger's settings. A section is not stored and changes nothing about how
+a behavior runs.
 
-Slash behaviors may define command options (BH-2.2C,
-`slashCommandOptions`): a flat list of scalar options (string / integer /
-number / boolean / user / channel / role / mentionable / attachment) edited
-in the admin UI, registered to Discord by the reconciler, and delivered to
-the webhook in `_meta.options` as `{ name, type, value }` entries.
+| Section | Holds |
+|---------|-------|
+| **App commands** | Global commands usable in more than one context, or installable by users. |
+| **DMs with the bot** | Message triggers in DMs with the bot, and global commands usable only there (`BotDM`, `guild_install` only). |
+| **Servers** → All servers | Message triggers in all servers, and global commands usable only in servers (`Guild`, `guild_install` only). |
+| **Servers** → one server | That server's message triggers and one-server commands. |
+| **Servers** → one channel | That channel's message triggers. Discord cannot limit a command to one channel. |
 
-Failed dispatch (network error, non-2xx, signature failure, a refused
-body) is recorded in `bot_events` and the behavior's stats. The POST has a
-10-second timeout.
+Adding a behavior in a section offers only what the section can hold, and
+explains why the rest is not offered. A new command starts with the
+visibility of its section (App commands: both install types and every
+context; DMs with the bot: `BotDM`; All servers: `Guild`; one server: a
+command registered to that server). Changing a command's settings can
+move it to another section.
+
+## The system login
+
+The **system login** (the System Behavior) is a fixed behavior that
+sends a one-time login link for the admin UI. It is the owner's only way
+in, and Karyl-chan is also the login provider for other self-hosted
+services, so it is protected against changes that would lock the owner
+out.
+
+- It cannot be added, deleted or disabled. Only its trigger can change.
+- It is pinned to the top of its section.
+- By default (and when it is missing at startup) it is the message
+  trigger `!login` (`startswith`) in DMs with the bot.
+- Bot owners (`BOT_OWNER_IDS`) and authorised users whose role has at least
+  one capability get the link: an embed and a link button, visible only to
+  them. On a message trigger, anyone else gets no answer; on a command,
+  they are told they are not authorised.
+- The admin login page shows the current trigger
+  (`GET /api/auth/login-trigger`, public and rate-limited).
+
+### Changing the login's trigger
+
+Only a **bot owner** can change the login's trigger, not every admin
+(`PUT /api/behaviors/system/login/trigger`). It is either a message
+trigger or a command, never both. Every rule answers one question: after
+this save, can the owner still log in?
+
+- **As a message trigger:** DMs with the bot only, because a reply in a
+  server channel would show the link to everyone. Audience everyone.
+  `startswith` or `endswith` only: a regex could be written never to
+  match, and the login page shows the pattern. The pattern cannot be
+  blank or start or end with whitespace (Discord trims messages). Each
+  change needs a **sample DM** that the pattern must match, checked the
+  same way the bot matches messages; the sample is not stored.
+- **As a command:** a global command (a server command would disappear if
+  the bot left that server), without default member permissions or
+  options. Its install types must include `guild_install` and its contexts
+  `BotDM`, so that an owner who has not installed the app, or shares no
+  server with the bot, still sees it. Other contexts may be added: the
+  reply is always visible only to the user who ran it. The name must be
+  free (`login` is the login's own).
+
+The new trigger takes effect **before** the old one stops:
+
+- **Message → command:** the command is registered on Discord first. If
+  Discord refuses, or the bot is not connected, nothing changes
+  (`502 registration_failed`). Only then is the change stored; if storing
+  fails, the registration is taken back.
+- **Command → message:** the message trigger is stored first, so the new
+  pattern works from that moment; then the command is deleted from
+  Discord. If that fails, the answer is `deferred`, and the next full
+  sync removes it.
+
+Every attempt that reaches the switch is audited as
+`behavior.system.trigger` with its outcome (`switched`, `name_conflict`,
+`registration_failed` or `store_failed`). A request refused before it (a
+malformed body, a stale version, not an owner) is not.
+Resyncing the login's command is also owner-only.
+
+## Webhook actions
+
+A webhook action calls a URL with the trigger's data and shows the answer
+as the reply. The full contract is in the
+[behavior webhook protocol](behavior-webhook-protocol.md).
+
+| Setting | Rule |
+|---------|------|
+| URL | At most 2048 characters, checked against the [target rules](#webhook-targets) on save and again on every call. |
+| Authentication | None, `token` or `hmac` ([protocol](behavior-webhook-protocol.md#authentication)). New behaviors in the admin UI start with `hmac`. |
+
+**Secrets are write-only.** The bot makes the secret when authentication
+is turned on and shows it **once**, in that response; reads report only
+`secretSet`. Switching between `token` and `hmac` keeps the secret, and
+turning authentication off deletes it. **Rotate** makes a new secret and
+keeps the old one valid for 24 hours, so a receiver can switch without
+downtime ([protocol](behavior-webhook-protocol.md#secret-rotation)). URL and
+secret are stored encrypted (AES-256-GCM).
+
+**Test webhook** sends one request to the **saved** action (not to
+unsaved edits). It is signed so that it never passes for a real user, and
+it carries a placeholder identity, not the admin's. The admin UI previews
+the reply: content, embeds, buttons, who would see it on that trigger,
+what the reply rules changed, and whether the response signature was
+verified. A test does not count in the statistics.
+
+**Statistics:** each behavior records when it last fired, its successes
+and failures, its consecutive failures, and its last error. The admin UI
+shows them and flags a behavior that keeps failing.
 
 ### Webhook targets
 
 The webhook URL is checked by `resolveWebhookTarget`
 (`src/utils/host-policy.ts`) both when the behavior is saved and again
-on every forward (including the admin test-fire):
+on every call (including the test-fire):
 
 | Target resolves to | Allowed? |
 |--------------------|----------|
@@ -225,13 +303,13 @@ wildcards, and `nas.latte.lan.` in the list is read as `nas.latte.lan`
 (a webhook URL whose host ends in a dot is rejected anyway). It is an
 environment variable (read at boot; a malformed entry stops the bot
 from starting) and its current value is shown on the admin **System
-settings** page under the behavior group. Entries that cannot fully
+settings** page, with the behavior settings. Entries that cannot fully
 apply are logged as a warning at boot: a loopback / metadata name, an
 IP or range reaching beyond private space (`127.0.0.0/8`, a public IP,
 `0.0.0.0/0`), or a private range covering a cloud metadata address
 (`100.64.0.0/10` → `100.100.100.200`, `fd00::/8` → `fd00:ec2::254`;
-that one address stays refused, the rest applies). A hostname whose DNS answers
-include any blocked address is refused as a whole.
+that one address stays refused, the rest applies). A hostname whose DNS
+answers include any blocked address is refused as a whole.
 
 Hosts that use fake-IP DNS (Clash, Surge and similar proxies answer
 every lookup with an address from `198.18.0.0/15`) cannot reach any
@@ -249,231 +327,136 @@ Redirects are never followed.
 
 A refusal carries a machine `code` (`private_not_allowlisted`,
 `https_required`, `blocked_loopback`, `blocked_metadata`,
-`blocked_reserved`, `dns_failed`, …) next to a readable `error` that
-names the target and the setting — the save route returns it as a 400
-body, the test-fire route as `{ ok: false, error, errorCode }` (in its
-`{ ok, reply, notes, status, error, errorCode, verified }` answer).
+`blocked_reserved`, `dns_failed`, …) next to a readable message that
+names the target and the setting. The save routes refuse with
+`400 validation_failed` on the `webhook.url` field, the code in the
+message; the test-fire returns it as `errorCode`.
 
 The legacy `WEBHOOK_ALLOW_PRIVATE=true` switch (allow every private
 address) still works for local development and the e2e harness, but is
 deprecated; the bot logs a warning at boot when it is on in production.
 
-### Authentication (`webhookAuthMode`)
+## Who sees the reply
 
-Each custom behavior picks one authentication mode:
+| Trigger | Default | Can be changed to |
+|---------|---------|-------------------|
+| Command | Only the user who ran it. | Public in the channel. |
+| Message in a DM with the bot | The DM. | — |
+| Message in a server channel | Public in the channel. | A DM to the author. |
 
-| Mode | Mechanism |
-|------|-----------|
-| `null` (unset) | No signing or verification. |
-| `token` | Header `x-plugin-webhook-token: <secret>` on the outbound request. Response signatures are verified if present (optional). |
-| `hmac` | HMAC-SHA256 mutual signing and verification (see below). |
+A command leaf and a server message trigger store a **reply visibility**
+(admin UI: 「回覆給誰看」): `private`, `public`, or unset for the default
+above. A webhook's answer can still say `ephemeral: true` or `false`,
+which wins. So the order is: the answer's `ephemeral`, then the stored
+reply visibility, then the trigger's default. It does not apply in DMs
+with the bot, nor to the system login, whose reply is always private.
 
-In `hmac` mode the bot sends three headers on the outbound request:
-
-| Header | Value |
-|--------|-------|
-| `X-Karyl-Timestamp` | Unix seconds. |
-| `X-Karyl-Nonce` | 32-hex random per request (BH-2.4). |
-| `X-Karyl-Signature` | `<hex>` = `HMAC_SHA256(secret, "<METHOD>:<path>:<ts>:<nonce>:<body>")`. |
-
-Receivers verifying requests should include the nonce in the signed
-string and remember seen nonces for the 300 s window to reject replays.
-`<path>` is the pathname of the configured webhook URL — the query
-string (including the `?wait=true` the bot adds) is not signed. A receiver
-behind a reverse proxy that rewrites the path must verify against the
-path as configured on the bot, not the one it receives.
-
-The webhook **response** is signed with the same secret over the
-**request's** method, path and **nonce** (#102):
-
-```
-X-Karyl-Signature = HMAC_SHA256(secret, "<METHOD>:<path>:<ts>:<request nonce>:<body>")
-```
-
-with `X-Karyl-Timestamp` set to the response's own time. Binding the
-request nonce means a response signed for one request — one user's login
-link — can't be swapped into another's. Sending `X-Karyl-Nonce` on the
-response is optional; if sent it must equal the request's. Timestamps that
-differ from local time by more than 300 seconds are rejected; comparisons
-use `timingSafeEqual`. In `hmac` mode a missing or invalid response
-signature fails the action and **nothing is shown** to the caller but the
-generic failure line. In `token` mode the bot also sends `X-Karyl-Nonce`,
-and a response that carries a signature is verified the same way.
-
-This was a hard switch: the earlier nonce-less response form
-(`"<METHOD>:<path>:<ts>:<body>"`) and responses signed over a nonce of the
-receiver's own no longer verify. A transition window would have kept the
-swap open for its whole length, and when it shipped production had no
-custom behaviors (only the built-in login), so no receiver depended on the
-old form.
-
-### Test-fire requests
-
-The admin **Test webhook** button sends one request to the saved webhook
-action (not the unsaved form). It must never pass for a real user, so it
-is distinguishable **at the signature level** (#101):
-
-| Mode | A test-fire |
-|------|-------------|
-| all | carries `X-Karyl-Test: 1` and `_meta.test: true` |
-| `hmac` | the signed string starts with `test:` — `HMAC(secret, "test:<METHOD>:<path>:<ts>:<nonce>:<body>")` (also `-previous` during a rotation). The response must be signed the same way, `test:` included. |
-| `token` | the token travels in `X-Plugin-Webhook-Test-Token` (and `-Test-Token-Previous`), never in `X-Plugin-Webhook-Token` |
-
-A receiver that verifies only the real scheme therefore rejects a test —
-the admin sees its answer (e.g. HTTP 401), which still proves the bot
-reaches it. A receiver that wants to answer tests verifies them under the
-test scheme and should answer with something harmless (never a real login
-link). A test-fire carries no real identity: `_meta.user` is the
-placeholder `{ id: "0", username: "karyl-test", … }`, not the admin who
-pressed the button.
-
-`POST /api/behaviors/:id/test` answers `{ ok, reply, notes, status,
-error, errorCode, verified }`: the reply after the phase-1 rules, what
-they changed (`notes`), and which key verified the response's signature
-(`"hmac"`, `"token"`, or `null` when the response was not signed). A
-signature that is missing, stale or does not match fails with
-`errorCode: "response_signature"`. The admin UI previews the reply —
-content, embeds, link buttons, who would see it on that trigger, "response
-signature verified" — and, when the service answers 401 / 403 or the
-signature fails, explains that a receiver refusing the test scheme is
-behaving as intended.
-
-### Secret rotation
-
-The secret is generated by the bot — when authentication is turned on,
-and by `POST /api/behaviors/:id/webhook-secret/rotate` — and shown once,
-in that response; the admin API never returns it again (reads report
-`secretSet` and `previousSecretExpiresAt`).
-
-After a rotation the replaced secret stays valid for 24 hours:
-
-| Mode | During the grace period the bot sends |
-|------|---------------------------------------|
-| `token` | `x-plugin-webhook-token: <new>` **and** `x-plugin-webhook-token-previous: <old>` |
-| `hmac` | the usual three headers signed with the **new** secret, **and** `x-karyl-signature-previous` — the same signature (same timestamp, nonce and body) made with the **old** secret |
-
-and it accepts a response signed with either secret. After the grace
-period the `-previous` headers stop and the old secret is gone.
-
-The standard headers switch to the new secret **at the moment of the
-rotation**. Their format does not change, but a receiver that only knows
-the old secret and only reads the standard headers rejects every request
-from then on, until it gets the new secret. To rotate without downtime:
-
-1. Before rotating, make the receiver verify **either** header: check
-   `x-karyl-signature` (or `x-plugin-webhook-token`) against its secret
-   and, if that fails, the `-previous` header — as the reference receiver
-   below does. This step is needed only once.
-2. Rotate. The receiver, still on the old secret, keeps accepting
-   requests through the `-previous` header, and its responses (signed with
-   the old secret) are still accepted.
-3. Within 24 hours, give the receiver the new secret. From then on the
-   standard header matches.
-
-A receiver that keeps a list of secrets can instead accept both the old
-and the new secret on the standard header — but it can only add the new
-one after the rotation, so requests between the rotation and that update
-fail unless it also checks the `-previous` header.
-
-### Reference webhook receiver (Node.js)
-
-```js
-import crypto from 'node:crypto';
-
-const seenNonces = new Map(); // nonce -> expiry (unix sec)
-
-function sign(secret, method, path, ts, nonce, body) {
-  return crypto
-    .createHmac('sha256', secret)
-    .update(`${method.toUpperCase()}:${path}:${ts}:${nonce}:${body}`)
-    .digest('hex');
-}
-
-function sameHex(a, b) {
-  return (
-    typeof a === 'string' &&
-    a.length === b.length &&
-    crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b))
-  );
-}
-
-// The response: sign over the REQUEST's nonce (the bot rejects anything else).
-function signResponse(secret, method, path, requestNonce, body) {
-  const ts = String(Math.floor(Date.now() / 1000));
-  return {
-    'x-karyl-timestamp': ts,
-    'x-karyl-signature': sign(secret, method, path, ts, requestNonce, body),
-  };
-}
-
-function verify(headers, body, method, path, secret) {
-  const ts = headers['x-karyl-timestamp'];
-  const nonce = headers['x-karyl-nonce'];
-  if (!ts || !nonce) return false;
-  const now = Math.floor(Date.now() / 1000);
-  if (Math.abs(now - Number(ts)) > 300) return false;
-  const expected = sign(secret, method, path, ts, nonce, body);
-  // The current secret signs x-karyl-signature. During a rotation's grace
-  // period the bot also signs with the previous secret in
-  // x-karyl-signature-previous: accepting either lets this receiver switch
-  // to the new secret at its own pace (see "Secret rotation").
-  if (
-    !sameHex(headers['x-karyl-signature'], expected) &&
-    !sameHex(headers['x-karyl-signature-previous'], expected)
-  ) {
-    return false;
-  }
-  // replay check AFTER the signature passes
-  for (const [n, exp] of seenNonces) if (exp <= now) seenNonces.delete(n);
-  if (seenNonces.has(nonce)) return false;
-  seenNonces.set(nonce, now + 300);
-  return true;
-}
-```
-
-In token mode the same applies to the token: accept the request when
-`x-plugin-webhook-token` **or** `x-plugin-webhook-token-previous` equals
-the receiver's token (compare with `timingSafeEqual`).
+When an action fails, the user gets only a generic "couldn't be completed"
+line (a server channel never sees it), and the detail goes to the event
+log and the behavior's statistics
+([protocol: failures](behavior-webhook-protocol.md#failures)).
 
 ## Admin UI
 
 Path: `/admin/behaviors`. Requires the `behavior.manage` capability (or
-`admin`); see [`../permissions.md`](../permissions.md).
+`admin`); see [`../permissions.md`](../permissions.md). There is no finer
+grant: per-section or per-behavior capabilities do not exist.
 
-- The left sidebar lists scope tabs. The `+` in the header creates a
-  dynamic tab.
-- The main area shows behaviors under the selected tab. Drag to reorder,
-  toggle to enable / disable, edit and delete inline.
-- Every write is recorded in `admin_audit_log` (hash chain), without
-  the webhook secret or URL (a short URL fingerprint instead).
+- The sidebar lists the [sections](#behavior-sections) with their behavior
+  counts. **New behavior** adds a command or a message trigger to the
+  selected section.
+- The system login is pinned to the top of its section. Commands and
+  message triggers are listed separately.
+- Each card edits a draft. Saving sends only what changed, and refuses
+  when the behavior changed on the server since the page loaded; the card
+  then shows the conflict. The page warns before leaving with unsaved
+  edits.
+- Message triggers are reordered by dragging, or with Alt+↑ / Alt+↓, one
+  location at a time.
+- Forms are checked against the write API's own schemas
+  (`GET /api/behaviors/schema`), so the UI and the API agree.
 
-The webhook URL and secret are AES-256-GCM encrypted at rest. The secret
-is write-only: generated by the bot, shown once, never returned by a
-read (see *Secret rotation*).
+## Write API
+
+All routes need `behavior.manage` (or `admin`); the check runs before the
+body is validated. Bodies are validated strictly: an unknown field, a
+wrong type or a malformed Discord id (`^\d{17,20}$`) is refused, never
+silently dropped.
+
+| Route | Does |
+|-------|------|
+| `GET /api/behaviors` | `{ system, commands, messageTriggers }`, each with its derived `section`, its statistics and its `updatedAt`. Secrets appear only as `secretSet`. |
+| `GET /api/behaviors/schema` | The write routes' JSON schemas. |
+| `POST /api/behaviors` | Create a message trigger with its webhook. |
+| `PATCH /api/behaviors/:id` | Edit a message trigger or a command leaf. |
+| `DELETE /api/behaviors/:id` | Delete a message trigger or a command leaf. |
+| `PUT /api/behaviors/reorder` | `{ location, ids }`: the full new order of one location's message triggers (`bot_dm`, `guild:all`, `guild:<id>`, `channel:<guildId>:<channelId>`). |
+| `POST /api/behaviors/:id/test` | Test-fire the saved webhook action. |
+| `POST /api/behaviors/:id/webhook-secret/rotate` | New secret, shown once; the old one stays valid for 24 hours. |
+| `POST /api/behavior-commands` | Create a command with its leaves. |
+| `PATCH /api/behavior-commands/:id` | Edit a command's name, description or visibility. |
+| `DELETE /api/behavior-commands/:id` | Delete a command and its leaves. |
+| `POST /api/behavior-commands/:id/leaves` | Add a subcommand leaf. |
+| `POST /api/behavior-commands/:id/convert-to-subcommands` | Turn the root leaf into the first subcommand. |
+| `POST /api/behavior-commands/:id/resync` | Register the command again as stored (the login's: owner only). |
+| `PUT /api/behaviors/system/login/trigger` | Change the system login's trigger (owner only). |
+| `GET` / `PUT /api/behavior-groups/:groupName/members` | Read or replace an audience group's members (at most 1000). |
+
+- **Errors** have one shape, `{ error: { code, message, field?, details? } }`,
+  with `code` one of `validation_failed` (400), `not_found` (404),
+  `name_conflict`, `invalid_tree`, `system_immutable` (409) and
+  `registration_failed` (502). `details` comes with
+  `registration_failed`: what each registration target reported.
+- **Stale edits:** a `PATCH` may carry `ifUpdatedAt` (the `updatedAt` it
+  was based on); a behavior changed since is refused with
+  `409 validation_failed`. A reorder whose `ids` are not exactly the
+  location's current triggers is refused the same way.
+- **The system login** refuses every other write
+  (`409 system_immutable`). Only its trigger switch and, for a bot owner,
+  a resync of its command go through.
+- **Writes are serialised** (one lock per process; on Postgres also an
+  advisory lock) and run in one transaction.
+- **Audit:** every write is recorded in `admin_audit_log`
+  (`behavior.create`, `behavior.update`, `behavior.delete`,
+  `behavior.reorder`, `behavior.webhook_secret.rotate`,
+  `behavior.command.create` / `update` / `delete` / `convert` / `resync`,
+  `behavior.group_members.replace`, `behavior.system.trigger`), never with
+  a secret or a webhook URL (a short URL fingerprint instead).
+- **Secrets** generated by a write come back once, as `secret` (a command
+  create returns one per leaf).
 
 ## Storage
 
 | Table | Purpose |
 |-------|---------|
-| `behaviors` | The behavior row itself (trigger / source / reach / webhook config). |
-| `behavior_scope_tabs` | Scope tab. |
-| `behavior_audience_members` | Membership list when `audienceKind='group'`. |
+| `behavior_commands` | A command: name, description, registration target, install types, contexts, default member permissions, `isSystem` (the login's command). |
+| `behavior_definitions` | A behavior: title, note, on/off, position, its trigger (command leaf or message trigger fields), action source (`webhook`, or `builtin` for the system login, keyed by `systemKey`) and reply visibility. |
+| `behavior_webhook_actions` | A behavior's webhook: URL and secret (encrypted), auth mode, the previous secret and its expiry during a rotation. |
+| `behavior_group_members` | Audience group members, by group name. |
+| `behavior_stats` | Per-behavior statistics. |
+
+The runtime reads all of this from an in-memory snapshot, rebuilt after
+every write (and at most 30 seconds old for writes from another process).
+Schema changes and the 2.0 upgrade are in
+[operations.md](../operations.md#upgrades).
 
 ## Source
 
 | File | Purpose |
 |------|---------|
-| `src/modules/behavior/models/behavior.model.ts` | `behaviors` table; enums; cross-field invariants. |
-| `src/modules/behavior/models/behavior-scope-tab.model.ts` | Scope tab + `deriveFieldsFromTab` derivation. |
-| `src/modules/behavior/models/behavior-audience-member.model.ts` | Group membership. |
-| `src/modules/behavior/behavior-routes.ts` | `/api/behaviors/*` CRUD + resync. |
-| `src/modules/behavior/scope-tab-routes.ts` | `/api/behavior-tabs/*` CRUD. |
-| `src/modules/behavior/system-seed.service.ts` | System behavior seed. |
-| `src/modules/behavior/scope-tab-seed.service.ts` | Fixed scope tab seed. |
-| `src/modules/behavior/behavior-trigger.ts` | Pure `matchesTrigger` and `describeTrigger`. |
-| `src/modules/command-system/interaction-dispatcher.service.ts` | Slash command dispatch. |
-| `src/modules/command-system/message-trigger-matcher.service.ts` | DM + guild pattern dispatch. |
-| `src/modules/command-system/webhook-forwarder.service.ts` | Webhook POST + HMAC. |
-| `src/modules/command-system/reconcile.service.ts` | Slash command registration in Discord. |
-| `src/utils/hmac.ts` | HMAC scheme. |
+| `src/modules/behavior/models/` | The five tables. |
+| `src/modules/behavior/behavior-catalog.ts` | The in-memory snapshot the runtime reads. |
+| `src/modules/behavior/behavior-section.ts` | The section rule. |
+| `src/modules/behavior/behavior-routes.ts` | Mounts every route; list, schema, test-fire, group members. |
+| `src/modules/behavior/behavior-write-routes.ts`, `message-trigger-rules.ts` | Message trigger writes and their rules. |
+| `src/modules/behavior/behavior-command-routes.ts`, `command-leaf-writes.ts`, `command-tree-rules.ts`, `command-registration-sync.ts` | Command writes, Discord's rules, registration. |
+| `src/modules/behavior/message-trigger-reorder.ts` | Reorder. |
+| `src/modules/behavior/webhook-action-input.ts`, `webhook-secret-rotate.ts` | Webhook intake and rotation. |
+| `src/modules/behavior/system-seed.service.ts`, `system-login-trigger.ts`, `system-login-trigger-route.ts`, `login-trigger-hint-route.ts` | The system login. |
+| `src/modules/behavior/behavior-trigger.ts` | Pattern matching. |
+| `src/modules/command-system/interaction-dispatcher.service.ts` | Runs command triggers. |
+| `src/modules/command-system/message-trigger-matcher.service.ts` | Runs message triggers. |
+| `src/modules/command-system/webhook-action.ts`, `webhook-forwarder.service.ts` | Calls the webhook, signs and verifies. |
+| `src/modules/command-system/behavior-reply.ts`, `reply-renderer.ts` | The reply model and its delivery. |
+| `src/modules/command-system/reconcile.service.ts` | Registers commands with Discord. |
 | `frontend/src/views/admin/behaviors/` | Admin UI. |
