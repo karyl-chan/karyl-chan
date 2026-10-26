@@ -35,7 +35,6 @@ import {
   expandTarget,
   guildTarget,
   targetCovers,
-  targetDiscordScope,
   targetGuildId,
   type CommandTarget,
   type ConcreteTarget,
@@ -98,17 +97,17 @@ async function deleteOwnedCommand(owned: OwnedCommand): Promise<void> {
 }
 
 /**
- * 名冊中的一筆是否仍被 desired set 需要：同名且 Discord 作用域相同
- * （global / guild）的 desired 指令存在即保留。
+ * 名冊中的一筆是否仍被 desired set 需要 —— 以「名稱 + 目標」為鍵。
+ * 伺服器的註冊只有在某個同名 desired 指令的目標涵蓋該伺服器時才保留；
+ * 指令搬到別的伺服器、或從 all_guilds 改成指定伺服器時，其他伺服器的
+ * 舊註冊就會被判定為 stale。
  */
 export function isOwnedCommandDesired(
   owned: OwnedCommand,
   desired: ReadonlyArray<{ name: string; target: CommandTarget }>,
 ): boolean {
   return desired.some(
-    (d) =>
-      d.name === owned.name &&
-      targetDiscordScope(d.target) === targetDiscordScope(owned.target),
+    (d) => d.name === owned.name && targetCovers(d.target, owned.target),
   );
 }
 
@@ -244,8 +243,7 @@ export class CommandReconciler {
     }));
     for (const entry of owned) {
       if (isOwnedCommandDesired(entry, desiredTargets)) continue;
-      await this.deleteStale(bot, entry);
-      report.deleted++;
+      if (await this.deleteStale(bot, entry)) report.deleted++;
     }
 
     // 步驟 5：清舊版產物（dm-slash-rebind 遺留物）
@@ -552,18 +550,22 @@ export class CommandReconciler {
     }
   }
 
-  /** 從 Discord（若可達）與名冊刪除一筆。 */
+  /**
+   * 從 Discord 與名冊清掉一筆；有清掉名冊列就回 true。目標伺服器不在此
+   * process 的 cache（別的 shard，或 bot 已離開）時無法驗證，不動並回
+   * false —— 只刪名冊會讓 Discord 端的指令永遠失去認領者，留給看得到它的
+   * process 處理。
+   */
   private async deleteStale(
     bot: Client,
     owned: OwnedCommand,
   ): Promise<boolean> {
+    const manager = commandManagerFor(bot, owned.target);
+    if (!manager) return false;
     try {
-      const manager = commandManagerFor(bot, owned.target);
-      if (manager) {
-        const cmds = await manager.fetch();
-        const cmd = cmds.find((c) => c.name === owned.name);
-        if (cmd) await manager.delete(cmd.id);
-      }
+      const cmds = await manager.fetch();
+      const cmd = cmds.find((c) => c.name === owned.name);
+      if (cmd) await manager.delete(cmd.id);
       await deleteOwnedCommand(owned);
       return true;
     } catch (err) {

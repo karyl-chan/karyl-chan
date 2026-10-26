@@ -214,3 +214,97 @@ describe("reconcile — registration targets", () => {
     expect(world.guilds.get("g1")!.names()).toEqual([]);
   });
 });
+
+describe("reconcile — stale cleanup keyed by name + target", () => {
+  it("moving a behavior from all guilds to one guild removes it from the other guilds", async () => {
+    const id = await seedSlashBehavior();
+    const world = makeWorld(["g1", "g2"]);
+    const reconciler = new CommandReconciler(() => world.client);
+    await reconciler.reconcileAll();
+    expect(world.guilds.get("g2")!.names()).toEqual(["ping"]);
+
+    const row = await Behavior.findByPk(id);
+    await row!.update({ placementGuildId: "g1" });
+    const report = await reconciler.reconcileAll();
+
+    expect(world.guilds.get("g1")!.names()).toEqual(["ping"]);
+    expect(world.guilds.get("g2")!.names()).toEqual([]);
+    expect(report.deleted).toBe(1);
+  });
+
+  it("moving a specific-guild behavior to another guild deletes the old registration", async () => {
+    const id = await seedSlashBehavior({ placementGuildId: "g1" });
+    const world = makeWorld(["g1", "g2"]);
+    const reconciler = new CommandReconciler(() => world.client);
+    await reconciler.reconcileAll();
+
+    const row = await Behavior.findByPk(id);
+    await row!.update({ placementGuildId: "g2" });
+    await reconciler.reconcileAll();
+
+    expect(world.guilds.get("g1")!.names()).toEqual([]);
+    expect(world.guilds.get("g2")!.names()).toEqual(["ping"]);
+  });
+
+  it("keeps an owned registration in a guild outside this process's cache while it is still desired there", async () => {
+    await seedSlashBehavior({ placementGuildId: "g-other-shard" });
+    await ReconcilerOwnedCommand.create({
+      name: "ping",
+      scope: "guild",
+      guildId: "g-other-shard",
+      ownedAt: new Date(),
+    });
+    const world = makeWorld(["g1"]);
+    const reconciler = new CommandReconciler(() => world.client);
+
+    const report = await reconciler.reconcileAll();
+
+    expect(report.deleted).toBe(0);
+    expect(report.errors).toEqual([]);
+    const rows = await ReconcilerOwnedCommand.findAll({
+      where: { name: "ping", guildId: "g-other-shard" },
+    });
+    expect(rows).toHaveLength(1);
+  });
+
+  it("leaves a no-longer-desired registration in an unreachable guild to the process that can see it", async () => {
+    await ReconcilerOwnedCommand.create({
+      name: "gone",
+      scope: "guild",
+      guildId: "g-other-shard",
+      ownedAt: new Date(),
+    });
+    const world = makeWorld(["g1"]);
+    const reconciler = new CommandReconciler(() => world.client);
+
+    const report = await reconciler.reconcileAll();
+
+    // 只刪名冊會讓另一個 shard 上的 Discord 指令永遠失去認領者
+    expect(report.deleted).toBe(0);
+    const rows = await ReconcilerOwnedCommand.findAll({
+      where: { name: "gone", guildId: "g-other-shard" },
+    });
+    expect(rows).toHaveLength(1);
+  });
+  it("disabling a behavior whose guild is unreachable keeps its roster row for the process that can see it", async () => {
+    const id = await seedSlashBehavior({
+      enabled: false,
+      placementGuildId: "g-other-shard",
+    });
+    await ReconcilerOwnedCommand.create({
+      name: "ping",
+      scope: "guild",
+      guildId: "g-other-shard",
+      ownedAt: new Date(),
+    });
+    const world = makeWorld(["g1"]);
+    const reconciler = new CommandReconciler(() => world.client);
+
+    await reconciler.reconcileForBehavior(id);
+
+    const rows = await ReconcilerOwnedCommand.findAll({
+      where: { name: "ping", guildId: "g-other-shard" },
+    });
+    expect(rows).toHaveLength(1);
+  });
+});
