@@ -30,17 +30,11 @@ import { dispatchComponentToPlugin } from "../plugin-system/plugin-component-dis
 import { dispatchModalToPlugin } from "../plugin-system/plugin-modal-dispatch.service.js";
 import { dispatchInProcessInteraction } from "../builtin-features/in-process-command-registry.service.js";
 import { issueLoginLinkForInteraction } from "../admin/admin-login.service.js";
-import {
-  startSession,
-  breakSessions,
-} from "../behavior/models/behavior-session.model.js";
 import { findGroupMembers } from "../behavior/models/behavior-group-member.model.js";
 import { recordForwardOutcome } from "../behavior/models/behavior-stats.model.js";
 import type { DispatchOutcome } from "./types.js";
 import type { WebhookForwarder } from "./webhook-forwarder.service.js";
-import { collectApplicableBehaviorsForUser } from "./message-pattern-matcher.service.js";
-import { buildManualBehaviorsEmbed } from "./manual-list.js";
-import { resolveLocale, tForInteraction } from "../../i18n/index.js";
+import { tForInteraction } from "../../i18n/index.js";
 
 // ── Discord webhook payload 建構（slash command → webhook body）─────────────
 
@@ -370,17 +364,10 @@ export class InteractionDispatcher {
   // ── source=system dispatch ────────────────────────────────────────────────
 
   /**
-   * system behavior（admin-login/manual/break）dispatch。
-   *
-   * 對齊 C-runtime §4.1：source=system 分支由此處理，不流到 WebhookForwarder。
-   *
-   * systemKey 對應：
-   *   admin-login → issueLoginLinkForInteraction（admin-login.service.ts）
-   *   manual      → manual 語意為「開始 continuous forward session 到特定 behavior」，
-   *                 但需要 behaviorRow 提供目標 behavior id（admin/behaviors UI 補），
-   *                 此版本回 ephemeral 說明暫不支援。
-   *   break       → breakSessions(userId, channelId)（清除當前 channel 的
-   *                 session，無則清全部 — 逃生門語意，BH-4.3）
+   * system behavior dispatch（對齊 C-runtime §4.1：source=system 分支由此
+   * 處理，不流到 WebhookForwarder）。唯一的 system behavior 是登入
+   * （admin-login → issueLoginLinkForInteraction）；manual / break 已由
+   * ADR 0003 移除。
    */
   private async dispatchSystemBehavior(
     interaction: ChatInputCommandInteraction,
@@ -391,22 +378,6 @@ export class InteractionDispatcher {
     if (systemKey === "admin-login") {
       await issueLoginLinkForInteraction(interaction);
       return { claimed: true, claimedBy: "behavior_system" };
-    }
-
-    if (systemKey === "break") {
-      const ended = await breakSessions(
-        interaction.user.id,
-        interaction.channelId,
-      );
-      const key = ended ? "system.session-ended" : "system.no-session";
-      await interaction
-        .reply({ content: tForInteraction(interaction, key), ephemeral: true })
-        .catch(() => {});
-      return { claimed: true, claimedBy: "behavior_system" };
-    }
-
-    if (systemKey === "manual") {
-      return this.dispatchManualBehavior(interaction);
     }
 
     // 未知 systemKey（不應發生，behaviorsS 表 CHECK 約束攔截）
@@ -423,64 +394,6 @@ export class InteractionDispatcher {
         ephemeral: true,
       })
       .catch(() => {});
-    return { claimed: true, claimedBy: "behavior_system" };
-  }
-
-  // ── /manual：列出此 user 在 DM 觸發可用的 behaviors ─────────────────────
-
-  /**
-   * /manual slash command 真實實作。
-   *
-   * 列出此 user 在 DM 觸發時 match 的所有 behaviors（依 audienceKind 過濾）。
-   * 回 ephemeral embed，顯示 title / triggerType / trigger preview。
-   * 若 0 條 → 「目前在私訊沒有可用行為」。
-   */
-  private async dispatchManualBehavior(
-    interaction: ChatInputCommandInteraction,
-  ): Promise<DispatchOutcome> {
-    const userId = interaction.user.id;
-
-    let behaviors: BehaviorRow[] = [];
-    try {
-      behaviors = await collectApplicableBehaviorsForUser(userId);
-    } catch (err) {
-      botEventLog.record(
-        "error",
-        "bot",
-        `interaction-dispatcher: /manual 查詢 behaviors 失敗：${err instanceof Error ? err.message : String(err)}`,
-        { userId },
-      );
-      await interaction
-        .reply({
-          content: tForInteraction(interaction, "system.cannot-load-manual"),
-          ephemeral: true,
-        })
-        .catch(() => {});
-      return { claimed: true, claimedBy: "behavior_system" };
-    }
-
-    const embed = buildManualBehaviorsEmbed(behaviors, resolveLocale(interaction));
-    if (!embed) {
-      await interaction
-        .reply({
-          content: tForInteraction(interaction, "system.no-manual"),
-          ephemeral: true,
-        })
-        .catch(() => {});
-      return { claimed: true, claimedBy: "behavior_system" };
-    }
-
-    await interaction
-      .reply({ embeds: [embed], ephemeral: true })
-      .catch(() => {});
-
-    botEventLog.record(
-      "info",
-      "bot",
-      `/manual: userId=${userId} 查詢到 ${behaviors.length} 條可用行為`,
-      { userId, count: behaviors.length },
-    );
-
     return { claimed: true, claimedBy: "behavior_system" };
   }
 
@@ -530,50 +443,13 @@ export class InteractionDispatcher {
         return { claimed: true, claimedBy: "behavior_custom" };
       }
 
-      // M-2 修：continuous + slash 觸發要 startSession，否則使用者後續 DM
-      // 進不到 webhook（matcher 沒 session 可走、又因 triggerType !==
-      // 'message_pattern' 跳過匹配）。channelId 用 DM channel 而不是
-      // interaction.channelId — slash 可能在 guild 觸發，但 session 是
-      // 「下一則 DM 走這條 webhook」的語意，必須是 DM channel。
-      // result.ended=true 代表 webhook 第一發就回 sentinel，session 不開。
-      // startSession 是 upsert：使用者既有 session 會被本次覆蓋（語意：
-      // admin 明示要切到這條 continuous behavior）。
-      let dmStartFailed = false;
-      if (behaviorRow.forwardType === "continuous" && !result.ended) {
-        try {
-          const dm = await interaction.user.createDM();
-          await startSession(
-            interaction.user.id,
-            behaviorRow.id,
-            dm.id,
-            behaviorRow.sessionExpireHours,
-          );
-        } catch (err) {
-          dmStartFailed = true;
-          botEventLog.record(
-            "warn",
-            "bot",
-            `interaction-dispatcher: 無法為 continuous behavior ${behaviorRow.id} 啟動 session：${err instanceof Error ? err.message : String(err)}`,
-            { behaviorId: behaviorRow.id, userId: interaction.user.id },
-          );
-        }
-      }
-
-      // 給使用者一個明確訊號：continuous 觸發成功但 session 沒建（最常見
-      // 原因是隱私設定關閉了 DMs），不然 user 會以為 session 已建立卻無
-      // 法後續傳訊息進來。
-      const dmWarning = dmStartFailed
-        ? tForInteraction(interaction, "system.continuous-dm-warning")
-        : "";
-
-      if (result.relayContent || result.relayEmbeds || dmStartFailed) {
+      if (result.relayContent || result.relayEmbeds) {
         // relay 內容來自外部 webhook，不可信，strip mentions 防止
         // user/role ping 經 bot relay 放大（與 message-pattern-matcher
-        // session 路徑同個威脅模型，這裡補上同等保護）。embeds 已在
-        // forwarder 白名單清洗（BH-2.2A）。
+        // 同個威脅模型）。embeds 已在 forwarder 白名單清洗（BH-2.2A）。
         await interaction
           .editReply({
-            content: (result.relayContent ?? "") + dmWarning,
+            content: result.relayContent ?? "",
             embeds: result.relayEmbeds ?? [],
             allowedMentions: { parse: [] },
           })

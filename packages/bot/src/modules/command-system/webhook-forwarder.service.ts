@@ -10,8 +10,8 @@
  *       null     → 不簽（裸 HTTP）
  *   - source='system' 不發外部 HTTP（InteractionDispatcher 不會呼叫 forward()）
  *   - URL 從 behaviors.webhookUrl 解密讀
- *   - 解析 response 拿 relayContent + 偵測 [BEHAVIOR:END] sentinel
- *   - 回 ForwardResult { ok, ended, relayContent, status?, error? }
+ *   - 解析 response 拿 relayContent / relayEmbeds
+ *   - 回 ForwardResult { ok, relayContent, relayEmbeds?, status?, error? }
  */
 
 import type { RESTPostAPIWebhookWithTokenJSONBody } from "discord.js";
@@ -29,16 +29,6 @@ import {
 import { decryptSecret } from "../../utils/crypto.js";
 import type { BehaviorRow } from "../behavior/models/behavior.model.js";
 import type { ForwardResult, SanitizedEmbed } from "./types.js";
-
-// ── 常數 ─────────────────────────────────────────────────────────────────────
-
-/**
- * sentinel token（C-runtime §7.3 / R-3 保留）。
- * 出現在 response.content 時觸發 endSession。
- * 與 webhook-dispatch.service.ts 的 BEHAVIOR_END_TOKEN 一致。
- */
-export const BEHAVIOR_END_TOKEN = "[BEHAVIOR:END]";
-const BEHAVIOR_END_RE = /\[BEHAVIOR:END\]/gi;
 
 // ── BH-2.2A：embeds 白名單清洗 ───────────────────────────────────────────────
 // webhook 回應來自外部服務，不可信：只搬白名單欄位、強制型別、按 Discord
@@ -126,7 +116,7 @@ export class WebhookForwarder {
    *
    * @param behavior  behaviors 表的 row（含三軸欄位）
    * @param payload   Discord webhook 形狀的 body（RESTPostAPIWebhookWithTokenJSONBody 相容）
-   * @returns         含 ended / relayContent 的結果
+   * @returns         含 relayContent / relayEmbeds 的結果
    */
   async forward(
     behavior: BehaviorRow,
@@ -142,7 +132,6 @@ export class WebhookForwarder {
       );
       return {
         ok: false,
-        ended: false,
         relayContent: "",
         error: "source=system behaviors 不走外部 HTTP 轉發",
       };
@@ -153,7 +142,6 @@ export class WebhookForwarder {
     if (!urlResult.ok) {
       return {
         ok: false,
-        ended: false,
         relayContent: "",
         error: urlResult.error,
       };
@@ -181,7 +169,6 @@ export class WebhookForwarder {
       );
       return {
         ok: false,
-        ended: false,
         relayContent: "",
         error:
           "hmac mode: webhook secret unavailable (rotated key or corrupt ciphertext) — refusing to forward unsigned",
@@ -229,7 +216,6 @@ export class WebhookForwarder {
     } catch {
       return {
         ok: false,
-        ended: false,
         relayContent: "",
         error: "無效的 webhook URL",
       };
@@ -271,7 +257,7 @@ export class WebhookForwarder {
       await assertExternalTarget(url.hostname, port);
     } catch (err) {
       if (!(err instanceof HostPolicyError)) throw err;
-      return { ok: false, ended: false, relayContent: "", error: err.message };
+      return { ok: false, relayContent: "", error: err.message };
     }
 
     // 發送 HTTP POST
@@ -293,7 +279,6 @@ export class WebhookForwarder {
       const msg = err instanceof Error ? err.message : String(err);
       return {
         ok: false,
-        ended: false,
         relayContent: "",
         error: `network error: ${msg}`,
       };
@@ -305,7 +290,6 @@ export class WebhookForwarder {
     if (res.status >= 300 && res.status < 400) {
       return {
         ok: false,
-        ended: false,
         relayContent: "",
         status: res.status,
         error: `webhook returned a redirect (HTTP ${res.status}); redirects are not followed`,
@@ -317,7 +301,6 @@ export class WebhookForwarder {
     if (!res.ok) {
       return {
         ok: false,
-        ended: false,
         relayContent: "",
         status: res.status,
         error: rawText ? rawText.slice(0, 500) : `HTTP ${res.status}`,
@@ -351,7 +334,6 @@ export class WebhookForwarder {
       if (!verdict.ok) {
         return {
           ok: false,
-          ended: false,
           relayContent: "",
           status: res.status,
           error: verdict.reason,
@@ -387,19 +369,11 @@ export class WebhookForwarder {
         if (sanitized.length > 0) relayEmbeds = sanitized;
       } catch {
         // wait=true 應永遠回 JSON，misbehaving webhook server 回純文字時視為無 content
-        return { ok: true, ended: false, relayContent: "" };
+        return { ok: true, relayContent: "" };
       }
     }
 
-    // 偵測 [BEHAVIOR:END] sentinel（C-runtime §7.3 / R-3）
-    const ended = BEHAVIOR_END_RE.test(responseContent);
-    BEHAVIOR_END_RE.lastIndex = 0; // 重置 global regex lastIndex
-    const relayContent = ended
-      ? responseContent.replace(BEHAVIOR_END_RE, "").trim()
-      : responseContent.trim();
-    BEHAVIOR_END_RE.lastIndex = 0;
-
-    return { ok: true, ended, relayContent, relayEmbeds };
+    return { ok: true, relayContent: responseContent.trim(), relayEmbeds };
   }
 
   // ── 私有：安全解密（不讓解密失敗 crash forward）──────────────────────────

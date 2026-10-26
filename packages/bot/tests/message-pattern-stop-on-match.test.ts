@@ -4,7 +4,6 @@
  * The matcher walks applicable message_pattern behaviors in sortOrder:
  *   - one_time + stopOnMatch=false → forward and KEEP evaluating
  *   - one_time + stopOnMatch=true  → forward and stop
- *   - continuous match             → forward and stop (session takes over)
  *
  * Previously the loop returned on the first match unconditionally and the
  * field was dead ("treat as reserved").
@@ -23,10 +22,6 @@ vi.mock("../src/modules/bot-events/bot-event-log.js", () => ({
 import { ChannelType } from "discord.js";
 import { sequelize } from "../src/db.js";
 import { Behavior } from "../src/modules/behavior/models/behavior.model.js";
-import {
-  BehaviorSession,
-  findActiveSession,
-} from "../src/modules/behavior/models/behavior-session.model.js";
 import { MessagePatternMatcher } from "../src/modules/command-system/message-pattern-matcher.service.js";
 import type { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
 import { encryptSecret } from "../src/utils/crypto.js";
@@ -38,12 +33,11 @@ beforeAll(async () => {
 beforeEach(async () => {
   vi.clearAllMocks();
   await Behavior.destroy({ where: {} });
-  await BehaviorSession.destroy({ where: {} });
 });
 
 function makeForwarder(): { forward: Mock } {
   return {
-    forward: vi.fn(async () => ({ ok: true, ended: false, relayContent: "ok" })),
+    forward: vi.fn(async () => ({ ok: true, relayContent: "ok" })),
   };
 }
 
@@ -124,21 +118,6 @@ describe("MessagePatternMatcher — stopOnMatch multi-match", () => {
       [{ id: number }, unknown],
     ];
     expect(firstCall[0].id).toBe(1);
-  });
-
-  it("a continuous match always stops the walk and starts the session", async () => {
-    await seedPattern(1, 0, { forwardType: "continuous" });
-    await seedPattern(2, 1);
-    const forwarder = makeForwarder();
-    const matcher = new MessagePatternMatcher(
-      forwarder as unknown as WebhookForwarder,
-    );
-    const { message } = fakeDm("U1", "!go now");
-    const outcome = await matcher.onMessage(message);
-    expect(outcome.handled).toBe(true);
-    expect(outcome.sessionStarted).toBe(true);
-    expect(forwarder.forward).toHaveBeenCalledTimes(1);
-    expect(await findActiveSession("U1", "DM-U1")).not.toBeNull();
   });
 
   it("a non-matching first behavior does not stop the second from firing", async () => {

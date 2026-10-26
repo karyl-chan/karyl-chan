@@ -36,12 +36,12 @@ in a watched channel) has no extra capability check. Any member who can
 send messages in the channel can trigger a forward. To restrict access,
 adjust the channel's Discord send-message permissions.
 
-> The system behaviors `/login`, `/manual`, and `/break`
-> (see [`features/behaviors.md`](features/behaviors.md)) are slash
-> commands registered with `contexts: BotDM,PrivateChannel` — they
-> appear only in DM contexts and never in guild channels, so guild
-> permissions don't apply. `/login` carries its own authorisation
-> gate (see [Admin identity](#admin-identity)): bot owners
+> The system behavior `/login` (see
+> [`features/behaviors.md`](features/behaviors.md)) is registered with
+> `contexts: BotDM` — it appears only in DMs with the bot and never in
+> guild channels, so guild permissions don't apply. It can also be
+> switched to a DM message pattern (e.g. `!login`). It carries its own
+> authorisation gate (see [Admin identity](#admin-identity)): bot owners
 > (`BOT_OWNER_IDS`) and any `authorized_users` row with at least one
 > active capability receive a login link; everyone else gets an
 > ephemeral "not authorized" reply.

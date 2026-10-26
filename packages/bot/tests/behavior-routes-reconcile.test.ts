@@ -115,20 +115,20 @@ describe("behavior-routes — reconcileAll fire-and-forget after CRUD", () => {
   it("PATCH system behavior (slash → message_pattern) triggers reconcileAll", async () => {
     await Behavior.create({
       id: 2,
-      title: "manual",
+      title: "login",
       enabled: true,
       sortOrder: -999,
       stopOnMatch: true,
       forwardType: "one_time",
       source: "system",
       triggerType: "slash_command",
-      slashCommandName: "manual",
-      slashCommandDescription: "manual",
+      slashCommandName: "login",
+      slashCommandDescription: "login",
       scope: "global",
       integrationTypes: "guild_install,user_install",
       contexts: "BotDM",
       audienceKind: "all",
-      systemKey: "manual",
+      systemKey: "admin-login",
       scopeTabId: 1,
     } as Record<string, unknown>);
 
@@ -141,7 +141,7 @@ describe("behavior-routes — reconcileAll fire-and-forget after CRUD", () => {
       payload: {
         triggerType: "message_pattern",
         messagePatternKind: "startswith",
-        messagePatternValue: "?manual",
+        messagePatternValue: "?login",
       },
     });
     expect(res.statusCode).toBe(200);

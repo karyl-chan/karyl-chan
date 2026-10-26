@@ -1,10 +1,10 @@
 /**
- * BH-2.1 — the pattern/session webhook payload carries `_meta`.
+ * BH-2.1 — the pattern webhook payload carries `_meta`.
  *
  * The old payload was only { content, username, avatar_url }: a webhook
  * serving multiple users had no stable way to tell callers apart
  * (usernames are mutable). `_meta.user.id` fixes that; `behavior_id`,
- * `message_id`, `session` and `attachments` round out the contract.
+ * `message_id` and `attachments` round out the contract.
  * Top-level fields stay Discord-webhook compatible.
  */
 import { vi, describe, it, expect, beforeAll, beforeEach, type Mock } from "vitest";
@@ -21,7 +21,6 @@ vi.mock("../src/modules/bot-events/bot-event-log.js", () => ({
 import { ChannelType, Collection } from "discord.js";
 import { sequelize } from "../src/db.js";
 import { Behavior } from "../src/modules/behavior/models/behavior.model.js";
-import { BehaviorSession } from "../src/modules/behavior/models/behavior-session.model.js";
 import { MessagePatternMatcher } from "../src/modules/command-system/message-pattern-matcher.service.js";
 import type { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
 import { encryptSecret } from "../src/utils/crypto.js";
@@ -33,12 +32,11 @@ beforeAll(async () => {
 beforeEach(async () => {
   vi.clearAllMocks();
   await Behavior.destroy({ where: {} });
-  await BehaviorSession.destroy({ where: {} });
 });
 
 function makeForwarder(): { forward: Mock } {
   return {
-    forward: vi.fn(async () => ({ ok: true, ended: false, relayContent: "" })),
+    forward: vi.fn(async () => ({ ok: true, relayContent: "" })),
   };
 }
 
@@ -94,12 +92,11 @@ type Meta = {
   message_id: string;
   channel_id: string;
   behavior_id: number;
-  session: { active: boolean; started_at?: string };
   attachments: Array<{ url: string; filename: string | null }>;
 };
 
 describe("pattern payload _meta (BH-2.1)", () => {
-  it("the triggering match carries user id / ids / inactive session / attachments", async () => {
+  it("the triggering match carries user id / ids / attachments", async () => {
     await seedPattern();
     const forwarder = makeForwarder();
     const matcher = new MessagePatternMatcher(
@@ -120,7 +117,7 @@ describe("pattern payload _meta (BH-2.1)", () => {
     expect(payload._meta.message_id).toBe("MSG-1");
     expect(payload._meta.channel_id).toBe("DM-U1");
     expect(payload._meta.behavior_id).toBe(7);
-    expect(payload._meta.session).toEqual({ active: false });
+    expect(payload._meta).not.toHaveProperty("session");
     expect(payload._meta.attachments).toEqual([
       {
         url: "https://cdn.example/file.png",
@@ -129,26 +126,5 @@ describe("pattern payload _meta (BH-2.1)", () => {
         size: 1234,
       },
     ]);
-  });
-
-  it("messages routed through an open session carry session.active=true", async () => {
-    await seedPattern({ forwardType: "continuous" });
-    const forwarder = makeForwarder();
-    const matcher = new MessagePatternMatcher(
-      forwarder as unknown as WebhookForwarder,
-    );
-
-    // first message starts the session
-    await matcher.onMessage(fakeDm("U1", "!go start"));
-    // second message rides the session (no pattern needed)
-    await matcher.onMessage(fakeDm("U1", "just chatting"));
-
-    expect(forwarder.forward).toHaveBeenCalledTimes(2);
-    const second = (forwarder.forward.mock.calls[1] as unknown[])[1] as {
-      _meta: Meta;
-    };
-    expect(second._meta.user.id).toBe("U1");
-    expect(second._meta.session.active).toBe(true);
-    expect(typeof second._meta.session.started_at).toBe("string");
   });
 });

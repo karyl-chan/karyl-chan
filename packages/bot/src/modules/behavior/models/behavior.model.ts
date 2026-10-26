@@ -6,23 +6,19 @@ import { sequelize } from "../../../db.js";
 export type BehaviorSource = "custom" | "system";
 export type BehaviorTriggerType = "slash_command" | "message_pattern";
 export type BehaviorMessagePatternKind = "startswith" | "endswith" | "regex";
+/** Legacy: continuous sessions were removed (ADR 0003); always "one_time".
+ *  The column is dropped by the trigger/action model rewrite. */
 export type BehaviorForwardType = "one_time" | "continuous";
 export type BehaviorScope = "global" | "guild";
 export type BehaviorAudienceKind = "all" | "user" | "group";
 export type BehaviorWebhookAuthMode = "token" | "hmac";
-export type BehaviorSystemKey = "admin-login" | "manual" | "break";
+export type BehaviorSystemKey = "admin-login";
 
 // ── system behavior 常數（供 main.ts + dispatcher 用）─────────────────────────
 
 export const SYSTEM_BEHAVIOR_KEY_LOGIN = "admin-login" as const;
-export const SYSTEM_BEHAVIOR_KEY_MANUAL = "manual" as const;
-export const SYSTEM_BEHAVIOR_KEY_BREAK = "break" as const;
 
-export const SYSTEM_BEHAVIOR_KEYS = [
-  SYSTEM_BEHAVIOR_KEY_LOGIN,
-  SYSTEM_BEHAVIOR_KEY_MANUAL,
-  SYSTEM_BEHAVIOR_KEY_BREAK,
-] as const;
+export const SYSTEM_BEHAVIOR_KEYS = [SYSTEM_BEHAVIOR_KEY_LOGIN] as const;
 
 // ── Sequelize model 定義 ──────────────────────────────────────────────────────
 
@@ -77,9 +73,8 @@ export const Behavior = sequelize.define(
       allowNull: false,
       defaultValue: true,
     },
-    // BH-4.2：continuous session 的 TTL（小時）。null = 用全域
-    // config.behavior.sessionExpireHours。對話代理（長）與一次性流程（短）
-    // 的需求天然不同，下放為 per-behavior。
+    // Legacy (BH-4.2 continuous-session TTL); unused since ADR 0003 removed
+    // sessions. Dropped by the trigger/action model rewrite.
     sessionExpireHours: {
       type: DataTypes.INTEGER,
       allowNull: true,
@@ -177,7 +172,7 @@ export const Behavior = sequelize.define(
     },
     // source-specific：system
     systemKey: {
-      type: DataTypes.ENUM("admin-login", "manual", "break"),
+      type: DataTypes.ENUM("admin-login"),
       allowNull: true,
     },
     // scope tab FK (added by migration 20260508010000)

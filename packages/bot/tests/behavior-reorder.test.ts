@@ -141,7 +141,7 @@ describe("PATCH /api/behaviors/reorder", () => {
       // CHECK invariant, now a model-level validate).
       contexts: "BotDM,PrivateChannel",
       audienceKind: "all",
-      systemKey: "manual",
+      systemKey: "admin-login",
       scopeTabId: 1,
     } as Record<string, unknown>);
     const server = await buildServer();

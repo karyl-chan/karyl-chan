@@ -1,10 +1,8 @@
 /**
- * BH-6 / BH-4.1 / BH-4.2 — operational surface:
+ * BH-6 — operational surface:
  *   - forward stats recorded per behavior (success/failure/consecutive)
  *   - POST /api/behaviors/:id/test fires the webhook and returns the
- *     outcome without starting sessions or touching stats
- *   - GET/DELETE /api/behavior-sessions list and force-end sessions
- *   - per-behavior sessionExpireHours overrides the global TTL
+ *     outcome without touching stats
  */
 import { vi, describe, it, expect, beforeAll, beforeEach, type Mock } from "vitest";
 
@@ -24,12 +22,7 @@ vi.mock("../src/utils/host-policy.js", async (importOriginal) => {
 import Fastify, { type FastifyInstance } from "fastify";
 import { ChannelType } from "discord.js";
 import { sequelize } from "../src/db.js";
-import { config } from "../src/config.js";
 import { Behavior } from "../src/modules/behavior/models/behavior.model.js";
-import {
-  BehaviorSession,
-  startSession,
-} from "../src/modules/behavior/models/behavior-session.model.js";
 import {
   BehaviorStat,
   recordForwardOutcome,
@@ -79,7 +72,6 @@ beforeAll(async () => {
 beforeEach(async () => {
   vi.clearAllMocks();
   await Behavior.destroy({ where: {} });
-  await BehaviorSession.destroy({ where: {} });
   await BehaviorStat.destroy({ where: {} });
 });
 
@@ -103,7 +95,7 @@ describe("BH-6.1 forward stats", () => {
   it("the matcher records an outcome per forward", async () => {
     await Behavior.create({ id: 2, title: "m", ...BASE } as Record<string, unknown>);
     const forwarder = {
-      forward: vi.fn(async () => ({ ok: true, ended: false, relayContent: "" })),
+      forward: vi.fn(async () => ({ ok: true, relayContent: "" })),
     };
     const matcher = new MessagePatternMatcher(
       forwarder as unknown as WebhookForwarder,
@@ -137,11 +129,10 @@ describe("BH-6.1 forward stats", () => {
 });
 
 describe("BH-6.2 test-fire", () => {
-  it("forwards a test payload and returns the outcome without stats/sessions", async () => {
+  it("forwards a test payload and returns the outcome without stats", async () => {
     await Behavior.create({ id: 4, title: "t", ...BASE } as Record<string, unknown>);
     const forward: Mock = vi.fn(async () => ({
       ok: true,
-      ended: false,
       relayContent: "pong",
       relayEmbeds: [],
     }));
@@ -154,87 +145,6 @@ describe("BH-6.2 test-fire", () => {
     };
     expect(payload._meta.test).toBe(true);
     expect((await findStatsBulk([4])).get(4)).toBeUndefined();
-    expect(await BehaviorSession.count()).toBe(0);
-    await server.close();
-  });
-});
-
-describe("BH-4.1 session visibility", () => {
-  it("lists active sessions with titles and force-ends one", async () => {
-    await Behavior.create({
-      id: 5,
-      title: "agent",
-      ...BASE,
-      forwardType: "continuous",
-    } as Record<string, unknown>);
-    await startSession("U1", 5, "DM-U1");
-    const server = await buildServer();
-
-    let res = await server.inject({ method: "GET", url: "/api/behavior-sessions" });
-    expect(res.statusCode).toBe(200);
-    const sessions = res.json().sessions as Array<{
-      userId: string;
-      behaviorTitle: string;
-    }>;
-    expect(sessions).toHaveLength(1);
-    expect(sessions[0].behaviorTitle).toBe("agent");
-
-    res = await server.inject({
-      method: "DELETE",
-      url: "/api/behavior-sessions/U1/DM-U1",
-    });
-    expect(res.statusCode).toBe(200);
-    expect(await BehaviorSession.count()).toBe(0);
-
-    res = await server.inject({
-      method: "DELETE",
-      url: "/api/behavior-sessions/U1/DM-U1",
-    });
-    expect(res.statusCode).toBe(404);
-    await server.close();
-  });
-});
-
-describe("BH-4.2 per-behavior session TTL", () => {
-  it("startSession honours the behavior TTL over the global default", async () => {
-    await Behavior.create({
-      id: 6,
-      title: "ttl",
-      ...BASE,
-      forwardType: "continuous",
-    } as Record<string, unknown>);
-    const globalHours = config.behavior.sessionExpireHours;
-    const row = await startSession("U2", 6, "DM-U2", 2);
-    const expiresMs = new Date(row.expiresAt!).getTime();
-    const startedMs = new Date(row.startedAt).getTime();
-    expect(Math.round((expiresMs - startedMs) / 3_600_000)).toBe(2);
-    expect(2).not.toBe(globalHours); // guard against a coincidental default
-
-    // null falls back to the global default
-    const row2 = await startSession("U3", 6, "DM-U3", null);
-    const hrs = Math.round(
-      (new Date(row2.expiresAt!).getTime() - new Date(row2.startedAt).getTime()) /
-        3_600_000,
-    );
-    expect(hrs).toBe(globalHours);
-  });
-
-  it("PATCH validates sessionExpireHours range", async () => {
-    await Behavior.create({ id: 7, title: "v", ...BASE } as Record<string, unknown>);
-    const server = await buildServer();
-    let res = await server.inject({
-      method: "PATCH",
-      url: "/api/behaviors/7",
-      payload: { sessionExpireHours: 9999 },
-    });
-    expect(res.statusCode).toBe(400);
-    res = await server.inject({
-      method: "PATCH",
-      url: "/api/behaviors/7",
-      payload: { sessionExpireHours: 12 },
-    });
-    expect(res.statusCode).toBe(200);
-    expect(res.json().behavior.sessionExpireHours).toBe(12);
     await server.close();
   });
 });

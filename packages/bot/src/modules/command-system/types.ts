@@ -110,8 +110,6 @@ export interface DispatchOutcome {
 
 export interface MessageMatchOutcome {
   handled: boolean;
-  sessionStarted?: boolean;
-  sessionEnded?: boolean;
   behaviorId?: number;
   error?: string;
 }
@@ -136,9 +134,7 @@ export interface SanitizedEmbed {
 
 export interface ForwardResult {
   ok: boolean;
-  /** [BEHAVIOR:END] sentinel 是否出現在 response.content */
-  ended: boolean;
-  /** 已 strip sentinel + trim 的 content，可直接 relay 給用戶 */
+  /** 已 trim 的 content，可直接 relay 給用戶 */
   relayContent: string;
   /** BH-2.2A：webhook 回應的 embeds（已白名單清洗 + 截斷），可直接 relay */
   relayEmbeds?: SanitizedEmbed[];

@@ -1254,9 +1254,6 @@
             "messagePatternValue": "Pattern value",
             "slashCommandName": "Slash command name",
             "slashCommandDescription": "Slash command description",
-            "forwardType": "Forward type",
-            "forwardOneTime": "One-time",
-            "forwardContinuous": "Continuous",
             "targetId": "Target",
             "triggerSection": "Trigger",
             "integrationTypes": "Where can be installed",
@@ -1271,8 +1268,6 @@
             "webhookSecretPlaceholder": "Leave blank to disable",
             "webhookAuthMode": "Auth mode",
             "stopOnMatch": "Stop on match",
-            "tagContinuous": "Continuous forward",
-            "tagContinuousShort": "Continuous",
             "tagPlugin": "Provided by Plugin",
             "tagPluginShort": "Plugin",
             "tagSystem": "System built-in",
@@ -1324,9 +1319,7 @@
             "resyncDone": "Command resynced.",
             "unhealthy": "failing",
             "statsLine": "Last fired {when} · {ok} ok / {fail} failed",
-            "statsLastError": "last error: {error}",
-            "sessionTtl": "Session TTL (hours)",
-            "sessionTtlHint": "1–720; empty = global default"
+            "statsLastError": "last error: {error}"
         },
         "addTab": {
             "title": "Add Scope Tab",
@@ -1361,17 +1354,6 @@
             "add": "Add",
             "remove": "Remove",
             "invalidId": "Invalid Discord user ID."
-        },
-        "sessions": {
-            "title": "Active sessions",
-            "open": "Sessions",
-            "empty": "No active continuous sessions.",
-            "user": "User",
-            "behavior": "Behavior",
-            "channel": "Channel",
-            "started": "Started",
-            "expires": "Expires",
-            "end": "End"
         }
     },
     "config": {

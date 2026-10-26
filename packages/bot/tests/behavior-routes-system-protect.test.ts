@@ -1,7 +1,6 @@
 /**
- * admin-login 與 break 是 admin 進後台 / 收尾 session 的唯一逃生口，停用後
- * 找不回；後端 PATCH 必須在 systemKey 屬於 protected set 時回 403。
- * manual 可關（語意：失去 DM 行為列表助理但其他功能不影響）。
+ * admin-login 是 admin 進後台的唯一入口，停用後找不回；後端 PATCH 必須
+ * 對它的 enabled=false 回 403（ADR 0003 後它是唯一的 system behavior）。
  */
 
 import { vi, describe, it, expect, beforeAll, beforeEach } from "vitest";
@@ -45,7 +44,7 @@ async function buildServer(): Promise<FastifyInstance> {
 
 async function seedSystemRow(
   id: number,
-  systemKey: "admin-login" | "manual" | "break",
+  systemKey: "admin-login",
   slashCommandName: string,
 ): Promise<void> {
   await Behavior.create({
@@ -87,49 +86,6 @@ describe("behavior-routes — system disable protection", () => {
     });
     expect(res.statusCode).toBe(403);
     const row = await Behavior.findByPk(1);
-    expect(row?.getDataValue("enabled")).toBe(true);
-    await server.close();
-  });
-
-  it("PATCH enabled=false on break → 403", async () => {
-    await seedSystemRow(2, "break", "break");
-    const server = await buildServer();
-    const res = await server.inject({
-      method: "PATCH",
-      url: "/api/behaviors/2",
-      payload: { enabled: false },
-    });
-    expect(res.statusCode).toBe(403);
-    const row = await Behavior.findByPk(2);
-    expect(row?.getDataValue("enabled")).toBe(true);
-    await server.close();
-  });
-
-  it("PATCH enabled=false on manual → 200", async () => {
-    await seedSystemRow(3, "manual", "manual");
-    const server = await buildServer();
-    const res = await server.inject({
-      method: "PATCH",
-      url: "/api/behaviors/3",
-      payload: { enabled: false },
-    });
-    expect(res.statusCode).toBe(200);
-    const row = await Behavior.findByPk(3);
-    expect(row?.getDataValue("enabled")).toBe(false);
-    await server.close();
-  });
-
-  it("PATCH enabled=true on a disabled manual → 200 (re-enable allowed)", async () => {
-    await seedSystemRow(4, "manual", "manual");
-    await Behavior.update({ enabled: false }, { where: { id: 4 } });
-    const server = await buildServer();
-    const res = await server.inject({
-      method: "PATCH",
-      url: "/api/behaviors/4",
-      payload: { enabled: true },
-    });
-    expect(res.statusCode).toBe(200);
-    const row = await Behavior.findByPk(4);
     expect(row?.getDataValue("enabled")).toBe(true);
     await server.close();
   });

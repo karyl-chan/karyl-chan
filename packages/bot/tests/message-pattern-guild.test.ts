@@ -23,10 +23,6 @@ import { ChannelType } from "discord.js";
 import { sequelize } from "../src/db.js";
 import { Behavior } from "../src/modules/behavior/models/behavior.model.js";
 import {
-  BehaviorSession,
-  findActiveSession,
-} from "../src/modules/behavior/models/behavior-session.model.js";
-import {
   MessagePatternMatcher,
   __resetGuildForwardWindowsForTests,
 } from "../src/modules/command-system/message-pattern-matcher.service.js";
@@ -43,12 +39,11 @@ beforeEach(async () => {
   vi.clearAllMocks();
   __resetGuildForwardWindowsForTests();
   await Behavior.destroy({ where: {} });
-  await BehaviorSession.destroy({ where: {} });
 });
 
 function makeForwarder(relay = ""): { forward: Mock } {
   return {
-    forward: vi.fn(async () => ({ ok: true, ended: false, relayContent: relay })),
+    forward: vi.fn(async () => ({ ok: true, relayContent: relay })),
   };
 }
 
@@ -228,25 +223,5 @@ describe("MessagePatternMatcher — guild channel patterns (BH-3)", () => {
       fakeGuildMsg({ userId: "U9", content: "!go", channelId: "C2" }).message,
     );
     expect(forwarder.forward).toHaveBeenCalledTimes(6);
-  });
-
-  it("continuous guild sessions are per (user, channel)", async () => {
-    await seedGuildPattern(1, { forwardType: "continuous" });
-    const forwarder = makeForwarder();
-    const m = matcherWith(forwarder);
-
-    await m.onMessage(fakeGuildMsg({ userId: "U1", content: "!go start" }).message);
-    expect(await findActiveSession("U1", "C1")).not.toBeNull();
-
-    // next message in the SAME channel rides the session (no pattern)
-    await m.onMessage(fakeGuildMsg({ userId: "U1", content: "free text" }).message);
-    expect(forwarder.forward).toHaveBeenCalledTimes(2);
-
-    // the same user in ANOTHER channel does not ride it
-    forwarder.forward.mockClear();
-    await m.onMessage(
-      fakeGuildMsg({ userId: "U1", content: "free text", channelId: "C2" }).message,
-    );
-    expect(forwarder.forward).not.toHaveBeenCalled();
   });
 });
