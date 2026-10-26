@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # Behavior 拆成觸發與動作；指令是一種觸發，不是範圍的實作手段
