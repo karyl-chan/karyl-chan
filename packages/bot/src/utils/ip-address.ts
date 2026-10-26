@@ -158,6 +158,26 @@ function classifyIPv6(b: number[]): AddressClass {
 }
 
 /**
+ * For a `transition`-class address, the IPv4 it embeds (dotted form):
+ * NAT64 64:ff9b::/96 carries it in the last 32 bits, 6to4 2002::/16 in
+ * bits 16-47. Null for anything else — including the NAT64 local-use
+ * prefix 64:ff9b:1::/48, whose embedding depends on an operator-chosen
+ * prefix length and so cannot be decoded reliably.
+ */
+export function transitionEmbeddedIPv4(ip: string): string | null {
+  const b = parseIPv6Bytes(normalizeIpLiteral(ip));
+  if (!b) return null;
+  if (
+    startsWith(b, [0x00, 0x64, 0xff, 0x9b]) &&
+    b.slice(4, 12).every((x) => x === 0)
+  ) {
+    return b.slice(12).join(".");
+  }
+  if (startsWith(b, [0x20, 0x02])) return b.slice(2, 6).join(".");
+  return null;
+}
+
+/**
  * Classify an IP literal (brackets / zone id tolerated). Returns null
  * when `ip` is not an IP literal at all (e.g. a hostname).
  */

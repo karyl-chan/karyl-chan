@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { classifyAddress } from "../src/utils/ip-address.js";
+import {
+  classifyAddress,
+  transitionEmbeddedIPv4,
+} from "../src/utils/ip-address.js";
 
 describe("classifyAddress", () => {
   it.each([
@@ -69,4 +72,22 @@ describe("classifyAddress", () => {
     expect(classifyAddress("1.2.3")).toBeNull();
     expect(classifyAddress("::1::2")).toBeNull();
   });
+});
+
+describe("transitionEmbeddedIPv4", () => {
+  it.each([
+    ["64:ff9b::a9fe:a9fe", "169.254.169.254"],
+    ["64:ff9b::10.0.0.5", "10.0.0.5"],
+    ["2002:c0a8:0101::1", "192.168.1.1"],
+    ["2002:7f00:1::", "127.0.0.1"],
+  ])("%s embeds %s", (ip, v4) => {
+    expect(transitionEmbeddedIPv4(ip)).toBe(v4);
+  });
+
+  it.each(["64:ff9b:1::1", "2606:4700::1111", "10.0.0.5", "example.com"])(
+    "%s has no decodable embedded IPv4",
+    (ip) => {
+      expect(transitionEmbeddedIPv4(ip)).toBeNull();
+    },
+  );
 });
