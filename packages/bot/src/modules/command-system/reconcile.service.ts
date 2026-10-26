@@ -333,6 +333,35 @@ export class CommandReconciler {
   }
 
   /**
+   * 放掉一筆不再需要的註冊：behavior 指令改名、換註冊目標或被刪除後，
+   * 舊的「名稱 + 目標」立刻從 Discord 與名冊移除，不等下一次 reconcileAll。
+   * desired set 仍涵蓋它（例如別的指令正好用這個名稱 + 目標）時不動。
+   * 與 registerOne 同在 reconcile 鎖內，所以看到的 desired set 與 DB 一致。
+   *
+   *   - removed：已刪除（Discord 上本來就沒有也算）
+   *   - still_desired：仍被需要，沒有刪
+   *   - unavailable：bot 未就緒或碰不到該伺服器 / Discord 失敗；名冊保留，
+   *     交給之後的 reconcileAll
+   */
+  async releaseRegistration(
+    name: string,
+    target: ConcreteTarget,
+  ): Promise<"removed" | "still_desired" | "unavailable"> {
+    return this.withLock(async () => {
+      const bot = this.getBot();
+      if (!bot?.application) return "unavailable";
+      const desired = (await this.listDesired()).map((d) => ({
+        name: d.name,
+        target: d.spec.target,
+      }));
+      if (isOwnedCommandDesired({ name, target }, desired)) return "still_desired";
+      return (await this.deleteStale(bot, { name, target }))
+        ? "removed"
+        : "unavailable";
+    });
+  }
+
+  /**
    * 增量 reconcile 單一 behavior 指令（behavior_commands.id；admin 寫入後
    * 呼叫）。沒有啟用中葉節點的指令從 Discord 刪除。
    */
