@@ -1,58 +1,28 @@
 import { authedFetch, jsonOrThrow } from "./client";
 
-// ── 列舉型別 ────────────────────────────────────────────────────────────────
+// Mirrors packages/bot/src/modules/behavior/behavior-list-view.ts — the
+// read-only shape of GET /api/behaviors (ADR 0003 trigger/action model).
+// The server derives every item's `section`; the UI only groups by it.
 
-export type BehaviorSource = "custom" | "system";
-export type BehaviorTriggerType = "slash_command" | "message_pattern";
-export type BehaviorMessagePatternKind = "startswith" | "endswith" | "regex";
-export type BehaviorScope = "global" | "guild";
+/**
+ * Where a behavior can be used (Behavior Section):
+ *   `app` App 指令 · `bot_dm` 與 bot 的私訊 · `guild:all` 全部伺服器 ·
+ *   `guild:<id>` 指定伺服器 · `channel:<guildId>:<channelId>` 指定頻道
+ */
+export type BehaviorSection =
+  | "app"
+  | "bot_dm"
+  | "guild:all"
+  | `guild:${string}`
+  | `channel:${string}:${string}`;
+
+export type BehaviorActionSource = "builtin" | "webhook";
+export type BehaviorMessageSurface = "bot_dm" | "guild";
+export type BehaviorPatternKind = "startswith" | "endswith" | "regex";
 export type BehaviorAudienceKind = "all" | "user" | "group";
 export type BehaviorWebhookAuthMode = "token" | "hmac";
-
-export type ScopeTabType =
-  | "global_all"
-  | "all_dms"
-  | "all_bot_dms"
-  | "all_guilds"
-  | "specific_guild"
-  | "specific_channel"
-  | "specific_user"
-  | "specific_group";
-
-// ── BehaviorRow ─────────────────────────────────────────────────────────────
-
-export interface BehaviorRow {
-  id: number;
-  title: string;
-  description: string;
-  enabled: boolean;
-  sortOrder: number;
-  stopOnMatch: boolean;
-  ignoreBots: boolean;
-  source: BehaviorSource;
-  triggerType: BehaviorTriggerType;
-  messagePatternKind: BehaviorMessagePatternKind | null;
-  messagePatternValue: string | null;
-  slashCommandName: string | null;
-  slashCommandDescription: string | null;
-  /** JSON 字串（BehaviorCommandOption[]）；null = 無參數 */
-  slashCommandOptions: string | null;
-  scope: BehaviorScope;
-  integrationTypes: string;
-  contexts: string;
-  placementGuildId: string | null;
-  placementChannelId: string | null;
-  audienceKind: BehaviorAudienceKind;
-  audienceUserId: string | null;
-  audienceGroupName: string | null;
-  webhookUrl: string | null;
-  webhookSecret: string | null;
-  webhookAuthMode: BehaviorWebhookAuthMode | null;
-  systemKey: string | null;
-  scopeTabId: number;
-  /** BH-6.1 forward 統計（list 回應附帶；無紀錄為 null） */
-  stats?: BehaviorStats | null;
-}
+export type DiscordContext = "Guild" | "BotDM" | "PrivateChannel";
+export type DiscordIntegrationType = "guild_install" | "user_install";
 
 export interface BehaviorStats {
   behaviorId: number;
@@ -64,23 +34,13 @@ export interface BehaviorStats {
   lastErrorAt: string | null;
 }
 
-// ── Scope Tab（sidebar 用）─────────────────────────────────────────────────
-
-export interface ScopeTabRow {
-  id: number;
-  tabType: ScopeTabType;
-  label: string;
-  isFixed: boolean;
-  guildId: string | null;
-  channelId: string | null;
-  userId: string | null;
-  groupName: string | null;
-  sortOrder: number;
-  scopeKey: string;
-  behaviorCount: number;
+export interface WebhookActionView {
+  /** Decrypted URL; null when it can no longer be decrypted. */
+  url: string | null;
+  authMode: BehaviorWebhookAuthMode | null;
+  /** The secret itself is never sent to the UI. */
+  secretSet: boolean;
 }
-
-// ── Create / Patch payload ──────────────────────────────────────────────────
 
 export interface BehaviorCommandOption {
   type:
@@ -98,213 +58,66 @@ export interface BehaviorCommandOption {
   required: boolean;
 }
 
-export interface BehaviorCreatePayload {
+interface BehaviorViewBase {
+  id: number;
   title: string;
-  description?: string;
-  triggerType: BehaviorTriggerType;
-  messagePatternKind?: BehaviorMessagePatternKind;
-  messagePatternValue?: string;
-  slashCommandName?: string;
-  slashCommandDescription?: string;
-  slashCommandOptions?: BehaviorCommandOption[];
-  scope?: BehaviorScope;
-  integrationTypes?: string;
-  contexts?: string;
-  audienceKind?: BehaviorAudienceKind;
-  audienceUserId?: string;
-  audienceGroupName?: string;
-  webhookUrl?: string;
-  webhookSecret?: string;
-  webhookAuthMode?: BehaviorWebhookAuthMode;
-  stopOnMatch?: boolean;
-  ignoreBots?: boolean;
-  enabled?: boolean;
-  scopeTabId?: number;
+  description: string;
+  enabled: boolean;
+  sortOrder: number;
+  systemKey: string | null;
+  actionSource: BehaviorActionSource;
+  webhook: WebhookActionView | null;
+  stats: BehaviorStats | null;
 }
 
-export interface BehaviorPatchPayload {
-  title?: string;
-  description?: string;
-  triggerType?: BehaviorTriggerType;
-  messagePatternKind?: BehaviorMessagePatternKind | null;
-  messagePatternValue?: string | null;
-  slashCommandName?: string | null;
-  slashCommandDescription?: string | null;
-  slashCommandOptions?: BehaviorCommandOption[] | null;
-  scope?: BehaviorScope;
-  integrationTypes?: string;
-  contexts?: string;
-  audienceKind?: BehaviorAudienceKind;
-  audienceUserId?: string | null;
-  audienceGroupName?: string | null;
-  enabled?: boolean;
-  stopOnMatch?: boolean;
-  ignoreBots?: boolean;
-  webhookUrl?: string | null;
-  webhookSecret?: string | null;
-  webhookAuthMode?: BehaviorWebhookAuthMode | null;
+export interface CommandLeafView extends BehaviorViewBase {
+  subcommandGroup: string;
+  /** '' = the root leaf (the command itself) */
+  subcommand: string;
+  leafDescription: string | null;
+  options: BehaviorCommandOption[];
 }
 
-// ── Behaviors API ───────────────────────────────────────────────────────────
-
-export async function listBehaviors(params?: {
-  scopeTabId?: number;
-  audienceKind?: BehaviorAudienceKind;
-  audienceUserId?: string;
-  audienceGroupName?: string;
-  source?: BehaviorSource;
-  triggerType?: BehaviorTriggerType;
-}): Promise<BehaviorRow[]> {
-  const qs = new URLSearchParams();
-  if (params?.scopeTabId != null)
-    qs.set("scopeTabId", String(params.scopeTabId));
-  if (params?.audienceKind) qs.set("audienceKind", params.audienceKind);
-  if (params?.audienceUserId) qs.set("audienceUserId", params.audienceUserId);
-  if (params?.audienceGroupName)
-    qs.set("audienceGroupName", params.audienceGroupName);
-  if (params?.source) qs.set("source", params.source);
-  if (params?.triggerType) qs.set("triggerType", params.triggerType);
-  const url = `/api/behaviors${qs.toString() ? "?" + qs.toString() : ""}`;
-  const r = await authedFetch(url);
-  const body = await jsonOrThrow<{ behaviors: BehaviorRow[] }>(r);
-  return body.behaviors;
+export interface CommandView {
+  kind: "command";
+  id: number;
+  name: string;
+  description: string;
+  registration: "global" | "guild";
+  guildId: string | null;
+  integrationTypes: DiscordIntegrationType[];
+  contexts: DiscordContext[];
+  defaultMemberPermissions: string | null;
+  isSystem: boolean;
+  section: BehaviorSection;
+  leaves: CommandLeafView[];
 }
 
-export async function getBehavior(id: number): Promise<BehaviorRow> {
-  const r = await authedFetch(`/api/behaviors/${id}`);
-  const body = await jsonOrThrow<{ behavior: BehaviorRow }>(r);
-  return body.behavior;
+export interface MessageTriggerView extends BehaviorViewBase {
+  kind: "message";
+  surface: BehaviorMessageSurface;
+  guildId: string | null;
+  channelId: string | null;
+  patternKind: BehaviorPatternKind;
+  patternValue: string;
+  stopOnMatch: boolean;
+  ignoreBots: boolean;
+  audienceKind: BehaviorAudienceKind;
+  audienceUserId: string | null;
+  audienceGroupName: string | null;
+  section: BehaviorSection;
 }
 
-export async function createBehavior(
-  payload: BehaviorCreatePayload,
-): Promise<BehaviorRow> {
-  const r = await authedFetch("/api/behaviors", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  const body = await jsonOrThrow<{ behavior: BehaviorRow }>(r);
-  return body.behavior;
+export type BehaviorItemView = CommandView | MessageTriggerView;
+
+export interface BehaviorListView {
+  /** The System Behavior (login), pinned at the top of its section. */
+  system: BehaviorItemView | null;
+  commands: CommandView[];
+  messageTriggers: MessageTriggerView[];
 }
 
-export async function updateBehavior(
-  id: number,
-  patch: BehaviorPatchPayload,
-): Promise<BehaviorRow> {
-  const r = await authedFetch(`/api/behaviors/${id}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(patch),
-  });
-  const body = await jsonOrThrow<{ behavior: BehaviorRow }>(r);
-  return body.behavior;
-}
-
-export async function deleteBehavior(id: number): Promise<void> {
-  const r = await authedFetch(`/api/behaviors/${id}`, { method: "DELETE" });
-  if (r.status === 204) return;
-  await jsonOrThrow<unknown>(r);
-}
-
-export async function resyncBehavior(id: number): Promise<{ result: unknown }> {
-  const r = await authedFetch(`/api/behaviors/${id}/resync`, {
-    method: "POST",
-  });
-  return jsonOrThrow<{ result: unknown }>(r);
-}
-
-export async function reorderBehaviors(orderedIds: number[]): Promise<void> {
-  const r = await authedFetch("/api/behaviors/reorder", {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ orderedIds }),
-  });
-  await jsonOrThrow<unknown>(r);
-}
-
-// ── Test-fire（BH-6.2）───────────────────────────────────────────────────────
-
-export interface BehaviorTestResult {
-  ok: boolean;
-  relayContent: string;
-  relayEmbeds: unknown[];
-  error: string | null;
-}
-
-export async function testBehavior(id: number): Promise<BehaviorTestResult> {
-  const r = await authedFetch(`/api/behaviors/${id}/test`, { method: "POST" });
-  return jsonOrThrow<BehaviorTestResult>(r);
-}
-
-// ── Audience group members API（BH-1）───────────────────────────────────────
-// group 以名字為單位，同名 group 的 behaviors 共享名單。
-
-export async function getGroupMembers(groupName: string): Promise<string[]> {
-  const r = await authedFetch(
-    `/api/behavior-groups/${encodeURIComponent(groupName)}/members`,
-  );
-  const body = await jsonOrThrow<{ members: string[] }>(r);
-  return body.members;
-}
-
-export async function setGroupMembers(
-  groupName: string,
-  userIds: string[],
-): Promise<string[]> {
-  const r = await authedFetch(
-    `/api/behavior-groups/${encodeURIComponent(groupName)}/members`,
-    {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userIds }),
-    },
-  );
-  const body = await jsonOrThrow<{ members: string[] }>(r);
-  return body.members;
-}
-
-// ── Scope Tab API ───────────────────────────────────────────────────────────
-
-export async function listScopeTabs(): Promise<ScopeTabRow[]> {
-  const r = await authedFetch("/api/behavior-tabs");
-  const body = await jsonOrThrow<{ tabs: ScopeTabRow[] }>(r);
-  return body.tabs;
-}
-
-export async function createScopeTab(payload: {
-  tabType: ScopeTabType;
-  label?: string;
-  guildId?: string;
-  channelId?: string;
-  userId?: string;
-  groupName?: string;
-}): Promise<ScopeTabRow> {
-  const r = await authedFetch("/api/behavior-tabs", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  const body = await jsonOrThrow<{ tab: ScopeTabRow }>(r);
-  return body.tab;
-}
-
-export async function updateScopeTab(
-  id: number,
-  patch: { label?: string; sortOrder?: number },
-): Promise<ScopeTabRow> {
-  const r = await authedFetch(`/api/behavior-tabs/${id}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(patch),
-  });
-  const body = await jsonOrThrow<{ tab: ScopeTabRow }>(r);
-  return body.tab;
-}
-
-export async function deleteScopeTab(id: number): Promise<{ deleted: number }> {
-  const r = await authedFetch(`/api/behavior-tabs/${id}`, {
-    method: "DELETE",
-  });
-  return jsonOrThrow<{ deleted: number }>(r);
+export async function listBehaviors(): Promise<BehaviorListView> {
+  const r = await authedFetch("/api/behaviors");
+  return jsonOrThrow<BehaviorListView>(r);
 }
