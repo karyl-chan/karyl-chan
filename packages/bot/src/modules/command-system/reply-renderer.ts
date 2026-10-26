@@ -18,6 +18,10 @@
  * Mentions are never parsed (a reply comes from an external service). A
  * Discord refusal comes back as `{ ok: false }` for the caller to log and
  * count — nothing here swallows it.
+ *
+ * renderFailure is what the end user sees when an action fails (#114): a
+ * generic localized line, never the receiver's error text — that goes to
+ * the log and the behavior's stats only — and never in a guild channel.
  */
 
 import {
@@ -28,6 +32,8 @@ import {
   type SendableChannels,
 } from "discord.js";
 import { planRespond } from "../plugin-system/plugin-defer-state.js";
+import { botEventLog } from "../bot-events/bot-event-log.js";
+import { resolveLocale, t } from "../../i18n/index.js";
 import { hasVisibleReply, type BehaviorReply } from "./behavior-reply.js";
 
 export type ReplyTarget =
@@ -128,4 +134,40 @@ async function renderToMessage(
   }
   await (message.channel as SendableChannels).send(body);
   return { ok: true, via: "channel" };
+}
+
+/**
+ * Tell the user the action failed, without saying why (#114): a command's
+ * invoker in its reply (the placeholder is resolved), a message author in
+ * the DM with the bot, or — for a guild message — in a DM to the author.
+ * A guild channel never hears about a failure: it would be noise on a
+ * broad trigger and could undo a reply meant to be private. If the DM
+ * fails too, nothing is said; the caller has logged it. Never throws.
+ */
+export async function renderFailure(target: ReplyTarget): Promise<void> {
+  try {
+    if (target.kind === "interaction") {
+      const { interaction } = target;
+      const content = t(resolveLocale(interaction), "behavior.action-failed");
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply({ content, embeds: [], components: [], allowedMentions: { parse: [] } });
+      } else {
+        await interaction.reply({ content, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+      }
+      return;
+    }
+    const { message } = target;
+    const content = t(
+      resolveLocale({ guildLocale: message.guild?.preferredLocale ?? null }),
+      "behavior.action-failed",
+    );
+    const body = { content, allowedMentions: { parse: [] as [] } };
+    if (message.channel.type === ChannelType.DM) {
+      await (message.channel as SendableChannels).send(body);
+    } else {
+      await message.author.send(body);
+    }
+  } catch (err) {
+    botEventLog.record("warn", "bot", `reply-renderer: could not tell the user an action failed: ${errorText(err)}`);
+  }
 }

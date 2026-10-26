@@ -16,7 +16,7 @@ import { mintLoginLink, type LoginContextRefs } from "../admin/admin-login.servi
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { moduleLogger } from "../../logger.js";
 import type { BehaviorReply } from "./behavior-reply.js";
-import { renderReply, type ReplyTarget } from "./reply-renderer.js";
+import { renderFailure, renderReply, type ReplyTarget } from "./reply-renderer.js";
 
 const log = moduleLogger("admin-login");
 
@@ -58,7 +58,8 @@ export async function loginActionReply(
 /**
  * Run the login for whoever triggered it — a command or a message — and
  * deliver the reply through the ReplyRenderer. Never throws: a failure is
- * logged (with its stack) and recorded in the bot event log.
+ * logged (with its stack), recorded in the bot event log, and the user
+ * gets the generic failure line (#114).
  */
 export async function runLoginAction(target: ReplyTarget): Promise<void> {
   const userId =
@@ -86,9 +87,20 @@ export async function runLoginAction(target: ReplyTarget): Promise<void> {
           );
     if (!reply) return;
     const rendered = await renderReply(reply, target);
-    if (!rendered.ok) throw new Error(`Discord refused the login reply: ${rendered.error}`);
+    if (!rendered.ok) {
+      log.warn({ error: rendered.error }, `admin-login reply refused (${target.kind})`);
+      botEventLog.record("error", "feature", "Admin login reply failed", {
+        userId,
+        via: target.kind,
+        error: rendered.error,
+      });
+      // a login that couldn't be DMed stays silent; otherwise the generic
+      // line, which in a guild goes to the author's DMs — never the channel
+      if (!rendered.dmFailed) await renderFailure(target);
+    }
   } catch (err) {
     log.error({ err }, `admin-login issue failed (${target.kind})`);
     botEventLog.record("error", "feature", "Admin login failed", { userId, via: target.kind });
+    await renderFailure(target);
   }
 }

@@ -39,6 +39,9 @@ import { MessageTriggerMatcher } from "../src/modules/command-system/message-tri
 import { InteractionDispatcher } from "../src/modules/command-system/interaction-dispatcher.service.js";
 import {
   ALLOWED_REPLY_FLAGS,
+  MAX_REPLY_BODY_BYTES,
+  MAX_REPLY_CONTENT,
+  MAX_REPLY_EMBED_CHARS,
   parseBehaviorReply,
 } from "../src/modules/command-system/behavior-reply.js";
 import type { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
@@ -178,6 +181,14 @@ describe("behavior webhook contract (BH-2.3)", () => {
     const rows = many.ok ? many.reply.components! : [];
     expect(rows).toHaveLength(C.response.maxComponentRows);
     expect(rows[0].components).toHaveLength(C.response.maxButtonsPerRow);
+  });
+
+  it("the size limits are the fixtures'", () => {
+    expect(MAX_REPLY_CONTENT).toBe(C.response.maxContentLength);
+    expect(MAX_REPLY_EMBED_CHARS).toBe(C.response.maxEmbedTotalLength);
+    expect(MAX_REPLY_BODY_BYTES).toBe(C.response.maxBodyBytes);
+    const long = parseBehaviorReply({ content: "x".repeat(C.response.maxContentLength + 1) });
+    expect(long.ok && long.reply.content!.length).toBe(C.response.maxContentLength);
   });
 
   it("embed whitelist matches the fixtures", () => {

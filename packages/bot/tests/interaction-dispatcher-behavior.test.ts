@@ -195,6 +195,40 @@ describe("root leaf", () => {
     expect(raw.deleteReply).toHaveBeenCalledTimes(1);
   });
 
+  it("a failed webhook shows the invoker a generic message; the detail goes to stats only", async () => {
+    const commandId = await seedCommand({ name: "ping" });
+    const leaf = await seedLeaf(commandId);
+    const forwarder = {
+      forward: vi.fn(async () => ({
+        ok: false,
+        reply: {},
+        notes: [],
+        status: 500,
+        error: "Traceback: db password=hunter2",
+      })),
+    };
+    const { interaction, raw } = fakeSlash({ commandName: "ping" });
+    await dispatcherWith(forwarder).dispatch(interaction);
+
+    const shown = (raw.editReply as Mock).mock.calls[0][0] as { content: string };
+    expect(shown.content).toBe("⚠ This couldn't be completed right now. Please try again later.");
+    const stat = await BehaviorStat.findByPk(leaf);
+    expect(stat?.get("failureCount")).toBe(1);
+    expect(stat?.get("lastError")).toContain("hunter2");
+  });
+
+  it("a reply Discord refuses counts as a failure and still resolves the placeholder", async () => {
+    const commandId = await seedCommand({ name: "ping" });
+    const leaf = await seedLeaf(commandId);
+    const { interaction, raw } = fakeSlash({ commandName: "ping" });
+    (raw.editReply as Mock).mockRejectedValueOnce(new Error("Invalid Form Body"));
+    await dispatcherWith(makeForwarder()).dispatch(interaction);
+
+    expect(raw.editReply).toHaveBeenCalledTimes(2);
+    expect(((raw.editReply as Mock).mock.calls[1][0] as { content: string }).content).toMatch(/couldn't be completed/);
+    expect((await BehaviorStat.findByPk(leaf))?.get("lastError")).toMatch(/Invalid Form Body/);
+  });
+
   it("a disabled leaf is not claimed", async () => {
     const commandId = await seedCommand({ name: "ping" });
     await seedLeaf(commandId, { enabled: false });

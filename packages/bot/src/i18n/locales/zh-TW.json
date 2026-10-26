@@ -13,9 +13,11 @@
     "unknown-error": "未知錯誤",
     "internal-error": "⚠ 內部錯誤：{{msg}}"
   },
+  "behavior": {
+    "action-failed": "⚠ 目前無法完成，請稍後再試。"
+  },
   "system": {
-    "unknown-system-command": "⚙ 未知的系統指令。",
-    "webhook-failed": "⚠ Behavior 轉發失敗：{{error}}"
+    "unknown-system-command": "⚙ 未知的系統指令。"
   },
   "role-emoji": {
     "command": {

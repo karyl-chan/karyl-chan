@@ -7,7 +7,7 @@
  * what it had to drop.
  */
 import { describe, expect, it } from "vitest";
-import { parseBehaviorReply } from "../src/modules/command-system/behavior-reply.js";
+import { parseBehaviorReply, TRUNCATION_MARK } from "../src/modules/command-system/behavior-reply.js";
 
 function parsed(raw: unknown) {
   const out = parseBehaviorReply(raw);
@@ -92,5 +92,49 @@ describe("parseBehaviorReply — the v1 shape", () => {
 
   it("an empty object is an empty reply", () => {
     expect(parsed({})).toEqual({ ok: true, reply: {}, notes: [] });
+  });
+});
+
+describe("parseBehaviorReply — phase-1 size limits", () => {
+  it("cuts content over 2000 characters and marks the cut", () => {
+    const { reply, notes } = parsed({ content: "a".repeat(2500) });
+    expect(reply.content).toHaveLength(2000);
+    expect(reply.content!.endsWith(TRUNCATION_MARK)).toBe(true);
+    expect(reply.content!.startsWith("a".repeat(2000 - TRUNCATION_MARK.length))).toBe(true);
+    expect(notes).toEqual([{ kind: "content_truncated", length: 2500 }]);
+  });
+
+  it("leaves content of exactly 2000 characters alone", () => {
+    const { reply, notes } = parsed({ content: "b".repeat(2000) });
+    expect(reply.content).toBe("b".repeat(2000));
+    expect(notes).toEqual([]);
+  });
+
+  it("drops the embeds that would take the total past 6000 characters", () => {
+    const big = (title: string) => ({ title, description: "d".repeat(2500) });
+    const { reply, notes } = parsed({ embeds: [big("1"), big("2"), big("3"), { title: "small" }] });
+    // 2501 + 2501 = 5002; the third would make 7503, the small one still fits
+    expect(reply.embeds!.map((e) => e.title)).toEqual(["1", "2", "small"]);
+    expect(notes).toEqual([{ kind: "embeds_dropped", count: 1 }]);
+  });
+
+  it("counts malformed and surplus embeds as dropped", () => {
+    const { reply, notes } = parsed({
+      embeds: [null, "x", ...Array.from({ length: 11 }, (_, i) => ({ title: `e${i}` }))],
+    });
+    expect(reply.embeds).toHaveLength(10);
+    expect(notes).toEqual([{ kind: "embeds_dropped", count: 3 }]);
+  });
+
+  it("ignores fields it does not know and names them", () => {
+    const { reply, notes } = parsed({ content: "x", tts: true, attachments: [], version: 2 });
+    expect(reply).toEqual({ content: "x" });
+    expect(notes).toEqual([{ kind: "unknown_fields", fields: ["attachments", "tts", "version"] }]);
+  });
+
+  it("refuses a body that is not a JSON object", () => {
+    for (const raw of [null, [], "text", 5]) {
+      expect(parseBehaviorReply(raw)).toEqual({ ok: false, error: "response body is not a JSON object" });
+    }
   });
 });

@@ -140,14 +140,17 @@ canonical lists live in `CONTRACT_FIXTURES.behaviorWebhook.response`
 
 | Field | Type | Phase-1 rule |
 |-------|------|--------------|
-| `content` | string | Trimmed. |
-| `embeds` | array | Whitelisted fields (title / description / url / color / timestamp / footer / image / thumbnail / author / fields), Discord's per-field lengths, non-http(s) urls dropped, at most 10. |
+| `content` | string | Trimmed. Over 2000 characters it is cut and ends with a new line and `…(truncated)`. |
+| `embeds` | array | Whitelisted fields (title / description / url / color / timestamp / footer / image / thumbnail / author / fields), Discord's per-field lengths, non-http(s) urls dropped. At most 10, and at most 6000 characters across all of them — an embed that would pass 6000 is dropped, later smaller ones may still fit. |
 | `components` | array | Action rows (`type: 1`) of **link buttons only** (`type: 2, style: 5`, an `https://` `url` ≤ 512 characters, a non-empty `label`, cut to 80). At most 5 rows of 5. Anything else is dropped. |
 | `ephemeral` | boolean | Who sees the reply — see below. |
 | `flags` | integer | Only `SuppressEmbeds` (4) and `SuppressNotifications` (4096) are kept. Visibility is never a flag. |
 
-A field of the wrong type is ignored. An empty body (or an object with
-nothing to show) means "no reply".
+Any other top-level field is ignored, and the bot logs it once per
+behavior. A field of the wrong type is ignored the same way. The body may
+be at most **64 KiB**; a larger body, a non-empty body that is not JSON, or
+JSON that is not an object fails the action. An empty body (or an object
+with nothing to show) means "no reply".
 
 `ephemeral`, per trigger:
 
@@ -161,14 +164,31 @@ Mentions in a reply are never parsed. There is no `[BEHAVIOR:END]` marker
 any more: it ended a conversation session, and sessions were removed
 with ADR 0003 (S1), so a reply never ends anything.
 
+When an action fails — the webhook is unreachable, answers non-2xx, fails
+signature checks, sends a body the rules above refuse, or Discord refuses
+the reply — the user gets a generic localized line ("couldn't be completed
+right now"), never the receiver's error text:
+
+| Trigger | Where the failure line goes |
+|---------|-----------------------------|
+| Command | the invoker's reply (the "thinking…" placeholder is resolved) |
+| Message in a DM with the bot | the DM |
+| Message in a guild channel | a DM to the author; if that DM fails, nothing — the channel never hears about it |
+
+An ephemeral guild reply that can't be DMed is a failure too, and also
+says nothing in the channel. The system login never speaks in a guild
+channel at all. The detail goes only to the log (`bot_events`) and the
+behavior's stats (`lastError`), which the admin UI shows.
+
 Slash behaviors may define command options (BH-2.2C,
 `slashCommandOptions`): a flat list of scalar options (string / integer /
 number / boolean / user / channel / role / mentionable / attachment) edited
 in the admin UI, registered to Discord by the reconciler, and delivered to
 the webhook in `_meta.options` as `{ name, type, value }` entries.
 
-Failed dispatch (network error, non-2xx, signature failure) is recorded
-in `bot_events`. The POST has a 10-second timeout.
+Failed dispatch (network error, non-2xx, signature failure, a refused
+body) is recorded in `bot_events` and the behavior's stats. The POST has a
+10-second timeout.
 
 ### Webhook targets
 

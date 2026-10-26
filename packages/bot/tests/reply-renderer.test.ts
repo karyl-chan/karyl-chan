@@ -12,7 +12,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import { ChannelType, MessageFlags } from "discord.js";
-import { renderReply } from "../src/modules/command-system/reply-renderer.js";
+import { renderFailure, renderReply } from "../src/modules/command-system/reply-renderer.js";
 
 function fakeInteraction(opts: { deferred?: boolean; ephemeral?: boolean } = {}) {
   return {
@@ -143,6 +143,42 @@ describe("renderReply — message target", () => {
       ok: true,
       via: "none",
     });
+    expect(channelSend).not.toHaveBeenCalled();
+  });
+});
+
+describe("renderFailure — the generic line, never in a guild channel", () => {
+  const GENERIC = "⚠ This couldn't be completed right now. Please try again later.";
+
+  it("resolves a command's placeholder", async () => {
+    const ix = { ...fakeInteraction({ deferred: true, ephemeral: true }), locale: "en-US" };
+    await renderFailure({ kind: "interaction", interaction: ix as never });
+    expect(ix.editReply).toHaveBeenCalledWith({
+      content: GENERIC,
+      embeds: [],
+      components: [],
+      allowedMentions: { parse: [] },
+    });
+  });
+
+  it("answers in the DM with the bot", async () => {
+    const { message, channelSend, authorSend } = fakeMessage("dm");
+    await renderFailure({ kind: "message", message: message as never });
+    expect(channelSend).toHaveBeenCalledWith({ content: GENERIC, allowedMentions: { parse: [] } });
+    expect(authorSend).not.toHaveBeenCalled();
+  });
+
+  it("DMs a guild message's author instead of posting in the channel", async () => {
+    const { message, channelSend, authorSend } = fakeMessage("guild");
+    await renderFailure({ kind: "message", message: message as never });
+    expect(authorSend).toHaveBeenCalledWith({ content: GENERIC, allowedMentions: { parse: [] } });
+    expect(channelSend).not.toHaveBeenCalled();
+  });
+
+  it("stays silent when that DM fails", async () => {
+    const { message, channelSend, authorSend } = fakeMessage("guild");
+    authorSend.mockRejectedValueOnce(new Error("Cannot send messages to this user"));
+    await expect(renderFailure({ kind: "message", message: message as never })).resolves.toBeUndefined();
     expect(channelSend).not.toHaveBeenCalled();
   });
 });

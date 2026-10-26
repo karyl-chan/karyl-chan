@@ -38,8 +38,8 @@ import { dispatchComponentToPlugin } from "../plugin-system/plugin-component-dis
 import { dispatchModalToPlugin } from "../plugin-system/plugin-modal-dispatch.service.js";
 import { dispatchInProcessInteraction } from "../builtin-features/in-process-command-registry.service.js";
 import { runLoginAction } from "./builtin-login-action.js";
-import { renderReply } from "./reply-renderer.js";
-import { recordForwardOutcome } from "../behavior/models/behavior-stats.model.js";
+import { renderFailure } from "./reply-renderer.js";
+import { runWebhookAction } from "./webhook-action.js";
 import type { DispatchOutcome } from "./types.js";
 import type { WebhookForwarder } from "./webhook-forwarder.service.js";
 import { tForInteraction } from "../../i18n/index.js";
@@ -262,7 +262,7 @@ export class InteractionDispatcher {
 
   /**
    * 內建動作（actionSource='builtin'）：只給 System Behavior，目前只有登入
-   * （admin-login → loginActionReply → ReplyRenderer）。
+   * （admin-login → runLoginAction → ReplyRenderer）。
    */
   private async dispatchSystemBehavior(
     interaction: ChatInputCommandInteraction,
@@ -311,14 +311,7 @@ export class InteractionDispatcher {
         `interaction-dispatcher: behavior ${leaf.id} 沒有 webhook 動作`,
         { behaviorId: leaf.id },
       );
-      await interaction
-        .reply({
-          content: tForInteraction(interaction, "common.internal-error", {
-            msg: "webhook action missing",
-          }),
-          ephemeral: true,
-        })
-        .catch(() => {});
+      await renderFailure({ kind: "interaction", interaction });
       return { claimed: true, claimedBy: "behavior_custom" };
     }
     const payload = buildWebhookPayload(interaction, subcommand);
@@ -334,62 +327,14 @@ export class InteractionDispatcher {
       return { claimed: true, claimedBy: "behavior_custom" };
     }
 
-    try {
-      const result = await this.forwarder.forward(
-        webhook,
-        payload as Record<string, unknown>,
-      );
-      await recordForwardOutcome(leaf.id, result.ok, result.error);
-
-      if (!result.ok) {
-        await interaction
-          .editReply({
-            content: tForInteraction(interaction, "system.webhook-failed", {
-              error:
-                result.error ??
-                tForInteraction(interaction, "common.unknown-error"),
-            }),
-            // webhook error text is operator-controlled but may contain
-            // @everyone / role mentions; suppress like the success path
-            allowedMentions: { parse: [] },
-          })
-          .catch(() => {});
-        return { claimed: true, claimedBy: "behavior_custom" };
-      }
-
-      // 回覆模型（#140）：forwarder 已清洗（content / embeds / 連結按鈕 /
-      // flags），ReplyRenderer 依 ephemeral 走 defer 狀態機；mentions 一律不解析。
-      const rendered = await renderReply(result.reply, {
-        kind: "interaction",
-        interaction,
-      });
-      if (!rendered.ok) {
-        botEventLog.record(
-          "warn",
-          "bot",
-          `interaction-dispatcher: webhook behavior ${leaf.id} reply was refused by Discord: ${rendered.error}`,
-          { behaviorId: leaf.id, commandName: interaction.commandName },
-        );
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      await interaction
-        .editReply({
-          content: tForInteraction(interaction, "common.internal-error", {
-            msg,
-          }),
-          // exception messages can include user/role mention strings;
-          // strip them like the success / webhook-failed paths
-          allowedMentions: { parse: [] },
-        })
-        .catch(() => {});
-      botEventLog.record(
-        "error",
-        "bot",
-        `interaction-dispatcher: webhook behavior ${leaf.id} 拋出例外：${msg}`,
-        { behaviorId: leaf.id, commandName: interaction.commandName },
-      );
-    }
+    // 回覆模型（#140）與失敗處理（#114）：webhook-action.ts
+    await runWebhookAction({
+      forwarder: this.forwarder,
+      behaviorId: leaf.id,
+      webhook,
+      payload,
+      target: { kind: "interaction", interaction },
+    });
 
     return { claimed: true, claimedBy: "behavior_custom" };
   }

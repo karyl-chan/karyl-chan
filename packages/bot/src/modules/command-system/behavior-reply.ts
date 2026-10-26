@@ -13,11 +13,16 @@
  * test result shows them; the live path logs them).
  *
  * Phase-1 rules:
- *   - embeds: field whitelist, Discord's per-field lengths, at most 10
+ *   - content: over 2000 characters is cut and ends with TRUNCATION_MARK
+ *   - embeds: field whitelist, Discord's per-field lengths, at most 10, and
+ *     no more than 6000 characters across all of them (later embeds that
+ *     don't fit are dropped)
  *   - components: only link buttons (type 2, style 5) with an https url,
  *     in action rows (type 1); at most 5 rows of 5
  *   - flags: only SuppressEmbeds and SuppressNotifications; visibility is
  *     the `ephemeral` field, never the Ephemeral bit
+ *   - any other top-level field is ignored (and named in a note)
+ *   - the body itself is capped at MAX_REPLY_BODY_BYTES by the forwarder
  *
  * Pure: no discord.js runtime, no I/O.
  */
@@ -55,6 +60,9 @@ export interface BehaviorReply {
 
 /** What parseBehaviorReply dropped or changed, for the admin and the log. */
 export type ReplyNote =
+  | { kind: "content_truncated"; length: number }
+  | { kind: "embeds_dropped"; count: number }
+  | { kind: "unknown_fields"; fields: string[] }
   | { kind: "invalid_field"; field: string }
   | { kind: "components_dropped"; count: number }
   | { kind: "flags_dropped"; flags: number };
@@ -65,6 +73,15 @@ export type ReplyParse =
 
 /** MessageFlags.SuppressEmbeds | MessageFlags.SuppressNotifications */
 export const ALLOWED_REPLY_FLAGS = 4 | 4096;
+
+export const MAX_REPLY_CONTENT = 2000;
+export const MAX_REPLY_EMBED_CHARS = 6000;
+/** The largest response body the forwarder reads (64 KiB). */
+export const MAX_REPLY_BODY_BYTES = 64 * 1024;
+/** Ends content that was cut to MAX_REPLY_CONTENT. */
+export const TRUNCATION_MARK = "\n…(truncated)";
+
+const KNOWN_FIELDS = new Set(["content", "embeds", "components", "ephemeral", "flags"]);
 
 const MAX_ROWS = 5;
 const MAX_BUTTONS_PER_ROW = 5;
@@ -137,15 +154,33 @@ function sanitizeOneEmbed(raw: unknown): SanitizedEmbed | null {
   return Object.keys(out).length > 0 ? out : null;
 }
 
-function sanitizeEmbeds(raw: unknown): SanitizedEmbed[] {
-  if (!Array.isArray(raw)) return [];
-  const out: SanitizedEmbed[] = [];
+/** The characters Discord counts toward an embed's 6000 limit. */
+function embedChars(e: SanitizedEmbed): number {
+  return (
+    (e.title?.length ?? 0) +
+    (e.description?.length ?? 0) +
+    (e.footer?.text.length ?? 0) +
+    (e.author?.name.length ?? 0) +
+    (e.fields ?? []).reduce((n, f) => n + f.name.length + f.value.length, 0)
+  );
+}
+
+/**
+ * Whitelisted embeds within every phase-1 limit, and how many of the
+ * given ones didn't make it (malformed, past 10, or past 6000 characters).
+ */
+function limitEmbeds(raw: unknown[]): { embeds: SanitizedEmbed[]; dropped: number } {
+  const embeds: SanitizedEmbed[] = [];
+  let total = 0;
   for (const item of raw) {
     const e = sanitizeOneEmbed(item);
-    if (e) out.push(e);
-    if (out.length >= MAX_EMBEDS) break;
+    if (!e || embeds.length >= MAX_EMBEDS) continue;
+    const chars = embedChars(e);
+    if (total + chars > MAX_REPLY_EMBED_CHARS) continue;
+    total += chars;
+    embeds.push(e);
   }
-  return out;
+  return { embeds, dropped: raw.length - embeds.length };
 }
 
 // ── components ───────────────────────────────────────────────────────────────
@@ -215,14 +250,24 @@ export function parseBehaviorReply(raw: unknown): ReplyParse {
 
   if (body.content !== undefined && body.content !== null) {
     if (typeof body.content !== "string") invalid("content");
-    else if (body.content.trim() !== "") reply.content = body.content.trim();
+    else {
+      const content = body.content.trim();
+      if (content.length > MAX_REPLY_CONTENT) {
+        reply.content =
+          content.slice(0, MAX_REPLY_CONTENT - TRUNCATION_MARK.length) + TRUNCATION_MARK;
+        notes.push({ kind: "content_truncated", length: content.length });
+      } else if (content !== "") {
+        reply.content = content;
+      }
+    }
   }
 
   if (body.embeds !== undefined && body.embeds !== null) {
     if (!Array.isArray(body.embeds)) invalid("embeds");
     else {
-      const embeds = sanitizeEmbeds(body.embeds);
+      const { embeds, dropped } = limitEmbeds(body.embeds);
       if (embeds.length > 0) reply.embeds = embeds;
+      if (dropped > 0) notes.push({ kind: "embeds_dropped", count: dropped });
     }
   }
 
@@ -250,6 +295,9 @@ export function parseBehaviorReply(raw: unknown): ReplyParse {
       if (droppedFlags !== 0) notes.push({ kind: "flags_dropped", flags: droppedFlags });
     }
   }
+
+  const unknown = Object.keys(body).filter((k) => !KNOWN_FIELDS.has(k)).sort();
+  if (unknown.length > 0) notes.push({ kind: "unknown_fields", fields: unknown });
 
   return { ok: true, reply, notes };
 }

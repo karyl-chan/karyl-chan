@@ -81,6 +81,7 @@ function guildMsg(opts: {
   bot?: boolean;
 }) {
   const send = vi.fn(async () => {});
+  const authorSend = vi.fn(async () => {});
   const message = {
     id: "MSG-G",
     content: opts.content,
@@ -93,11 +94,12 @@ function guildMsg(opts: {
       discriminator: "0",
       avatar: null,
       displayAvatarURL: () => "https://cdn.example/a.png",
+      send: authorSend,
     },
     client: { user: { id: BOT_ID } },
     channel: { id: opts.channelId ?? "C1", type: ChannelType.GuildText, send },
   } as never;
-  return { message, send };
+  return { message, send, authorSend };
 }
 
 function dmMsg(userId: string, content: string) {
@@ -251,6 +253,55 @@ describe("guild triggers", () => {
     expect(forwarder.forward).toHaveBeenCalledTimes(1);
   });
 
+  it("an ephemeral reply goes to the author's DMs, not the channel", async () => {
+    await seedMessageTrigger({ surface: "guild" });
+    const forwarder = {
+      forward: vi.fn(async () => ({ ok: true, reply: { content: "psst", ephemeral: true }, notes: [] })),
+    };
+    const { message, send, authorSend } = guildMsg({ content: "!go" });
+    await matcherWith(forwarder).onMessage(message);
+    expect(authorSend).toHaveBeenCalledWith({ content: "psst", allowedMentions: { parse: [] } });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("when that DM fails nothing is said anywhere; the failure is counted", async () => {
+    const id = await seedMessageTrigger({ surface: "guild" });
+    const forwarder = {
+      forward: vi.fn(async () => ({ ok: true, reply: { content: "psst", ephemeral: true }, notes: [] })),
+    };
+    const { message, send, authorSend } = guildMsg({ content: "!go" });
+    authorSend.mockRejectedValue(new Error("Cannot send messages to this user"));
+    await matcherWith(forwarder).onMessage(message);
+    expect(send).not.toHaveBeenCalled();
+    expect(authorSend).toHaveBeenCalledTimes(1);
+    expect((await BehaviorStat.findByPk(id))?.get("failureCount")).toBe(1);
+  });
+
+  it("a failed forward DMs the author a generic line, never the channel or the receiver's error", async () => {
+    const id = await seedMessageTrigger({ surface: "guild" });
+    const forwarder = {
+      forward: vi.fn(async () => ({ ok: false, reply: {}, notes: [], error: "500: secret stack" })),
+    };
+    const { message, send, authorSend } = guildMsg({ content: "!go" });
+    await matcherWith(forwarder).onMessage(message);
+    expect(send).not.toHaveBeenCalled();
+    const shown = (authorSend as Mock).mock.calls[0][0] as { content: string };
+    expect(shown.content).toBe("⚠ This couldn't be completed right now. Please try again later.");
+    expect((await BehaviorStat.findByPk(id))?.get("lastError")).toBe("500: secret stack");
+  });
+
+  it("if that DM fails too, the failure stays in the log and the stats", async () => {
+    const id = await seedMessageTrigger({ surface: "guild" });
+    const forwarder = {
+      forward: vi.fn(async () => ({ ok: false, reply: {}, notes: [], error: "boom" })),
+    };
+    const { message, send, authorSend } = guildMsg({ content: "!go" });
+    authorSend.mockRejectedValue(new Error("Cannot send messages to this user"));
+    await matcherWith(forwarder).onMessage(message);
+    expect(send).not.toHaveBeenCalled();
+    expect((await BehaviorStat.findByPk(id))?.get("lastError")).toBe("boom");
+  });
+
   it("rate-limits forwards per channel (5 per 10s window)", async () => {
     await seedMessageTrigger({ surface: "guild" });
     const forwarder = makeForwarder();
@@ -306,6 +357,16 @@ describe("the system login", () => {
     };
     expect(sent.embeds).toHaveLength(1);
     expect(sent.components[0].components[0].url).toBe("https://admin.example/admin/auth?token=t");
+  });
+
+  it("in a DM, a failed forward answers in the DM with the generic line", async () => {
+    await seedMessageTrigger();
+    const forwarder = {
+      forward: vi.fn(async () => ({ ok: false, reply: {}, notes: [], error: "boom" })),
+    };
+    const { message, send } = dmMsg("U1", "!go");
+    await matcherWith(forwarder).onMessage(message);
+    expect(((send as Mock).mock.calls[0][0] as { content: string }).content).toMatch(/couldn't be completed/);
   });
 
   it("stays silent in the DM for someone who is not authorised", async () => {

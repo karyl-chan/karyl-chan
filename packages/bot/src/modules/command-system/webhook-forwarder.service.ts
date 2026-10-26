@@ -43,7 +43,70 @@ import type { AllowlistEntry } from "../../utils/webhook-allowlist.js";
 import { decryptSecret } from "../../utils/crypto.js";
 import type { BehaviorWebhookActionRow } from "../behavior/models/behavior-webhook-action.model.js";
 import type { ForwardResult } from "./types.js";
-import { parseBehaviorReply } from "./behavior-reply.js";
+import {
+  MAX_REPLY_BODY_BYTES,
+  parseBehaviorReply,
+  type ReplyNote,
+} from "./behavior-reply.js";
+
+/**
+ * Read the body, giving up past `max` bytes (null). A declared
+ * Content-Length over the cap is refused before reading anything.
+ */
+async function readCapped(res: Response, max: number): Promise<string | null> {
+  const declared = Number(res.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > max) {
+    await res.body?.cancel().catch(() => {});
+    return null;
+  }
+  if (!res.body) return "";
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+/**
+ * What a reply lost in parsing is the receiver author's business: log it
+ * once per behavior and kind of loss for the life of the process, not on
+ * every message (#140 — unknown fields are ignored and logged once). The
+ * set is capped; past the cap the oldest key is forgotten.
+ */
+const loggedReplyNotes = new Set<string>();
+const MAX_LOGGED_REPLY_NOTES = 1000;
+
+function logReplyNotes(behaviorId: number, notes: readonly ReplyNote[]): void {
+  for (const note of notes) {
+    const detail =
+      note.kind === "unknown_fields"
+        ? note.fields.join(",")
+        : note.kind === "invalid_field"
+          ? note.field
+          : "";
+    const key = `${behaviorId}:${note.kind}:${detail}`;
+    if (loggedReplyNotes.has(key)) continue;
+    if (loggedReplyNotes.size >= MAX_LOGGED_REPLY_NOTES) {
+      loggedReplyNotes.delete(loggedReplyNotes.values().next().value as string);
+    }
+    loggedReplyNotes.add(key);
+    botEventLog.record(
+      "warn",
+      "bot",
+      `webhook-forwarder: behavior ${behaviorId}'s reply was adjusted (${note.kind}${detail ? `: ${detail}` : ""}) — see the reply contract in docs/features/behaviors.md`,
+      { behaviorId, note },
+    );
+  }
+}
 
 /** A failed forward: no reply, and the detail for the log / stats / admin. */
 function fail(error: string, status?: number, errorCode?: HostPolicyCode): ForwardResult {
@@ -198,7 +261,7 @@ export class WebhookForwarder {
     // answer that changes after the check (rebinding) can't redirect it.
     const agent = createPinnedAgent(target.addresses);
     let res: Response;
-    let rawText: string;
+    let rawText: string | null;
     try {
       try {
         res = await fetch(url, {
@@ -231,11 +294,22 @@ export class WebhookForwarder {
         );
       }
 
-      rawText = await res.text().catch(() => "");
+      try {
+        rawText = await readCapped(res, MAX_REPLY_BODY_BYTES);
+      } catch (err) {
+        return fail(
+          `could not read the response body: ${err instanceof Error ? err.message : String(err)}`,
+          res.status,
+        );
+      }
     } finally {
       // One-shot agent: drop its socket once the response is read (or
       // abandoned on the error / redirect paths above).
       void agent.destroy().catch(() => {});
+    }
+
+    if (rawText === null) {
+      return fail(`response body exceeds ${MAX_REPLY_BODY_BYTES / 1024} KiB`, res.status);
     }
 
     if (!res.ok) {
@@ -285,17 +359,20 @@ export class WebhookForwarder {
       );
     }
 
-    // 解析 response body（#140 回覆模型）
+    // 解析 response body（#140 回覆模型）。空 body = 動作選擇不回覆；
+    // 非 JSON 或不是物件 = receiver 壞掉，算失敗（不再默默變成空回覆）。
     if (rawText.length === 0) return { ok: true, reply: {}, notes: [] };
     let decoded: unknown;
     try {
       decoded = JSON.parse(rawText);
     } catch {
-      // wait=true 應永遠回 JSON，misbehaving webhook server 回純文字時視為無 content
-      return { ok: true, reply: {}, notes: [] };
+      return fail("response body is not JSON", res.status);
     }
     const parsed = parseBehaviorReply(decoded);
-    if (!parsed.ok) return { ok: true, reply: {}, notes: [] };
+    if (!parsed.ok) {
+      return fail(parsed.error, res.status);
+    }
+    logReplyNotes(action.behaviorId, parsed.notes);
     return { ok: true, reply: parsed.reply, notes: parsed.notes };
   }
 

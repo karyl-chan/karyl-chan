@@ -22,13 +22,12 @@ import {
   getBehaviorCatalog,
   type CatalogBehavior,
 } from "../behavior/behavior-catalog.js";
-import { recordForwardOutcome } from "../behavior/models/behavior-stats.model.js";
 import { matchesTrigger } from "../behavior/behavior-trigger.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import type { MessageMatchOutcome } from "./types.js";
 import type { WebhookForwarder } from "./webhook-forwarder.service.js";
 import { runLoginAction } from "./builtin-login-action.js";
-import { renderReply } from "./reply-renderer.js";
+import { runWebhookAction } from "./webhook-action.js";
 
 // BH-0.3 multi-match：一則訊息可以連發多條 behavior，
 // outcome 取聯集；behaviorId 報第一條命中的（log 用途）。
@@ -235,33 +234,15 @@ export class MessageTriggerMatcher {
       return { handled: false };
     }
 
-    const payload = this.buildPayload(djsMessage, behavior);
-    const result = await this.forwarder.forward(behavior.webhook, payload);
-    await recordForwardOutcome(behavior.id, result.ok, result.error);
-    if (result.ok) {
-      // 回覆模型（#140）：forwarder 已清洗；ReplyRenderer 決定貼在哪
-      // （私訊照常回；伺服器預設貼頻道，ephemeral=true 改私訊作者）。
-      // mentions 一律不解析 —— 外部服務不能決定 ping 誰。
-      const rendered = await renderReply(result.reply, {
-        kind: "message",
-        message: djsMessage,
-      });
-      if (!rendered.ok) {
-        botEventLog.record(
-          "warn",
-          "bot",
-          `message-trigger-matcher: behavior ${behavior.id} reply was refused by Discord: ${rendered.error}`,
-          { userId, behaviorId: behavior.id },
-        );
-      }
-    } else {
-      botEventLog.record(
-        "warn",
-        "bot",
-        `message-trigger-matcher: forward 失敗 behaviorId=${behavior.id}：${result.error ?? "unknown"}`,
-        { userId, behaviorId: behavior.id },
-      );
-    }
+    // 回覆模型（#140）與失敗處理（#114）：webhook-action.ts。私訊照常回；
+    // 伺服器預設貼頻道，ephemeral=true 改私訊作者；失敗從不貼頻道。
+    await runWebhookAction({
+      forwarder: this.forwarder,
+      behaviorId: behavior.id,
+      webhook: behavior.webhook,
+      payload: this.buildPayload(djsMessage, behavior),
+      target: { kind: "message", message: djsMessage },
+    });
 
     return { handled: true, behaviorId: behavior.id };
   }

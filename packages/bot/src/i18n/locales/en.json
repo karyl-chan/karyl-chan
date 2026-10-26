@@ -13,9 +13,11 @@
     "unknown-error": "Unknown error",
     "internal-error": "⚠ Internal error: {{msg}}"
   },
+  "behavior": {
+    "action-failed": "⚠ This couldn't be completed right now. Please try again later."
+  },
   "system": {
-    "unknown-system-command": "⚙ Unknown system command.",
-    "webhook-failed": "⚠ Behavior forward failed: {{error}}"
+    "unknown-system-command": "⚙ Unknown system command."
   },
   "role-emoji": {
     "command": {

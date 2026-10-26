@@ -123,6 +123,12 @@ export interface ContractFixtures {
       readonly embedWhitelist: readonly string[];
       readonly maxEmbeds: number;
       readonly maxFields: number;
+      /** Longer content is cut (and marked). */
+      readonly maxContentLength: number;
+      /** Across all embeds; an embed that would pass it is dropped. */
+      readonly maxEmbedTotalLength: number;
+      /** A larger response body fails the action. */
+      readonly maxBodyBytes: number;
       /** Only link buttons (type 2, style 5) with an https url, in action rows. */
       readonly maxComponentRows: number;
       readonly maxButtonsPerRow: number;
@@ -457,6 +463,9 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
       ],
       maxEmbeds: 10,
       maxFields: 25,
+      maxContentLength: 2000,
+      maxEmbedTotalLength: 6000,
+      maxBodyBytes: 65536,
       maxComponentRows: 5,
       maxButtonsPerRow: 5,
       // SuppressEmbeds, SuppressNotifications
