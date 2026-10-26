@@ -1208,11 +1208,17 @@
                 "guild": "指定服务器",
                 "channel": "指定频道"
             },
-            "readOnly": "目前为只读视图，之后的更新会开放编辑。",
             "loadError": "无法加载行为：{error}",
             "empty": "这里还没有行为。",
             "commands": "指令",
-            "messageTriggers": "消息触发"
+            "messageTriggers": "消息触发",
+            "note": {
+                "guild": "要限制这个服务器里哪些身份组或频道能用指令，请到 Discord 的“服务器设置 → 整合”。",
+                "channel": "Discord 无法把指令限定在单一频道，所以这里只有消息匹配。"
+            },
+            "reorderHandle": "拖动排序“{title}”",
+            "reorderHint": "拖动排序，或按 Alt + ↑／↓",
+            "reorderStale": "这个位置的行为刚被其他人更改，已重新载入；请再排一次。"
         },
         "card": {
             "systemRowLocked": "系统行为，固定排在最前面",
@@ -1231,21 +1237,11 @@
             "tagStopShort": "停止",
             "unhealthy": "连续失败",
             "toggleProtected": "系统行为不可停用",
-            "toggleReadOnly": "此版本为只读",
+            "toggleReadOnly": "指令的编辑会在之后的更新开放",
             "enabled": "已启用",
             "disabled": "已停用",
-            "where": "在哪里",
-            "whereBotDm": "与 bot 的私信",
-            "whereGuildAll": "全部服务器",
-            "whereGuild": "服务器 {guild}",
-            "whereChannel": "服务器 {guild} 的频道 {channel}",
-            "audience": "对象",
-            "audienceAll": "所有人",
             "audienceUser": "用户 {user}",
             "audienceGroup": "群组 {group}",
-            "ignoreBots": "忽略 bot 消息",
-            "yes": "是",
-            "no": "否",
             "registration": "注册范围",
             "registrationGlobal": "全局",
             "registrationGuild": "服务器 {guild}",
@@ -1276,7 +1272,152 @@
             "secretUnset": "未设置密钥",
             "stats": "触发记录",
             "statsLine": "上次触发 {when} · 成功 {ok} / 失败 {fail}",
-            "statsLastError": "最近错误：{error}"
+            "statsLastError": "最近错误：{error}",
+            "unsaved": "未保存",
+            "more": "更多操作",
+            "test": "测试 webhook",
+            "testing": "正在发送测试…",
+            "testOk": "测试成功，服务回复：",
+            "testFailed": "测试失败：{error}",
+            "testSavedOnly": "测试的是已保存的设置，未保存的修改不会用到。",
+            "delete": "删除",
+            "deleteTitle": "删除这个行为？",
+            "deleteMessage": "“{title}”会被删除，无法恢复。",
+            "titleLabel": "标题",
+            "descriptionLabel": "说明",
+            "descriptionHint": "只给管理员看，不会发送到 Discord。",
+            "conflict": "这个行为已经被其他人修改，现在保存会被拒绝。你的修改还在。",
+            "conflictKeep": "保留我的修改，应用到最新版本",
+            "conflictDiscard": "放弃我的修改，载入最新版本",
+            "staleRebased": "刚才的保存没有成功：其他人在你编辑时改过这个行为（不是你正在编辑的字段）。已载入最新版本，你的修改还在，请再点一次保存。"
+        },
+        "validation": {
+            "required": "必填",
+            "tooShort": "至少 {min} 个字",
+            "tooLong": "最多 {max} 个字",
+            "tooMany": "最多 {max} 项",
+            "format": "格式不正确",
+            "invalid": "值无效"
+        },
+        "unsaved": {
+            "title": "放弃未保存的修改？",
+            "message": "有行为的修改还没保存，离开后会丢失。",
+            "leave": "放弃并离开"
+        },
+        "location": {
+            "label": "位置",
+            "bot_dm": "与 bot 的私信",
+            "guild_all": "全部服务器",
+            "guild": "指定服务器",
+            "channel": "指定频道",
+            "guildPicker": "服务器",
+            "channelPicker": "频道",
+            "guildPlaceholder": "选择服务器",
+            "channelPlaceholder": "选择频道",
+            "idHint": "Discord ID（17–20 位数字）"
+        },
+        "trigger": {
+            "title": "触发",
+            "moved": "保存后，这一行会移到“{section}”。",
+            "patternKind": "匹配方式",
+            "patternValue": "匹配内容",
+            "patternPlaceholder": "例：!weather",
+            "kind": {
+                "startswith": "开头匹配",
+                "endswith": "结尾匹配",
+                "regex": "正则表达式"
+            },
+            "try": "试试看",
+            "tryPlaceholder": "输入一条消息，看会不会触发",
+            "preview": {
+                "match": "会触发",
+                "no_match": "不会触发",
+                "invalid": "正则表达式写法有误"
+            },
+            "ignoreBots": "忽略其他 bot 与 webhook 的消息",
+            "stopOnMatch": "匹配到之后停止，不再检查后面的行为",
+            "movedPublic": "回复会发在频道里，所有人都看得到。"
+        },
+        "audience": {
+            "title": "对象",
+            "label": "谁私信时触发",
+            "all": "所有人",
+            "user": "指定用户",
+            "group": "群组",
+            "groupPlaceholder": "选择群组",
+            "newGroup": "＋ 新增群组…",
+            "newGroupName": "新群组名称",
+            "newGroupHint": "保存后就能设置这个群组的成员。"
+        },
+        "group": {
+            "membersTitle": "群组“{group}”的成员",
+            "count": "{count} 人",
+            "shared": "这份名单由 {count} 个行为共用，修改会应用到全部。",
+            "empty": "还没有成员。",
+            "remove": "移除 {user}",
+            "addPlaceholder": "Discord 用户 ID",
+            "add": "加入",
+            "saveFirst": "保存后就能设置这个群组的成员。",
+            "dropOnSave": "保存后没有其他行为使用群组“{group}”，它的 {count} 位成员名单会一起被清除。",
+            "dropOnDelete": "它是群组“{group}”唯一的使用者，这个群组的 {count} 位成员名单也会一起被清除。"
+        },
+        "action": {
+            "title": "转发设置",
+            "source": "动作来源",
+            "sourceWebhook": "Webhook",
+            "sourcePluginLater": "Plugin 动作会在第二阶段开放。",
+            "url": "Webhook URL",
+            "urlHint": "公开网址需用 https；局域网地址需在 bot 的局域网白名单上。",
+            "authLabel": "验证模式",
+            "auth": {
+                "hmac": "HMAC（推荐）",
+                "token": "Token",
+                "none": "不验证"
+            },
+            "authNoteDrop": "保存后会移除密钥，webhook 不再签名。",
+            "authNoteIssue": "保存后 bot 会生成密钥，只显示一次。"
+        },
+        "secret": {
+            "label": "Webhook 密钥",
+            "set": "已设置",
+            "unset": "未设置",
+            "rotate": "生成新密钥",
+            "rotateTitle": "生成新的 webhook 密钥？",
+            "rotateMessage": "新密钥立即生效并只显示一次；旧密钥在 24 小时内仍然有效，请在这段时间内把新密钥设置到你的服务。",
+            "grace": "旧密钥在 {time} 前仍然有效。",
+            "shownOnce": "这是新的密钥，只会显示这一次，请现在复制保存。",
+            "copy": "复制",
+            "copied": "已复制",
+            "saved": "我已保存"
+        },
+        "errors": {
+            "withDetail": "{reason}（{detail}）",
+            "validation_failed": "输入不正确",
+            "name_conflict": "名称已被使用",
+            "system_immutable": "系统行为不能这样修改",
+            "registration_failed": "Discord 注册失败",
+            "not_found": "找不到这个项目",
+            "invalid_tree": "指令结构不正确"
+        },
+        "add": {
+            "open": "新增行为",
+            "title": "新增行为",
+            "intro": "在“{section}”创建行为：选择触发方式，再决定要转发到哪里。",
+            "name": "行为名称",
+            "namePlaceholder": "例：天气查询",
+            "kind": "触发类型",
+            "kinds": {
+                "command": "指令",
+                "message": "消息匹配"
+            },
+            "reason": {
+                "messageInApp": "App 指令区只能创建指令：bot 收不到用户之间的私信，也收不到它没加入的服务器里的消息。",
+                "commandInChannel": "Discord 无法把指令限定在单一频道。请到上层的服务器新增，再到 Discord 的“服务器设置 → 整合”限制频道。",
+                "commandLater": "指令的新增会在之后的更新开放。"
+            },
+            "create": "创建",
+            "created": "已创建“{title}”。",
+            "done": "完成"
         }
     },
     "config": {

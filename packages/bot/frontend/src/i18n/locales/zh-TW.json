@@ -1208,11 +1208,17 @@
                 "guild": "指定伺服器",
                 "channel": "指定頻道"
             },
-            "readOnly": "目前為唯讀檢視，之後的更新會開放編輯。",
             "loadError": "無法載入行為：{error}",
             "empty": "這裡還沒有行為。",
             "commands": "指令",
-            "messageTriggers": "訊息觸發"
+            "messageTriggers": "訊息觸發",
+            "note": {
+                "guild": "要限制這個伺服器裡哪些身分組或頻道能用指令，請到 Discord 的「伺服器設定 → 整合」。",
+                "channel": "Discord 無法把指令限定在單一頻道，所以這裡只有訊息比對。"
+            },
+            "reorderHandle": "拖曳排序「{title}」",
+            "reorderHint": "拖曳排序，或按 Alt + ↑／↓",
+            "reorderStale": "這個位置的行為剛被其他人變更，已重新載入；請再排一次。"
         },
         "card": {
             "systemRowLocked": "系統行為，固定排在最前面",
@@ -1231,21 +1237,11 @@
             "tagStopShort": "停止",
             "unhealthy": "連續失敗",
             "toggleProtected": "系統行為不可停用",
-            "toggleReadOnly": "此版本為唯讀",
+            "toggleReadOnly": "指令的編輯會在之後的更新開放",
             "enabled": "已啟用",
             "disabled": "已停用",
-            "where": "在哪裡",
-            "whereBotDm": "與 bot 的私訊",
-            "whereGuildAll": "全部伺服器",
-            "whereGuild": "伺服器 {guild}",
-            "whereChannel": "伺服器 {guild} 的頻道 {channel}",
-            "audience": "對象",
-            "audienceAll": "所有人",
             "audienceUser": "使用者 {user}",
             "audienceGroup": "群組 {group}",
-            "ignoreBots": "忽略 bot 訊息",
-            "yes": "是",
-            "no": "否",
             "registration": "註冊範圍",
             "registrationGlobal": "全域",
             "registrationGuild": "伺服器 {guild}",
@@ -1276,7 +1272,152 @@
             "secretUnset": "未設定密鑰",
             "stats": "觸發紀錄",
             "statsLine": "上次觸發 {when} · 成功 {ok} / 失敗 {fail}",
-            "statsLastError": "最近錯誤：{error}"
+            "statsLastError": "最近錯誤：{error}",
+            "unsaved": "未儲存",
+            "more": "更多操作",
+            "test": "測試 webhook",
+            "testing": "正在送出測試…",
+            "testOk": "測試成功，服務回覆：",
+            "testFailed": "測試失敗：{error}",
+            "testSavedOnly": "測試的是已儲存的設定，未儲存的修改不會用到。",
+            "delete": "刪除",
+            "deleteTitle": "刪除這個行為？",
+            "deleteMessage": "「{title}」會被刪除，無法復原。",
+            "titleLabel": "標題",
+            "descriptionLabel": "說明",
+            "descriptionHint": "只給管理員看，不會送到 Discord。",
+            "conflict": "這個行為已經被其他人修改，現在儲存會被拒絕。你的修改還在。",
+            "conflictKeep": "保留我的修改，套用到最新版本",
+            "conflictDiscard": "捨棄我的修改，載入最新版本",
+            "staleRebased": "剛才的儲存沒有成功：其他人在你編輯時改過這個行為（不是你正在編輯的欄位）。已載入最新版本，你的修改還在，請再按一次儲存。"
+        },
+        "validation": {
+            "required": "必填",
+            "tooShort": "至少 {min} 個字",
+            "tooLong": "最多 {max} 個字",
+            "tooMany": "最多 {max} 項",
+            "format": "格式不正確",
+            "invalid": "值無效"
+        },
+        "unsaved": {
+            "title": "放棄未儲存的修改？",
+            "message": "有行為的修改還沒儲存，離開後會遺失。",
+            "leave": "放棄並離開"
+        },
+        "location": {
+            "label": "位置",
+            "bot_dm": "與 bot 的私訊",
+            "guild_all": "全部伺服器",
+            "guild": "指定伺服器",
+            "channel": "指定頻道",
+            "guildPicker": "伺服器",
+            "channelPicker": "頻道",
+            "guildPlaceholder": "選擇伺服器",
+            "channelPlaceholder": "選擇頻道",
+            "idHint": "Discord ID（17–20 位數字）"
+        },
+        "trigger": {
+            "title": "觸發",
+            "moved": "儲存後，這列會移到「{section}」。",
+            "patternKind": "比對方式",
+            "patternValue": "比對內容",
+            "patternPlaceholder": "例：!weather",
+            "kind": {
+                "startswith": "開頭符合",
+                "endswith": "結尾符合",
+                "regex": "正規表示式"
+            },
+            "try": "試試看",
+            "tryPlaceholder": "輸入一則訊息，看會不會觸發",
+            "preview": {
+                "match": "會觸發",
+                "no_match": "不會觸發",
+                "invalid": "正規表示式寫法有誤"
+            },
+            "ignoreBots": "略過其他 bot 與 webhook 的訊息",
+            "stopOnMatch": "比對到之後停止，不再檢查後面的行為",
+            "movedPublic": "回覆會貼在頻道裡，所有人都看得到。"
+        },
+        "audience": {
+            "title": "對象",
+            "label": "誰私訊時觸發",
+            "all": "所有人",
+            "user": "指定使用者",
+            "group": "群組",
+            "groupPlaceholder": "選擇群組",
+            "newGroup": "＋ 新增群組…",
+            "newGroupName": "新群組名稱",
+            "newGroupHint": "儲存後就能設定這個群組的成員。"
+        },
+        "group": {
+            "membersTitle": "群組「{group}」的成員",
+            "count": "{count} 人",
+            "shared": "這份名單由 {count} 個行為共用，修改會套用到全部。",
+            "empty": "還沒有成員。",
+            "remove": "移除 {user}",
+            "addPlaceholder": "Discord 使用者 ID",
+            "add": "加入",
+            "saveFirst": "儲存後就能設定這個群組的成員。",
+            "dropOnSave": "儲存後沒有其他行為使用群組「{group}」，它的 {count} 位成員名單會一起被清除。",
+            "dropOnDelete": "它是群組「{group}」唯一的使用者，這個群組的 {count} 位成員名單也會一起被清除。"
+        },
+        "action": {
+            "title": "轉發設定",
+            "source": "動作來源",
+            "sourceWebhook": "Webhook",
+            "sourcePluginLater": "Plugin 動作會在第二階段開放。",
+            "url": "Webhook URL",
+            "urlHint": "公開網址需用 https；區網位址需在 bot 的區網白名單上。",
+            "authLabel": "驗證模式",
+            "auth": {
+                "hmac": "HMAC（建議）",
+                "token": "Token",
+                "none": "不驗證"
+            },
+            "authNoteDrop": "儲存後會移除密鑰，webhook 不再簽章。",
+            "authNoteIssue": "儲存後 bot 會產生密鑰，只顯示一次。"
+        },
+        "secret": {
+            "label": "Webhook 密鑰",
+            "set": "已設定",
+            "unset": "未設定",
+            "rotate": "產生新密鑰",
+            "rotateTitle": "產生新的 webhook 密鑰？",
+            "rotateMessage": "新密鑰立刻生效並只顯示一次；舊密鑰在 24 小時內仍然有效，請在這段時間內把新密鑰設定到你的服務。",
+            "grace": "舊密鑰在 {time} 前仍然有效。",
+            "shownOnce": "這是新的密鑰，只會顯示這一次，請現在複製保存。",
+            "copy": "複製",
+            "copied": "已複製",
+            "saved": "我已保存"
+        },
+        "errors": {
+            "withDetail": "{reason}（{detail}）",
+            "validation_failed": "輸入不正確",
+            "name_conflict": "名稱已被使用",
+            "system_immutable": "系統行為不能這樣修改",
+            "registration_failed": "Discord 註冊失敗",
+            "not_found": "找不到這個項目",
+            "invalid_tree": "指令結構不正確"
+        },
+        "add": {
+            "open": "新增行為",
+            "title": "新增行為",
+            "intro": "在「{section}」建立行為：選擇觸發方式，再決定要轉發到哪裡。",
+            "name": "行為名稱",
+            "namePlaceholder": "例：天氣查詢",
+            "kind": "觸發類型",
+            "kinds": {
+                "command": "指令",
+                "message": "訊息比對"
+            },
+            "reason": {
+                "messageInApp": "App 指令區只能建立指令：bot 收不到使用者之間的私訊，也收不到它沒加入的伺服器裡的訊息。",
+                "commandInChannel": "Discord 無法把指令限定在單一頻道。請到上層的伺服器新增，再到 Discord 的「伺服器設定 → 整合」限制頻道。",
+                "commandLater": "指令的新增會在之後的更新開放。"
+            },
+            "create": "建立",
+            "created": "已建立「{title}」。",
+            "done": "完成"
         }
     },
     "config": {

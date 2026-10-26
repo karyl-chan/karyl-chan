@@ -290,3 +290,42 @@ describe("audit", () => {
     });
   });
 });
+
+describe("GET /api/behaviors/schema (#108)", () => {
+  async function servedValidator() {
+    const res = await server.inject({ method: "GET", url: "/api/behaviors/schema" });
+    expect(res.statusCode).toBe(200);
+    const { Ajv } = await import("ajv");
+    return new Ajv({ strict: false }).compile(res.json().messageTrigger);
+  }
+
+  it("serves the schema POST /api/behaviors validates a message trigger with", async () => {
+    const accepts = await servedValidator();
+    const refused = [
+      { ...dmTrigger, title: "x".repeat(101) },
+      { ...dmTrigger, title: "   " },
+      { ...dmTrigger, guildId: "12345" },
+      { ...dmTrigger, patternValue: "" },
+      { ...dmTrigger, webhook: { url: "" } },
+    ];
+    for (const payload of refused) {
+      expect(accepts(payload)).toBe(false);
+      expect((await create(payload)).statusCode).toBe(400);
+    }
+    expect(accepts(dmTrigger)).toBe(true);
+    expect((await create(dmTrigger)).statusCode).toBe(201);
+  });
+
+  it("needs the behavior capability", async () => {
+    const open = Fastify({ logger: false });
+    open.addHook("onRequest", async (request) => {
+      request.authUserId = "nobody";
+      request.authCapabilities = new Set() as never;
+    });
+    await registerBehaviorRoutes(open);
+    await open.ready();
+    const res = await open.inject({ method: "GET", url: "/api/behaviors/schema" });
+    expect(res.statusCode).toBe(403);
+    await open.close();
+  });
+});

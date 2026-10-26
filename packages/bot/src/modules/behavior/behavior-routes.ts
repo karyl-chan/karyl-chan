@@ -3,6 +3,7 @@
  *
  * 路由表：
  *   GET  /api/behaviors                          — { system, commands, messageTriggers }
+ *   GET  /api/behaviors/schema                   — the write schemas, for the admin UI's form checks
  *   POST /api/behaviors/:id/test                 — 對 behavior 的 webhook 動作試發
  *   POST / PATCH / DELETE /api/behaviors[/:id]   — 訊息觸發的寫入（behavior-write-routes.ts）
  *   PUT  /api/behaviors/reorder                  — 一個位置內的訊息觸發排序（message-trigger-reorder.ts）
@@ -36,6 +37,7 @@ import {
 import { findStatsBulk } from "./models/behavior-stats.model.js";
 import {
   findGroupMembers,
+  groupInUse,
   replaceGroupMembers,
 } from "./models/behavior-group-member.model.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
@@ -44,7 +46,11 @@ import {
   installBehaviorRouteValidation,
 } from "./behavior-api-error.js";
 import { auditBehaviorWrite } from "./behavior-audit.js";
-import { registerBehaviorWriteRoutes } from "./behavior-write-routes.js";
+import { behaviorTransaction, withBehaviorWriteLock } from "./behavior-write-lock.js";
+import {
+  createMessageTriggerSchema,
+  registerBehaviorWriteRoutes,
+} from "./behavior-write-routes.js";
 import { registerMessageTriggerReorderRoute } from "./message-trigger-reorder.js";
 import { registerWebhookSecretRotateRoute } from "./webhook-secret-rotate.js";
 import { registerBehaviorCommandRoutes } from "./behavior-command-routes.js";
@@ -89,6 +95,15 @@ function registerReadAndTestRoutes(
     ];
     const stats = await findStatsBulk(ids);
     return reply.send(buildBehaviorListView(catalog, stats));
+  });
+
+  // ── GET /api/behaviors/schema（#108）────────────────────────────────────────
+  // 寫入路由實際驗證用的 JSON schema。admin UI 用它在送出前檢查表單，
+  // 規則只有這一份，前端不另抄一份。schema 只涵蓋單一欄位的形狀；跨欄位
+  // 規則（message-trigger-rules.ts）由 UI 的表單結構避開，送出後仍由這裡把關。
+
+  server.get("/api/behaviors/schema", async (_request, reply) => {
+    return reply.send({ messageTrigger: createMessageTriggerSchema });
   });
 
   // ── BH-6.2：test-fire ───────────────────────────────────────────────────────
@@ -151,7 +166,9 @@ function registerReadAndTestRoutes(
 // ── audience group 成員管理（BH-1）─────────────────────────────────────────
 //
 // group 以名字為單位（訊息觸發的 audienceGroupName），名單存
-// behavior_group_members，同名 group 的 behaviors 共享。
+// behavior_group_members，同名 group 的 behaviors 共享。group 沒有自己的
+// 列：只有被訊息觸發引用的 group 能設名單，沒有觸發用了名單就清掉
+// （behavior-group-member.model.ts），不會留下孤兒名單（#137）。
 
 const groupParams = {
   type: "object",
@@ -184,6 +201,7 @@ function registerGroupMemberRoutes(server: FastifyInstance): void {
 
   // PUT /api/behavior-groups/:groupName/members { userIds: string[] }
   // 全量替換（與 UI 的編輯-儲存模型一致；增/刪都走同一條）。
+  // 沒有訊息觸發引用的 group → not_found：先把觸發的對象設成這個群組。
   server.put(
     "/api/behavior-groups/:groupName/members",
     {
@@ -202,7 +220,18 @@ function registerGroupMemberRoutes(server: FastifyInstance): void {
     async (request, reply) => {
       const groupName = groupNameOf(request.params);
       const { userIds } = request.body as { userIds: string[] };
-      await replaceGroupMembers(groupName, userIds);
+      await withBehaviorWriteLock(() =>
+        behaviorTransaction(async (transaction) => {
+          if (!(await groupInUse(groupName, transaction))) {
+            throw new BehaviorApiError(
+              "not_found",
+              `no message trigger uses group '${groupName}'; set a trigger's audience to it first`,
+              "groupName",
+            );
+          }
+          await replaceGroupMembers(groupName, userIds, transaction);
+        }),
+      );
       const members = await findGroupMembers(groupName);
       await auditBehaviorWrite(request, "behavior.group_members.replace", `group:${groupName}`, {
         userIds: members,

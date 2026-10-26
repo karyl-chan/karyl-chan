@@ -24,11 +24,13 @@ vi.mock("../src/modules/admin/admin-audit.service.js", () => ({
 import Fastify, { type FastifyInstance } from "fastify";
 import { sequelize } from "../src/db.js";
 import { registerBehaviorRoutes } from "../src/modules/behavior/behavior-routes.js";
+import { seedMessageTrigger } from "./behavior-fixtures.js";
 
 let server: FastifyInstance;
 
 beforeAll(async () => {
   await sequelize.sync({ force: true });
+  await seedMessageTrigger({ audienceKind: "group", audienceGroupName: "ops" });
   server = Fastify({ logger: false });
   server.addHook("onRequest", async (request) => {
     request.authUserId = "admin";
