@@ -54,3 +54,51 @@ _Avoid_: error, validation failure (both blur the line between an outcome to sho
 **Config Intake**:
 Turning an admin config payload into validated, storage-ready values — normalize, validate, resolve the secret sentinel and encryption — before either storage model claims it. The one part the two config-write paths genuinely share; what each does afterwards is not.
 _Avoid_: config validation (validation is one of its three jobs; naming it that invites a second copy of the other two)
+
+### Behaviors
+
+**Behavior**:
+管理員設定的一個觸發綁定一個動作。
+_Avoid_: rule、自訂指令（指令只是其中一種觸發）
+
+**Trigger（觸發）**:
+啟動 behavior 的方式；只有 Command Trigger 與 Message Trigger 兩種。
+
+**Command Trigger（指令觸發）**:
+Behavior 綁在某個 Command 的一個 Command Leaf 上；誰看得到、在哪能用，由 Discord 與伺服器管理員決定，看得到就能執行。
+
+**Command（指令）**:
+Discord 註冊的單位，持有名稱與所有可見性設定，底下有一或多個 Command Leaf。
+_Avoid_: 用「指令」稱呼單一子指令
+
+**Command Leaf（葉節點）**:
+指令底下一個可呼叫的路徑（指令本身或某個子指令），綁一個動作。根葉節點與子指令不並存。
+_Avoid_: subcommand behavior、子行為
+_Avoid_: slash behavior 的範圍、指定使用者的指令
+
+**Message Trigger（訊息觸發）**:
+比對 bot 收得到的訊息 —— 與 bot 的私訊，或伺服器的頻道。對象篩選只在與 bot 的私訊提供。
+_Avoid_: DM pattern、message_pattern（舊稱，且不只限於私訊）
+
+**Behavior Section（分區）**:
+Admin UI 依觸發的可用情境推導出的分組：App 指令、與 bot 的私訊、伺服器。只是呈現，不儲存、不影響行為。
+_Avoid_: scope tab、範圍分頁（已移除）
+
+**App 指令**:
+可用情境跨越多處，或開放使用者安裝的指令觸發所屬的分區。
+_Avoid_: 用來泛稱所有 slash 指令
+
+**Action（動作）**:
+Behavior 被觸發後要做的事，由一個 Action Source 提供。
+
+**Action Source（動作來源）**:
+管理員可選的動作提供者：webhook 或 plugin。
+_Avoid_: `source: custom / system`（舊稱）
+
+**System Behavior（系統指令）**:
+系統提供、固定存在的 behavior，目前只有登入；管理員只能改它的觸發方式，不能新增、刪除或停用。
+_Avoid_: 內建動作（它不是可選的動作來源）、admin-login
+
+**Plugin Action**:
+Plugin 宣告、與觸發面無關的動作，由管理員綁到觸發上。
+_Avoid_: dm_behavior（已移除的前身，綁死在私訊上）
