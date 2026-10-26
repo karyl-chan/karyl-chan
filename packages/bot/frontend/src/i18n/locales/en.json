@@ -304,8 +304,16 @@
         "exchanging": "Exchanging login token…",
         "success": "Signed in. Redirecting…",
         "noTokenLead": "To sign in, send a direct message to the bot:",
+        "noTokenLeadCommand": "To sign in, use this command of the bot:",
+        "noTokenLeadUnknown": "To sign in, ask the bot for a login link the way your admin set up.",
         "noTokenHint": "The bot will reply with a single-use login link. Open the link in this browser.",
-        "errorHint": "Request a new link by sending {login} to the bot."
+        "errorHint": "Request a new link by sending {login} to the bot.",
+        "errorHintCommand": "Request a new link by using {login}.",
+        "errorHintUnknown": "Request a new link from the bot.",
+        "match": {
+            "endswith": "Any DM to the bot that ends with this text.",
+            "regex": "Any DM to the bot that matches this regular expression."
+        }
     },
     "dashboard": {
         "title": "Dashboard",
@@ -1534,6 +1542,51 @@
             "nextLeaf": "The new subcommand you set up next",
             "note": "Once synced, people who type /{command} have to pick a subcommand. The command's visibility does not change.",
             "submit": "Convert and add a subcommand"
+        },
+        "system": {
+            "triggerKind": "Trigger type",
+            "kindMessage": "Message pattern (DMs with the bot)",
+            "kindCommand": "Slash command",
+            "messageNote": "The login's message pattern only works in DMs with the bot: a reply in a server channel is visible to everyone, and would leak the login link. It is starts-with or ends-with only (no regex); Discord trims spaces around a message, so the pattern cannot start or end with whitespace.",
+            "commandName": "Slash command name",
+            "commandDescription": "Slash command description",
+            "commandNote": "The login is always a global command with no default member permissions, and it always keeps server install and bot DMs, so you can always reach it; it takes no options, and its reply is only ever visible to whoever ran it.",
+            "switchToCommandHint": "Changing the trigger registers {command} on Discord first, and only then turns off {old}.",
+            "switchToMessageHint": "Changing the trigger turns on {pattern} first, then removes {old} from Discord.",
+            "save": "Save trigger",
+            "whereMessage": "Message pattern · DMs with the bot",
+            "whereCommand": "Slash command · {section}",
+            "steps": {
+                "register": "Register {command} on Discord",
+                "registerSub": "With the visibility you set",
+                "confirm": "Confirm the registration",
+                "confirmSub": "Discord answered: the command exists",
+                "disable": "Turn off {old}",
+                "disableSub": "Only once both steps above succeeded",
+                "enable": "Turn on {pattern}",
+                "enableSub": "DMs with the bot, in effect as soon as it is saved",
+                "remove": "Remove {command} from Discord",
+                "removeSub": "If that fails, the next sync removes it; the login is not affected",
+                "notRun": "Not run"
+            },
+            "switch": {
+                "title": "Change the login's trigger",
+                "intro": "The login is the only way into the admin UI, so the switch runs in this order, and a failure at any step keeps {old}:",
+                "start": "Start the switch",
+                "failed": "{old} stays on; nothing changed.",
+                "done": "Done. The login is now {trigger}, pinned on top of “{section}”.",
+                "sampleNote": "Your sample DM “{sample}” was checked: {pattern} matches it."
+            },
+            "sample": "Sample DM (required)",
+            "sampleHint": "A DM you would send the bot to log in. Before saving it is checked against the pattern, so a typo cannot lock you out; the sample is not stored.",
+            "sampleRequired": "Write a sample DM to check the pattern against.",
+            "sampleNoMatch": "This sample DM does not match the pattern; saved like this, you could not log in.",
+            "ownerOnly": "Only a bot owner can change the login's trigger.",
+            "mustKeep": "The login command always keeps this, or you might not see it.",
+            "rule": {
+                "needsGuildInstall": "The login command must include server install: installed by users only, you would not see it without installing the app yourself.",
+                "needsBotDm": "The login command must be usable in DMs with the bot: elsewhere only, you could not reach it without sharing a server with the bot."
+            }
         }
     },
     "config": {

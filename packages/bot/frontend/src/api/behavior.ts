@@ -335,6 +335,43 @@ export async function convertToSubcommands(
 }
 
 /**
+ * The System Behavior's trigger (#139): a bot DM message pattern, or a
+ * global command (name, description and visibility; no registration or
+ * permission choice — the server fixes those, and it always keeps
+ * guild_install and BotDM). Only a bot owner may change it.
+ */
+/** The pattern kinds the login's message trigger takes — never a regex. */
+export type LoginPatternKind = Exclude<BehaviorPatternKind, "regex">;
+
+export type LoginTriggerInput =
+  | {
+      kind: "message";
+      patternKind: LoginPatternKind;
+      patternValue: string;
+      /** A DM the admin would send; the server refuses a pattern it does not match. Not stored. */
+      sample: string;
+    }
+  | {
+      kind: "command";
+      name: string;
+      description: string;
+      integrationTypes: DiscordIntegrationType[];
+      contexts: DiscordContext[];
+    };
+
+/**
+ * PUT /api/behaviors/system/login/trigger — the new trigger takes effect
+ * first, the old one goes after. A refusal from Discord is an ApiError
+ * `registration_failed` (502) and nothing changed. `registration` is null
+ * when Discord was not involved (one message pattern for another).
+ */
+export async function switchLoginTrigger(
+  input: LoginTriggerInput & { ifUpdatedAt?: string },
+): Promise<{ system: BehaviorItemView; registration: RegistrationReport | null }> {
+  return jsonOrThrow(await send("PUT", "/api/behaviors/system/login/trigger", input));
+}
+
+/**
  * The JSON schemas the write routes validate with (GET /api/behaviors/schema).
  * Forms check a draft against them before sending (#108); fetched once.
  */
@@ -344,6 +381,8 @@ export interface BehaviorSchemas {
   command: Record<string, unknown>;
   /** POST /api/behavior-commands/:id/leaves: an added subcommand. */
   commandLeaf: Record<string, unknown>;
+  /** PUT /api/behaviors/system/login/trigger. */
+  loginTrigger?: Record<string, unknown>;
 }
 
 let schemas: Promise<BehaviorSchemas> | null = null;

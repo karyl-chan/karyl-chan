@@ -22,17 +22,17 @@ export function refuseSystem(row: { systemKey: string | null }): void {
   if (row.systemKey !== null) {
     throw new BehaviorApiError(
       "system_immutable",
-      "the system behavior cannot be changed or deleted here (its trigger switch comes with #139)",
+      "the system login cannot be changed, disabled or deleted; only its trigger can be switched (PUT /api/behaviors/system/login/trigger)",
     );
   }
 }
 
-/** The system login's command container (S7 #139 will allow its trigger switch). */
+/** The system login's command container: changed only by the trigger switch (system-login-trigger-route.ts). */
 export function refuseSystemCommand(command: { isSystem: boolean }): void {
   if (command.isSystem) {
     throw new BehaviorApiError(
       "system_immutable",
-      "the system login command cannot be changed here (its trigger switch comes with #139)",
+      "the system login command cannot be changed or deleted here; switch the login's trigger instead (PUT /api/behaviors/system/login/trigger)",
     );
   }
 }

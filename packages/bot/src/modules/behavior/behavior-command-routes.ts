@@ -16,11 +16,15 @@
  * and the shared command namespace — builtin, plugin and behavior
  * commands; `/login` stays reserved for the system login (#96) — then
  * registered through the reconciler; a refusal restores the previous rows
- * (command-registration-sync.ts). The system command is immutable here.
+ * (command-registration-sync.ts). The system login's command is immutable
+ * here — its trigger switch is system-login-trigger-route.ts — but can be
+ * resynced (re-registered as stored, e.g. after Discord lost it) — by a
+ * bot owner only, like the switch.
  */
 
 import type { FastifyInstance } from "fastify";
 import { sortJoin } from "../../utils/sort-join.js";
+import { requireOwner } from "../web-core/route-guards.js";
 import { BehaviorApiError } from "./behavior-api-error.js";
 import { auditBehaviorWrite } from "./behavior-audit.js";
 import {
@@ -73,6 +77,8 @@ export interface BehaviorCommandDeps {
   reconciler?: BehaviorCommandRegistrar;
   /** The shared Discord command namespace; required for command writes. */
   namespace?: CommandNamespaceChecker;
+  /** Bot owners (tests); production reads BOT_OWNER_IDS. */
+  ownerIds?: readonly string[];
 }
 
 // ── shapes ──────────────────────────────────────────────────────────────────
@@ -459,6 +465,10 @@ export function registerBehaviorCommandRoutes(
     { schema: { params: idParams } },
     async (request, reply) => {
       const id = parseRowId(request.params);
+      // the login's command: owner only, like its trigger switch
+      if ((await loadCommandRow(id)).isSystem && !requireOwner(request, reply, deps.ownerIds, "resync the login command")) {
+        return reply;
+      }
       const registration = await withBehaviorWriteLock(async () => {
         const current = await loadCommandRow(id);
         return registerCommandWrite(deps.reconciler, id, registeredNameOf(current), null, null);

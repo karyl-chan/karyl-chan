@@ -11,7 +11,7 @@
  *
  * Registered inside the behavior scope (strict schemas, uniform errors,
  * the behavior.manage gate — see behavior-routes.ts). The System Behavior
- * is immutable here: switching its trigger is S7 (#139).
+ * is immutable here: its trigger switch is system-login-trigger-route.ts.
  */
 
 import type { FastifyInstance } from "fastify";

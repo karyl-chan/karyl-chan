@@ -169,13 +169,28 @@ is stored.
 - `behavior-trigger.ts` — pure `matchesTrigger`.
 - `system-seed.service.ts` — adds the System Behavior (login, DM
   `!login`) when it is missing.
+- `system-login-trigger.ts` / `system-login-trigger-route.ts` —
+  `PUT /api/behaviors/system/login/trigger`, the System Behavior's one
+  write: switching its trigger between a bot DM message trigger and a
+  global command (the rules are in the first file, the sequence in the
+  second). The new trigger takes effect first: a command is registered
+  on Discord before it is stored (inside `withRegistrationLock`, taken
+  back if the store fails); leaving a command stores the message trigger
+  first and then deletes the command. Owner only (`requireOwner` in
+  `web-core/route-guards.ts`, as is resyncing the login's command);
+  every attempt that reaches the switch is audited with its outcome.
+- `login-trigger-hint-route.ts` — `GET /api/auth/login-trigger`, public
+  and rate-limited per client: the login's current trigger (kind + the
+  text a user sends or types) for the admin login page, which needs it
+  before anyone is signed in. Mounted outside the behavior scope.
 - `models/` — behavior-command, behavior-definition,
   behavior-webhook-action, behavior-stats, behavior-group-member (an
   Audience Group's list: settable only for a group a message trigger
   uses, dropped when the last such trigger leaves it).
 
 **External surface.** HTTP `/api/behaviors/*`,
-`/api/behavior-commands/*`, `/api/behavior-groups/*`;
+`/api/behavior-commands/*`, `/api/behavior-groups/*`, and the public
+`/api/auth/login-trigger`;
 `ensureSystemBehaviors` (startup); `getBehaviorCatalog` (read by
 command-system).
 
@@ -205,7 +220,11 @@ This is the bot's command backbone.
   owns so it cannot mistakenly delete track-1 in-process commands; the
   stale sweep is keyed by name + registration target. `registerOne(key)`
   registers a single desired command inside the reconcile lock and
-  returns a typed per-target result.
+  returns a typed per-target result. `withRegistrationLock(fn)` holds the
+  lock across a whole section and hands `fn` lock-free single-command
+  operations — registering a behavior command as given (not as stored)
+  and releasing a registration — for a write that must reach Discord
+  before the DB (the system login's trigger switch).
 - `desired-command-source.ts` — `DesiredCommandSource` adapters that feed
   the desired set: one for behaviors, one for track-3 `plugin_commands`.
 - `command-target.ts` — registration targets (`global`, `guild:<id>`,
@@ -343,7 +362,10 @@ tokens, and the audit log (with hash chain).
 - `models/` — admin-audit-log, admin-role, admin-role-capability,
   authorized-user.
 
-**External surface.** HTTP `/api/admin/*`, `/api/auth/*`;
+**External surface.** HTTP `/api/admin/*`, `/api/auth/*` (except
+`/api/auth/login-trigger`, which the behavior module serves: it reads the
+System Behavior, and sits under `/api/auth/` only to be public and
+throttled like the other auth endpoints);
 `requireCapability` family; `recordAudit`.
 
 **Depends on.** web-core; bot-events.
@@ -433,6 +455,9 @@ plus cross-cutting meta routes.
   `models/refresh-token.model.ts` — token storage.
 - `route-guards.ts` — `requireAnyCapability` / `requireGuildCapability`
   and similar middleware.
+- `client-throttle.ts` — the per-client throttle of the public
+  `/api/auth/*` endpoints (`clientKey`, `refuseIfThrottled`) and their
+  paths; the caller passes its log (`bot-events/auth-throttle-log.ts`).
 - `validators.ts` — `isSnowflake`, `isBoundedString`, and so on (pure
   functions).
 - `message-mapper.ts` + `message-types.ts` — Discord message → API DTO.

@@ -23,8 +23,21 @@ const { confirm } = useConfirm();
 const guildList = useGuildListStore();
 
 const toast = useToastStore();
-const { view, selected, loading, error, expandKey, sections, groupUse, load, applyTrigger, applyCommand, showCreated, reorder } =
-    useBehaviorList();
+const {
+    view,
+    selected,
+    loading,
+    error,
+    expandKey,
+    sections,
+    groupUse,
+    load,
+    applyTrigger,
+    applyCommand,
+    applySystem,
+    showCreated,
+    reorder,
+} = useBehaviorList();
 const adding = ref(false);
 const { hasUnsaved } = provideUnsavedDrafts();
 provideRegistrationResults();
@@ -113,6 +126,7 @@ async function onSelect(section: BehaviorSection) {
             @reload="load"
             @updated="applyTrigger($event, mayDropDrafts)"
             @command-updated="applyCommand($event, mayDropDrafts)"
+            @system-updated="applySystem($event, mayDropDrafts)"
             @deleted="load"
             @add="adding = true"
             @reorder="onReorder"

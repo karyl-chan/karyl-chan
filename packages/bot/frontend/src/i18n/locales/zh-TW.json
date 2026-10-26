@@ -304,8 +304,16 @@
         "exchanging": "正在交換登入權杖…",
         "success": "已登入,正在轉導…",
         "noTokenLead": "如要登入,請傳私訊給機器人:",
+        "noTokenLeadCommand": "如要登入，請使用機器人的這個指令：",
+        "noTokenLeadUnknown": "如要登入，請照管理員設定的方式向機器人取得登入連結。",
         "noTokenHint": "機器人會回覆一次性登入連結,請在此瀏覽器開啟。",
-        "errorHint": "請再次傳 {login} 給機器人以取得新連結。"
+        "errorHint": "請再次傳 {login} 給機器人以取得新連結。",
+        "errorHintCommand": "請再次使用 {login} 以取得新連結。",
+        "errorHintUnknown": "請再次向機器人取得新連結。",
+        "match": {
+            "endswith": "私訊機器人任何以這段文字結尾的訊息。",
+            "regex": "私訊機器人任何符合這個正規表示式的訊息。"
+        }
     },
     "dashboard": {
         "title": "儀表板",
@@ -1534,6 +1542,51 @@
             "nextLeaf": "接著設定的新子指令",
             "note": "同步後，使用者原本輸入的 /{command} 會變成要再選子指令。指令的可見性設定不變。",
             "submit": "轉換並新增子指令"
+        },
+        "system": {
+            "triggerKind": "觸發類型",
+            "kindMessage": "訊息 Pattern（與 bot 的私訊）",
+            "kindCommand": "Slash 指令",
+            "messageNote": "登入的訊息比對只能用在與 bot 的私訊：伺服器頻道裡的回覆所有人都看得到，登入連結會外流。只能用開頭符合或結尾符合（不能用正規表示式）；訊息前後的空白會被 Discord 去掉，所以 pattern 不能以空白開頭或結尾。",
+            "commandName": "Slash 指令名稱",
+            "commandDescription": "Slash 指令說明",
+            "commandNote": "登入一律註冊為全域指令，不設預設成員權限，而且一定保留「伺服器安裝」與「bot 私訊」，確保你隨時找得到它；不需要參數，回覆一律只有執行的人看得到。",
+            "switchToCommandHint": "改變觸發方式會先把 {command} 註冊到 Discord，成功後才停用 {old}。",
+            "switchToMessageHint": "改變觸發方式會先啟用 {pattern}，再從 Discord 移除 {old}。",
+            "save": "儲存觸發方式",
+            "whereMessage": "訊息 Pattern · 與 bot 的私訊",
+            "whereCommand": "Slash 指令 · {section}",
+            "steps": {
+                "register": "把 {command} 註冊到 Discord",
+                "registerSub": "照你設定的可見性註冊",
+                "confirm": "確認註冊成功",
+                "confirmSub": "Discord 回應成功，指令已存在",
+                "disable": "停用 {old}",
+                "disableSub": "只有前兩步都成功才會執行",
+                "enable": "啟用 {pattern}",
+                "enableSub": "與 bot 的私訊，儲存後立即生效",
+                "remove": "從 Discord 移除 {command}",
+                "removeSub": "移除失敗時留給下一次同步，登入不受影響",
+                "notRun": "未執行"
+            },
+            "switch": {
+                "title": "改變登入的觸發方式",
+                "intro": "登入是唯一能進後台的方式，所以切換會照下面的順序進行，任何一步失敗都會保留 {old}：",
+                "start": "開始切換",
+                "failed": "{old} 維持啟用，沒有任何變更。",
+                "done": "切換完成。登入現在是 {trigger}，這列在「{section}」的最上方。",
+                "sampleNote": "已用你的範例私訊「{sample}」確認 {pattern} 會觸發。"
+            },
+            "sample": "範例私訊（必填）",
+            "sampleHint": "寫一則你登入時會傳給 bot 的私訊。儲存前會用它確認 pattern 真的會觸發，避免打錯字把自己鎖在門外；範例不會被儲存。",
+            "sampleRequired": "請填一則範例私訊，用來確認 pattern 會觸發。",
+            "sampleNoMatch": "這則範例私訊不會觸發這個 pattern；照這樣存檔，你會無法登入。",
+            "ownerOnly": "只有 bot 擁有者能修改登入的觸發方式。",
+            "mustKeep": "登入指令一定要保留這一項，否則你可能看不到它。",
+            "rule": {
+                "needsGuildInstall": "登入指令一定要包含「伺服器安裝」：只開放使用者安裝時，沒有自行安裝 app 的你會看不到它。",
+                "needsBotDm": "登入指令一定要能在「bot 私訊」使用：其他地方的話，沒有和 bot 同在伺服器時就用不到。"
+            }
         }
     },
     "config": {

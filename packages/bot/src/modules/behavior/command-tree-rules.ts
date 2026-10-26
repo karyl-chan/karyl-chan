@@ -35,7 +35,7 @@ export const MAX_SUBCOMMANDS = 25;
 export const MAX_OPTIONS = 25;
 export const MAX_COMMAND_CHARS = 8000;
 
-/** Names the system login may take when its trigger becomes a command (S7). */
+/** Names reserved for the system login: no other command may take them (system-login-trigger.ts). */
 export const RESERVED_COMMAND_NAMES: ReadonlySet<string> = new Set(["login"]);
 
 export interface CommandSettings {

@@ -16,6 +16,12 @@ import { sectionLabel } from './section-labels';
  * mirror of the server's rule) and Discord's rules as errors on the
  * field they concern. A server command can only be used in its server and
  * installed by it, so those choices are fixed there.
+ *
+ * `globalOnly` (the system login's command): registered everywhere with
+ * no default member permissions — the server fixes both — so only the
+ * installs and contexts are offered. `required` keeps some of those ticked
+ * and locked (the login command's guild install and bot DMs), with
+ * `requiredReason` as their tooltip.
  */
 const props = defineProps<{
     draft: CommandDraft;
@@ -23,6 +29,12 @@ const props = defineProps<{
     /** The section the saved command is in (null while creating). */
     section: BehaviorSection | null;
     guildNames: ReadonlyMap<string, string>;
+    globalOnly?: boolean;
+    required?: {
+        integrationTypes?: readonly CommandIntegrationType[];
+        contexts?: readonly CommandContext[];
+    };
+    requiredReason?: string;
 }>();
 
 const emit = defineEmits<{ (e: 'patch', patch: Partial<CommandDraft>): void }>();
@@ -90,7 +102,7 @@ const sectionHint = computed(() => {
 <template>
     <Stack gap="2">
         <h4 class="part">{{ t('behaviors.command.visibility') }}</h4>
-        <div class="grid">
+        <div v-if="!globalOnly" class="grid">
             <label class="field">
                 <Stack gap="1">
                     <span class="field-label">{{ t('behaviors.command.registration.label') }}</span>
@@ -146,10 +158,11 @@ const sectionHint = computed(() => {
             <fieldset class="checks" :disabled="isGuild" data-test="integration-types">
                 <legend class="field-label">{{ t('behaviors.card.integrationTypes') }}</legend>
                 <div class="row">
-                    <label v-for="i in INSTALLS" :key="i" class="check">
+                    <label v-for="i in INSTALLS" :key="i" class="check" :title="required?.integrationTypes?.includes(i) ? requiredReason : undefined">
                         <input
                             type="checkbox"
                             :checked="draft.integrationTypes.includes(i)"
+                            :disabled="required?.integrationTypes?.includes(i)"
                             @change="emit('patch', { integrationTypes: toggle(draft.integrationTypes, i, ($event.target as HTMLInputElement).checked, INSTALLS) })"
                         />
                         {{ t(`behaviors.card.integration.${i}`) }}
@@ -160,10 +173,11 @@ const sectionHint = computed(() => {
             <fieldset class="checks" :disabled="isGuild" data-test="contexts">
                 <legend class="field-label">{{ t('behaviors.card.contexts') }}</legend>
                 <div class="row">
-                    <label v-for="c in CONTEXTS" :key="c" class="check">
+                    <label v-for="c in CONTEXTS" :key="c" class="check" :title="required?.contexts?.includes(c) ? requiredReason : undefined">
                         <input
                             type="checkbox"
                             :checked="draft.contexts.includes(c)"
+                            :disabled="required?.contexts?.includes(c)"
                             @change="emit('patch', { contexts: toggle(draft.contexts, c, ($event.target as HTMLInputElement).checked, CONTEXTS) })"
                         />
                         {{ t(`behaviors.card.context.${c}`) }}

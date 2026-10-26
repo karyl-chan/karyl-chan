@@ -153,3 +153,39 @@ export function savedCommand(overrides: Partial<CommandView> = {}): CommandView 
         ...overrides,
     };
 }
+
+/** The System Behavior (login) on its default trigger: bot DM `!login`, id 1. */
+export function systemLoginMessage(overrides: Partial<MessageTriggerView> = {}): MessageTriggerView {
+    return savedTrigger({
+        id: 1,
+        title: '發送登入連結',
+        systemKey: 'admin-login',
+        actionSource: 'builtin',
+        webhook: null,
+        sortOrder: -1000,
+        patternValue: '!login',
+        stopOnMatch: true,
+        ...overrides,
+    });
+}
+
+/** The System Behavior on a command: `/login`, global, bot DMs only (command id 9, leaf id 1). */
+export function systemLoginCommand(overrides: Partial<CommandView> = {}): CommandView {
+    return savedCommand({
+        id: 9,
+        name: 'login',
+        description: '取得 admin 後台一次性登入連結(僅授權使用者)',
+        isSystem: true,
+        leaves: [
+            savedLeaf({
+                id: 1,
+                title: '發送登入連結',
+                systemKey: 'admin-login',
+                actionSource: 'builtin',
+                webhook: null,
+                sortOrder: -1000,
+            }),
+        ],
+        ...overrides,
+    });
+}

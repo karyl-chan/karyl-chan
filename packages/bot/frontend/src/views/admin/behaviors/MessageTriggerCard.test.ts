@@ -177,11 +177,4 @@ describe('MessageTriggerCard — header actions', () => {
         expect(api.testBehavior).toHaveBeenCalledWith(7);
         expect(wrapper.find('[data-test="test-result"]').text()).toContain('sunny');
     });
-
-    it('the system login is read-only: no editor, no menu, toggle disabled', async () => {
-        const wrapper = await mountOpen(savedTrigger({ systemKey: 'admin-login', actionSource: 'builtin', webhook: null }));
-        expect(wrapper.find('form.editor').exists()).toBe(false);
-        expect(wrapper.find('.more-btn').exists()).toBe(false);
-        expect(wrapper.find('[data-test="enabled-toggle"]').attributes('disabled')).toBeDefined();
-    });
 });
