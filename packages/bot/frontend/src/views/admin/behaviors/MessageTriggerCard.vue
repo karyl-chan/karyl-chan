@@ -100,7 +100,7 @@ const conflict = ref(false);
 /** The last save was refused as stale; the list was reloaded under the draft. */
 const stale = ref(false);
 const dirty = computed(() => isDirty(base.value, draft.value));
-trackUnsavedDraft(props.trigger.id, dirty);
+trackUnsavedDraft(`behavior:${props.trigger.id}`, dirty);
 
 watch(
     () => props.trigger,

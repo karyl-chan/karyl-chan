@@ -8,6 +8,7 @@ import type {
     MessageTriggerView,
 } from '../../../api/behavior';
 import { kindHasGuild, locationKindOf, type LocationKind, type TriggerLocation } from './message-trigger-location';
+import { NEW_WEBHOOK, savedWebhookBody, webhookBody, webhookDraftOf, type WebhookDraft } from './webhook-draft';
 
 /**
  * The edit draft of a Message Trigger: what the trigger and action forms
@@ -20,9 +21,7 @@ import { kindHasGuild, locationKindOf, type LocationKind, type TriggerLocation }
  * are kept by construction, the per-field rules by the server's schema.
  */
 
-export type AuthChoice = 'none' | BehaviorWebhookAuthMode;
-
-export interface MessageTriggerDraft {
+export interface MessageTriggerDraft extends WebhookDraft {
     title: string;
     description: string;
     locationKind: LocationKind;
@@ -35,8 +34,6 @@ export interface MessageTriggerDraft {
     audienceKind: BehaviorAudienceKind;
     audienceUserId: string;
     audienceGroupName: string;
-    webhookUrl: string;
-    authMode: AuthChoice;
 }
 
 export function draftFromTrigger(t: MessageTriggerView): MessageTriggerDraft {
@@ -53,8 +50,7 @@ export function draftFromTrigger(t: MessageTriggerView): MessageTriggerDraft {
         audienceKind: t.audienceKind,
         audienceUserId: t.audienceUserId ?? '',
         audienceGroupName: t.audienceGroupName ?? '',
-        webhookUrl: t.webhook?.url ?? '',
-        authMode: t.webhook?.authMode ?? 'none',
+        ...webhookDraftOf(t.webhook),
     };
 }
 
@@ -72,8 +68,7 @@ export function emptyDraft(location: { kind: LocationKind; guildId?: string; cha
         audienceKind: 'all',
         audienceUserId: '',
         audienceGroupName: '',
-        webhookUrl: '',
-        authMode: 'hmac',
+        ...NEW_WEBHOOK,
     };
 }
 
@@ -149,7 +144,7 @@ export function toCreateBody(d: MessageTriggerDraft): MessageTriggerBody {
         audienceKind,
         audienceUserId: audienceKind === 'user' ? d.audienceUserId.trim() : null,
         audienceGroupName: audienceKind === 'group' ? d.audienceGroupName.trim() : null,
-        webhook: { url: d.webhookUrl.trim(), authMode: d.authMode === 'none' ? null : d.authMode },
+        webhook: webhookBody(d),
     };
 }
 
@@ -167,7 +162,7 @@ function savedBody(t: MessageTriggerView): MessageTriggerBody {
         audienceKind: t.audienceKind,
         audienceUserId: t.audienceUserId,
         audienceGroupName: t.audienceGroupName,
-        webhook: { url: t.webhook?.url ?? '', authMode: t.webhook?.authMode ?? null },
+        webhook: savedWebhookBody(t.webhook),
     };
 }
 
