@@ -2,10 +2,13 @@
 // just runs the fail-closed config assertion, builds the runtime, and
 // starts it. Nothing imports from here (the bot client is dependency-
 // injected, not imported), so this module is a pure leaf.
-import { config } from "./config.js";
+import { config, webhookAllowlist } from "./config.js";
 import { validateMetadataCoverage } from "./config-metadata.js";
 import { createRuntime } from "./runtime/runtime.js";
-import { warnIfLegacyWebhookAllowPrivate } from "./utils/host-policy.js";
+import {
+  warnAboutIneffectiveAllowlistEntries,
+  warnIfLegacyWebhookAllowPrivate,
+} from "./utils/host-policy.js";
 
 // Fail-closed boot assertion: every config leaf must have explicit
 // classification in config-metadata.ts. We run this at module load
@@ -14,6 +17,7 @@ import { warnIfLegacyWebhookAllowPrivate } from "./utils/host-policy.js";
 // looping every 10 seconds.
 validateMetadataCoverage(config);
 warnIfLegacyWebhookAllowPrivate();
+warnAboutIneffectiveAllowlistEntries(webhookAllowlist);
 
 const runtime = createRuntime();
 // Fire-and-forget, as before the runtime split — nothing awaits the

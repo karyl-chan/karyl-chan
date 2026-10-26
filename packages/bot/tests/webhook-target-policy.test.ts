@@ -10,9 +10,8 @@ vi.mock("dns/promises", () => ({
 }));
 
 const { lookup } = await import("dns/promises");
-const { resolveWebhookTarget, HostPolicyError } = await import(
-  "../src/utils/host-policy.js"
-);
+const { resolveWebhookTarget, ineffectiveAllowlistEntries, HostPolicyError } =
+  await import("../src/utils/host-policy.js");
 const { parseAllowlistEntries } = await import(
   "../src/utils/webhook-allowlist.js"
 );
@@ -222,5 +221,42 @@ describe("resolveWebhookTarget — DNS rebinding", () => {
     await expect(
       resolveWebhookTarget("https://v6.example/hook", allow()),
     ).resolves.toMatchObject({ addresses: [{ address: "2606:4700:4700::1111", family: 6 }] });
+  });
+});
+
+describe("ineffectiveAllowlistEntries (boot warning)", () => {
+  it.each([
+    "127.0.0.0/8",
+    "::1",
+    "169.254.169.254",
+    "0.0.0.0/0",
+    "::/0",
+    "fd00::/8", // covers the AWS IPv6 metadata address
+    "100.64.0.0/10", // covers Alibaba metadata 100.100.100.200
+    "8.8.8.8", // public — never needs (or gets) the allowlist
+    "224.0.0.0/4",
+    "metadata.google.internal",
+    "localhost",
+  ])("names %s", (entry) => {
+    const warnings = ineffectiveAllowlistEntries(allow(entry));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain(`"${entry}"`);
+  });
+
+  it.each([
+    ["fd00::/8", "fd00:ec2::254"],
+    ["100.64.0.0/10", "100.100.100.200"],
+  ])("tells a private %s it only loses the metadata address %s", (entry, meta) => {
+    const [warning] = ineffectiveAllowlistEntries(allow(entry));
+    expect(warning).toContain(meta);
+    expect(warning).toContain("rest of it");
+  });
+
+  it("stays quiet for ordinary LAN entries", () => {
+    expect(
+      ineffectiveAllowlistEntries(
+        allow("192.168.0.0/16", "10.1.2.3", "172.16.0.0/12", "fd12::/16", "nas.latte.lan"),
+      ),
+    ).toEqual([]);
   });
 });

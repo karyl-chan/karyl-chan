@@ -3,12 +3,17 @@ import { isIP } from "net";
 import { moduleLogger } from "../logger.js";
 import type { PinnedAddress } from "./pinned-dispatcher.js";
 import {
+  addressBytes,
   classifyAddress,
+  classifyBytes,
+  KNOWN_METADATA_ADDRESSES,
   transitionEmbeddedIPv4,
   type AddressClass,
 } from "./ip-address.js";
 import {
   allowlistMatches,
+  cidrBounds,
+  cidrContains,
   normalizeHostname,
   type AllowlistEntry,
 } from "./webhook-allowlist.js";
@@ -316,6 +321,56 @@ export function warnIfLegacyWebhookAllowPrivate(): void {
       "WEBHOOK_ALLOW_PRIVATE=true is deprecated: it lets behavior webhooks reach every private address. List the LAN targets in WEBHOOK_PRIVATE_ALLOWLIST instead.",
     );
   }
+}
+
+/**
+ * Allowlist entries that cannot do what the operator probably meant:
+ * a metadata / loopback hostname (never applies), a CIDR / IP reaching
+ * beyond private space (only its private part applies), or a private
+ * range covering a metadata address (that address stays refused — the
+ * warning names it). One readable warning per such entry, naming it.
+ */
+export function ineffectiveAllowlistEntries(
+  entries: readonly AllowlistEntry[],
+): string[] {
+  const warnings: string[] = [];
+  for (const e of entries) {
+    const label = `WEBHOOK_PRIVATE_ALLOWLIST entry "${e.source}"`;
+    if (e.kind === "host") {
+      if (
+        BLOCKED_HOSTNAMES.has(e.host) ||
+        e.host === "localhost" ||
+        e.host.endsWith(".localhost")
+      ) {
+        warnings.push(`${label} is a metadata / loopback hostname and never applies`);
+      }
+      continue;
+    }
+    const { first, last } = cidrBounds(e);
+    if (classifyBytes(first) !== "private" || classifyBytes(last) !== "private") {
+      warnings.push(
+        `${label} reaches beyond private address space; loopback / metadata / reserved / public addresses in it stay refused — only its private addresses are allowlisted`,
+      );
+      continue;
+    }
+    const metadata = KNOWN_METADATA_ADDRESSES.filter((m) => {
+      const b = addressBytes(m);
+      return b !== null && cidrContains(e, b);
+    });
+    if (metadata.length > 0) {
+      warnings.push(
+        `${label} covers the cloud metadata address ${metadata.join(", ")}, which stays refused; the rest of it is allowlisted`,
+      );
+    }
+  }
+  return warnings;
+}
+
+/** Boot-time: log `ineffectiveAllowlistEntries` so a misconfiguration is visible. */
+export function warnAboutIneffectiveAllowlistEntries(
+  entries: readonly AllowlistEntry[],
+): void {
+  for (const warning of ineffectiveAllowlistEntries(entries)) log.warn(warning);
 }
 
 function describeTarget(host: string, address: string): string {

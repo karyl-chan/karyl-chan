@@ -10,8 +10,8 @@
 import { addressBytes, normalizeIpLiteral } from "./ip-address.js";
 
 export type AllowlistEntry =
-  | { kind: "host"; host: string }
-  | { kind: "cidr"; bytes: number[]; prefix: number };
+  | { kind: "host"; source: string; host: string }
+  | { kind: "cidr"; source: string; bytes: number[]; prefix: number };
 
 const HOSTNAME_RE = /^[a-z0-9]([a-z0-9\-.]*[a-z0-9])?$/;
 
@@ -48,16 +48,19 @@ export function parseAllowlistEntries(
         prefix = Number(p);
         if (prefix > max) fail();
       }
-      return { kind: "cidr", bytes, prefix };
+      return { kind: "cidr", source: entry, bytes, prefix };
     }
     if (slash !== -1) fail();
     const host = normalizeHostname(entry);
     if (!HOSTNAME_RE.test(host)) fail();
-    return { kind: "host", host };
+    return { kind: "host", source: entry, host };
   });
 }
 
-function inCidr(bytes: number[], cidr: { bytes: number[]; prefix: number }): boolean {
+type CidrEntry = Extract<AllowlistEntry, { kind: "cidr" }>;
+
+/** True when `bytes` (from `addressBytes`) falls inside the CIDR entry. */
+export function cidrContains(cidr: CidrEntry, bytes: number[]): boolean {
   if (bytes.length !== cidr.bytes.length) return false;
   let bits = cidr.prefix;
   for (let i = 0; bits > 0; i++, bits -= 8) {
@@ -80,6 +83,19 @@ export function allowlistMatches(
   const h = normalizeHostname(normalizeIpLiteral(host));
   const bytes = addressBytes(address);
   return entries.some((e) =>
-    e.kind === "host" ? e.host === h : bytes !== null && inCidr(bytes, e),
+    e.kind === "host" ? e.host === h : bytes !== null && cidrContains(e, bytes),
   );
+}
+
+/** First and last address bytes a CIDR entry covers. */
+export function cidrBounds(cidr: CidrEntry): { first: number[]; last: number[] } {
+  const first: number[] = [];
+  const last: number[] = [];
+  cidr.bytes.forEach((byte, i) => {
+    const bits = Math.max(0, Math.min(8, cidr.prefix - i * 8));
+    const mask = (0xff << (8 - bits)) & 0xff;
+    first.push(byte & mask);
+    last.push((byte & mask) | (~mask & 0xff));
+  });
+  return { first, last };
 }

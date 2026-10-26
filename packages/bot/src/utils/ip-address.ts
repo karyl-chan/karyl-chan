@@ -31,13 +31,18 @@ export type AddressClass =
   | "transition";
 
 /** Cloud metadata endpoints that live outside link-local space. */
-const METADATA_IPV4 = new Set([
+export const KNOWN_METADATA_ADDRESSES: readonly string[] = [
   "168.63.129.16", // Azure WireServer
   "100.100.100.200", // Alibaba Cloud
   "192.0.0.192", // Oracle Cloud
-]);
-/** AWS IMDS over IPv6 — sits inside ULA fc00::/7. */
-const METADATA_IPV6 = [parseIPv6Bytes("fd00:ec2::254")!];
+  "fd00:ec2::254", // AWS IMDS over IPv6 — sits inside ULA fc00::/7
+];
+const METADATA_IPV4 = new Set(
+  KNOWN_METADATA_ADDRESSES.filter((a) => isIP(a) === 4),
+);
+const METADATA_IPV6 = KNOWN_METADATA_ADDRESSES.filter(
+  (a) => isIP(a) === 6,
+).map((a) => parseIPv6Bytes(a)!);
 
 /** Strip URL-style brackets and an IPv6 zone id (`fe80::1%eth0`). */
 export function normalizeIpLiteral(ip: string): string {
@@ -198,6 +203,10 @@ export function addressBytes(ip: string): number[] | null {
  */
 export function classifyAddress(ip: string): AddressClass | null {
   const b = addressBytes(ip);
-  if (!b) return null;
+  return b ? classifyBytes(b) : null;
+}
+
+/** Classify address bytes as returned by `addressBytes` (4 or 16 long). */
+export function classifyBytes(b: number[]): AddressClass {
   return b.length === 4 ? classifyIPv4(b) : classifyIPv6(b);
 }
