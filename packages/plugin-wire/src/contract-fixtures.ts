@@ -522,6 +522,10 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
         "interaction_id",
         "application_id",
         "command_name",
+        // the invoked leaf's path, named like the plugin command payload;
+        // null on a root leaf (content still reads "/name sub")
+        "sub_command_name",
+        "sub_command_group",
         "guild_id",
         "channel_id",
         "user",

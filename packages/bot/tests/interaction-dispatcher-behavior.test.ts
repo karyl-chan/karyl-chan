@@ -144,6 +144,8 @@ type Payload = {
     command_name: string;
     options: Array<{ name: string; value: unknown }>;
     interaction_token?: string;
+    sub_command_name: string | null;
+    sub_command_group: string | null;
   };
 };
 
@@ -168,6 +170,8 @@ describe("root leaf", () => {
     const payload = payloadOf(forwarder);
     expect(payload.content).toBe("/ping");
     expect(payload._meta.behavior_id).toBe(leaf);
+    expect(payload._meta.sub_command_name).toBeNull();
+    expect(payload._meta.sub_command_group).toBeNull();
     expect(payload._meta.options).toEqual([{ name: "q", type: 3, value: "hello" }]);
     expect(payload._meta).not.toHaveProperty("interaction_token");
     expect((await BehaviorStat.findByPk(leaf))?.get("successCount")).toBe(1);
@@ -261,6 +265,9 @@ describe("subcommands", () => {
     const payload = payloadOf(forwarder);
     expect(payload.content).toBe("/nas wake");
     expect(payload._meta.options).toEqual([{ name: "host", type: 3, value: "box" }]);
+    // the invoked path, structured like the plugin command payload (#140)
+    expect(payload._meta.sub_command_name).toBe("wake");
+    expect(payload._meta.sub_command_group).toBeNull();
   });
 });
 

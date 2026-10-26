@@ -56,6 +56,7 @@ import { tForInteraction } from "../../i18n/index.js";
  */
 function buildWebhookPayload(
   interaction: ChatInputCommandInteraction,
+  subcommandGroup: string,
   subcommand: string,
 ): Record<string, unknown> {
   // 子指令的參數在它的 option 底下
@@ -66,8 +67,8 @@ function buildWebhookPayload(
       ? (data[0].options ?? [])
       : data;
   return {
-    // Discord webhook 原生欄位：content 帶指令路徑（供 webhook 識別觸發入口，
-    // 子指令也在這裡；_meta 的鍵集合是 plugin-wire 的契約，不另加欄位）
+    // Discord webhook 原生欄位：content 帶指令路徑（供 webhook 識別觸發入口；
+    // 結構化的路徑在 _meta.sub_command_name / sub_command_group）
     content: `/${interaction.commandName}${subcommand ? ` ${subcommand}` : ""}`,
     // username / avatar_url 帶發送者資訊（相容 Discord 原生 webhook 形狀）
     username: interaction.user.globalName ?? interaction.user.username,
@@ -78,6 +79,9 @@ function buildWebhookPayload(
       interaction_token: interaction.token,
       application_id: interaction.applicationId,
       command_name: interaction.commandName,
+      // 被呼叫的葉節點路徑，與 plugin 指令 payload 同名（#140）；根葉節點為 null
+      sub_command_name: subcommand || null,
+      sub_command_group: subcommandGroup || null,
       guild_id: interaction.guildId,
       channel_id: interaction.channelId,
       user: {
@@ -211,10 +215,10 @@ export class InteractionDispatcher {
     interaction: ChatInputCommandInteraction,
   ): Promise<DispatchOutcome> {
     let subcommand = "";
+    let subcommandGroup = "";
     let leaf: CatalogBehavior | null = null;
     try {
-      const subcommandGroup =
-        interaction.options.getSubcommandGroup(false) ?? "";
+      subcommandGroup = interaction.options.getSubcommandGroup(false) ?? "";
       subcommand = interaction.options.getSubcommand(false) ?? "";
       // 以 (commandName, commandGuildId) 找指令：commandGuildId 是這個指令
       // 註冊在哪個伺服器（全域指令為 null），與 interaction 發生在哪裡無關。
@@ -255,7 +259,7 @@ export class InteractionDispatcher {
     if (leaf.actionSource === "builtin") {
       return this.dispatchSystemBehavior(interaction, leaf);
     }
-    return this.dispatchWebhookBehavior(interaction, leaf, subcommand);
+    return this.dispatchWebhookBehavior(interaction, leaf, subcommandGroup, subcommand);
   }
 
   // ── source=system dispatch ────────────────────────────────────────────────
@@ -301,6 +305,7 @@ export class InteractionDispatcher {
   private async dispatchWebhookBehavior(
     interaction: ChatInputCommandInteraction,
     leaf: CatalogBehavior,
+    subcommandGroup: string,
     subcommand: string,
   ): Promise<DispatchOutcome> {
     const webhook = leaf.webhook;
@@ -314,7 +319,7 @@ export class InteractionDispatcher {
       await renderFailure({ kind: "interaction", interaction });
       return { claimed: true, claimedBy: "behavior_custom" };
     }
-    const payload = buildWebhookPayload(interaction, subcommand);
+    const payload = buildWebhookPayload(interaction, subcommandGroup, subcommand);
     delete (payload._meta as Record<string, unknown>).interaction_token;
     // BH-2.1：與 pattern 路徑對齊 — _meta 帶 behavior_id 供 webhook 端
     // 在多條 behavior 指向同一端點時辨識來源。

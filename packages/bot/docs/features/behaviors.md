@@ -131,7 +131,10 @@ obtain a synchronous response):
 `allowed_mentions` outbound. The `allowed_mentions: { parse: [] }` guard is
 applied to the bot's *response* relayed back into the DM, not to this
 outbound webhook call. The slash path's `_meta` additionally carries the
-interaction fields and now also `behavior_id`.)
+interaction fields, `behavior_id`, and the invoked leaf's path as
+`sub_command_name` / `sub_command_group` — the names the plugin command
+payload uses, `null` on a root leaf; `content` keeps reading
+`/name sub`.)
 
 ### Reply contract (v1)
 
