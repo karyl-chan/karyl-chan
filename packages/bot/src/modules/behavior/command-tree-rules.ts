@@ -7,6 +7,8 @@
  *   - a guild command lives in one guild: guildId set, contexts exactly
  *     [Guild], installed by the guild only (Discord's rule for guild
  *     commands); a global command has no guildId
+ *   - other DMs (PrivateChannel) only show a command to users who
+ *     installed the app, so offering one there needs user_install
  *
  * Leaves:
  *   - options: ≤ 25, unique names, required ones before optional ones
@@ -71,6 +73,11 @@ export function checkCommandSettings(c: CommandSettings): void {
     }
   } else if (c.guildId !== null) {
     refuse("guildId", "a global command has no guildId");
+  } else if (c.contexts.includes("PrivateChannel") && !c.integrationTypes.includes("user_install")) {
+    refuse(
+      "contexts",
+      "other DMs (PrivateChannel) only show commands of an app the user installed; add user_install or drop PrivateChannel",
+    );
   }
 }
 

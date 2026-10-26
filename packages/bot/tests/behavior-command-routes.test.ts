@@ -296,6 +296,20 @@ describe("POST /api/behavior-commands", () => {
     expect(await listedCommands()).toEqual([]);
   });
 
+  it("refuses a global command offered in other DMs that only guilds install", async () => {
+    // Discord shows a command in group DMs / other users' DMs only to users who installed the app
+    const res = await create({
+      ...guildCommand,
+      registration: "global",
+      guildId: null,
+      integrationTypes: ["guild_install"],
+      contexts: ["Guild", "PrivateChannel"],
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toMatchObject({ code: "validation_failed", field: "contexts" });
+    expect(await listedCommands()).toEqual([]);
+  });
+
   it("refuses a root leaf next to subcommands (invalid_tree)", async () => {
     const res = await create({
       ...guildCommand,
