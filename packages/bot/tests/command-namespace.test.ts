@@ -175,4 +175,17 @@ describe("CommandNamespace.check", () => {
       },
     });
   });
+
+  it("compares names case-insensitively against stored commands", async () => {
+    await PluginCommand.create({
+      pluginId: 7,
+      guildId: null,
+      name: "Radio",
+      featureKey: null,
+      manifestJson: JSON.stringify({ name: "Radio", scope: "global" }),
+    } as Record<string, unknown>);
+
+    expect((await ns.check("radio", "global")).ok).toBe(false);
+    expect((await ns.check("RADIO", "global")).ok).toBe(false);
+  });
 });

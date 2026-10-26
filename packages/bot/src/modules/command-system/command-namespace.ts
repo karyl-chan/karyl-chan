@@ -14,7 +14,7 @@
  * 不能用 /login）由呼叫端自己加。
  */
 
-import { Op } from "sequelize";
+import { Op, col, fn, where as sqlWhere } from "sequelize";
 import {
   Behavior,
   rowOfBehavior,
@@ -54,7 +54,7 @@ interface NamespaceEntry {
 export class CommandNamespace {
   /**
    * `name` 在 `target` 是否可用。回傳第一個衝突（內建 → plugin → behavior
-   * 的順序）。名稱比對不分大小寫（Discord 的 chat input 指令名一律小寫）。
+   * 的順序）。名稱比對不分大小寫（輸入與既有資料都轉小寫後比對；Discord 的 chat input 指令名一律小寫）。
    */
   async check(
     name: string,
@@ -83,8 +83,8 @@ export class CommandNamespace {
     for (const cmd of listInProcessCommandNames()) {
       if (cmd.name.toLowerCase() !== name) continue;
       entries.push({
-        // 同 pluginCommandScopeTarget 的對照：guild = 依開關逐伺服器註冊
-        target: cmd.scope === "guild" ? "all_guilds" : "global",
+        // guild = 依 feature 開關逐伺服器註冊，與軌三 scope 同一個對照
+        target: pluginCommandScopeTarget(cmd.scope),
         owner: { kind: "builtin" },
       });
     }
@@ -95,7 +95,7 @@ export class CommandNamespace {
       exclude && "pluginId" in exclude ? exclude.pluginId : null;
     const pluginRows = await PluginCommand.findAll({
       where: {
-        name,
+        [Op.and]: [sqlWhere(fn("lower", col("name")), name)],
         ...(excludePluginId !== null
           ? { pluginId: { [Op.ne]: excludePluginId } }
           : {}),
@@ -126,7 +126,7 @@ export class CommandNamespace {
     const behaviorRows = await Behavior.findAll({
       where: {
         triggerType: "slash_command",
-        slashCommandName: name,
+        [Op.and]: [sqlWhere(fn("lower", col("slashCommandName")), name)],
         ...(excludeBehaviorId !== null
           ? { id: { [Op.ne]: excludeBehaviorId } }
           : {}),
