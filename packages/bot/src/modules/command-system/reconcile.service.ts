@@ -333,12 +333,14 @@ export class CommandReconciler {
   }
 
   /**
-   * 增量 reconcile 單條 behavior（admin CRUD 後呼叫）。
-   * 若 triggerType !== 'slash_command' 則為 no-op；停用的 behavior 從 Discord 刪除。
+   * 增量 reconcile 單一 behavior 指令（behavior_commands.id；admin 寫入後
+   * 呼叫）。沒有啟用中葉節點的指令從 Discord 刪除。
    */
-  async reconcileForBehavior(behaviorId: number): Promise<ReconcileItemResult> {
+  async reconcileForBehaviorCommand(
+    commandId: number,
+  ): Promise<ReconcileItemResult> {
     return this.withLock(() =>
-      this._reconcileForSource({ source: "behavior", id: behaviorId }),
+      this._reconcileForSource({ source: "behavior", id: commandId }),
     );
   }
 

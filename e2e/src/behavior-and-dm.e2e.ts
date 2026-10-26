@@ -1,9 +1,16 @@
 /**
  * PM-2.3 — Core paths 4 + 5: behavior webhook forward + DM inbox SSE.
  *
- *   path 4: behavior created over the admin API → test-fire → REAL
- *           HTTP POST to a webhook sink → auth headers per mode
- *           (none / token / hmac) → signed-response verification
+ *   path 4: behavior seeded into the trigger/action tables → test-fire
+ *           over the admin API → REAL HTTP POST to a webhook sink → auth
+ *           headers per mode (none / token / hmac) → signed-response
+ *           verification
+ *
+ * The behavior write API is rebuilt on the new tables in S4 (#136); until
+ * then the harness seeds `behavior_definitions` + `behavior_webhook_actions`
+ * straight into the shared Postgres, sealing the URL / secret with the
+ * bot's `ENCRYPTION_KEY` the same way admin-dashboard.e2e.ts opens the
+ * signing key.
  *   path 5: synthetic DM → recordActivity → event bus → SSE frames on
  *           /api/dm/events → channel listed → reply fails CLEANLY
  *           without Discord
@@ -28,7 +35,12 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { spawn, type ChildProcess } from "node:child_process";
-import { createHmac, randomBytes } from "node:crypto";
+import {
+  createCipheriv,
+  createHash,
+  createHmac,
+  randomBytes,
+} from "node:crypto";
 import { createServer as createHttpServer, type Server } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import { networkInterfaces } from "node:os";
@@ -52,6 +64,9 @@ function findRepoRoot(from: string): string {
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = findRepoRoot(HERE);
 const BOT_MAIN = path.join(REPO, "packages", "bot", "build", "main.js");
+
+const ENCRYPTION_KEY =
+  "0000000000000000000000000000000000000000000000000000000000000000";
 
 const DM_CHANNEL_ID = "920000000000000001";
 const DM_USER_ID = "920000000000000002";
@@ -117,6 +132,32 @@ async function api(
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
   return { status: res.status, body: await res.json().catch(() => null) };
+}
+
+/** Seal a value the way the bot's encryptSecret does (v2, AES-256-GCM). */
+function encryptV2(plaintext: string, keyHex: string): string {
+  const keyBytes = Buffer.from(keyHex, "hex");
+  const keyId = createHash("sha256").update(keyBytes).digest("hex").slice(0, 8);
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", keyBytes, iv);
+  const ct = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  return [
+    "v2",
+    keyId,
+    iv.toString("base64"),
+    cipher.getAuthTag().toString("base64"),
+    ct.toString("base64"),
+  ].join(":");
+}
+
+type PgClient = import("pg").Client;
+
+async function connectDb(dbUrl: string): Promise<PgClient> {
+  // Lazy import keeps the suite skippable without pg installed elsewhere.
+  const { Client } = (await import("pg")) as typeof import("pg");
+  const client = new Client({ connectionString: dbUrl });
+  await client.connect();
+  return client;
 }
 
 /** The shared `<METHOD>:<path>:<ts>:<nonce>:<body>` HMAC-SHA256 scheme. */
@@ -232,8 +273,7 @@ describe("behavior webhook + DM inbox E2E (PM-2.3, paths 4+5)", { skip: !DB_URL 
         BOT_TOKEN: "e2e.placeholder",
         // No BOT_OWNER_IDS: dev unauth bypass — required both for the
         // admin API calls and for the dev DM-inject route's gate.
-        ENCRYPTION_KEY:
-          "0000000000000000000000000000000000000000000000000000000000000000",
+        ENCRYPTION_KEY,
         JWT_SECRET:
           "0000000000000000000000000000000000000000000000000000000000000000",
         DB_URL,
@@ -256,11 +296,16 @@ describe("behavior webhook + DM inbox E2E (PM-2.3, paths 4+5)", { skip: !DB_URL 
 
   after(async () => {
     // Behaviors persist in the shared e2e Postgres volume — sweep ours so
-    // re-runs (and the slash-command name space) stay clean.
-    for (const id of createdBehaviorIds) {
-      await fetch(`${botUrl}/api/behaviors/${id}`, { method: "DELETE" }).catch(
-        () => undefined,
-      );
+    // re-runs stay clean (webhook actions and stats cascade).
+    if (createdBehaviorIds.length > 0) {
+      const db = await connectDb(DB_URL!);
+      try {
+        await db.query("DELETE FROM behavior_definitions WHERE id = ANY($1)", [
+          createdBehaviorIds,
+        ]);
+      } finally {
+        await db.end();
+      }
     }
     await sink?.close();
     if (bot && bot.exitCode === null) {
@@ -282,22 +327,43 @@ describe("behavior webhook + DM inbox E2E (PM-2.3, paths 4+5)", { skip: !DB_URL 
     }
   });
 
+  /** A bot DM message trigger with a webhook action pointing at the sink. */
   async function createBehavior(
     suffix: string,
-    extra: Record<string, unknown>,
+    webhook: { authMode?: "token" | "hmac"; secret?: string } = {},
   ): Promise<number> {
-    const r = await api("POST", `${botUrl}/api/behaviors`, {
-      title: `e2e webhook ${suffix}`,
-      triggerType: "message_pattern",
-      messagePatternKind: "startswith",
-      messagePatternValue: `!e2e-${suffix}`,
-      webhookUrl: sink!.url(`/hook/${suffix}`),
-      ...extra,
-    });
-    assert.equal(r.status, 201, `create ${suffix}: ${JSON.stringify(r.body)}`);
-    const id = (r.body as { behavior: { id: number } }).behavior.id;
-    createdBehaviorIds.push(id);
-    return id;
+    const db = await connectDb(DB_URL!);
+    try {
+      const now = new Date();
+      const inserted = await db.query(
+        `INSERT INTO behavior_definitions
+           ("title", "description", "enabled", "sortOrder", "systemKey",
+            "triggerKind", "actionSource", "surface", "patternKind",
+            "patternValue", "stopOnMatch", "ignoreBots", "audienceKind",
+            "createdAt", "updatedAt")
+         VALUES ($1, '', true, 0, NULL, 'message', 'webhook', 'bot_dm',
+                 'startswith', $2, false, true, 'all', $3, $3)
+         RETURNING "id"`,
+        [`e2e webhook ${suffix}`, `!e2e-${suffix}`, now],
+      );
+      const id = inserted.rows[0].id as number;
+      createdBehaviorIds.push(id);
+      await db.query(
+        `INSERT INTO behavior_webhook_actions
+           ("behaviorId", "url", "secret", "authMode", "createdAt", "updatedAt")
+         VALUES ($1, $2, $3, $4, $5, $5)`,
+        [
+          id,
+          encryptV2(sink!.url(`/hook/${suffix}`), ENCRYPTION_KEY),
+          webhook.secret ? encryptV2(webhook.secret, ENCRYPTION_KEY) : null,
+          webhook.secret ? (webhook.authMode ?? "token") : null,
+          now,
+        ],
+      );
+      return id;
+    } finally {
+      await db.end();
+    }
   }
 
   function testFire(id: number) {
@@ -305,7 +371,7 @@ describe("behavior webhook + DM inbox E2E (PM-2.3, paths 4+5)", { skip: !DB_URL 
   }
 
   it("path 4: forwards with no auth mode and relays the sink's content", async () => {
-    const id = await createBehavior("none", {});
+    const id = await createBehavior("none");
     sink!.respondWith({ content: "ok from sink" });
 
     const fired = await testFire(id);
@@ -329,10 +395,7 @@ describe("behavior webhook + DM inbox E2E (PM-2.3, paths 4+5)", { skip: !DB_URL 
 
   it("path 4: token mode sends the shared secret header", async () => {
     const secret = randomBytes(16).toString("hex");
-    const id = await createBehavior("token", {
-      webhookAuthMode: "token",
-      webhookSecret: secret,
-    });
+    const id = await createBehavior("token", { authMode: "token", secret });
     sink!.respondWith({ content: "token ok" });
 
     const fired = await testFire(id);
@@ -346,10 +409,7 @@ describe("behavior webhook + DM inbox E2E (PM-2.3, paths 4+5)", { skip: !DB_URL 
 
   it("path 4: hmac mode signs the request and verifies the response fail-closed", async () => {
     const secret = randomBytes(16).toString("hex");
-    const id = await createBehavior("hmac", {
-      webhookAuthMode: "hmac",
-      webhookSecret: secret,
-    });
+    const id = await createBehavior("hmac", { authMode: "hmac", secret });
 
     // 1. Signed request reaches the sink; sink answers SIGNED → ok and
     //    the content is relayed.

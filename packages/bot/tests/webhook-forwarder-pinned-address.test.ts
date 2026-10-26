@@ -25,7 +25,7 @@ vi.mock("../src/utils/host-policy.js", () => ({
 
 import { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
 import { encryptSecret } from "../src/utils/crypto.js";
-import type { BehaviorRow } from "../src/modules/behavior/models/behavior.model.js";
+import type { BehaviorWebhookActionRow } from "../src/modules/behavior/models/behavior-webhook-action.model.js";
 
 let server: Server;
 let port: number;
@@ -51,13 +51,12 @@ afterAll(async () => {
 
 describe("WebhookForwarder connects to the checked address", () => {
   it("POSTs to the pinned IP while keeping the hostname in the Host header", async () => {
-    const behavior = {
-      id: 1,
-      source: "custom",
-      webhookUrl: encryptSecret(`http://rebind.invalid:${port}/hook`),
-      webhookSecret: null,
-      webhookAuthMode: null,
-    } as unknown as BehaviorRow;
+    const behavior: BehaviorWebhookActionRow = {
+      behaviorId: 1,
+      url: encryptSecret(`http://rebind.invalid:${port}/hook`),
+      secret: null,
+      authMode: null,
+    };
 
     const result = await new WebhookForwarder().forward(behavior, {
       content: "hi",

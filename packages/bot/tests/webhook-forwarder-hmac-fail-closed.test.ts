@@ -21,21 +21,20 @@ vi.mock("../src/utils/host-policy.js", () => ({
   HostPolicyError: class HostPolicyError extends Error {},
 }));
 
-import type { BehaviorRow } from "../src/modules/behavior/models/behavior.model.js";
+import type { BehaviorWebhookActionRow } from "../src/modules/behavior/models/behavior-webhook-action.model.js";
 import { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
 import { encryptSecret } from "../src/utils/crypto.js";
 import { buildOutboundSignatureHeaders } from "../src/utils/hmac.js";
 
 const HOOK_URL = "http://203.0.113.10/hook";
 
-function hmacBehavior(webhookSecret: string | null): BehaviorRow {
+function hmacBehavior(webhookSecret: string | null): BehaviorWebhookActionRow {
   return {
-    id: 1,
-    source: "custom",
-    webhookUrl: encryptSecret(HOOK_URL),
-    webhookSecret,
-    webhookAuthMode: "hmac",
-  } as unknown as BehaviorRow;
+    behaviorId: 1,
+    url: encryptSecret(HOOK_URL),
+    secret: webhookSecret,
+    authMode: "hmac",
+  };
 }
 
 describe("WebhookForwarder hmac fail-closed", () => {

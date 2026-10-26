@@ -6,12 +6,14 @@
  *   - `global`        全域指令（application.commands）
  *   - `guild:<id>`    只註冊在指定伺服器
  *   - `all_guilds`    在 bot 所在的每個伺服器各註冊一份（只給 track 3
- *                     plugin_commands 的 `scope: guild`；behavior 的舊
- *                     all_guilds 分頁在 S3 移除前暫時也用它）
+ *                     plugin_commands 的 `scope: guild` 與內建指令；
+ *                     behavior 的指令只有 global / guild:<id>）
  *
  * `all_guilds` 不是 Discord 的概念，執行時依 bot 的 guild cache 展開成多個
  * 具體目標（ConcreteTarget）。這裡全是純函式，不碰 Discord / DB。
  */
+
+import type { BehaviorCommandRegistration } from "../behavior/models/behavior-command.model.js";
 
 export type GuildTarget = `guild:${string}`;
 
@@ -83,18 +85,14 @@ export function targetsConflict(a: CommandTarget, b: CommandTarget): boolean {
 // ── 各來源的目標推導 ─────────────────────────────────────────────────────────
 
 /**
- * Behavior 的註冊目標（由舊的 scope + placement 欄位推導）：
- *   scope='global'                      → global
- *   scope='guild' + placementGuildId    → guild:<placementGuildId>
- *     （specific_guild / specific_channel 分頁；#128）
- *   scope='guild' 無 placement          → all_guilds（舊 all_guilds 分頁，S3 移除）
+ * Behavior 指令（behavior_commands）的註冊目標：`global` 或 `guild:<guildId>`。
  */
-export function behaviorTarget(row: {
-  scope: "global" | "guild";
-  placementGuildId: string | null;
-}): CommandTarget {
-  if (row.scope !== "guild") return "global";
-  return row.placementGuildId !== null
-    ? guildTarget(row.placementGuildId)
-    : "all_guilds";
+export function behaviorCommandTarget(command: {
+  registration: BehaviorCommandRegistration;
+  guildId: string | null;
+}): "global" | GuildTarget {
+  if (command.registration === "guild" && command.guildId !== null) {
+    return guildTarget(command.guildId);
+  }
+  return "global";
 }

@@ -8,7 +8,7 @@ import { registerRoleEmojiEvents } from "./modules/builtin-features/role-emoji/r
 import { registerTodoChannelEvents } from "./modules/builtin-features/todo-channel/todo-channel.events.js";
 import { registerTypingStartEvents } from "./modules/dm-inbox/events/typing-start.events.js";
 import { registerVoiceStateEvents } from "./modules/bot-events/events/voice-state.events.js";
-// DM message_pattern dispatch 由 MessagePatternMatcher（command-system）接管，
+// Message Trigger dispatch 由 MessageTriggerMatcher（command-system）接管，
 // 在 main.ts 的 ready handler 內呼叫 messageMatcher.register(bot)。
 
 /**

@@ -1,15 +1,14 @@
 /**
- * command-system/message-pattern-matcher.service.ts
+ * command-system/message-trigger-matcher.service.ts
  *
- * MessagePatternMatcher：messageCreate handler for `message_pattern`
- * behaviors, in bot DMs and guild text channels (BH-3).
+ * MessageTriggerMatcher：Message Trigger 的 messageCreate handler（ADR 0003）。
  *
- *   1. 查 applicable behaviors（依 audienceKind 三層 user → group → all）
- *   2. reach 過濾（contexts / placement / ignoreBots）
- *   3. matchTrigger（startswith/endswith/regex）
- *   4. system behavior → 內建 handler；其餘呼叫 WebhookForwarder.forward
- *
- * Continuous sessions, `break` and `manual` were removed by ADR 0003.
+ *   1. 觸發來自 BehaviorCatalog 的記憶體快照（寫入即失效）
+ *   2. 在哪：與 bot 的私訊 → surface='bot_dm'；伺服器頻道 → surface='guild'
+ *      （全部 / 指定伺服器 / 指定頻道），再依 ignoreBots 過濾 bot 作者
+ *   3. 對誰：audience（所有人 / 使用者 / 群組）只在與 bot 的私訊
+ *   4. matchTrigger（startswith/endswith/regex），依 sortOrder 走訪
+ *   5. 內建動作（系統登入）→ 內建 handler；webhook → WebhookForwarder
  *
  * onMessage(djsMessage) 暴露給 testing。
  */
@@ -17,16 +16,13 @@
 import {
   type Client,
   type Message as DjsMessage,
-  type DMChannel,
+  type SendableChannels,
   ChannelType,
 } from "discord.js";
-import { Op } from "sequelize";
 import {
-  Behavior,
-  rowOfBehavior,
-  type BehaviorRow,
-} from "../behavior/models/behavior.model.js";
-import { findGroupMembersBulk } from "../behavior/models/behavior-group-member.model.js";
+  getBehaviorCatalog,
+  type CatalogBehavior,
+} from "../behavior/behavior-catalog.js";
 import { recordForwardOutcome } from "../behavior/models/behavior-stats.model.js";
 import { matchesTrigger } from "../behavior/behavior-trigger.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
@@ -57,7 +53,7 @@ function guildForwardAllowed(channelId: string): boolean {
       botEventLog.record(
         "warn",
         "bot",
-        `message-pattern-matcher: guild channel ${channelId} 觸發超過 ${GUILD_FORWARD_LIMIT}/${GUILD_FORWARD_WINDOW_MS / 1000}s，rate limit 丟棄`,
+        `message-trigger-matcher: guild channel ${channelId} 觸發超過 ${GUILD_FORWARD_LIMIT}/${GUILD_FORWARD_WINDOW_MS / 1000}s，rate limit 丟棄`,
         { channelId },
       );
     }
@@ -86,9 +82,9 @@ function mergeOutcomes(
   };
 }
 
-// ── MessagePatternMatcher ─────────────────────────────────────────────────────
+// ── MessageTriggerMatcher ─────────────────────────────────────────────────────
 
-export class MessagePatternMatcher {
+export class MessageTriggerMatcher {
   /**
    * Per-user in-process mutex: a user's messages are matched and
    * forwarded in the order they arrived, sequential per user and
@@ -120,9 +116,8 @@ export class MessagePatternMatcher {
   /**
    * 掛載到 bot client：真實掛載 messageCreate listener。
    *
-   * system behavior 的訊息觸發路徑：admin 把登入的 system behavior 切到
-   * message_pattern 時，matcher 命中後走 handleMatchedSystemBehavior，
-   * dispatch 到內建 handler（不送 WebhookForwarder — system 沒有 webhookUrl）。
+   * 系統登入在訊息觸發上時，命中後走 handleMatchedSystemBehavior 的內建
+   * 動作（不送 WebhookForwarder）。
    */
   register(client: Client): void {
     client.on("messageCreate", (msg) => {
@@ -130,14 +125,14 @@ export class MessagePatternMatcher {
         botEventLog.record(
           "error",
           "bot",
-          `message-pattern-matcher: messageCreate handler 拋出例外：${err instanceof Error ? err.message : String(err)}`,
+          `message-trigger-matcher: messageCreate handler 拋出例外：${err instanceof Error ? err.message : String(err)}`,
         );
       });
     });
     botEventLog.record(
       "info",
       "bot",
-      "message-pattern-matcher: messageCreate listener 已掛載",
+      "message-trigger-matcher: messageCreate listener 已掛載",
     );
   }
 
@@ -179,58 +174,24 @@ export class MessagePatternMatcher {
     userId: string,
     isDm: boolean,
   ): Promise<MessageMatchOutcome> {
-    const channelId = djsMessage.channel.id;
     const content = djsMessage.content ?? "";
+    const { messageTriggers, groupMembers } = await getBehaviorCatalog();
 
-    // ─ 查 applicable behaviors（三層：user → group → all）
-    const applicableBehaviors = await this.collectApplicableBehaviors(userId);
-    if (applicableBehaviors.length === 0) {
-      return { handled: false };
-    }
-
-    // ─ 匹配 trigger（BH-0.3 multi-match：依 sortOrder 走訪，stopOnMatch
-    //   決定命中後是否擋住後續比對）
-    //
-    // 停止規則：
-    //   system → 必停（terminal UX：登入連結是收尾動作）
-    //   custom → stopOnMatch=true 停；false 繼續比對下一條
+    // 依 sortOrder 走訪（BH-0.3 multi-match）。停止規則：
+    //   系統登入 → 必停（登入連結是收尾動作）
+    //   其他     → stopOnMatch=true 停；false 繼續比對下一條
     let aggregate: MessageMatchOutcome | null = null;
-    for (const behavior of applicableBehaviors) {
-      if (behavior.triggerType !== "message_pattern") continue;
-      if (!behavior.messagePatternKind || !behavior.messagePatternValue)
+    for (const trigger of messageTriggers) {
+      if (!trigger.enabled) continue;
+      if (!trigger.patternKind || trigger.patternValue === null) continue;
+      if (!appliesTo(trigger, djsMessage, userId, isDm, groupMembers)) continue;
+      if (!matchesTrigger(trigger.patternKind, trigger.patternValue, content)) {
         continue;
-
-      // ─ BH-3 reach 過濾：contexts 決定 DM / guild 哪邊生效；guild 再按
-      //   placement（specific_guild/channel tab 的承諾）與 ignoreBots 過濾。
-      const contexts = behavior.contexts ?? "";
-      if (isDm) {
-        if (!contexts.includes("BotDM")) continue;
-      } else {
-        if (!contexts.includes("Guild")) continue;
-        if (
-          behavior.placementGuildId !== null &&
-          behavior.placementGuildId !== djsMessage.guildId
-        )
-          continue;
-        if (
-          behavior.placementChannelId !== null &&
-          behavior.placementChannelId !== channelId
-        )
-          continue;
-        if (djsMessage.author.bot && behavior.ignoreBots) continue;
       }
 
-      const matched = matchesTrigger(
-        behavior.messagePatternKind,
-        behavior.messagePatternValue,
-        content,
-      );
-      if (!matched) continue;
-
-      // ─ system source 不走 webhook，直接 dispatch 到對應 system handler
-      if (behavior.source === "system") {
+      if (trigger.actionSource === "builtin") {
         const outcome = await this.handleMatchedSystemBehavior(
-          behavior,
+          trigger,
           djsMessage,
           userId,
         );
@@ -238,14 +199,13 @@ export class MessagePatternMatcher {
       }
 
       const outcome = await this.handleMatchedBehavior(
-        behavior,
+        trigger,
         djsMessage,
         userId,
-        channelId,
       );
       aggregate = aggregate ? mergeOutcomes(aggregate, outcome) : outcome;
 
-      if (behavior.stopOnMatch) {
+      if (trigger.stopOnMatch) {
         return aggregate;
       }
     }
@@ -256,29 +216,36 @@ export class MessagePatternMatcher {
   // ── 私有：matched behavior 觸發 ─────────────────────────────────────────
 
   private async handleMatchedBehavior(
-    behavior: BehaviorRow,
+    behavior: CatalogBehavior,
     djsMessage: DjsMessage,
     userId: string,
-    channelId: string,
   ): Promise<MessageMatchOutcome> {
+    const channelId = djsMessage.channel.id;
     // BH-3：guild 頻道 forward 受 per-channel rate limit
     if (djsMessage.guildId && !guildForwardAllowed(channelId)) {
       return { handled: false };
     }
+    if (!behavior.webhook) {
+      botEventLog.record(
+        "warn",
+        "bot",
+        `message-trigger-matcher: behavior ${behavior.id} 沒有 webhook 動作，略過`,
+        { behaviorId: behavior.id },
+      );
+      return { handled: false };
+    }
 
     const payload = this.buildPayload(djsMessage, behavior);
-    const result = await this.forwarder.forward(behavior, payload);
+    const result = await this.forwarder.forward(behavior.webhook, payload);
     await recordForwardOutcome(behavior.id, result.ok, result.error);
-    const dmChannel = djsMessage.channel as DMChannel;
+    const channel = djsMessage.channel as SendableChannels;
 
     if (result.ok) {
       if (result.relayContent || result.relayEmbeds) {
         // No allowed_mentions parsing — the response content comes from
         // an external webhook server, which we don't trust to set ping
-        // policy. DMs don't honour @everyone but role/user pings can
-        // still notify in group-DM contexts, and this also guards
-        // against a future relay site that uses a guild channel.
-        await dmChannel
+        // policy (guild channels would honour @everyone / role pings).
+        await channel
           .send({
             content: result.relayContent,
             embeds: result.relayEmbeds ?? [],
@@ -290,7 +257,7 @@ export class MessagePatternMatcher {
       botEventLog.record(
         "warn",
         "bot",
-        `message-pattern-matcher: forward 失敗 behaviorId=${behavior.id}：${result.error ?? "unknown"}`,
+        `message-trigger-matcher: forward 失敗 behaviorId=${behavior.id}：${result.error ?? "unknown"}`,
         { userId, behaviorId: behavior.id },
       );
     }
@@ -301,7 +268,7 @@ export class MessagePatternMatcher {
   // ── 私有：matched system behavior dispatch（admin-login）────────────────
 
   private async handleMatchedSystemBehavior(
-    behavior: BehaviorRow,
+    behavior: CatalogBehavior,
     djsMessage: DjsMessage,
     userId: string,
   ): Promise<MessageMatchOutcome> {
@@ -313,7 +280,7 @@ export class MessagePatternMatcher {
     botEventLog.record(
       "warn",
       "bot",
-      `message-pattern-matcher: 未知 systemKey='${behavior.systemKey ?? "(null)"}'，handled=true 阻止漏到下一條`,
+      `message-trigger-matcher: 未知 systemKey='${behavior.systemKey ?? "(null)"}'，handled=true 阻止漏到下一條`,
       {
         userId,
         behaviorId: behavior.id,
@@ -321,21 +288,6 @@ export class MessagePatternMatcher {
       },
     );
     return { handled: true, behaviorId: behavior.id };
-  }
-
-  // ── 私有：collectApplicableBehaviors（三層 audienceKind 查詢）──────────
-
-  /**
-   * 查詢對此 userId 適用的 message_pattern behaviors（含 system source：
-   * 登入可被 admin 切到 message_pattern）。
-   */
-  private async collectApplicableBehaviors(
-    userId: string,
-  ): Promise<BehaviorRow[]> {
-    return collectApplicableBehaviorsForUser(userId, {
-      triggerType: "message_pattern",
-      includeSystem: true,
-    });
   }
 
   // ── 私有：buildPayload ───────────────────────────────────────────────────
@@ -350,7 +302,7 @@ export class MessagePatternMatcher {
    */
   private buildPayload(
     djsMessage: DjsMessage,
-    behavior: BehaviorRow,
+    behavior: CatalogBehavior,
   ): Record<string, unknown> {
     const attachments = djsMessage.attachments
       ? [...djsMessage.attachments.values()].map((a) => ({
@@ -382,66 +334,38 @@ export class MessagePatternMatcher {
   }
 }
 
-// ── module-level helper ──────────────────────────────────────────────────────
+// ── 觸發是否適用於這則訊息（在哪 + 對誰）────────────────────────────────
 
-/**
- * 查詢對此 userId 適用的 behaviors。
- *
- * 篩選條件：
- *   - enabled=true
- *   - source：預設排除 'system'；MessagePatternMatcher 透過 includeSystem=true
- *     把可被切到 message_pattern 的登入 system behavior 也算進去。
- *   - triggerType：若指定，只回該 triggerType；不指定則返回全部
- *   - audienceKind 符合（user / group / all 三層）
- *
- * 結果依 sortOrder 排序。
- *
- * @param userId  Discord user id
- * @param options.triggerType  若指定則只查該 triggerType；未指定則查全部
- * @param options.includeSystem  預設 false（不含 system source）
- */
-export async function collectApplicableBehaviorsForUser(
+function appliesTo(
+  trigger: CatalogBehavior,
+  djsMessage: DjsMessage,
   userId: string,
-  options?: {
-    triggerType?: "message_pattern" | "slash_command";
-    includeSystem?: boolean;
-  },
-): Promise<BehaviorRow[]> {
-  const where: Record<string, unknown> = {
-    enabled: true,
-  };
-  if (options?.includeSystem !== true) {
-    where["source"] = { [Op.ne]: "system" };
-  }
-  if (options?.triggerType !== undefined) {
-    where["triggerType"] = options.triggerType;
-  }
-  const allRows = await Behavior.findAll({
-    where,
-    order: [["sortOrder", "ASC"]],
-  });
-
-  const behaviors = allRows.map(rowOfBehavior);
-  // group 成員以 groupName 為鍵（BH-1）— 同名 group 的 behaviors 共享名單
-  const groupNames = behaviors
-    .filter((b) => b.audienceKind === "group" && b.audienceGroupName !== null)
-    .map((b) => b.audienceGroupName as string);
-  const memberMap = await findGroupMembersBulk(groupNames);
-
-  const result: BehaviorRow[] = [];
-  for (const behavior of behaviors) {
-    if (behavior.audienceKind === "user") {
-      if (behavior.audienceUserId === userId) result.push(behavior);
-    } else if (behavior.audienceKind === "group") {
-      if (
-        behavior.audienceGroupName !== null &&
-        memberMap.get(behavior.audienceGroupName)?.includes(userId)
-      ) {
-        result.push(behavior);
-      }
-    } else if (behavior.audienceKind === "all") {
-      result.push(behavior);
+  isDm: boolean,
+  groupMembers: ReadonlyMap<string, ReadonlySet<string>>,
+): boolean {
+  if (isDm) {
+    if (trigger.surface !== "bot_dm") return false;
+    switch (trigger.audienceKind) {
+      case "all":
+        return true;
+      case "user":
+        return trigger.audienceUserId === userId;
+      case "group":
+        return (
+          trigger.audienceGroupName !== null &&
+          (groupMembers.get(trigger.audienceGroupName)?.has(userId) ?? false)
+        );
     }
   }
-  return result;
+  if (trigger.surface !== "guild") return false;
+  if (trigger.guildId !== null && trigger.guildId !== djsMessage.guildId) {
+    return false;
+  }
+  if (
+    trigger.channelId !== null &&
+    trigger.channelId !== djsMessage.channel.id
+  ) {
+    return false;
+  }
+  return !(djsMessage.author.bot && trigger.ignoreBots);
 }

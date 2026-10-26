@@ -72,7 +72,7 @@ Discord 註冊的單位，持有名稱與所有可見性設定，底下有一或
 _Avoid_: 用「指令」稱呼單一子指令
 
 **Registration Target（註冊目標）**:
-一個 Command 在 Discord 註冊到哪裡：全域、指定伺服器，或每個伺服器。Behavior 的指令只選全域或指定伺服器；「每個伺服器」給 plugin 在 manifest 寫死的指令與內建指令（舊 all_guilds 分頁的 behavior 在換表前暫時也是）。指令名稱在重疊的註冊目標內不能重複；全域指令與任何同名指令衝突。
+一個 Command 在 Discord 註冊到哪裡：全域、指定伺服器，或每個伺服器。Behavior 的指令只選全域或指定伺服器；「每個伺服器」給 plugin 在 manifest 寫死的指令與內建指令。指令名稱在重疊的註冊目標內不能重複；全域指令與任何同名指令衝突。
 _Avoid_: scope（舊欄位，只分全域 / 伺服器）
 
 **Command Leaf（葉節點）**:
@@ -96,11 +96,11 @@ _Avoid_: 用來泛稱所有 slash 指令
 Behavior 被觸發後要做的事，由一個 Action Source 提供。
 
 **Action Source（動作來源）**:
-管理員可選的動作提供者：webhook 或 plugin。
+管理員可選的動作提供者：webhook 或 plugin。資料裡的 `builtin` 只是 System Behavior 的持久化值，不是管理員可選的動作來源。
 _Avoid_: `source: custom / system`（舊稱）
 
 **System Behavior（系統指令）**:
-系統提供、固定存在的 behavior，目前只有登入；管理員只能改它的觸發方式，不能新增、刪除或停用。
+系統提供、固定存在的 behavior，目前只有登入；管理員只能改它的觸發方式，不能新增、刪除或停用。它的動作在資料裡記為 `actionSource: builtin`，那只是持久化值，不是管理員可選的 Action Source。
 _Avoid_: 內建動作（它不是可選的動作來源）、admin-login
 
 **Plugin Action**:

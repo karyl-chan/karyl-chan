@@ -3,7 +3,8 @@
  *
  * CommandNamespace：Discord 指令命名空間的衝突檢查。bot 的指令來自三處
  * —— 內建 in-process 指令、plugin_commands（軌一 guild feature + 軌三）、
- * behaviors（含停用的，停用只是暫時不註冊，名稱仍屬於它）—— 它們共用
+ * behavior_commands（含葉節點全停用的，停用只是暫時不註冊，名稱仍屬於
+ * 它）—— 它們共用
  * Discord 的命名空間，同一目標內的名稱衝突要在存檔與註冊時拒絕（ADR 0003），
  * 不能讓後註冊的靜默覆蓋。
  *
@@ -16,9 +17,9 @@
 
 import { Op, col, fn, where as sqlWhere } from "sequelize";
 import {
-  Behavior,
-  rowOfBehavior,
-} from "../behavior/models/behavior.model.js";
+  BehaviorCommand,
+  rowOfBehaviorCommand,
+} from "../behavior/models/behavior-command.model.js";
 import {
   PluginCommand,
   pluginCommandScopeTarget,
@@ -26,7 +27,7 @@ import {
 } from "../plugin-system/models/plugin-command.model.js";
 import { listInProcessCommandNames } from "../builtin-features/in-process-command-registry.service.js";
 import {
-  behaviorTarget,
+  behaviorCommandTarget,
   targetsConflict,
   type CommandTarget,
 } from "./command-target.js";
@@ -34,10 +35,10 @@ import {
 export type NamespaceOwner =
   | { kind: "builtin" }
   | { kind: "plugin_command"; pluginId: number }
-  | { kind: "behavior"; behaviorId: number };
+  | { kind: "behavior_command"; commandId: number };
 
 /** 檢查時排除呼叫端自己的指令（重新註冊 / 編輯自己不算衝突）。 */
-export type NamespaceExclude = { pluginId: number } | { behaviorId: number };
+export type NamespaceExclude = { pluginId: number } | { commandId: number };
 
 export type NamespaceCheck =
   | { ok: true }
@@ -121,23 +122,22 @@ export class CommandNamespace {
       entries.push({ target, owner: { kind: "plugin_command", pluginId } });
     }
 
-    // behaviors：所有指令觸發的列，含停用的
-    const excludeBehaviorId =
-      exclude && "behaviorId" in exclude ? exclude.behaviorId : null;
-    const behaviorRows = await Behavior.findAll({
+    // behavior_commands：所有指令容器，含葉節點全停用的
+    const excludeCommandId =
+      exclude && "commandId" in exclude ? exclude.commandId : null;
+    const commandRows = await BehaviorCommand.findAll({
       where: {
-        triggerType: "slash_command",
-        [Op.and]: [sqlWhere(fn("lower", col("slashCommandName")), name)],
-        ...(excludeBehaviorId !== null
-          ? { id: { [Op.ne]: excludeBehaviorId } }
+        [Op.and]: [sqlWhere(fn("lower", col("name")), name)],
+        ...(excludeCommandId !== null
+          ? { id: { [Op.ne]: excludeCommandId } }
           : {}),
       },
     });
-    for (const model of behaviorRows) {
-      const row = rowOfBehavior(model);
+    for (const model of commandRows) {
+      const command = rowOfBehaviorCommand(model);
       entries.push({
-        target: behaviorTarget(row),
-        owner: { kind: "behavior", behaviorId: row.id },
+        target: behaviorCommandTarget(command),
+        owner: { kind: "behavior_command", commandId: command.id },
       });
     }
 

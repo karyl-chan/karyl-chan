@@ -17,9 +17,9 @@ const log = moduleLogger("admin-login");
 /**
  * Admin login link issuance, factored out of the old
  * admin-login-dm.events.ts `@On()` handler so it can be invoked from
- * the unified behavior dispatcher (type='system' rows route here
- * instead of POSTing to a webhook / plugin) and from interactionCreate
- * when the system behavior's trigger type is 'slash_command'.
+ * the behavior runtime: the system login's built-in action runs here
+ * from a bot DM message trigger (MessageTriggerMatcher) or from a
+ * command trigger (InteractionDispatcher).
  *
  * `mintLoginLink` is the pure core (resolveRole → token → URL). The
  * two delivery wrappers — Message DM reply and Slash command
@@ -147,8 +147,8 @@ export async function issueLoginLinkAndReply(
 }
 
 /**
- * Slash-command flow: invoked when a system behavior row with
- * triggerType='slash_command' matches an inbound interaction. Reply
+ * Slash-command flow: invoked when the system login is on a command
+ * trigger and that command is invoked. Reply
  * is ephemeral so the link doesn't leak into a shared channel even
  * if the slash command was invoked outside a DM (defensive — DM-only
  * registration on the Discord side already restricts visibility).

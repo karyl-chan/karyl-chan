@@ -18,7 +18,7 @@ vi.hoisted(() => {
 });
 
 import { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
-import type { BehaviorRow } from "../src/modules/behavior/models/behavior.model.js";
+import type { BehaviorWebhookActionRow } from "../src/modules/behavior/models/behavior-webhook-action.model.js";
 import { encryptSecret } from "../src/utils/crypto.js";
 import { classifyAddress } from "../src/utils/ip-address.js";
 import { parseAllowlistEntries } from "../src/utils/webhook-allowlist.js";
@@ -67,14 +67,13 @@ describe.skipIf(lanIp === null)("webhook forward to a LAN receiver (real policy)
     received.length = 0;
   });
 
-  function behavior(): BehaviorRow {
+  function behavior(): BehaviorWebhookActionRow {
     return {
-      id: 1,
-      source: "custom",
-      webhookUrl: encryptSecret(url),
-      webhookSecret: null,
-      webhookAuthMode: null,
-    } as unknown as BehaviorRow;
+      behaviorId: 1,
+      url: encryptSecret(url),
+      secret: null,
+      authMode: null,
+    };
   }
 
   it("delivers over plain http when the receiver's IP is allowlisted", async () => {

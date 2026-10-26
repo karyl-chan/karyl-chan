@@ -39,33 +39,6 @@ const INTEGRATION_MAP: Record<
   user_install: ApplicationIntegrationType.UserInstall,
 };
 
-// ── 輔助：三軸 → 型別化陣列 ─────────────────────────────────────────────────
-
-/** behaviors 表存逗號字串、manifest 存陣列；兩者都過濾掉不認得的值。 */
-function splitAxis(raw: string | readonly string[]): string[] {
-  return (typeof raw === "string" ? raw.split(",") : [...raw]).map((s) =>
-    s.trim(),
-  );
-}
-
-export function parseContexts(
-  raw: string | readonly string[],
-): DiscordContext[] {
-  return splitAxis(raw).filter(
-    (s): s is DiscordContext =>
-      s === "Guild" || s === "BotDM" || s === "PrivateChannel",
-  );
-}
-
-export function parseIntegrationTypes(
-  raw: string | readonly string[],
-): DiscordIntegrationType[] {
-  return splitAxis(raw).filter(
-    (s): s is DiscordIntegrationType =>
-      s === "guild_install" || s === "user_install",
-  );
-}
-
 // ── 指令定義（deriveRegistrationCall 的輸入）─────────────────────────────────
 
 export interface CommandLocalizations {

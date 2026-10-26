@@ -3,8 +3,8 @@
  *
  * Members are keyed by groupName (shared by every behavior carrying the
  * same audienceGroupName) and managed via
- * GET/PUT /api/behavior-groups/:groupName/members. The dispatch-side
- * filter (collectApplicableBehaviorsForUser) must honour the list.
+ * GET/PUT /api/behavior-groups/:groupName/members. The bot DM matcher
+ * must honour the list as soon as it changes.
  */
 import { vi, describe, it, expect, beforeAll, beforeEach } from "vitest";
 
@@ -13,12 +13,17 @@ vi.hoisted(() => {
   process.env.ENCRYPTION_KEY = "a".repeat(64);
 });
 
+vi.mock("../src/modules/bot-events/bot-event-log.js", () => ({
+  botEventLog: { record: vi.fn() },
+}));
+
 import Fastify, { type FastifyInstance } from "fastify";
 import { sequelize } from "../src/db.js";
-import { Behavior } from "../src/modules/behavior/models/behavior.model.js";
+import { ChannelType } from "discord.js";
 import { registerBehaviorRoutes } from "../src/modules/behavior/behavior-routes.js";
-import { collectApplicableBehaviorsForUser } from "../src/modules/command-system/message-pattern-matcher.service.js";
-import { encryptSecret } from "../src/utils/crypto.js";
+import { MessageTriggerMatcher } from "../src/modules/command-system/message-trigger-matcher.service.js";
+import type { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
+import { clearBehaviors, seedMessageTrigger } from "./behavior-fixtures.js";
 
 async function buildServer(): Promise<FastifyInstance> {
   const fastify = Fastify({ logger: false });
@@ -26,9 +31,7 @@ async function buildServer(): Promise<FastifyInstance> {
     request.authUserId = "test";
     request.authCapabilities = new Set(["admin"]);
   });
-  await registerBehaviorRoutes(fastify, {
-    reconciler: { reconcileAll: async () => undefined } as never,
-  });
+  await registerBehaviorRoutes(fastify);
   await fastify.ready();
   return fastify;
 }
@@ -38,7 +41,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  await Behavior.destroy({ where: {} });
+  await clearBehaviors();
 });
 
 describe("behavior group members API", () => {
@@ -85,26 +88,32 @@ describe("behavior group members API", () => {
     await server.close();
   });
 
-  it("dispatch-side audience filter honours group membership", async () => {
-    await Behavior.create({
-      id: 1,
+  it("the matcher honours a membership change right away", async () => {
+    const id = await seedMessageTrigger({
       title: "vip-only",
-      enabled: true,
-      sortOrder: 0,
-      stopOnMatch: false,
-      forwardType: "one_time",
-      source: "custom",
-      triggerType: "message_pattern",
-      messagePatternKind: "startswith",
-      messagePatternValue: "!vip",
-      scope: "global",
-      integrationTypes: "guild_install,user_install",
-      contexts: "BotDM",
+      patternValue: "!vip",
       audienceKind: "group",
       audienceGroupName: "vip",
-      webhookUrl: encryptSecret("https://example.test/hook"),
-      scopeTabId: 1,
-    } as Record<string, unknown>);
+    });
+    const forward = vi.fn(async () => ({ ok: true, relayContent: "" }));
+    const matcher = new MessageTriggerMatcher({ forward } as unknown as WebhookForwarder);
+    const dm = (userId: string) =>
+      ({
+        id: "M",
+        content: "!vip",
+        guildId: null,
+        author: {
+          id: userId,
+          bot: false,
+          username: "u",
+          displayAvatarURL: () => "https://cdn.example/a.png",
+        },
+        client: { user: { id: "BOT" } },
+        channel: { id: `DM-${userId}`, type: ChannelType.DM, send: vi.fn(async () => {}) },
+      }) as never;
+
+    // warm the trigger snapshot before the membership changes
+    expect((await matcher.onMessage(dm("333333333"))).handled).toBe(false);
 
     const server = await buildServer();
     await server.inject({
@@ -113,11 +122,8 @@ describe("behavior group members API", () => {
       payload: { userIds: ["333333333"] },
     });
 
-    const forMember = await collectApplicableBehaviorsForUser("333333333");
-    expect(forMember.map((b) => b.id)).toEqual([1]);
-
-    const forOutsider = await collectApplicableBehaviorsForUser("444444444");
-    expect(forOutsider).toEqual([]);
+    expect(await matcher.onMessage(dm("333333333"))).toEqual({ handled: true, behaviorId: id });
+    expect((await matcher.onMessage(dm("444444444"))).handled).toBe(false);
 
     await server.close();
   });

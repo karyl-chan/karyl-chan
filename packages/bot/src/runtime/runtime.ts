@@ -2,7 +2,7 @@ import { createBotClient, patchRestSetToken } from "./discord-client.js";
 import { WebhookForwarder } from "../modules/command-system/webhook-forwarder.service.js";
 import { InteractionDispatcher } from "../modules/command-system/interaction-dispatcher.service.js";
 import { CommandReconciler } from "../modules/command-system/reconcile.service.js";
-import { MessagePatternMatcher } from "../modules/command-system/message-pattern-matcher.service.js";
+import { MessageTriggerMatcher } from "../modules/command-system/message-trigger-matcher.service.js";
 import { CommandNamespace } from "../modules/command-system/command-namespace.js";
 import { setPluginCommandNamespace } from "../modules/plugin-system/plugin-command-registry.service.js";
 import { installProcessErrorHandlers } from "./process-errors.js";
@@ -39,7 +39,7 @@ export function createRuntime(): Runtime {
   const commandReconciler = new CommandReconciler(() =>
     bot.isReady() ? bot : null,
   );
-  const messageMatcher = new MessagePatternMatcher(webhookForwarder);
+  const messageMatcher = new MessageTriggerMatcher(webhookForwarder);
   // plugin 註冊的名稱衝突檢查走共用的指令命名空間
   setPluginCommandNamespace(new CommandNamespace());
 

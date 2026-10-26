@@ -1,10 +1,11 @@
-import type { Client } from "discord.js";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { requireCapability } from "../web-core/route-guards.js";
-import { decryptSecret } from "../../utils/crypto.js";
 import { webhookAllowlist } from "../../config.js";
 import type { AllowlistEntry } from "../../utils/webhook-allowlist.js";
-import type { BehaviorRow } from "./models/behavior.model.js";
+import {
+  BEHAVIOR_OPTION_TYPES,
+  type BehaviorCommandOption,
+} from "./models/behavior-definition.model.js";
 import {
   HostPolicyError,
   resolveWebhookTarget,
@@ -12,25 +13,8 @@ import {
 } from "../../utils/host-policy.js";
 
 export interface BehaviorRoutesOptions {
-  bot?: Client;
-  reconciler?: import("../command-system/reconcile.service.js").CommandReconciler;
   /** BH-6.2 test-fire 用；未提供時 route 自建（測試注入 stub 用）。 */
   forwarder?: import("../command-system/webhook-forwarder.service.js").WebhookForwarder;
-}
-
-/**
- * Decrypt the URL + secret before handing them to the admin UI. Both
- * fields round-trip in plaintext: the URL is operator config (treated
- * as plain config like a host:port) and the secret is needed to
- * verify it matches what the receiving server expects. They remain
- * AES-encrypted at rest.
- */
-export function decryptedView(row: BehaviorRow): BehaviorRow {
-  return {
-    ...row,
-    webhookUrl: row.webhookUrl ? decryptSecret(row.webhookUrl) : row.webhookUrl,
-    webhookSecret: row.webhookSecret ? decryptSecret(row.webhookSecret) : null,
-  };
 }
 
 /**
@@ -76,26 +60,6 @@ export function isValidRegex(value: string): boolean {
 
 // ── BH-2.2C：slash command options 驗證 ──────────────────────────────────────
 
-/** behaviors 允許的扁平 scalar option 型別（OPTION_TYPE_MAP 的子集；
- *  不開 sub_command / choices / autocomplete —— 那些屬 plugin SDK 的進階面）。 */
-export const BEHAVIOR_OPTION_TYPES = [
-  "string",
-  "integer",
-  "number",
-  "boolean",
-  "user",
-  "channel",
-  "role",
-  "mentionable",
-  "attachment",
-] as const;
-
-export interface BehaviorCommandOption {
-  type: (typeof BEHAVIOR_OPTION_TYPES)[number];
-  name: string;
-  description: string;
-  required: boolean;
-}
 
 const OPTION_NAME_RE = /^[a-z0-9_-]{1,32}$/;
 const MAX_OPTIONS = 10;

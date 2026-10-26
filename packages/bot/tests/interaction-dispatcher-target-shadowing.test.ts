@@ -34,7 +34,7 @@ vi.mock("../src/modules/bot-events/bot-event-log.js", () => ({
 
 import type { Interaction } from "discord.js";
 import { sequelize } from "../src/db.js";
-import { Behavior } from "../src/modules/behavior/models/behavior.model.js";
+import { clearBehaviors, seedCommand, seedLeaf } from "./behavior-fixtures.js";
 import { Plugin } from "../src/modules/plugin-system/models/plugin.model.js";
 import {
   PluginCommand,
@@ -43,7 +43,6 @@ import {
 import { botEventLog } from "../src/modules/bot-events/bot-event-log.js";
 import { InteractionDispatcher } from "../src/modules/command-system/interaction-dispatcher.service.js";
 import type { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
-import { encryptSecret } from "../src/utils/crypto.js";
 
 const OFFLINE = "離線"; // P1（全域 /foo）認領時的回覆
 const NOT_READY = "初始化"; // P2（all_guilds /foo）認領時的回覆
@@ -72,7 +71,11 @@ function fakeSlash(commandGuildId: string | null) {
       avatar: null,
       displayAvatarURL: () => "https://cdn.example/avatar.png",
     },
-    options: { data: [] },
+    options: {
+      data: [],
+      getSubcommand: () => null,
+      getSubcommandGroup: () => null,
+    },
     reply,
     deferReply: vi.fn(async () => {}),
     editReply: vi.fn(async () => {}),
@@ -118,22 +121,13 @@ async function seedPlugin(
 }
 
 async function seedGuildBehavior(guildId: string): Promise<void> {
-  await Behavior.create({
-    title: "foo",
-    enabled: true,
-    sortOrder: 0,
-    source: "custom",
-    triggerType: "slash_command",
-    slashCommandName: "foo",
-    slashCommandDescription: "foo",
-    scope: "guild",
-    integrationTypes: "guild_install",
-    contexts: "Guild",
-    audienceKind: "all",
-    placementGuildId: guildId,
-    webhookUrl: encryptSecret("http://example.invalid/hook"),
-    scopeTabId: 1,
-  } as Record<string, unknown>);
+  const commandId = await seedCommand({
+    name: "foo",
+    description: "foo",
+    registration: "guild",
+    guildId,
+  });
+  await seedLeaf(commandId, { title: "foo" });
 }
 
 function makeDispatcher() {
@@ -152,7 +146,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  await Behavior.destroy({ where: {} });
+  await clearBehaviors();
   await PluginCommand.destroy({ where: {} });
   await Plugin.destroy({ where: {} });
   await seedGuildBehavior("G");

@@ -7,6 +7,10 @@
 
 import type { HostPolicyCode } from "../../utils/host-policy.js";
 import type {
+  DiscordContext,
+  DiscordIntegrationType,
+} from "../../utils/command-axes.js";
+import type {
   ApplicationCommandData,
   RESTPostAPIWebhookWithTokenJSONBody,
 } from "discord.js";
@@ -14,17 +18,9 @@ import type { CommandTarget, ConcreteTarget } from "./command-target.js";
 
 // ── 三軸核心型別（C-runtime §2.1）────────────────────────────────────────────
 
-/**
- * 對應 Discord InteractionContextType 的字串值。
- * M0-FROZEN §1.1 鎖定列舉。
- */
-export type DiscordContext = "Guild" | "BotDM" | "PrivateChannel";
-
-/**
- * 對應 Discord ApplicationIntegrationType 的字串值。
- * M0-FROZEN §1.1 鎖定列舉。
- */
-export type DiscordIntegrationType = "guild_install" | "user_install";
+// DiscordContext / DiscordIntegrationType 定義在 utils/command-axes.ts（與其
+// 解析函式同處，讓 behavior 不必在 runtime 依賴 command-system）。
+export type { DiscordContext, DiscordIntegrationType };
 
 /**
  * 指令的 Discord 作用域。
@@ -34,7 +30,7 @@ export type CommandScope = "global" | "guild";
 
 /**
  * 三軸規格：scope + integrationTypes + contexts。
- * behaviors 表（軌二）與 plugin_commands 表（軌三）共用。
+ * behavior_commands（軌二）與 plugin_commands（軌三）共用。
  *
  * DB 儲存格式（M0-FROZEN §1.4）：
  *   integrationTypes / contexts 為 lexicographically-sorted comma-joined string，

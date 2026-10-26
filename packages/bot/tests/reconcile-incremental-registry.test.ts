@@ -1,5 +1,5 @@
 /**
- * Regression: the incremental reconcile paths (reconcileForBehavior /
+ * Regression: the incremental reconcile paths (reconcileForBehaviorCommand /
  * reconcileForPluginCommand — used by /resync and the plugin adminEnabled
  * toggle) created the Discord command but never registered it in the
  * reconciler_owned_commands roster. A later reconcileAll keys its stale
@@ -17,11 +17,11 @@ vi.hoisted(() => {
 
 import type { Client } from "discord.js";
 import { sequelize } from "../src/db.js";
-import { Behavior } from "../src/modules/behavior/models/behavior.model.js";
+import { BehaviorCommand } from "../src/modules/behavior/models/behavior-command.model.js";
 import { PluginCommand } from "../src/modules/plugin-system/models/plugin-command.model.js";
 import { ReconcilerOwnedCommand } from "../src/modules/command-system/models/reconciler-owned-command.model.js";
 import { CommandReconciler } from "../src/modules/command-system/reconcile.service.js";
-import { encryptSecret } from "../src/utils/crypto.js";
+import { clearBehaviors, seedCommand, seedLeaf } from "./behavior-fixtures.js";
 
 interface CmdStub {
   id: string;
@@ -74,23 +74,9 @@ function makeClient(
 }
 
 async function seedGuildBehavior(): Promise<number> {
-  await Behavior.create({
-    id: 1,
-    title: "ping",
-    enabled: true,
-    sortOrder: 0,
-    source: "custom",
-    triggerType: "slash_command",
-    slashCommandName: "ping",
-    slashCommandDescription: "ping",
-    scope: "guild",
-    integrationTypes: "guild_install",
-    contexts: "Guild",
-    audienceKind: "all",
-    webhookUrl: encryptSecret("http://example.invalid/hook"),
-    scopeTabId: 1,
-  } as Record<string, unknown>);
-  return 1;
+  const id = await seedCommand({ name: "ping", description: "ping", registration: "guild", guildId: "g1" });
+  await seedLeaf(id, { title: "ping" });
+  return id;
 }
 
 beforeAll(async () => {
@@ -98,20 +84,20 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  await Behavior.destroy({ where: {} });
+  await clearBehaviors();
   await PluginCommand.destroy({ where: {} });
   await ReconcilerOwnedCommand.destroy({ where: {} });
 });
 
 describe("reconcile incremental → owned-commands roster", () => {
-  it("reconcileForBehavior registers the created command in the roster", async () => {
+  it("reconcileForBehaviorCommand registers the created command in the roster", async () => {
     const id = await seedGuildBehavior();
     const guildCmds = statefulCommands();
     const reconciler = new CommandReconciler(() =>
       makeClient(statefulCommands(), guildCmds),
     );
 
-    await reconciler.reconcileForBehavior(id);
+    await reconciler.reconcileForBehaviorCommand(id);
 
     // Pre-fix: 0 (incremental path never touched the roster).
     const rows = await ReconcilerOwnedCommand.findAll({
@@ -120,19 +106,19 @@ describe("reconcile incremental → owned-commands roster", () => {
     expect(rows).toHaveLength(1);
   });
 
-  it("a command created via reconcileForBehavior is cleaned up (not orphaned) by a later reconcileAll after the behavior is deleted", async () => {
+  it("a command created via reconcileForBehaviorCommand is cleaned up (not orphaned) by a later reconcileAll after the behavior is deleted", async () => {
     const id = await seedGuildBehavior();
     const guildCmds = statefulCommands();
     const appCmds = statefulCommands();
     const reconciler = new CommandReconciler(() => makeClient(appCmds, guildCmds));
 
     // 1. Incremental resync creates the guild command.
-    await reconciler.reconcileForBehavior(id);
+    await reconciler.reconcileForBehaviorCommand(id);
     expect(guildCmds.create).toHaveBeenCalledTimes(1);
     expect(guildCmds.store.size).toBe(1);
 
-    // 2. Behavior is deleted — it is no longer desired.
-    await Behavior.destroy({ where: { id } });
+    // 2. The command is deleted — it is no longer desired.
+    await BehaviorCommand.destroy({ where: { id } });
 
     // 3. Full reconcile must recognise the now-stale command and remove it.
     await reconciler.reconcileAll();

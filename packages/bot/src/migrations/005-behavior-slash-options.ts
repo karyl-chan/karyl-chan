@@ -15,6 +15,8 @@ const TABLE = "behaviors";
 const COLUMN = "slashCommandOptions";
 
 export const up: MigrationFn<QueryInterface> = async ({ context: qi }) => {
+  // Gone since migration 011; a fresh install never has it.
+  if (!((await qi.showAllTables()) as string[]).includes(TABLE)) return;
   const table = await qi.describeTable(TABLE);
   if (table[COLUMN]) return;
   await qi.addColumn(TABLE, COLUMN, {
@@ -24,6 +26,7 @@ export const up: MigrationFn<QueryInterface> = async ({ context: qi }) => {
 };
 
 export const down: MigrationFn<QueryInterface> = async ({ context: qi }) => {
+  if (!((await qi.showAllTables()) as string[]).includes(TABLE)) return;
   const table = await qi.describeTable(TABLE);
   if (!table[COLUMN]) return;
   await qi.removeColumn(TABLE, COLUMN);

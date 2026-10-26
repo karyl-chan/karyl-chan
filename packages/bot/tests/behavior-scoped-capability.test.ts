@@ -24,9 +24,7 @@ async function buildServer(caps: string[]): Promise<FastifyInstance> {
     request.authUserId = "some-user";
     request.authCapabilities = new Set(caps) as never;
   });
-  await registerBehaviorRoutes(fastify, {
-    reconciler: { reconcileAll: async () => undefined } as never,
-  });
+  await registerBehaviorRoutes(fastify);
   await fastify.ready();
   return fastify;
 }

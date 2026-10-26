@@ -15,6 +15,8 @@ import type {
   DiscordContext,
   DiscordIntegrationType,
 } from "../command-system/types.js";
+import type { BehaviorCommandRegistration } from "./models/behavior-command.model.js";
+import type { BehaviorMessageSurface } from "./models/behavior-definition.model.js";
 
 export type BehaviorSection =
   | "app"
@@ -27,14 +29,14 @@ export type BehaviorSection =
 export type SectionSource =
   | {
       kind: "command";
-      registration: "global" | "guild";
+      registration: BehaviorCommandRegistration;
       guildId: string | null;
       integrationTypes: readonly DiscordIntegrationType[];
       contexts: readonly DiscordContext[];
     }
   | {
       kind: "message";
-      surface: "bot_dm" | "guild";
+      surface: BehaviorMessageSurface;
       guildId: string | null;
       channelId: string | null;
     };
