@@ -26,7 +26,7 @@ import { ChannelType } from "discord.js";
 import { getVoiceBackend, VoiceCapacityError } from "./voice-backend.js";
 import { findPluginById } from "../plugin-system/models/plugin.model.js";
 import {
-  assertExternalTarget,
+  assertPublicMediaTarget,
   assertPluginTarget,
   HostPolicyError,
 } from "../../utils/host-policy.js";
@@ -217,7 +217,7 @@ export async function registerVoiceRpcRoutes(
       // surface is fine (e.g. how the radio plugin serves a downloaded
       // library track from `/internal/audio/…`) — that's the permissive
       // plugin-target policy. Anything else is treated as an arbitrary
-      // user-supplied media URL and gets the strict external policy
+      // user-supplied media URL and gets the strict public-media policy
       // (blocks RFC1918 / loopback / link-local / cloud metadata).
       const port = parsed.port
         ? Number(parsed.port)
@@ -234,7 +234,7 @@ export async function registerVoiceRpcRoutes(
         if (pluginOrigin && parsed.origin === pluginOrigin) {
           await assertPluginTarget(parsed.hostname, port);
         } else {
-          await assertExternalTarget(parsed.hostname, port);
+          await assertPublicMediaTarget(parsed.hostname, port);
         }
       } catch (err) {
         if (err instanceof HostPolicyError) {

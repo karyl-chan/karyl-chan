@@ -10,7 +10,7 @@ vi.mock("dns/promises", () => ({
 }));
 
 const { lookup } = await import("dns/promises");
-const { assertExternalTarget, assertPluginTarget, assertAllowedTarget, HostPolicyError } =
+const { assertPublicMediaTarget, assertPluginTarget, assertAllowedTarget, HostPolicyError } =
   await import("../src/utils/host-policy.js");
 
 const mockedLookup = vi.mocked(lookup);
@@ -54,9 +54,9 @@ afterEach(() => {
   process.env.NODE_ENV = origNodeEnv;
 });
 
-describe("assertExternalTarget — newly blocked ranges", () => {
+describe("assertPublicMediaTarget — newly blocked ranges", () => {
   it.each([...NON_ROUTABLE, ...TRANSITION])("blocks literal %s", async (ip) => {
-    await expect(assertExternalTarget(ip, 443)).rejects.toBeInstanceOf(
+    await expect(assertPublicMediaTarget(ip, 443)).rejects.toBeInstanceOf(
       HostPolicyError,
     );
   });
@@ -66,7 +66,7 @@ describe("assertExternalTarget — newly blocked ranges", () => {
     async (ip) => {
       stubResolve(ip, ip.includes(":") ? 6 : 4);
       await expect(
-        assertExternalTarget("sneaky.example.com", 443),
+        assertPublicMediaTarget("sneaky.example.com", 443),
       ).rejects.toBeInstanceOf(HostPolicyError);
     },
   );
@@ -74,7 +74,7 @@ describe("assertExternalTarget — newly blocked ranges", () => {
   it("still blocks them with the legacy WEBHOOK_ALLOW_PRIVATE hatch on", async () => {
     process.env.WEBHOOK_ALLOW_PRIVATE = "true";
     for (const ip of [...NON_ROUTABLE, ...TRANSITION]) {
-      await expect(assertExternalTarget(ip, 443)).rejects.toBeInstanceOf(
+      await expect(assertPublicMediaTarget(ip, 443)).rejects.toBeInstanceOf(
         HostPolicyError,
       );
     }
@@ -83,13 +83,13 @@ describe("assertExternalTarget — newly blocked ranges", () => {
   it("blocks the AWS IPv6 metadata endpoint fd00:ec2::254", async () => {
     process.env.WEBHOOK_ALLOW_PRIVATE = "true";
     await expect(
-      assertExternalTarget("fd00:ec2::254", 80),
+      assertPublicMediaTarget("fd00:ec2::254", 80),
     ).rejects.toBeInstanceOf(HostPolicyError);
   });
 
   it("blocks the expanded IPv4-mapped spelling of loopback", async () => {
     await expect(
-      assertExternalTarget("0:0:0:0:0:ffff:7f00:1", 80),
+      assertPublicMediaTarget("0:0:0:0:0:ffff:7f00:1", 80),
     ).rejects.toBeInstanceOf(HostPolicyError);
   });
 });
@@ -157,7 +157,7 @@ describe("an empty DNS answer fails closed", () => {
   it.each([
     ["assertAllowedTarget", () => assertAllowedTarget("empty.example", 25575)],
     ["assertPluginTarget", () => assertPluginTarget("empty.example", 3000)],
-    ["assertExternalTarget", () => assertExternalTarget("empty.example", 443)],
+    ["assertPublicMediaTarget", () => assertPublicMediaTarget("empty.example", 443)],
   ])("%s refuses a host with no addresses", async (_name, check) => {
     mockedLookup.mockResolvedValue([] as unknown as Awaited<ReturnType<typeof lookup>>);
     await expect(check()).rejects.toThrow(/解析/);

@@ -17,7 +17,7 @@ const log = moduleLogger("host-policy");
 
 /**
  * Machine-readable refusal reason. `blocked` is the generic code of the
- * plugin / RCON / external policies; the webhook policy
+ * plugin / RCON / public-media policies; the webhook policy
  * (`resolveWebhookTarget`) uses the specific ones so the admin UI can
  * say why and what to change.
  */
@@ -102,7 +102,7 @@ function embeddedClass(ip: string): AddressClass | null {
 
 /**
  * How a policy turns a refusal into an error. The webhook policy keeps
- * the specific `code`; the boolean policies (RCON / plugin / external)
+ * the specific `code`; the boolean policies (RCON / plugin / public-media)
  * have always thrown the generic `blocked` code.
  */
 type Refuse = (code: HostPolicyCode, message: string) => HostPolicyError;
@@ -207,27 +207,34 @@ export async function assertAllowedTarget(
 }
 
 /**
- * assertExternalTarget — strict public-internet-only policy (arbitrary
- * user-supplied URLs, e.g. voice media URLs).
+ * True when the legacy WEBHOOK_ALLOW_PRIVATE dev hatch is on. Read from
+ * process.env per call so tests can flip it per-case without
+ * re-importing the frozen `config` module; operators set it once at
+ * deploy time, so the boot-frozen value and the runtime read are
+ * observationally equivalent in prod.
+ */
+function legacyAllowPrivate(): boolean {
+  return process.env.WEBHOOK_ALLOW_PRIVATE === "true";
+}
+
+/**
+ * assertPublicMediaTarget — strict public-internet-only policy for
+ * arbitrary user / plugin-supplied media URLs (voice playback).
  *
  * Only `public` addresses pass: cloud metadata, link-local, loopback,
  * unspecified, RFC1918 / shared / ULA, non-routable ranges (0/8,
  * 198.18/15, 224/4, 240/4, fec0::/10, multicast, ::/96) and the NAT64 /
  * 6to4 transition prefixes are all refused.
  *
- * Escape hatch: set env WEBHOOK_ALLOW_PRIVATE=true to let `private`
- * addresses through (everything else is still blocked). Intended for
- * ops debugging only — never enable in production.
+ * Historical quirk kept as-is: the legacy WEBHOOK_ALLOW_PRIVATE=true dev
+ * hatch also lets `private` addresses through here (everything else is
+ * still blocked). Never enable it in production.
  */
-export async function assertExternalTarget(
+export async function assertPublicMediaTarget(
   host: string,
   port: number,
 ): Promise<void> {
-  // Read directly from process.env so tests can flip the escape
-  // hatch per-case without re-importing the frozen `config` module.
-  // Bot operators set this once at deploy time; the boot-frozen value
-  // and the runtime read are observationally equivalent in prod.
-  const allowPrivate = process.env.WEBHOOK_ALLOW_PRIVATE === "true";
+  const allowPrivate = legacyAllowPrivate();
   await checkHost(
     host,
     port,
@@ -259,7 +266,7 @@ export async function assertPluginTarget(
   host: string,
   port: number,
 ): Promise<void> {
-  // Same per-call read rationale as `allowPrivate` above — tests
+  // Same per-call read rationale as `legacyAllowPrivate` — tests
   // toggle NODE_ENV per-case to assert the prod vs dev branch.
   const isProd = process.env.NODE_ENV === "production";
   const deniedClass = (cls: AddressClass): boolean => {
@@ -296,12 +303,6 @@ export interface WebhookTarget {
    * Connect only to these (DNS-rebinding guard) — see pinned-dispatcher.
    */
   addresses: PinnedAddress[];
-}
-
-/** True when the legacy WEBHOOK_ALLOW_PRIVATE dev hatch is on. */
-function legacyAllowPrivate(): boolean {
-  // Per-call env read, same rationale as assertExternalTarget.
-  return process.env.WEBHOOK_ALLOW_PRIVATE === "true";
 }
 
 /**
