@@ -20,7 +20,8 @@ import MessageTriggerFields from './MessageTriggerFields.vue';
 import MessageTriggerReadOnly from './MessageTriggerReadOnly.vue';
 import WebhookActionFields from './WebhookActionFields.vue';
 import WebhookTestResult from './WebhookTestResult.vue';
-import { NO_ERRORS, describeBehaviorError, errorsFromRefusal, type FormErrors } from './behavior-errors';
+import { NO_ERRORS, describeBehaviorError, errorsFromRefusal, isStale, type FormErrors } from './behavior-errors';
+import { keepEditsOn, rebaseDraft } from './draft-rebase';
 import {
     checkMessageTriggerDraft,
     fieldsWithErrorLine,
@@ -31,12 +32,17 @@ import { draftPatcher, draftFromTrigger, draftLocation, isDirty, toPatchBody } f
 import { locationKey } from './message-trigger-location';
 import { sectionLabel } from './section-labels';
 import { draftLeavesGroup, useSoleGroup } from './use-sole-group';
+import { trackUnsavedDraft } from './use-unsaved-drafts';
 
 /**
  * A Message Trigger (board 7): the header row toggles, test-fires and
  * deletes; the expanded body edits the trigger (MessageTriggerFields) and
  * its action (WebhookActionFields). The System Behavior's trigger stays
  * read-only and pinned (S7 #139 adds its trigger switch).
+ *
+ * The saved trigger (`base`) and the edit draft are kept apart (#105): a
+ * new version from the server — the answer to the enabled toggle, a reload
+ * — never overwrites edits in progress (see rebaseDraft).
  */
 const props = defineProps<{
     trigger: MessageTriggerView;
@@ -85,23 +91,41 @@ onMounted(() => {
     if (props.expand) bringIntoView();
 });
 
-// ── the saved trigger and the edit draft ────────────────────────────────────
+// ── saved state vs. edit draft ──────────────────────────────────────────────
 
 const base = ref(props.trigger);
 const draft = ref(draftFromTrigger(props.trigger));
 const applyPatch = draftPatcher(draft);
+const conflict = ref(false);
+/** The last save was refused as stale; the list was reloaded under the draft. */
+const stale = ref(false);
 const dirty = computed(() => isDirty(base.value, draft.value));
+trackUnsavedDraft(props.trigger.id, dirty);
 
 watch(
     () => props.trigger,
     (incoming) => {
-        base.value = incoming;
-        draft.value = draftFromTrigger(incoming);
+        if (incoming === base.value) return;
+        const next = rebaseDraft(base.value, draft.value, incoming);
+        base.value = next.base;
+        draft.value = next.draft;
+        conflict.value = next.conflict;
     }
 );
 
+/** Keep my edits, applied onto the latest version (the next save is based on it). */
+function keepMine() {
+    stale.value = false;
+    draft.value = keepEditsOn(base.value, draft.value, props.trigger);
+    base.value = props.trigger;
+    conflict.value = false;
+}
+
 function discard() {
-    draft.value = draftFromTrigger(base.value);
+    stale.value = false;
+    base.value = props.trigger;
+    draft.value = draftFromTrigger(props.trigger);
+    conflict.value = false;
     errors.value = NO_ERRORS;
 }
 
@@ -111,12 +135,14 @@ const errors = ref<FormErrors>(NO_ERRORS);
 const saving = ref(false);
 const issuedSecret = ref<string | null>(null);
 
-const canSave = computed(() => dirty.value && !saving.value);
+/** Saving is blocked while a conflict is open: it would only be refused again. */
+const canSave = computed(() => dirty.value && !saving.value && !conflict.value);
 
 async function save() {
     const patch = toPatchBody(base.value, draft.value);
     if (!patch || !canSave.value) return;
     saving.value = true;
+    stale.value = false;
     try {
         const found = await checkMessageTriggerDraft(t, draft.value, LAYOUT);
         errors.value = found;
@@ -128,7 +154,16 @@ async function save() {
         draft.value = draftFromTrigger(saved);
         emit('updated', saved);
     } catch (err) {
-        errors.value = errorsFromRefusal(t, err, fieldsWithErrorLine(draft.value, LAYOUT));
+        if (isStale(err)) {
+            // the reload decides: a changed form field keeps the conflict
+            // open; otherwise the edits are rebased and only need saving again
+            conflict.value = true;
+            stale.value = true;
+            errors.value = NO_ERRORS;
+            emit('reload');
+        } else {
+            errors.value = errorsFromRefusal(t, err, fieldsWithErrorLine(draft.value, LAYOUT));
+        }
     } finally {
         saving.value = false;
     }
@@ -246,6 +281,9 @@ const savedGroup = computed(() =>
             </template>
 
             <template #trailing>
+                <AppBadge v-if="dirty" size="sm" tone="warn" icon="material-symbols:edit-outline-rounded">
+                    {{ t('behaviors.card.unsaved') }}
+                </AppBadge>
                 <AppBadge size="sm" icon="material-symbols:article-outline">
                     {{ t('behaviors.card.triggerMessage') }}
                 </AppBadge>
@@ -332,6 +370,18 @@ const savedGroup = computed(() =>
 
                     <p v-if="groupDropWarning" class="warning" role="status" data-test="group-drop">{{ groupDropWarning }}</p>
 
+                    <div v-if="conflict" class="conflict" role="alert" data-test="conflict">
+                        <span>{{ t('behaviors.card.conflict') }}</span>
+                        <AppButton size="sm" variant="secondary" data-test="keep-mine" @click="keepMine">
+                            {{ t('behaviors.card.conflictKeep') }}
+                        </AppButton>
+                        <AppButton size="sm" variant="ghost" @click="discard">
+                            {{ t('behaviors.card.conflictDiscard') }}
+                        </AppButton>
+                    </div>
+                    <p v-else-if="stale" class="hint" role="status" data-test="stale">
+                        {{ t('behaviors.card.staleRebased') }}
+                    </p>
                     <p v-if="errors.general" class="error" role="alert" data-test="general-error">{{ errors.general }}</p>
 
                     <footer class="footer">
@@ -394,6 +444,17 @@ const savedGroup = computed(() =>
 }
 .hint { margin: 0; font-size: 0.78rem; color: var(--text-muted); }
 .warning { margin: 0; font-size: 0.82rem; color: var(--warn-text, var(--text)); }
+.conflict {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.7rem;
+    border: 1px solid var(--warn-text, var(--border));
+    border-radius: var(--radius-sm);
+    font-size: 0.85rem;
+}
+.conflict span { flex: 1; min-width: 12rem; }
 .error { margin: 0; font-size: 0.82rem; color: var(--danger); }
 .footer {
     display: flex;

@@ -71,6 +71,19 @@ describe('useBehaviorList', () => {
         expect(state.expandId.value).toBe(1);
     });
 
+    it('stays put when leaving would drop drafts and the admin says no', async () => {
+        listMock.mockResolvedValue(list([trigger(1)]));
+        const state = useBehaviorList();
+        await state.load();
+        state.selected.value = 'bot_dm';
+        const mayLeave = vi.fn(async () => false);
+
+        await state.applyTrigger(trigger(1, { surface: 'guild', section: 'guild:all' }), mayLeave);
+        expect(mayLeave).toHaveBeenCalledTimes(1);
+        expect(state.selected.value).toBe('bot_dm');
+        expect(state.view.value?.messageTriggers[0].section).toBe('guild:all');
+    });
+
     it('counts the triggers using each audience group', async () => {
         listMock.mockResolvedValue(
             list([

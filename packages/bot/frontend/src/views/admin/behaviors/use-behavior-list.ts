@@ -7,6 +7,10 @@ import {
 } from '../../../api/behavior';
 import { sidebarSections } from './behavior-sections';
 
+/** Asks whether the page may switch section (dropping drafts there). */
+export type MayLeave = () => Promise<boolean>;
+const allowLeave: MayLeave = async () => true;
+
 /**
  * The behaviors page's state: the list from GET /api/behaviors, the
  * selected section, and which card to open. Writes made by a card come
@@ -45,8 +49,17 @@ export function useBehaviorList() {
         expandId.value = trigger.id;
     }
 
+    /**
+     * Follow a trigger to its section and open it — if leaving the current
+     * section is all right (`mayLeave`: other cards there may hold unsaved
+     * drafts the switch would drop).
+     */
+    async function follow(trigger: MessageTriggerView, mayLeave: MayLeave): Promise<void> {
+        if (trigger.section === selected.value || (await mayLeave())) reveal(trigger);
+    }
+
     /** A card saved its trigger: take the server's version; follow it if it moved. */
-    function applyTrigger(trigger: MessageTriggerView): void {
+    async function applyTrigger(trigger: MessageTriggerView, mayLeave: MayLeave = allowLeave): Promise<void> {
         const current = view.value;
         if (!current) return;
         const before = current.messageTriggers.find((m) => m.id === trigger.id);
@@ -54,7 +67,7 @@ export function useBehaviorList() {
             ...current,
             messageTriggers: current.messageTriggers.map((m) => (m.id === trigger.id ? trigger : m)),
         };
-        if (before && before.section !== trigger.section) reveal(trigger);
+        if (before && before.section !== trigger.section) await follow(trigger, mayLeave);
     }
 
     /** Audience Groups in use, with how many message triggers use each. */

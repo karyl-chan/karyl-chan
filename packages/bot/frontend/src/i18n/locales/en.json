@@ -1270,6 +1270,7 @@
             "stats": "Activity",
             "statsLine": "Last fired {when} · ok {ok} / failed {fail}",
             "statsLastError": "Last error: {error}",
+            "unsaved": "Unsaved",
             "more": "More actions",
             "test": "Test webhook",
             "testing": "Sending a test…",
@@ -1281,7 +1282,11 @@
             "deleteMessage": "“{title}” will be deleted. This cannot be undone.",
             "titleLabel": "Title",
             "descriptionLabel": "Description",
-            "descriptionHint": "For admins only; never sent to Discord."
+            "descriptionHint": "For admins only; never sent to Discord.",
+            "conflict": "Someone else changed this behavior, so saving now would be refused. Your edits are still here.",
+            "conflictKeep": "Keep my edits on the latest version",
+            "conflictDiscard": "Discard my edits and load the latest",
+            "staleRebased": "That save did not go through: someone changed this behavior while you were editing (not the fields you edited). The latest version is loaded under your edits; save again."
         },
         "validation": {
             "required": "Required",
@@ -1290,6 +1295,11 @@
             "tooMany": "At most {max} entries",
             "format": "Invalid format",
             "invalid": "Invalid value"
+        },
+        "unsaved": {
+            "title": "Discard unsaved edits?",
+            "message": "Some behavior edits are not saved yet and will be lost.",
+            "leave": "Discard and leave"
         },
         "location": {
             "label": "Location",

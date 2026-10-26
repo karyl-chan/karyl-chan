@@ -1270,6 +1270,7 @@
             "stats": "觸發紀錄",
             "statsLine": "上次觸發 {when} · 成功 {ok} / 失敗 {fail}",
             "statsLastError": "最近錯誤：{error}",
+            "unsaved": "未儲存",
             "more": "更多操作",
             "test": "測試 webhook",
             "testing": "正在送出測試…",
@@ -1281,7 +1282,11 @@
             "deleteMessage": "「{title}」會被刪除，無法復原。",
             "titleLabel": "標題",
             "descriptionLabel": "說明",
-            "descriptionHint": "只給管理員看，不會送到 Discord。"
+            "descriptionHint": "只給管理員看，不會送到 Discord。",
+            "conflict": "這個行為已經被其他人修改，現在儲存會被拒絕。你的修改還在。",
+            "conflictKeep": "保留我的修改，套用到最新版本",
+            "conflictDiscard": "捨棄我的修改，載入最新版本",
+            "staleRebased": "剛才的儲存沒有成功：其他人在你編輯時改過這個行為（不是你正在編輯的欄位）。已載入最新版本，你的修改還在，請再按一次儲存。"
         },
         "validation": {
             "required": "必填",
@@ -1290,6 +1295,11 @@
             "tooMany": "最多 {max} 項",
             "format": "格式不正確",
             "invalid": "值無效"
+        },
+        "unsaved": {
+            "title": "放棄未儲存的修改？",
+            "message": "有行為的修改還沒儲存，離開後會遺失。",
+            "leave": "放棄並離開"
         },
         "location": {
             "label": "位置",

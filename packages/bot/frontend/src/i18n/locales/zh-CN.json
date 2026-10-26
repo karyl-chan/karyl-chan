@@ -1270,6 +1270,7 @@
             "stats": "触发记录",
             "statsLine": "上次触发 {when} · 成功 {ok} / 失败 {fail}",
             "statsLastError": "最近错误：{error}",
+            "unsaved": "未保存",
             "more": "更多操作",
             "test": "测试 webhook",
             "testing": "正在发送测试…",
@@ -1281,7 +1282,11 @@
             "deleteMessage": "“{title}”会被删除，无法恢复。",
             "titleLabel": "标题",
             "descriptionLabel": "说明",
-            "descriptionHint": "只给管理员看，不会发送到 Discord。"
+            "descriptionHint": "只给管理员看，不会发送到 Discord。",
+            "conflict": "这个行为已经被其他人修改，现在保存会被拒绝。你的修改还在。",
+            "conflictKeep": "保留我的修改，应用到最新版本",
+            "conflictDiscard": "放弃我的修改，载入最新版本",
+            "staleRebased": "刚才的保存没有成功：其他人在你编辑时改过这个行为（不是你正在编辑的字段）。已载入最新版本，你的修改还在，请再点一次保存。"
         },
         "validation": {
             "required": "必填",
@@ -1290,6 +1295,11 @@
             "tooMany": "最多 {max} 项",
             "format": "格式不正确",
             "invalid": "值无效"
+        },
+        "unsaved": {
+            "title": "放弃未保存的修改？",
+            "message": "有行为的修改还没保存，离开后会丢失。",
+            "leave": "放弃并离开"
         },
         "location": {
             "label": "位置",
