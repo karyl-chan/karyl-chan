@@ -40,6 +40,7 @@ import {
   BehaviorApiError,
   installBehaviorRouteValidation,
 } from "./behavior-api-error.js";
+import { auditBehaviorWrite } from "./behavior-audit.js";
 import { idParams, parseRowId, snowflake } from "./behavior-schemas.js";
 
 export type { BehaviorRoutesOptions };
@@ -189,6 +190,9 @@ function registerGroupMemberRoutes(server: FastifyInstance): void {
       const { userIds } = request.body as { userIds: string[] };
       await replaceGroupMembers(groupName, userIds);
       const members = await findGroupMembers(groupName);
+      await auditBehaviorWrite(request, "behavior.group_members.replace", `group:${groupName}`, {
+        userIds: members,
+      });
       botEventLog.record(
         "info",
         "bot",
