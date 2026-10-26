@@ -54,7 +54,8 @@ interface NamespaceEntry {
 export class CommandNamespace {
   /**
    * `name` 在 `target` 是否可用。回傳第一個衝突（內建 → plugin → behavior
-   * 的順序）。名稱比對不分大小寫（輸入與既有資料都轉小寫後比對；Discord 的 chat input 指令名一律小寫）。
+   * 的順序）。名稱比對不分大小寫：輸入與既有資料都轉小寫後比對（Discord
+   * 的 chat input 指令名一律小寫）。
    */
   async check(
     name: string,

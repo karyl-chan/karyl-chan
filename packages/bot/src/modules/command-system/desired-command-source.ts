@@ -81,6 +81,13 @@ export type DesiredLookup =
 
 export interface DesiredCommandSource {
   readonly kind: CommandSourceKind;
+  /** lookup 找不到來源列時，增量 reconcile 回報的訊息。 */
+  readonly notFoundMessage: string;
+  /**
+   * 列存在但不該註冊（not_desired，例如停用）時，增量 reconcile 是否立刻
+   * 刪掉 Discord 上的舊註冊；否則只回報，交給 reconcileAll 的 stale 清除。
+   */
+  readonly deleteWhenNotDesired: boolean;
   /** 這個來源目前要註冊的所有指令（invalid 的列記 log 後略過）。 */
   listDesired(): Promise<DesiredCommand[]>;
   lookup(id: number): Promise<DesiredLookup>;
@@ -154,6 +161,8 @@ export function lookupBehaviorRow(row: BehaviorRow): DesiredLookup {
 
 export class BehaviorCommandSource implements DesiredCommandSource {
   readonly kind = "behavior" as const;
+  readonly notFoundMessage = "behavior not found";
+  readonly deleteWhenNotDesired = true;
 
   async listDesired(): Promise<DesiredCommand[]> {
     const rows = await Behavior.findAll({
@@ -216,6 +225,8 @@ function pluginCommandDefinition(
 
 export class PluginCommandSource implements DesiredCommandSource {
   readonly kind = "plugin_command" as const;
+  readonly notFoundMessage = "plugin_command row not found";
+  readonly deleteWhenNotDesired = false;
 
   async listDesired(): Promise<DesiredCommand[]> {
     const rows = await PluginCommand.findAll({

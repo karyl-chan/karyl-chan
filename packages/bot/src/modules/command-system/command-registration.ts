@@ -132,12 +132,12 @@ export function deriveRegistrationCall(
   }
   if (targetDiscordScope(target) === "guild") {
     if (integrationTypes.includes("user_install")) {
-      throw new RejectionError("scope=guild 不支援 user_install");
+      throw new RejectionError("伺服器指令（guild 目標）不支援 user_install");
     }
-    // M-8 修：scope=guild + 含 BotDM 為非法
+    // M-8 修：伺服器指令 + 含 BotDM 為非法
     if (contexts.some((c) => c !== "Guild")) {
       throw new RejectionError(
-        "scope=guild 的 contexts 只能包含 Guild（BotDM/PrivateChannel 非法）",
+        "伺服器指令（guild 目標）的 contexts 只能包含 Guild（BotDM/PrivateChannel 非法）",
       );
     }
   }

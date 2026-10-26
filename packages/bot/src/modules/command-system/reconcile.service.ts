@@ -224,15 +224,10 @@ export class CommandReconciler {
         "bot",
         "command-reconciler: bot not ready, skipping reconcileAll",
       );
-      return { created: 0, patched: 0, deleted: 0, errors: [] };
+      return emptyReport();
     }
 
-    const report: ReconcileReport = {
-      created: 0,
-      patched: 0,
-      deleted: 0,
-      errors: [],
-    };
+    const report = emptyReport();
 
     // 步驟 1：枚舉 desired set
     const desired = await this.listDesired();
@@ -365,7 +360,8 @@ export class CommandReconciler {
     if (!bot?.application) {
       return { ...base, ok: false, error: "bot not ready" };
     }
-    const lookup = await this.sourceFor(key.source).lookup(key.id);
+    const source = this.sourceFor(key.source);
+    const lookup = await source.lookup(key.id);
     switch (lookup.status) {
       case "desired":
         return toItemResult(
@@ -373,20 +369,13 @@ export class CommandReconciler {
           await this.applyAndRecord(bot, lookup.command),
         );
       case "not_found":
-        return {
-          ...base,
-          ok: false,
-          error:
-            key.source === "behavior"
-              ? "behavior not found"
-              : "plugin_command row not found",
-        };
+        return { ...base, ok: false, error: source.notFoundMessage };
       case "unmanaged":
         return { ...base, ok: true, action: "noop" };
       case "not_desired":
-        // behavior 停用：從 Discord 刪除（若存在）。plugin 指令的停用沿用
-        // 既有行為（回報無法計算，由 reconcileAll 的 stale 清除處理）。
-        if (key.source === "behavior" && lookup.name && lookup.target) {
+        // 來源決定停用時要不要立刻刪 Discord 上的舊註冊（behavior 會；
+        // plugin 指令沿用既有行為，回報無法計算，交給 reconcileAll 清除）
+        if (source.deleteWhenNotDesired && lookup.name && lookup.target) {
           for (const target of expandTarget(
             lookup.target,
             bot.guilds.cache.keys(),
@@ -434,15 +423,10 @@ export class CommandReconciler {
         "bot",
         `command-reconciler: reconcileForGuild(${guild.id}) bot not ready, skipping`,
       );
-      return { created: 0, patched: 0, deleted: 0, errors: [] };
+      return emptyReport();
     }
 
-    const report: ReconcileReport = {
-      created: 0,
-      patched: 0,
-      deleted: 0,
-      errors: [],
-    };
+    const report = emptyReport();
 
     // 步驟 1：枚舉 desired set，只保留目標涵蓋此 guild 的項目（#128：
     // 指定其他伺服器的指令不在這裡註冊）
@@ -703,6 +687,10 @@ export class CommandReconciler {
 }
 
 // ── 輔助：結果彙整 ───────────────────────────────────────────────────────────
+
+function emptyReport(): ReconcileReport {
+  return { created: 0, patched: 0, deleted: 0, errors: [] };
+}
 
 /** 非 desired 的 lookup → registerOne 的失敗原因。 */
 function notRegistrable(
