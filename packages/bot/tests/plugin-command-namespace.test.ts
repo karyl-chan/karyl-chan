@@ -194,4 +194,51 @@ describe("PluginCommandRegistry.assertNoCollisions via CommandNamespace", () => 
       ),
     ).resolves.toBeUndefined();
   });
+
+  it("refuses a guild-feature command whose name a behavior already uses", async () => {
+    await seedBehavior({
+      slashCommandName: "quest",
+      scope: "guild",
+      placementGuildId: "g1",
+    });
+
+    await expect(
+      registry.assertNoCollisions("p1", 1, featureManifest(["quest"])),
+    ).rejects.toThrow(/behavior/);
+  });
+
+  it("lets a plugin re-register its own guild-feature commands", async () => {
+    // 正式站的 radio / quest-game / xiangqi 只有 feature 指令：每個開了
+    // feature 的伺服器各一列（guildId 有值、featureKey 非 null）
+    for (const g of ["g1", "g2"]) {
+      await PluginCommand.create({
+        pluginId: 1,
+        guildId: g,
+        name: "quest",
+        featureKey: "quest",
+        manifestJson: JSON.stringify({ name: "quest" }),
+      } as Record<string, unknown>);
+    }
+
+    await expect(
+      registry.assertNoCollisions("p1", 1, featureManifest(["quest"])),
+    ).resolves.toBeUndefined();
+    // 另一個 plugin 想用同名 feature 指令則被擋
+    await expect(
+      registry.assertNoCollisions("p2", 2, featureManifest(["quest"])),
+    ).rejects.toThrow(/id=1/);
+  });
 });
+
+function featureManifest(names: string[]): PluginManifest {
+  return {
+    guild_features: [
+      {
+        key: "quest",
+        name: "Quest",
+        description: "quest",
+        commands: names.map((name) => ({ name, description: name })),
+      },
+    ],
+  } as unknown as PluginManifest;
+}

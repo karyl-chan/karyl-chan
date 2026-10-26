@@ -33,6 +33,7 @@ import type {
   CommandNamespace,
   NamespaceOwner,
 } from "../command-system/command-namespace.js";
+import type { CommandTarget } from "../command-system/command-target.js";
 import type {
   ManifestCommand,
   ManifestCommandOption,
@@ -332,37 +333,55 @@ export class PluginCommandRegistry {
    * rejection nothing is persisted and the plugin retries with a
    * corrected manifest.
    *
-   * 讀取 manifest.plugin_commands[]（軌三）。scope=guild 的目標是
-   * all_guilds（reconciler 在每個伺服器各註冊一份）。
+   * 檢查 manifest.plugin_commands[]（軌三；scope=guild 的目標是 all_guilds，
+   * reconciler 在每個伺服器各註冊一份）與 guild_features[].commands
+   * （目標 all_guilds）。
    */
   async assertNoCollisions(
     incomingPluginKey: string,
     incomingPluginId: number,
     manifest: PluginManifest,
   ): Promise<void> {
-    const incomingCommands = manifest.plugin_commands ?? [];
-    if (incomingCommands.length === 0) return;
+    const trackThree = manifest.plugin_commands ?? [];
+    // guild feature 指令依每個伺服器的開關註冊，可能出現在任何伺服器 →
+    // all_guilds（與 CommandNamespace 看待 feature 列的方式一致）
+    const featureCommands = (manifest.guild_features ?? []).flatMap(
+      (f) => f.commands ?? [],
+    );
+    if (trackThree.length === 0 && featureCommands.length === 0) return;
     const namespace = this.getNamespace();
     if (!namespace) {
       // fail closed：沒有命名空間就無法保證不覆蓋別人的指令
       throw new Error("plugin-commands: command namespace not wired");
     }
+    // 即時快取保留只套在軌三（沿用既有行為）；feature 指令只走命名空間
     const reserved = await this.buildReservedCommandNames(incomingPluginId);
-    for (const cmd of incomingCommands) {
+    for (const cmd of trackThree) {
       if (reserved.has(cmd.name)) {
         throw new ManifestCommandError(
           `command '${cmd.name}' is reserved for bot internals or already registered with Discord; ` +
             `'${incomingPluginKey}' must rename it`,
         );
       }
-      const res = await namespace.check(
-        cmd.name,
-        pluginCommandScopeTarget(cmd.scope),
-        { pluginId: incomingPluginId },
-      );
+    }
+    const candidates: Array<{ name: string; target: CommandTarget }> = [
+      ...trackThree.map((cmd) => ({
+        name: cmd.name,
+        target: pluginCommandScopeTarget(cmd.scope),
+      })),
+      ...featureCommands.map((cmd) => ({
+        name: cmd.name,
+        target: "all_guilds" as const,
+      })),
+    ];
+    for (const { name, target } of candidates) {
+      // 排除自己：重新註冊時，自己先前的軌三列與 feature 列都不算衝突
+      const res = await namespace.check(name, target, {
+        pluginId: incomingPluginId,
+      });
       if (!res.ok) {
         throw new ManifestCommandError(
-          `command '${cmd.name}' conflicts with ${describeOwner(res.conflict.owner)} ` +
+          `command '${name}' conflicts with ${describeOwner(res.conflict.owner)} ` +
             `(registered as ${res.conflict.target}); '${incomingPluginKey}' must rename or remove it`,
         );
       }
