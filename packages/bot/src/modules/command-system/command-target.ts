@@ -56,6 +56,19 @@ export function targetCovers(
 }
 
 /**
+ * 一次 interaction 是否來自這個目標註冊的指令。`commandGuildId` 是
+ * Discord 告訴我們「這個指令註冊在哪個伺服器」（全域指令為 null），
+ * 與 interaction 發生在哪裡（guildId）無關。
+ */
+export function targetMatchesInvocation(
+  target: CommandTarget,
+  commandGuildId: string | null,
+): boolean {
+  if (commandGuildId === null) return target === "global";
+  return targetCovers(target, guildTarget(commandGuildId));
+}
+
+/**
  * 同名指令的兩個目標是否衝突。Discord 允許全域與伺服器指令同名並存，
  * 但伺服器的指令選單會列出兩個同名項目；karyl 把全域指令視為與任何
  * 同名伺服器指令衝突。只有「兩個不同的指定伺服器」可以同名。

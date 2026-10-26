@@ -120,26 +120,43 @@ export function parsePluginCommandManifest(
 }
 
 /**
- * Reverse lookup used by the interaction dispatcher. Returns the
- * plugin command for the given (name, guildId) — tries guild-scoped
- * first, falls back to global. Discord delivers the raw guildId on
- * the interaction; commands registered globally are also visible
- * inside guilds, so we have to check both.
+ * 這一列實際註冊在哪：軌一 guild feature 列 → guild:<guildId>；軌三列 →
+ * 依 manifest scope（解析失敗保守視為 global）。
  */
-export const findPluginCommandByName = async (
+export function pluginCommandRowTarget(row: PluginCommandRow): CommandTarget {
+  if (row.featureKey !== null && row.guildId) return `guild:${row.guildId}`;
+  return pluginCommandScopeTarget(
+    parsePluginCommandManifest(row.manifestJson)?.scope,
+  );
+}
+
+/**
+ * Reverse lookup used by the interaction dispatcher: the plugin command a
+ * Discord invocation belongs to. `commandGuildId` is where the invoked
+ * command is registered (null = a global command), not where it was used.
+ * Only a row whose registration target covers it may claim the
+ * invocation — a global command is claimed only by a global track-3 row;
+ * a guild command only by that guild's feature row or a scope=guild
+ * track-3 row. (Same rule as command-target.ts targetMatchesInvocation.)
+ * Otherwise a same-named row registered elsewhere (e.g. a global plugin
+ * /foo vs a behavior's guild /foo) would steal the interaction.
+ */
+export const findPluginCommandForInvocation = async (
   name: string,
-  guildId: string | null,
+  commandGuildId: string | null,
 ): Promise<PluginCommandRow | null> => {
-  if (guildId) {
-    const guildScoped = await PluginCommand.findOne({
-      where: { name, guildId },
-    });
-    if (guildScoped) return rowOfPluginCommand(guildScoped);
-  }
-  const global = await PluginCommand.findOne({
-    where: { name, guildId: { [Op.is]: null } },
-  });
-  return global ? rowOfPluginCommand(global) : null;
+  const rows = (await PluginCommand.findAll({ where: { name } })).map(
+    rowOfPluginCommand,
+  );
+  const covers = (target: CommandTarget): boolean =>
+    commandGuildId === null
+      ? target === "global"
+      : target === "all_guilds" || target === `guild:${commandGuildId}`;
+  // 指定伺服器的列優先於 all_guilds（同名同伺服器時 Discord 只會留一個）
+  const matching = rows.filter((r) => covers(pluginCommandRowTarget(r)));
+  return (
+    matching.find((r) => r.guildId !== null) ?? matching[0] ?? null
+  );
 };
 
 export interface UpsertPluginCommandInput {

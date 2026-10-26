@@ -56,7 +56,7 @@ import type {
  *
  * What this does NOT own:
  *   - Routing inbound interactions to plugins. That lives in main.ts'
- *     interactionCreate handler, which queries findPluginCommandByName
+ *     interactionCreate handler, which queries findPluginCommandForInvocation
  *     and posts to the plugin via plugin-event-bridge / a dedicated
  *     /commands/<name> POST.
  *   - Discord vs discordx prune coordination. discordx's
