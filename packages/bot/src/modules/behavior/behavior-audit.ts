@@ -20,7 +20,11 @@ export type BehaviorAuditAction =
   | "behavior.delete"
   | "behavior.reorder"
   | "behavior.webhook_secret.rotate"
-  | "behavior.group_members.replace";
+  | "behavior.group_members.replace"
+  | "behavior.command.create"
+  | "behavior.command.update"
+  | "behavior.command.delete"
+  | "behavior.command.resync";
 
 /**
  * Record one behavior write. Never throws: it runs after the write is

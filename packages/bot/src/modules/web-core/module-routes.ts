@@ -6,6 +6,7 @@ import { requireAnyCapability } from "./route-guards.js";
 import { avatarUrlFor } from "./message-mapper.js";
 import type { DmInboxStore } from "../dm-inbox/dm-inbox.service.js";
 import type { CommandReconciler } from "../command-system/reconcile.service.js";
+import type { CommandNamespace } from "../command-system/command-namespace.js";
 
 import { registerDmRoutes } from "../dm-inbox/dm-routes.js";
 import { registerDiscordRoutes } from "./discord-routes.js";
@@ -35,6 +36,8 @@ import { registerShardForwardRoutes } from "../plugin-system/shard-forward-route
 export interface ModuleRouteDeps {
   bot?: Client;
   reconciler?: CommandReconciler;
+  /** Shared Discord command namespace; behavior command writes need it. */
+  commandNamespace?: CommandNamespace;
   dmInbox?: DmInboxStore;
   /** Injected DM rate limiter for tests; production uses the singleton. */
   dmLimiter?: { isRateLimited(key: string): boolean };
@@ -81,13 +84,13 @@ export async function registerModuleRoutes(
   server: FastifyInstance,
   deps: ModuleRouteDeps,
 ): Promise<void> {
-  const { bot, reconciler, dmInbox, dmLimiter } = deps;
+  const { bot, reconciler, commandNamespace, dmInbox, dmLimiter } = deps;
 
   await registerAdminManagementRoutes(server, { bot });
   await registerAdminLoginStatusRoutes(server);
   await registerAdminSystemSettingsRoutes(server);
   await registerBotEventRoutes(server);
-  await registerBehaviorRoutes(server);
+  await registerBehaviorRoutes(server, { reconciler, namespace: commandNamespace });
   await registerPluginRoutes(server, { bot, reconciler });
   await registerPluginRpcRoutes(server, { bot, dmLimiter });
   await registerVoiceRpcRoutes(server, { bot });

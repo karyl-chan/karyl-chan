@@ -123,6 +123,8 @@ export interface WebServerOptions {
   bot?: Client;
   dmInbox?: DmInboxStore;
   reconciler?: import("../command-system/reconcile.service.js").CommandReconciler;
+  /** Shared Discord command namespace (behavior command name checks). */
+  commandNamespace?: import("../command-system/command-namespace.js").CommandNamespace;
 }
 
 export interface CreateWebServerOptions {
@@ -136,6 +138,8 @@ export interface CreateWebServerOptions {
   /** Override owner ids for tests; production uses config.bot.ownerIds. */
   ownerIds?: string[];
   reconciler?: import("../command-system/reconcile.service.js").CommandReconciler;
+  /** Shared Discord command namespace (behavior command name checks). */
+  commandNamespace?: import("../command-system/command-namespace.js").CommandNamespace;
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -694,6 +698,7 @@ export async function createWebServer(
   await registerModuleRoutes(server, {
     bot,
     reconciler: options.reconciler,
+    commandNamespace: options.commandNamespace,
     dmInbox: options.dmInbox,
     dmLimiter: options.dmLimiter,
   });
@@ -741,6 +746,7 @@ export async function startWebServer(
     bot: options.bot,
     dmInbox: options.dmInbox,
     reconciler: options.reconciler,
+    commandNamespace: options.commandNamespace,
   });
   await server.listen({
     port: options.port,

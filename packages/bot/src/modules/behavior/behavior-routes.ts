@@ -7,6 +7,7 @@
  *   POST / PATCH / DELETE /api/behaviors[/:id]   — 訊息觸發的寫入（behavior-write-routes.ts）
  *   PUT  /api/behaviors/reorder                  — 一個位置內的訊息觸發排序（message-trigger-reorder.ts）
  *   POST /api/behaviors/:id/webhook-secret/rotate — 輪換 webhook 密鑰（webhook-secret-rotate.ts）
+ *   /api/behavior-commands[/:id[/resync]]        — 指令的寫入與重新註冊（behavior-command-routes.ts）
  *   GET  /api/behavior-groups/:groupName/members — 群組名單
  *   PUT  /api/behavior-groups/:groupName/members — 全量替換群組名單
  *
@@ -47,6 +48,7 @@ import { auditBehaviorWrite } from "./behavior-audit.js";
 import { registerBehaviorWriteRoutes } from "./behavior-write-routes.js";
 import { registerMessageTriggerReorderRoute } from "./message-trigger-reorder.js";
 import { registerWebhookSecretRotateRoute } from "./webhook-secret-rotate.js";
+import { registerBehaviorCommandRoutes } from "./behavior-command-routes.js";
 import { idParams, parseRowId, snowflake } from "./behavior-schemas.js";
 
 export type { BehaviorRoutesOptions };
@@ -68,6 +70,7 @@ export async function registerBehaviorRoutes(
     registerBehaviorWriteRoutes(scope);
     registerMessageTriggerReorderRoute(scope);
     registerWebhookSecretRotateRoute(scope);
+    registerBehaviorCommandRoutes(scope, options);
     registerGroupMemberRoutes(scope);
   });
 }

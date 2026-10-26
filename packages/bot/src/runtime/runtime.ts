@@ -40,14 +40,16 @@ export function createRuntime(): Runtime {
     bot.isReady() ? bot : null,
   );
   const messageMatcher = new MessageTriggerMatcher(webhookForwarder);
-  // plugin 註冊的名稱衝突檢查走共用的指令命名空間
-  setPluginCommandNamespace(new CommandNamespace());
+  // plugin 註冊與 behavior 指令寫入的名稱衝突檢查走同一個指令命名空間
+  const commandNamespace = new CommandNamespace();
+  setPluginCommandNamespace(commandNamespace);
 
   const ctx: RuntimeContext = {
     bot,
     webhookForwarder,
     interactionDispatcher,
     commandReconciler,
+    commandNamespace,
     messageMatcher,
     shuttingDown: false,
     dbReady: false,

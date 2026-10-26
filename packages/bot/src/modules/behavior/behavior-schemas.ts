@@ -4,6 +4,7 @@
  * closed (`additionalProperties: false`); Discord ids are snowflakes.
  */
 
+import { BEHAVIOR_OPTION_TYPES } from "./models/behavior-definition.model.js";
 import {
   NON_BLANK_PATTERN,
   ROW_ID_PATTERN,
@@ -67,4 +68,60 @@ export const messageTriggerFields = {
       { type: "null" },
     ],
   },
+} as const;
+
+// ── command fields ──────────────────────────────────────────────────────────
+
+/** Discord chat-input names (commands, subcommands, options); lower case. */
+export const COMMAND_NAME_PATTERN = "^[a-z0-9_-]{1,32}$";
+
+export const commandNameSchema = { type: "string", pattern: COMMAND_NAME_PATTERN } as const;
+
+/** A Discord description: 1–100 characters, not blank (#97). */
+export const discordDescriptionSchema = {
+  type: "string",
+  minLength: 1,
+  maxLength: 100,
+  pattern: NON_BLANK_PATTERN,
+} as const;
+
+export const commandOptionSchema = {
+  type: "object",
+  properties: {
+    type: { enum: [...BEHAVIOR_OPTION_TYPES] },
+    name: commandNameSchema,
+    description: discordDescriptionSchema,
+    required: { type: "boolean" },
+  },
+  required: ["type", "name", "description"],
+  additionalProperties: false,
+} as const;
+
+/** Command (container) fields: name and visibility (ADR 0003). */
+export const commandFields = {
+  name: commandNameSchema,
+  description: discordDescriptionSchema,
+  registration: { enum: ["global", "guild"] },
+  guildId: nullableSnowflake,
+  integrationTypes: {
+    type: "array",
+    items: { enum: ["guild_install", "user_install"] },
+    minItems: 1,
+    uniqueItems: true,
+  },
+  contexts: {
+    type: "array",
+    items: { enum: ["Guild", "BotDM", "PrivateChannel"] },
+    minItems: 1,
+    uniqueItems: true,
+  },
+  defaultMemberPermissions: {
+    anyOf: [{ type: "string", pattern: "^\\d{1,20}$" }, { type: "null" }],
+  },
+} as const;
+
+/** Command Leaf fields (besides the common ones and the webhook). */
+export const commandLeafFields = {
+  leafDescription: { anyOf: [discordDescriptionSchema, { type: "null" }] },
+  options: { type: "array", maxItems: 25, items: commandOptionSchema },
 } as const;

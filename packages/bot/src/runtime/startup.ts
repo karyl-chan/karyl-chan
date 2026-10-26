@@ -143,6 +143,7 @@ export async function runStartup(ctx: RuntimeContext): Promise<void> {
       bot,
       dmInbox: dmInboxService,
       reconciler: ctx.commandReconciler,
+      commandNamespace: ctx.commandNamespace,
     });
     const isHttps = !!(config.web.sslCertPath && config.web.sslKeyPath);
     botEventLog.record("info", "web", `Web server started on :${webPort}`, {

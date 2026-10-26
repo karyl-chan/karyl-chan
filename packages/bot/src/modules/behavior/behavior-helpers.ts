@@ -15,6 +15,13 @@ import {
 export interface BehaviorRoutesOptions {
   /** BH-6.2 test-fire 用；未提供時 route 自建（測試注入 stub 用）。 */
   forwarder?: import("../command-system/webhook-forwarder.service.js").WebhookForwarder;
+  /**
+   * 指令寫入向 Discord 註冊用（CommandReconciler）；未提供時註冊延後到
+   * 下一次 reconcile。
+   */
+  reconciler?: import("./command-registration-sync.js").BehaviorCommandRegistrar;
+  /** 指令名稱衝突檢查（CommandNamespace）；指令寫入必填。 */
+  namespace?: import("./command-registration-sync.js").CommandNamespaceChecker;
 }
 
 /**
