@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { ApiError, authedFetch, exchangeOneTimeToken, logout } from './client';
+import { ApiError, authedFetch, exchangeOneTimeToken, jsonOrThrow, logout } from './client';
 import { clearTokens, setTokens } from '../auth';
 
 const FUTURE = Date.now() + 60 * 60 * 1000;
@@ -242,5 +242,27 @@ describe('logout', () => {
         const fetchSpy = mockFetch(() => new Response(null, { status: 204 }));
         await logout();
         expect(fetchSpy).not.toHaveBeenCalled();
+    });
+});
+
+describe('jsonOrThrow', () => {
+    it('reads the structured error body: message, code and field', async () => {
+        const res = jsonResponse(
+            { error: { code: 'name_conflict', message: '/nas is already taken', field: 'name' } },
+            { status: 409 }
+        );
+        const err = await jsonOrThrow(res).catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(ApiError);
+        expect(err).toMatchObject({
+            status: 409,
+            message: '/nas is already taken',
+            code: 'name_conflict',
+            field: 'name'
+        });
+    });
+
+    it('still reads a plain string error', async () => {
+        const err = await jsonOrThrow(jsonResponse({ error: 'nope' }, { status: 400 })).catch((e: unknown) => e);
+        expect(err).toMatchObject({ status: 400, message: 'nope', code: null, field: null });
     });
 });

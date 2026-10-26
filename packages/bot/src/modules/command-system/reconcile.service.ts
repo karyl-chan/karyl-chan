@@ -333,6 +333,35 @@ export class CommandReconciler {
   }
 
   /**
+   * 放掉一筆不再需要的註冊：behavior 指令改名、換註冊目標或被刪除後，
+   * 舊的「名稱 + 目標」立刻從 Discord 與名冊移除，不等下一次 reconcileAll。
+   * desired set 仍涵蓋它（例如別的指令正好用這個名稱 + 目標）時不動。
+   * 與 registerOne 同在 reconcile 鎖內，所以看到的 desired set 與 DB 一致。
+   *
+   *   - removed：已刪除（Discord 上本來就沒有也算）
+   *   - still_desired：仍被需要，沒有刪
+   *   - unavailable：bot 未就緒或碰不到該伺服器 / Discord 失敗；名冊保留，
+   *     交給之後的 reconcileAll
+   */
+  async releaseRegistration(
+    name: string,
+    target: ConcreteTarget,
+  ): Promise<"removed" | "still_desired" | "unavailable"> {
+    return this.withLock(async () => {
+      const bot = this.getBot();
+      if (!bot?.application) return "unavailable";
+      const desired = (await this.listDesired()).map((d) => ({
+        name: d.name,
+        target: d.spec.target,
+      }));
+      if (isOwnedCommandDesired({ name, target }, desired)) return "still_desired";
+      return (await this.deleteStale(bot, { name, target }))
+        ? "removed"
+        : "unavailable";
+    });
+  }
+
+  /**
    * 增量 reconcile 單一 behavior 指令（behavior_commands.id；admin 寫入後
    * 呼叫）。沒有啟用中葉節點的指令從 Discord 刪除。
    */
@@ -378,13 +407,29 @@ export class CommandReconciler {
         // 來源決定停用時要不要立刻刪 Discord 上的舊註冊（behavior 會；
         // plugin 指令沿用既有行為，回報無法計算，交給 reconcileAll 清除）
         if (source.deleteWhenNotDesired && lookup.name && lookup.target) {
+          // 刪除失敗要回報（呼叫端據此判斷「已從 Discord 移除」是否成立）；
+          // bot 碰不到的伺服器不算失敗 —— 名冊保留，交給看得到它的 process，
+          // 以 skipped 回報，讓呼叫端知道移除還沒發生
+          const failures: string[] = [];
+          const skipped: TargetOutcome[] = [];
           for (const target of expandTarget(
             lookup.target,
             bot.guilds.cache.keys(),
           )) {
-            await this.deleteStale(bot, { name: lookup.name, target });
+            const removal = await this.removeRegistration(bot, {
+              name: lookup.name,
+              target,
+            });
+            if (removal.status === "failed") {
+              failures.push(`${target}: ${removal.error}`);
+            } else if (removal.status === "unavailable") {
+              skipped.push({ target, status: "skipped", reason: "guild_unavailable" });
+            }
           }
-          return { ...base, ok: true, action: "delete" };
+          const reported = skipped.length > 0 ? { targets: skipped } : {};
+          return failures.length > 0
+            ? { ...base, ok: false, action: "delete", error: failures.join("; "), ...reported }
+            : { ...base, ok: true, action: "delete", ...reported };
         }
         return {
           ...base,
@@ -620,21 +665,33 @@ export class CommandReconciler {
     bot: Client,
     owned: OwnedCommand,
   ): Promise<boolean> {
+    return (await this.removeRegistration(bot, owned)).status === "removed";
+  }
+
+  /** deleteStale 的三態版本：removed / unavailable（碰不到該目標）/ failed。 */
+  private async removeRegistration(
+    bot: Client,
+    owned: OwnedCommand,
+  ): Promise<
+    | { status: "removed" | "unavailable" }
+    | { status: "failed"; error: string }
+  > {
     const manager = commandManagerFor(bot, owned.target);
-    if (!manager) return false;
+    if (!manager) return { status: "unavailable" };
     try {
       const cmds = await manager.fetch();
       const cmd = cmds.find((c) => c.name === owned.name);
       if (cmd) await manager.delete(cmd.id);
       await deleteOwnedCommand(owned);
-      return true;
+      return { status: "removed" };
     } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
       botEventLog.record(
         "warn",
         "bot",
-        `command-reconciler: stale 清除失敗 ${owned.target} ${owned.name}：${err instanceof Error ? err.message : String(err)}`,
+        `command-reconciler: stale 清除失敗 ${owned.target} ${owned.name}：${error}`,
       );
-      return false;
+      return { status: "failed", error };
     }
   }
 

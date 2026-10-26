@@ -84,6 +84,10 @@ _Avoid_: slash behavior 的範圍、指定使用者的指令
 比對 bot 收得到的訊息 —— 與 bot 的私訊，或伺服器的頻道。對象篩選只在與 bot 的私訊提供。
 _Avoid_: DM pattern、message_pattern（舊稱，且不只限於私訊）
 
+**Message Trigger Location（訊息觸發位置）**:
+一個 Message Trigger 設在哪裡：surface + guildId + channelId，也就是與 bot 的私訊、全部伺服器、指定伺服器或指定頻道。訊息觸發的排序以位置為單位：管理員排的是同一個位置裡的觸發，比對時所有位置仍走同一條順序。位置的 key 寫成 `bot_dm`、`guild:all`、`guild:<id>`、`channel:<guildId>:<channelId>`（與訊息觸發的 Behavior Section key 相同，但位置是寫入用的識別，分區只是呈現）。
+_Avoid_: 用 section / 分區指稱排序或寫入的單位
+
 **Behavior Section（分區）**:
 Admin UI 依觸發的可用情境推導出的分組：App 指令、與 bot 的私訊、伺服器。只是呈現，不儲存、不影響行為。
 _Avoid_: scope tab、範圍分頁（已移除）

@@ -23,6 +23,7 @@ import { ChannelType } from "discord.js";
 import { registerBehaviorRoutes } from "../src/modules/behavior/behavior-routes.js";
 import { MessageTriggerMatcher } from "../src/modules/command-system/message-trigger-matcher.service.js";
 import type { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
+import { listAudit } from "../src/modules/admin/admin-audit.service.js";
 import { clearBehaviors, seedMessageTrigger } from "./behavior-fixtures.js";
 
 async function buildServer(): Promise<FastifyInstance> {
@@ -51,10 +52,10 @@ describe("behavior group members API", () => {
     let res = await server.inject({
       method: "PUT",
       url: "/api/behavior-groups/vip/members",
-      payload: { userIds: ["111111111", "222222222", "111111111"] },
+      payload: { userIds: ["111111111111111111", "222222222222222222", "111111111111111111"] },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json().members).toEqual(["111111111", "222222222"]);
+    expect(res.json().members).toEqual(["111111111111111111", "222222222222222222"]);
 
     res = await server.inject({
       method: "GET",
@@ -63,17 +64,34 @@ describe("behavior group members API", () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({
       groupName: "vip",
-      members: ["111111111", "222222222"],
+      members: ["111111111111111111", "222222222222222222"],
     });
 
     // full replace: dropping a member really removes them
     res = await server.inject({
       method: "PUT",
       url: "/api/behavior-groups/vip/members",
-      payload: { userIds: ["222222222"] },
+      payload: { userIds: ["222222222222222222"] },
     });
-    expect(res.json().members).toEqual(["222222222"]);
+    expect(res.json().members).toEqual(["222222222222222222"]);
 
+    await server.close();
+  });
+
+  it("records the replacement in admin_audit_log", async () => {
+    const server = await buildServer();
+    await server.inject({
+      method: "PUT",
+      url: "/api/behavior-groups/ops/members",
+      payload: { userIds: ["555555555555555555"] },
+    });
+    const [entry] = await listAudit({ limit: 1 });
+    expect(entry).toMatchObject({
+      actorUserId: "test",
+      action: "behavior.group_members.replace",
+      target: "group:ops",
+      context: { userIds: ["555555555555555555"] },
+    });
     await server.close();
   });
 
@@ -113,17 +131,17 @@ describe("behavior group members API", () => {
       }) as never;
 
     // warm the trigger snapshot before the membership changes
-    expect((await matcher.onMessage(dm("333333333"))).handled).toBe(false);
+    expect((await matcher.onMessage(dm("333333333333333333"))).handled).toBe(false);
 
     const server = await buildServer();
     await server.inject({
       method: "PUT",
       url: "/api/behavior-groups/vip/members",
-      payload: { userIds: ["333333333"] },
+      payload: { userIds: ["333333333333333333"] },
     });
 
-    expect(await matcher.onMessage(dm("333333333"))).toEqual({ handled: true, behaviorId: id });
-    expect((await matcher.onMessage(dm("444444444"))).handled).toBe(false);
+    expect(await matcher.onMessage(dm("333333333333333333"))).toEqual({ handled: true, behaviorId: id });
+    expect((await matcher.onMessage(dm("444444444444444444"))).handled).toBe(false);
 
     await server.close();
   });

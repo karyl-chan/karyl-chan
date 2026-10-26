@@ -295,6 +295,8 @@ export interface BehaviorDefinitionRow {
   audienceKind: BehaviorAudienceKind;
   audienceUserId: string | null;
   audienceGroupName: string | null;
+  /** last write — the version an admin edit is based on */
+  updatedAt: Date;
 }
 
 export function rowOfBehaviorDefinition(
@@ -327,6 +329,7 @@ export function rowOfBehaviorDefinition(
     audienceKind: value<BehaviorAudienceKind>("audienceKind"),
     audienceUserId: nullable<string>("audienceUserId"),
     audienceGroupName: nullable<string>("audienceGroupName"),
+    updatedAt: value<Date>("updatedAt"),
   };
 }
 
@@ -353,7 +356,7 @@ export function leafPathOf(leaf: {
 /**
  * A leaf's stored `options` JSON → its options. `null` when the column
  * holds something that is not a JSON array (hand-edited DB etc.); the
- * shape itself was validated on write (parseSlashCommandOptions).
+ * shape itself was validated on write (the leaf schema + checkLeafOptions).
  */
 export function parseLeafOptions(
   raw: string | null,

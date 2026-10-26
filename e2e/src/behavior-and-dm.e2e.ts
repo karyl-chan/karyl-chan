@@ -1,16 +1,15 @@
 /**
  * PM-2.3 — Core paths 4 + 5: behavior webhook forward + DM inbox SSE.
  *
- *   path 4: behavior seeded into the trigger/action tables → test-fire
- *           over the admin API → REAL HTTP POST to a webhook sink → auth
- *           headers per mode (none / token / hmac) → signed-response
- *           verification
- *
- * The behavior write API is rebuilt on the new tables in S4 (#136); until
- * then the harness seeds `behavior_definitions` + `behavior_webhook_actions`
- * straight into the shared Postgres, sealing the URL / secret with the
- * bot's `ENCRYPTION_KEY` the same way admin-dashboard.e2e.ts opens the
- * signing key.
+ *   path 4: message trigger created over the admin write API (#136) →
+ *           test-fire → REAL HTTP POST to a webhook sink → auth headers
+ *           per mode (none / token / hmac, with the secret the API issued
+ *           once) → signed-response verification → secret rotation: both
+ *           signatures during the grace period, a response signed with the
+ *           old secret still accepted
+ *           + the command write API on Postgres: a command saved while the
+ *           bot is not connected (registration deferred), a name conflict,
+ *           delete
  *   path 5: synthetic DM → recordActivity → event bus → SSE frames on
  *           /api/dm/events → channel listed → reply fails CLEANLY
  *           without Discord
@@ -35,12 +34,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { spawn, type ChildProcess } from "node:child_process";
-import {
-  createCipheriv,
-  createHash,
-  createHmac,
-  randomBytes,
-} from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import { createServer as createHttpServer, type Server } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import { networkInterfaces } from "node:os";
@@ -67,6 +61,9 @@ const BOT_MAIN = path.join(REPO, "packages", "bot", "build", "main.js");
 
 const ENCRYPTION_KEY =
   "0000000000000000000000000000000000000000000000000000000000000000";
+
+/** A guild id for the command write API; the bot runs without Discord. */
+const E2E_GUILD_ID = "920000000000000010";
 
 const DM_CHANNEL_ID = "920000000000000001";
 const DM_USER_ID = "920000000000000002";
@@ -132,32 +129,6 @@ async function api(
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
   return { status: res.status, body: await res.json().catch(() => null) };
-}
-
-/** Seal a value the way the bot's encryptSecret does (v2, AES-256-GCM). */
-function encryptV2(plaintext: string, keyHex: string): string {
-  const keyBytes = Buffer.from(keyHex, "hex");
-  const keyId = createHash("sha256").update(keyBytes).digest("hex").slice(0, 8);
-  const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", keyBytes, iv);
-  const ct = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
-  return [
-    "v2",
-    keyId,
-    iv.toString("base64"),
-    cipher.getAuthTag().toString("base64"),
-    ct.toString("base64"),
-  ].join(":");
-}
-
-type PgClient = import("pg").Client;
-
-async function connectDb(dbUrl: string): Promise<PgClient> {
-  // Lazy import keeps the suite skippable without pg installed elsewhere.
-  const { Client } = (await import("pg")) as typeof import("pg");
-  const client = new Client({ connectionString: dbUrl });
-  await client.connect();
-  return client;
 }
 
 /** The shared `<METHOD>:<path>:<ts>:<nonce>:<body>` HMAC-SHA256 scheme. */
@@ -259,6 +230,7 @@ describe("behavior webhook + DM inbox E2E (PM-2.3, paths 4+5)", { skip: !DB_URL 
   let botUrl = "";
   let sink: Sink | null = null;
   const createdBehaviorIds: number[] = [];
+  const createdCommandIds: number[] = [];
 
   before(async () => {
     sink = await startSink();
@@ -295,17 +267,14 @@ describe("behavior webhook + DM inbox E2E (PM-2.3, paths 4+5)", { skip: !DB_URL 
   });
 
   after(async () => {
-    // Behaviors persist in the shared e2e Postgres volume — sweep ours so
-    // re-runs stay clean (webhook actions and stats cascade).
-    if (createdBehaviorIds.length > 0) {
-      const db = await connectDb(DB_URL!);
-      try {
-        await db.query("DELETE FROM behavior_definitions WHERE id = ANY($1)", [
-          createdBehaviorIds,
-        ]);
-      } finally {
-        await db.end();
-      }
+    // Behaviors persist in the shared e2e Postgres volume — delete ours
+    // through the API so re-runs stay clean (webhook actions and stats go
+    // with them).
+    for (const id of createdBehaviorIds) {
+      await api("DELETE", `${botUrl}/api/behaviors/${id}`).catch(() => null);
+    }
+    for (const id of createdCommandIds) {
+      await api("DELETE", `${botUrl}/api/behavior-commands/${id}`).catch(() => null);
     }
     await sink?.close();
     if (bot && bot.exitCode === null) {
@@ -327,43 +296,27 @@ describe("behavior webhook + DM inbox E2E (PM-2.3, paths 4+5)", { skip: !DB_URL 
     }
   });
 
-  /** A bot DM message trigger with a webhook action pointing at the sink. */
+  /**
+   * A bot DM message trigger with a webhook action pointing at the sink,
+   * created through the write API. Returns the secret the bot issued (once)
+   * when the webhook authenticates.
+   */
   async function createBehavior(
     suffix: string,
-    webhook: { authMode?: "token" | "hmac"; secret?: string } = {},
-  ): Promise<number> {
-    const db = await connectDb(DB_URL!);
-    try {
-      const now = new Date();
-      const inserted = await db.query(
-        `INSERT INTO behavior_definitions
-           ("title", "description", "enabled", "sortOrder", "systemKey",
-            "triggerKind", "actionSource", "surface", "patternKind",
-            "patternValue", "stopOnMatch", "ignoreBots", "audienceKind",
-            "createdAt", "updatedAt")
-         VALUES ($1, '', true, 0, NULL, 'message', 'webhook', 'bot_dm',
-                 'startswith', $2, false, true, 'all', $3, $3)
-         RETURNING "id"`,
-        [`e2e webhook ${suffix}`, `!e2e-${suffix}`, now],
-      );
-      const id = inserted.rows[0].id as number;
-      createdBehaviorIds.push(id);
-      await db.query(
-        `INSERT INTO behavior_webhook_actions
-           ("behaviorId", "url", "secret", "authMode", "createdAt", "updatedAt")
-         VALUES ($1, $2, $3, $4, $5, $5)`,
-        [
-          id,
-          encryptV2(sink!.url(`/hook/${suffix}`), ENCRYPTION_KEY),
-          webhook.secret ? encryptV2(webhook.secret, ENCRYPTION_KEY) : null,
-          webhook.secret ? (webhook.authMode ?? "token") : null,
-          now,
-        ],
-      );
-      return id;
-    } finally {
-      await db.end();
-    }
+    authMode: "token" | "hmac" | null = null,
+  ): Promise<{ id: number; secret: string | null }> {
+    const res = await api("POST", `${botUrl}/api/behaviors`, {
+      title: `e2e webhook ${suffix}`,
+      surface: "bot_dm",
+      patternKind: "startswith",
+      patternValue: `!e2e-${suffix}`,
+      webhook: { url: sink!.url(`/hook/${suffix}`), authMode },
+    });
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+    const body = res.body as { behavior: { id: number }; secret?: string };
+    createdBehaviorIds.push(body.behavior.id);
+    assert.equal(body.secret !== undefined, authMode !== null, "a secret is issued exactly when auth is on");
+    return { id: body.behavior.id, secret: body.secret ?? null };
   }
 
   function testFire(id: number) {
@@ -371,7 +324,7 @@ describe("behavior webhook + DM inbox E2E (PM-2.3, paths 4+5)", { skip: !DB_URL 
   }
 
   it("path 4: forwards with no auth mode and relays the sink's content", async () => {
-    const id = await createBehavior("none");
+    const { id } = await createBehavior("none");
     sink!.respondWith({ content: "ok from sink" });
 
     const fired = await testFire(id);
@@ -394,8 +347,7 @@ describe("behavior webhook + DM inbox E2E (PM-2.3, paths 4+5)", { skip: !DB_URL 
   });
 
   it("path 4: token mode sends the shared secret header", async () => {
-    const secret = randomBytes(16).toString("hex");
-    const id = await createBehavior("token", { authMode: "token", secret });
+    const { id, secret } = await createBehavior("token", "token");
     sink!.respondWith({ content: "token ok" });
 
     const fired = await testFire(id);
@@ -408,8 +360,9 @@ describe("behavior webhook + DM inbox E2E (PM-2.3, paths 4+5)", { skip: !DB_URL 
   });
 
   it("path 4: hmac mode signs the request and verifies the response fail-closed", async () => {
-    const secret = randomBytes(16).toString("hex");
-    const id = await createBehavior("hmac", { authMode: "hmac", secret });
+    const created = await createBehavior("hmac", "hmac");
+    const id = created.id;
+    const secret = created.secret!;
 
     // 1. Signed request reaches the sink; sink answers SIGNED → ok and
     //    the content is relayed.
@@ -437,6 +390,85 @@ describe("behavior webhook + DM inbox E2E (PM-2.3, paths 4+5)", { skip: !DB_URL 
     const verdict = rejected.body as { ok: boolean; error: string | null };
     assert.equal(verdict.ok, false, "unsigned response must not be trusted");
     assert.ok(verdict.error, "rejection carries a reason");
+  });
+
+  it("path 4: a rotated secret keeps the old one valid for the grace period", async () => {
+    const created = await createBehavior("rotate", "hmac");
+    const oldSecret = created.secret!;
+
+    const rotated = await api("POST", `${botUrl}/api/behaviors/${created.id}/webhook-secret/rotate`);
+    assert.equal(rotated.status, 200, JSON.stringify(rotated.body));
+    const { secret: newSecret, previousSecretExpiresAt } = rotated.body as {
+      secret: string;
+      previousSecretExpiresAt: string;
+    };
+    assert.notEqual(newSecret, oldSecret);
+    assert.ok(Date.parse(previousSecretExpiresAt) > Date.now() + 23 * 3600_000);
+
+    // The list never shows either secret, only that one is set and when the grace ends.
+    const list = await api("GET", `${botUrl}/api/behaviors`);
+    const text = JSON.stringify(list.body);
+    assert.ok(!text.includes(oldSecret) && !text.includes(newSecret), "secrets are write-only");
+
+    // A receiver still on the OLD secret: its signed response is accepted …
+    sink!.respondWith({ content: "old receiver" }, { signWithSecret: oldSecret });
+    const fired = await testFire(created.id);
+    const result = fired.body as { ok: boolean; relayContent: string };
+    assert.equal(result.ok, true, JSON.stringify(fired.body));
+    assert.equal(result.relayContent, "old receiver");
+
+    // … and the request carries both signatures over the same ts / nonce.
+    const hit = sink!.hits.at(-1)!;
+    const ts = hit.headers["x-karyl-timestamp"] as string;
+    const nonce = hit.headers["x-karyl-nonce"] as string;
+    assert.equal(
+      hit.headers["x-karyl-signature"],
+      hmacSign(newSecret, "POST", "/hook/rotate", ts, nonce, hit.body),
+      "the standard header is signed with the NEW secret",
+    );
+    assert.equal(
+      hit.headers["x-karyl-signature-previous"],
+      hmacSign(oldSecret, "POST", "/hook/rotate", ts, nonce, hit.body),
+      "the previous secret's signature rides along during the grace period",
+    );
+  });
+
+  it("command write API: saved while Discord is away, names stay unique", async () => {
+    const command = {
+      name: "e2e-nas",
+      description: "e2e command",
+      registration: "guild",
+      guildId: E2E_GUILD_ID,
+      leaves: [
+        { subcommand: "wake", title: "Wake", webhook: { url: sink!.url("/hook/wake") } },
+      ],
+    };
+    const created = await api("POST", `${botUrl}/api/behavior-commands`, command);
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const body = created.body as {
+      command: { id: number; section: string };
+      registration: { status: string };
+    };
+    createdCommandIds.push(body.command.id);
+    assert.equal(body.command.section, `guild:${E2E_GUILD_ID}`);
+    assert.equal(body.registration.status, "deferred", "no Discord connection in this harness");
+
+    // Same name in the same guild: refused by the namespace / Postgres unique index.
+    const conflict = await api("POST", `${botUrl}/api/behavior-commands`, command);
+    assert.equal(conflict.status, 409, JSON.stringify(conflict.body));
+    assert.equal((conflict.body as { error: { code: string } }).error.code, "name_conflict");
+
+    // A second subcommand; registration again deferred.
+    const leaf = await api("POST", `${botUrl}/api/behavior-commands/${body.command.id}/leaves`, {
+      subcommand: "status",
+      title: "Status",
+      webhook: { url: sink!.url("/hook/status") },
+    });
+    assert.equal(leaf.status, 201, JSON.stringify(leaf.body));
+
+    const removed = await api("DELETE", `${botUrl}/api/behavior-commands/${body.command.id}`);
+    assert.equal(removed.status, 200, JSON.stringify(removed.body));
+    createdCommandIds.pop();
   });
 
   it("path 5: synthetic DM flows store → bus → SSE, and reply degrades cleanly", async (t) => {

@@ -56,6 +56,8 @@ describe("WebhookForwarder connects to the checked address", () => {
       url: encryptSecret(`http://rebind.invalid:${port}/hook`),
       secret: null,
       authMode: null,
+      previousSecret: null,
+      previousSecretExpiresAt: null,
     };
 
     const result = await new WebhookForwarder().forward(behavior, {
