@@ -109,9 +109,10 @@ one channel); actions are a webhook, or the built-in login action that
 only the System Behavior uses. Three tables: `behavior_commands` (a
 Command and its visibility settings), `behavior_definitions` (one
 Behavior: its trigger, action source and `systemKey`) and
-`behavior_webhook_actions` (encrypted URL / secret, auth mode). The
-admin UI groups behaviors by a derived Behavior Section; nothing about
-sections is stored.
+`behavior_webhook_actions` (encrypted URL / secret, auth mode, and the
+previous secret during a rotation's 24 h grace period). The admin UI
+groups behaviors by a derived Behavior Section; nothing about sections
+is stored.
 
 **Key files.**
 - `behavior-catalog.ts` — `loadBehaviorCatalog()` reads commands with
@@ -122,12 +123,41 @@ sections is stored.
   TTL backstop for writes from other processes.
 - `behavior-section.ts` — `behaviorSection()`, the one rule that derives
   a trigger's Behavior Section. Pure.
-- `behavior-list-view.ts` — the read-only `GET /api/behaviors` shape
-  (`{ system, commands, messageTriggers }`, secrets only as `secretSet`).
-- `behavior-routes.ts` — `GET /api/behaviors`, test-fire, group members.
-  The write routes return with S4 (#136).
-- `behavior-helpers.ts` — the `behavior.manage` gate and the save-time
-  validators (webhook target, regex, leaf options).
+- `behavior-list-view.ts` — the `GET /api/behaviors` shape
+  (`{ system, commands, messageTriggers }`, secrets only as `secretSet`;
+  every row carries `updatedAt`, the version an edit's `ifUpdatedAt`
+  is checked against).
+- `behavior-routes.ts` — mounts every behavior route in one Fastify
+  scope (gate before validation, strict schemas, uniform errors);
+  serves `GET /api/behaviors`, test-fire, group members.
+- `behavior-api-error.ts` — the refusal contract
+  `{ error: { code, message, field? } }` (`validation_failed`,
+  `name_conflict`, `system_immutable`, `registration_failed`,
+  `not_found`, `invalid_tree`) and the scope's own ajv (no
+  `removeAdditional`, no coercion), so `additionalProperties: false`
+  refuses instead of dropping. `behavior-schemas.ts` holds the shared
+  field schemas.
+- `behavior-write-routes.ts` — Message Trigger create / edit / delete,
+  and the leaf branch of `PATCH` / `DELETE /api/behaviors/:id`;
+  `message-trigger-rules.ts` is the pure trigger rule set.
+- `behavior-command-routes.ts` — `/api/behavior-commands`: commands,
+  added leaves, convert-to-subcommands, resync; `command-leaf-writes.ts`
+  edits and removes leaves; `command-tree-rules.ts` is Discord's
+  rule set for a command and its leaves (pure).
+- `command-registration-sync.ts` — commit → `registerOne` → release the
+  old name; a refusal restores the rows from `command-snapshot.ts` and
+  answers `registration_failed` (the consistency story is in the file
+  header).
+- `message-trigger-reorder.ts` — `PUT /api/behaviors/reorder`, one
+  location at a time, keeping the global matching order.
+- `webhook-action-input.ts` / `webhook-secret-rotate.ts` — webhook
+  intake (bot-generated, write-only secret) and rotation.
+- `behavior-write-lock.ts` — in-process write serialisation and the
+  write transaction (Postgres: advisory lock).
+- `behavior-audit.ts` — every write → `admin_audit_log`, never a
+  secret or a webhook URL (a URL fingerprint instead).
+- `behavior-helpers.ts` — the `behavior.manage` gate and the webhook
+  target / regex checks.
 - `behavior-trigger.ts` — pure `matchesTrigger`.
 - `system-seed.service.ts` — adds the System Behavior (login, DM
   `!login`) when it is missing.
@@ -135,10 +165,14 @@ sections is stored.
   behavior-webhook-action, behavior-stats, behavior-group-member.
 
 **External surface.** HTTP `/api/behaviors/*`,
-`/api/behavior-groups/*`; `ensureSystemBehaviors` (startup);
-`getBehaviorCatalog` (read by command-system).
+`/api/behavior-commands/*`, `/api/behavior-groups/*`;
+`ensureSystemBehaviors` (startup); `getBehaviorCatalog` (read by
+command-system).
 
-**Depends on.** web-core; admin (audit + capability).
+**Depends on.** web-core; admin (audit + capability); command-system
+types only — the `CommandReconciler` and `CommandNamespace` are
+injected by the route wiring (`runtime.ts` → web server → module
+routes).
 
 > Behavior **dispatch** (trigger → action) lives in `command-system`,
 > not here. This module is only the rule store and CRUD.
@@ -413,6 +447,7 @@ admin → bot-events                                           OK   (admin actio
 behavior → admin                                             OK   (audit + capability)
 command-system → behavior / plugin-system                    OK   (reads rules, dispatches)
 plugin-system ⇢ command-system (import type only)             OK   (CommandTarget / CommandNamespace types)
+behavior ⇢ command-system (import type only)                  OK   (CommandReconciler / CommandNamespace types; injected)
 plugin-system → feature-toggle / voice                       OK
 builtin-features → feature-toggle / bot-events / voice        OK
 builtin-features ↔ guild-management                           OK   (facade; builtin imports type only)
@@ -423,7 +458,9 @@ dm-inbox → admin / guild-management / bot-events              OK
 close a runtime cycle with the edge above. Where plugin registration
 needs a command-system service it gets it injected: `runtime.ts` builds
 the `CommandNamespace` and hands it over with
-`setPluginCommandNamespace()`; plugin-system only holds the type.
+`setPluginCommandNamespace()`; plugin-system only holds the type. The
+behavior write routes get the same `CommandNamespace` and the
+`CommandReconciler` through the web server's route deps.
 
 ### Forbidden
 
@@ -533,8 +570,13 @@ boot, on fresh and existing DBs alike). A migration is only needed when
 1. Add server.<method>(...) in the module's routes file.
 2. Gate with web-core's requireCapability(...) or
    requireGuildCapability(...).
-3. Validate with web-core/validators.ts helpers (isSnowflake,
-   isBoundedString, ...).
+3. Validate the request: either web-core/validators.ts helpers
+   (isSnowflake, isBoundedString, ...) in the handler, or a Fastify JSON
+   schema on the route when the module's routes run in a scope with a
+   strict validator — the behavior module does this (behavior-routes.ts:
+   one scope, own ajv without coercion or removeAdditional, refusals as
+   { error: { code, message, field? } }). A new route in such a module
+   follows the module's way; one module never mixes both.
 4. For admin operations, await recordAudit(...) (from
    admin/admin-audit.service).
 5. Call into the module's services / models.
