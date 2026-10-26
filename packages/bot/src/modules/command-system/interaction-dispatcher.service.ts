@@ -22,8 +22,10 @@ import {
 } from "discord.js";
 import {
   Behavior,
+  rowOfBehavior,
   type BehaviorRow,
 } from "../behavior/models/behavior.model.js";
+import { behaviorTarget, targetMatchesInvocation } from "./command-target.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { dispatchInteractionToPlugin } from "../plugin-system/plugin-interaction-dispatch.service.js";
 import { dispatchComponentToPlugin } from "../plugin-system/plugin-component-dispatch.service.js";
@@ -195,71 +197,24 @@ export class InteractionDispatcher {
   ): Promise<DispatchOutcome> {
     let behaviorRow: BehaviorRow | null = null;
     try {
-      // 查找 behaviors 表中 triggerType='slash_command' + slashCommandName 匹配的 row
-      const row = await Behavior.findOne({
+      // 以 (commandName, commandGuildId) 找 behavior：commandGuildId 是這個
+      // 指令註冊在哪個伺服器（全域指令為 null），與 interaction 發生在哪裡
+      // 無關。同名指令可能分屬不同目標（全域 behavior vs plugin 的伺服器
+      // 指令、不同伺服器的指定伺服器指令），只認目標相符的那一條。
+      const commandGuildId = interaction.commandGuildId ?? null;
+      const rows = await Behavior.findAll({
         where: {
           triggerType: "slash_command",
           slashCommandName: interaction.commandName,
           enabled: true,
         },
       });
-      if (!row) return { claimed: false };
-
-      behaviorRow = {
-        id: row.getDataValue("id") as number,
-        title: row.getDataValue("title") as string,
-        description: (row.getDataValue("description") as string) ?? "",
-        enabled: !!row.getDataValue("enabled"),
-        sortOrder: row.getDataValue("sortOrder") as number,
-        stopOnMatch: !!row.getDataValue("stopOnMatch"),
-        ignoreBots: !!row.getDataValue("ignoreBots"),
-        sessionExpireHours:
-          (row.getDataValue("sessionExpireHours") as number | null) ?? null,
-        forwardType: row.getDataValue(
-          "forwardType",
-        ) as BehaviorRow["forwardType"],
-        source: row.getDataValue("source") as BehaviorRow["source"],
-        triggerType: row.getDataValue(
-          "triggerType",
-        ) as BehaviorRow["triggerType"],
-        messagePatternKind:
-          (row.getDataValue(
-            "messagePatternKind",
-          ) as BehaviorRow["messagePatternKind"]) ?? null,
-        messagePatternValue:
-          (row.getDataValue("messagePatternValue") as string | null) ?? null,
-        slashCommandName:
-          (row.getDataValue("slashCommandName") as string | null) ?? null,
-        slashCommandDescription:
-          (row.getDataValue("slashCommandDescription") as string | null) ??
-          null,
-        slashCommandOptions:
-          (row.getDataValue("slashCommandOptions") as string | null) ?? null,
-        scope: row.getDataValue("scope") as BehaviorRow["scope"],
-        integrationTypes: row.getDataValue("integrationTypes") as string,
-        contexts: row.getDataValue("contexts") as string,
-        placementGuildId:
-          (row.getDataValue("placementGuildId") as string | null) ?? null,
-        placementChannelId:
-          (row.getDataValue("placementChannelId") as string | null) ?? null,
-        audienceKind: row.getDataValue(
-          "audienceKind",
-        ) as BehaviorRow["audienceKind"],
-        audienceUserId:
-          (row.getDataValue("audienceUserId") as string | null) ?? null,
-        audienceGroupName:
-          (row.getDataValue("audienceGroupName") as string | null) ?? null,
-        webhookUrl: (row.getDataValue("webhookUrl") as string | null) ?? null,
-        webhookSecret:
-          (row.getDataValue("webhookSecret") as string | null) ?? null,
-        webhookAuthMode:
-          (row.getDataValue(
-            "webhookAuthMode",
-          ) as BehaviorRow["webhookAuthMode"]) ?? null,
-        systemKey:
-          (row.getDataValue("systemKey") as BehaviorRow["systemKey"]) ?? null,
-        scopeTabId: (row.getDataValue("scopeTabId") as number) ?? 1,
-      };
+      behaviorRow =
+        rows
+          .map(rowOfBehavior)
+          .find((r) =>
+            targetMatchesInvocation(behaviorTarget(r), commandGuildId),
+          ) ?? null;
     } catch (err) {
       botEventLog.record(
         "error",

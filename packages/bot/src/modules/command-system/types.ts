@@ -9,6 +9,7 @@ import type {
   ApplicationCommandData,
   RESTPostAPIWebhookWithTokenJSONBody,
 } from "discord.js";
+import type { CommandTarget, ConcreteTarget } from "./command-target.js";
 
 // ── 三軸核心型別（C-runtime §2.1）────────────────────────────────────────────
 
@@ -48,11 +49,12 @@ export interface ThreeAxisSpec {
 
 /**
  * reconciler 傳給 Discord API 的完整登記規格。
- * - scope='global'：呼叫 `application.commands.create(data)`
- * - scope='guild'：per each guild 呼叫 `guild.commands.create(data)`
+ * - target='global'：呼叫 `application.commands.create(data)`
+ * - target='guild:<id>'：只在該 guild 呼叫 `guild.commands.create(data)`
+ * - target='all_guilds'：per each guild 呼叫 `guild.commands.create(data)`
  */
 export interface DiscordRegistrationSpec {
-  scope: CommandScope;
+  target: CommandTarget;
   data: ApplicationCommandData;
 }
 
@@ -73,12 +75,26 @@ export class RejectionError extends Error {
 
 // ── ReconcileReport / ReconcileItemResult（C-runtime §2.2）──────────────────
 
+/** 一個指令在一個具體目標（全域或某個伺服器）上的處理結果。 */
+export type TargetOutcome =
+  | { target: ConcreteTarget; status: "created" | "patched" | "unchanged" }
+  | {
+      target: ConcreteTarget;
+      status: "failed";
+      attempted: "create" | "patch";
+      error: string;
+    }
+  /** `guild:<id>` 但 bot 不在（或此 shard 看不到）那個伺服器 */
+  | { target: ConcreteTarget; status: "skipped"; reason: "guild_unavailable" };
+
 export interface ReconcileItemResult {
   ok: boolean;
   source: "behavior" | "plugin_command";
   sourceId: number;
   action?: "create" | "patch" | "delete" | "noop";
   error?: string;
+  /** 逐目標的結果（有實際套用到 Discord 時才有） */
+  targets?: TargetOutcome[];
 }
 
 export interface ReconcileReport {

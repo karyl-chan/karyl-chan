@@ -38,6 +38,7 @@ import { sequelize } from "../src/db.js";
 import { Behavior } from "../src/modules/behavior/models/behavior.model.js";
 import { addGroupMember } from "../src/modules/behavior/models/behavior-group-member.model.js";
 import { InteractionDispatcher } from "../src/modules/command-system/interaction-dispatcher.service.js";
+import { dispatchInteractionToPlugin } from "../src/modules/plugin-system/plugin-interaction-dispatch.service.js";
 import type { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
 
 beforeAll(async () => {
@@ -60,6 +61,8 @@ function fakeSlash(opts: {
   userId: string;
   guildId?: string | null;
   channelId?: string | null;
+  /** 指令註冊在哪個伺服器（全域指令為 null）—— Discord 的 commandGuildId */
+  commandGuildId?: string | null;
 }) {
   const reply = vi.fn(async () => {});
   const deferReply = vi.fn(async () => {});
@@ -75,6 +78,7 @@ function fakeSlash(opts: {
     token: "tok",
     applicationId: "app1",
     commandName: opts.commandName,
+    commandGuildId: opts.commandGuildId ?? null,
     guildId: opts.guildId ?? null,
     channelId: opts.channelId ?? "C-any",
     locale: "en-US",
@@ -205,6 +209,7 @@ describe("InteractionDispatcher — behavior reach enforcement", () => {
       userId: "U1",
       guildId: "G2",
       channelId: "C1",
+      commandGuildId: "G1",
     });
     await d.dispatch(wrongGuild.interaction);
     expect(forwarder.forward).not.toHaveBeenCalled();
@@ -218,6 +223,7 @@ describe("InteractionDispatcher — behavior reach enforcement", () => {
       userId: "U1",
       guildId: "G1",
       channelId: "C9",
+      commandGuildId: "G1",
     });
     await d.dispatch(wrongChannel.interaction);
     expect(forwarder.forward).not.toHaveBeenCalled();
@@ -227,8 +233,91 @@ describe("InteractionDispatcher — behavior reach enforcement", () => {
       userId: "U1",
       guildId: "G1",
       channelId: "C1",
+      commandGuildId: "G1",
     });
     await d.dispatch(right.interaction);
+    expect(forwarder.forward).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("InteractionDispatcher — matches behaviors by (commandName, commandGuildId)", () => {
+  it("a specific-guild behavior only answers the command registered in its guild", async () => {
+    // （兩個指定伺服器的 behavior 同名在命名空間上合法，但舊的
+    //   behaviors_slash_uq 索引仍擋著，S3 換資料表時移除。）
+    const id = await seedCustomSlash({
+      scope: "guild",
+      integrationTypes: "guild_install",
+      contexts: "Guild",
+      placementGuildId: "G1",
+    });
+    (dispatchInteractionToPlugin as Mock).mockResolvedValue(true);
+    const forwarder = makeForwarder();
+    const d = new InteractionDispatcher(forwarder as unknown as WebhookForwarder);
+
+    // G2 的同名指令（例如 plugin 的）不歸這條 behavior
+    const other = fakeSlash({
+      commandName: "reachtest",
+      userId: "U1",
+      guildId: "G2",
+      commandGuildId: "G2",
+    });
+    expect(await d.dispatch(other.interaction)).toEqual({
+      claimed: true,
+      claimedBy: "plugin_command",
+    });
+    expect(forwarder.forward).not.toHaveBeenCalled();
+
+    const own = fakeSlash({
+      commandName: "reachtest",
+      userId: "U1",
+      guildId: "G1",
+      commandGuildId: "G1",
+    });
+    expect(await d.dispatch(own.interaction)).toEqual({
+      claimed: true,
+      claimedBy: "behavior_custom",
+    });
+    const payload = (forwarder.forward.mock.calls[0] as unknown[])[1] as {
+      _meta: { behavior_id: number };
+    };
+    expect(payload._meta.behavior_id).toBe(id);
+  });
+
+  it("a global behavior does not claim a same-named guild command (e.g. a plugin's)", async () => {
+    await seedCustomSlash({});
+    (dispatchInteractionToPlugin as Mock).mockResolvedValue(true);
+    const forwarder = makeForwarder();
+    const d = new InteractionDispatcher(forwarder as unknown as WebhookForwarder);
+
+    const { interaction } = fakeSlash({
+      commandName: "reachtest",
+      userId: "U1",
+      guildId: "G1",
+      commandGuildId: "G1",
+    });
+    const outcome = await d.dispatch(interaction);
+
+    expect(outcome).toEqual({ claimed: true, claimedBy: "plugin_command" });
+    expect(forwarder.forward).not.toHaveBeenCalled();
+  });
+
+  it("an all-guilds behavior answers its command in any guild", async () => {
+    await seedCustomSlash({
+      scope: "guild",
+      integrationTypes: "guild_install",
+      contexts: "Guild",
+    });
+    const forwarder = makeForwarder();
+    const d = new InteractionDispatcher(forwarder as unknown as WebhookForwarder);
+
+    const { interaction } = fakeSlash({
+      commandName: "reachtest",
+      userId: "U1",
+      guildId: "G7",
+      commandGuildId: "G7",
+    });
+    await d.dispatch(interaction);
+
     expect(forwarder.forward).toHaveBeenCalledTimes(1);
   });
 });

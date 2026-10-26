@@ -87,6 +87,21 @@ export function registerInProcessModal(entry: ModalEntry): void {
   modals.push(entry);
 }
 
+/**
+ * Names + scopes of every registered in-process command. Read by the
+ * command namespace (command-system/command-namespace.ts) so plugin and
+ * behavior commands can't take a built-in name.
+ */
+export function listInProcessCommandNames(): Array<{
+  name: string;
+  scope: "global" | "guild";
+}> {
+  return [...commands.values()].map((spec) => ({
+    name: spec.data.name,
+    scope: spec.scope,
+  }));
+}
+
 /** For tests + assertions; production code should not iterate this. */
 export function _listInProcessCommands(): ReadonlyArray<CommandSpec> {
   return [...commands.values()];
