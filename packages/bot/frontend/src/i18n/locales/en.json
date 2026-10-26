@@ -1385,7 +1385,21 @@
                 "none": "None"
             },
             "authNoteDrop": "Saving removes the secret; requests are no longer signed.",
-            "authNoteIssue": "Saving makes the bot generate a secret, shown once."
+            "authNoteIssue": "Saving makes the bot generate a secret, shown once.",
+            "replyVisibility": {
+                "label": "Who sees the reply",
+                "command": {
+                    "private": "Only the person who ran it",
+                    "public": "Everyone in the channel"
+                },
+                "guild": {
+                    "private": "A DM to whoever triggered it",
+                    "public": "Everyone in the channel"
+                },
+                "defaultMark": " (default)",
+                "hint": "The service's response can choose too (ephemeral); this is the default.",
+                "notApplicable": "Not applicable: only they see a DM with the bot"
+            }
         },
         "secret": {
             "label": "Webhook secret",

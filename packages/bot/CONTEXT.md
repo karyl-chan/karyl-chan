@@ -113,7 +113,11 @@ _Avoid_: 內建動作（它不是可選的動作來源）、admin-login
 
 **Behavior Reply（回覆）**:
 動作的回答：`{ content?, embeds?, components?, ephemeral?, flags? }`，與 plugin `interactions.respond` 同形。webhook 的回應與內建登入動作都產生它，由 Reply Renderer 送出；`ephemeral` 決定誰看得到（指令預設只有執行的人；伺服器訊息預設公開，`true` 改私訊作者；與 bot 的私訊不受影響）。
+誰看得到的順序：回應的 `ephemeral` → behavior 儲存的 Reply Visibility → 觸發本身的預設。
 _Avoid_: relay、轉發內容（舊稱，只有 content / embeds）
+
+**Reply Visibility（回覆給誰看）**:
+指令葉節點與伺服器訊息觸發儲存的回覆預設：`private`（指令只有執行的人；伺服器訊息私訊作者）、`public`（貼在頻道），null 沿用觸發本身的預設。回應的 `ephemeral` 可覆蓋；與 bot 的私訊與 System Behavior 不適用。
 
 **Reply Renderer**:
 把 Behavior Reply 送到 Discord 的唯一入口，目標是一個互動（指令觸發）或一則訊息（訊息觸發）。

@@ -167,6 +167,15 @@ with nothing to show) means "no reply".
 | Message in a DM with the bot | in the DM | in the DM | in the DM (ignored) |
 | Message in a guild channel | in the channel | in the channel | DMed to the author; never in the channel |
 
+The "Default" column can be changed per behavior: a command leaf and a
+guild message trigger store `replyVisibility` (admin UI: 「回覆給誰看」) —
+`private` (a command: only the invoker; a guild trigger: the author's
+DMs), `public` (the channel), or `null` for the default above. Who sees a
+reply is decided in this order: the response's `ephemeral`, then the
+stored `replyVisibility`, then the trigger's default. A command stored
+`public` defers in the open, so a public answer fills the "thinking…"
+message in place. Not used in a DM with the bot, nor by the system login.
+
 Mentions in a reply are never parsed. There is no `[BEHAVIOR:END]` marker
 any more: it ended a conversation session, and sessions were removed
 with ADR 0003 (S1), so a reply never ends anything.
@@ -178,7 +187,7 @@ right now"), never the receiver's error text:
 
 | Trigger | Where the failure line goes |
 |---------|-----------------------------|
-| Command | the invoker's reply (the "thinking…" placeholder is resolved) |
+| Command | the invoker only: a private "thinking…" placeholder is filled with it; a public one (a leaf stored `public`) is deleted and the line follows up privately |
 | Message in a DM with the bot | the DM |
 | Message in a guild channel | a DM to the author; if that DM fails, nothing — the channel never hears about it |
 

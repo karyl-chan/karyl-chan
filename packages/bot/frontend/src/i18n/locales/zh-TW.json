@@ -1385,7 +1385,21 @@
                 "none": "不驗證"
             },
             "authNoteDrop": "儲存後會移除密鑰，webhook 不再簽章。",
-            "authNoteIssue": "儲存後 bot 會產生密鑰，只顯示一次。"
+            "authNoteIssue": "儲存後 bot 會產生密鑰，只顯示一次。",
+            "replyVisibility": {
+                "label": "回覆給誰看",
+                "command": {
+                    "private": "只有執行的人",
+                    "public": "頻道裡所有人"
+                },
+                "guild": {
+                    "private": "私訊給觸發的人",
+                    "public": "頻道裡所有人"
+                },
+                "defaultMark": "（預設）",
+                "hint": "服務的回應也可以自己指定（ephemeral）；這裡是預設值。",
+                "notApplicable": "不適用：與 bot 的私訊裡只有對方看得到"
+            }
         },
         "secret": {
             "label": "Webhook 密鑰",

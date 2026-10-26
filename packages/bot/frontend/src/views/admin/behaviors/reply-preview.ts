@@ -1,4 +1,4 @@
-import type { BehaviorReplyView } from '../../../api/behavior';
+import type { BehaviorReplyView, ReplyVisibility } from '../../../api/behavior';
 
 /**
  * Where a behavior's reply goes — the trigger's kind as the bot's
@@ -28,8 +28,16 @@ export function replyAudience(ephemeral: boolean | undefined, target: ReplyTarge
     return ephemeral === true ? 'author_dm' : 'channel';
 }
 
-/** A test-fire's reply as the bot would render it, summarised for the admin. */
-export function replyPreview(reply: BehaviorReplyView, target: ReplyTargetKind): ReplyPreview {
+/**
+ * A test-fire's reply as the bot would render it, summarised for the admin.
+ * Who sees it: the response's `ephemeral`, else the stored default, else
+ * the trigger's own default (the bot's renderer, in the same order).
+ */
+export function replyPreview(
+    reply: BehaviorReplyView,
+    target: ReplyTargetKind,
+    stored: ReplyVisibility | null = null
+): ReplyPreview {
     const embedTitles = (reply.embeds ?? []).map((e) => e.title ?? null);
     const buttons = (reply.components ?? []).flatMap((row) => row.components.map((b) => ({ label: b.label, url: b.url })));
     const content = reply.content ?? null;
@@ -37,7 +45,7 @@ export function replyPreview(reply: BehaviorReplyView, target: ReplyTargetKind):
         content,
         embedTitles,
         buttons,
-        audience: replyAudience(reply.ephemeral, target),
+        audience: replyAudience(reply.ephemeral ?? (stored ? stored === 'private' : undefined), target),
         empty: content === null && embedTitles.length === 0 && buttons.length === 0,
     };
 }

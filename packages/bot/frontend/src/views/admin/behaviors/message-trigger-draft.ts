@@ -5,6 +5,7 @@ import type {
     BehaviorWebhookAuthMode,
     MessageTriggerInput,
     MessageTriggerView,
+    ReplyVisibility,
 } from '../../../api/behavior';
 import type { DraftModel } from './draft-rebase';
 import { kindHasGuild, locationKindOf, type LocationKind, type TriggerLocation } from './message-trigger-location';
@@ -34,6 +35,8 @@ export interface MessageTriggerDraft extends WebhookDraft {
     audienceKind: BehaviorAudienceKind;
     audienceUserId: string;
     audienceGroupName: string;
+    /** Who the reply is for when the response does not say; null = the location's default. */
+    replyVisibility: ReplyVisibility | null;
 }
 
 export function draftFromTrigger(t: MessageTriggerView): MessageTriggerDraft {
@@ -50,6 +53,7 @@ export function draftFromTrigger(t: MessageTriggerView): MessageTriggerDraft {
         audienceKind: t.audienceKind,
         audienceUserId: t.audienceUserId ?? '',
         audienceGroupName: t.audienceGroupName ?? '',
+        replyVisibility: t.replyVisibility,
         ...webhookDraftOf(t.webhook),
     };
 }
@@ -68,6 +72,7 @@ export function emptyDraft(location: { kind: LocationKind; guildId?: string; cha
         audienceKind: 'all',
         audienceUserId: '',
         audienceGroupName: '',
+        replyVisibility: null,
         ...NEW_WEBHOOK,
     };
 }
@@ -113,6 +118,7 @@ type TriggerBody = Omit<MessageTriggerInput, 'webhook' | 'enabled'> & {
     audienceKind: BehaviorAudienceKind;
     audienceUserId: string | null;
     audienceGroupName: string | null;
+    replyVisibility: ReplyVisibility | null;
 };
 
 export type MessageTriggerBody = TriggerBody & { webhook: { url: string; authMode: BehaviorWebhookAuthMode | null } };
@@ -134,6 +140,8 @@ export function toCreateBody(d: MessageTriggerDraft): MessageTriggerBody {
         audienceKind,
         audienceUserId: audienceKind === 'user' ? d.audienceUserId.trim() : null,
         audienceGroupName: audienceKind === 'group' ? d.audienceGroupName.trim() : null,
+        // nothing to choose in a DM with the bot
+        replyVisibility: inDm ? null : d.replyVisibility,
         webhook: webhookBody(d),
     };
 }
@@ -152,6 +160,7 @@ function savedBody(t: MessageTriggerView): MessageTriggerBody {
         audienceKind: t.audienceKind,
         audienceUserId: t.audienceUserId,
         audienceGroupName: t.audienceGroupName,
+        replyVisibility: t.replyVisibility,
         webhook: savedWebhookBody(t.webhook),
     };
 }

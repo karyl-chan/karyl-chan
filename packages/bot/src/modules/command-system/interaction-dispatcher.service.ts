@@ -327,7 +327,11 @@ export class InteractionDispatcher {
 
     // Defer reply（slash command 需要在 3s 內 ack）
     try {
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      // a leaf stored 'public' defers in the open, so a public reply fills
+      // the placeholder in place; otherwise only the invoker sees it
+      await interaction.deferReply(
+        leaf.replyVisibility === "public" ? {} : { flags: MessageFlags.Ephemeral },
+      );
     } catch {
       return { claimed: true, claimedBy: "behavior_custom" };
     }
@@ -339,6 +343,7 @@ export class InteractionDispatcher {
       webhook,
       payload,
       target: { kind: "interaction", interaction },
+      visibility: leaf.replyVisibility,
     });
 
     return { claimed: true, claimedBy: "behavior_custom" };

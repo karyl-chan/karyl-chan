@@ -210,7 +210,14 @@ describe('AddBehaviorModal — creating a command (board 2)', () => {
             integrationTypes: ['guild_install'],
             contexts: ['BotDM'],
             defaultMemberPermissions: null,
-            leaves: [{ subcommand: '', title: 'Service status', webhook: { url: 'https://hook.example/s', authMode: 'hmac' } }],
+            leaves: [
+                {
+                    subcommand: '',
+                    title: 'Service status',
+                    replyVisibility: null,
+                    webhook: { url: 'https://hook.example/s', authMode: 'hmac' },
+                },
+            ],
         });
         expect(wrapper.emitted('created')).toEqual([[created]]);
         expect($('[data-test="registration-result"]')!.getAttribute('data-tone')).toBe('warn');

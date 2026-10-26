@@ -98,6 +98,53 @@ describe('MessageTriggerCard — editing', () => {
     });
 });
 
+describe('MessageTriggerCard — who sees the reply (#140)', () => {
+    it('a guild trigger saves a private default; picking the default again stores null', async () => {
+        const saved = savedTrigger({ surface: 'guild', section: 'guild:all', ignoreBots: true });
+        api.updateBehavior.mockImplementation(async (_id: number, patch: Record<string, unknown>) => ({
+            behavior: { ...saved, ...patch },
+        }));
+        const wrapper = await mountOpen(saved);
+        await choose(wrapper, 'behaviors.action.replyVisibility.label', 'behaviors.action.replyVisibility.guild.private');
+        await wrapper.find('form.editor').trigger('submit');
+        await flushPromises();
+        expect(api.updateBehavior).toHaveBeenLastCalledWith(7, expect.objectContaining({ replyVisibility: 'private' }));
+
+        await choose(
+            wrapper,
+            'behaviors.action.replyVisibility.label',
+            'behaviors.action.replyVisibility.guild.publicbehaviors.action.replyVisibility.defaultMark'
+        );
+        await wrapper.find('form.editor').trigger('submit');
+        await flushPromises();
+        expect(api.updateBehavior).toHaveBeenLastCalledWith(7, expect.objectContaining({ replyVisibility: null }));
+    });
+
+    it('is not a choice in a DM with the bot', async () => {
+        const wrapper = await mountOpen();
+        expect(wrapper.find('[data-test="reply-visibility"]').exists()).toBe(false);
+        expect(wrapper.find('[data-test="reply-visibility-na"]').exists()).toBe(true);
+    });
+
+    it('the test preview applies the stored default when the response does not say', async () => {
+        api.testBehavior.mockResolvedValue({
+            ok: true,
+            reply: { content: 'x' },
+            notes: [],
+            status: null,
+            error: null,
+            errorCode: null,
+            verified: null,
+        });
+        const wrapper = await mountOpen(savedTrigger({ surface: 'guild', section: 'guild:all', replyVisibility: 'private' }));
+        await wrapper.find('.more-btn').trigger('click');
+        await flushPromises();
+        document.querySelector<HTMLElement>('[data-test="test-fire"]')!.click();
+        await flushPromises();
+        expect(wrapper.find('[data-test="preview-audience"]').text()).toBe('behaviors.testReply.audience.author_dm');
+    });
+});
+
 describe('MessageTriggerCard — try it', () => {
     it('shows the groups a regex captures, as the service will receive them', async () => {
         const wrapper = await mountOpen(savedTrigger({ patternKind: 'regex', patternValue: '^天氣\\s+(.+)' }));

@@ -177,7 +177,14 @@ async function createCommand() {
     try {
         const result = await createBehaviorCommand({
             ...commandBody(cmd),
-            leaves: [{ subcommand: '', title: leaf.title.trim(), webhook: webhookBody(leaf) }],
+            leaves: [
+                {
+                    subcommand: '',
+                    title: leaf.title.trim(),
+                    replyVisibility: draft.value.replyVisibility,
+                    webhook: webhookBody(leaf),
+                },
+            ],
         });
         emit('created', result.command);
         created.value = {
@@ -328,6 +335,8 @@ async function create() {
                     :saved="null"
                     :behavior-id="null"
                     :issued-secret="null"
+                    :reply-target="kind === 'command' ? 'command' : draft.locationKind === 'bot_dm' ? 'bot_dm' : 'guild'"
+                    :reply-visibility="draft.replyVisibility"
                     @patch="applyPatch"
                 />
 

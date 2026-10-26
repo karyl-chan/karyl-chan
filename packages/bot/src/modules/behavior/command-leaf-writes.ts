@@ -130,12 +130,14 @@ export async function patchCommandLeaf(
     subcommand: current.subcommand,
     leafDescription: current.leafDescription,
     options: current.options,
+    replyVisibility: row.replyVisibility,
   };
   const after = {
     ...before,
     ...next,
     ...(body.description !== undefined ? { description: body.description.trim() } : {}),
     ...(body.enabled !== undefined ? { enabled: body.enabled } : {}),
+    ...(body.replyVisibility !== undefined ? { replyVisibility: body.replyVisibility } : {}),
   };
   const reregister =
     discordFacing({ ...current, enabled: row.enabled }) !==
@@ -150,6 +152,7 @@ export async function patchCommandLeaf(
       subcommand: after.subcommand,
       leafDescription: after.leafDescription,
       options: after.options.length > 0 ? JSON.stringify(after.options) : null,
+      replyVisibility: after.replyVisibility,
     });
     await model!.save({ transaction });
     if (webhook) {

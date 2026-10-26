@@ -161,6 +161,18 @@ describe("renderFailure — the generic line, never in a guild channel", () => {
     });
   });
 
+  it("never shows the failure in a public placeholder: follows up privately and deletes it", async () => {
+    const ix = { ...fakeInteraction({ deferred: true, ephemeral: false }), locale: "en-US" };
+    await renderFailure({ kind: "interaction", interaction: ix as never });
+    expect(ix.followUp).toHaveBeenCalledWith({
+      content: GENERIC,
+      flags: MessageFlags.Ephemeral,
+      allowedMentions: { parse: [] },
+    });
+    expect(ix.deleteReply).toHaveBeenCalledTimes(1);
+    expect(ix.editReply).not.toHaveBeenCalled();
+  });
+
   it("answers in the DM with the bot", async () => {
     const { message, channelSend, authorSend } = fakeMessage("dm");
     await renderFailure({ kind: "message", message: message as never });
@@ -180,5 +192,55 @@ describe("renderFailure — the generic line, never in a guild channel", () => {
     authorSend.mockRejectedValueOnce(new Error("Cannot send messages to this user"));
     await expect(renderFailure({ kind: "message", message: message as never })).resolves.toBeUndefined();
     expect(channelSend).not.toHaveBeenCalled();
+  });
+});
+
+describe("renderReply — the stored default (replyVisibility)", () => {
+  // the response's own `ephemeral` wins; else the stored default; else the
+  // target's default
+  it("a guild trigger stored 'private' DMs the author when the response says nothing", async () => {
+    const { message, channelSend, authorSend } = fakeMessage("guild");
+    await renderReply({ content: "x" }, { kind: "message", message: message as never }, { visibility: "private" });
+    expect(authorSend).toHaveBeenCalledTimes(1);
+    expect(channelSend).not.toHaveBeenCalled();
+  });
+
+  it("the response's ephemeral overrides the stored default", async () => {
+    const { message, channelSend, authorSend } = fakeMessage("guild");
+    await renderReply(
+      { content: "x", ephemeral: false },
+      { kind: "message", message: message as never },
+      { visibility: "private" },
+    );
+    expect(channelSend).toHaveBeenCalledTimes(1);
+    expect(authorSend).not.toHaveBeenCalled();
+  });
+
+  it("a command stored 'public' answers publicly when the response says nothing", async () => {
+    const ix = fakeInteraction();
+    await renderReply({ content: "x" }, { kind: "interaction", interaction: ix as never }, { visibility: "public" });
+    expect(ix.reply).toHaveBeenCalledWith({ content: "x", allowedMentions: { parse: [] } });
+  });
+
+  it("a command stored 'public' still answers privately when the response says ephemeral:true", async () => {
+    const ix = fakeInteraction({ deferred: true, ephemeral: false });
+    await renderReply(
+      { content: "x", ephemeral: true },
+      { kind: "interaction", interaction: ix as never },
+      { visibility: "public" },
+    );
+    expect(ix.followUp).toHaveBeenCalledWith({
+      content: "x",
+      allowedMentions: { parse: [] },
+      flags: MessageFlags.Ephemeral,
+    });
+    expect(ix.deleteReply).toHaveBeenCalledTimes(1);
+  });
+
+  it("a DM with the bot ignores the stored default too", async () => {
+    const { message, channelSend, authorSend } = fakeMessage("dm");
+    await renderReply({ content: "x" }, { kind: "message", message: message as never }, { visibility: "private" });
+    expect(channelSend).toHaveBeenCalledTimes(1);
+    expect(authorSend).not.toHaveBeenCalled();
   });
 });

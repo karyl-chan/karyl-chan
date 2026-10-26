@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { testBehavior, type ReplyNoteView, type TestFireResult } from '../../../api/behavior';
+import { testBehavior, type ReplyNoteView, type ReplyVisibility, type TestFireResult } from '../../../api/behavior';
 import { describeBehaviorError } from './behavior-errors';
 import { replyPreview, type ReplyTargetKind } from './reply-preview';
 
@@ -13,7 +13,12 @@ import { replyPreview, type ReplyTargetKind } from './reply-preview';
  * service refused the test signature (#101). The card's menu starts it
  * with `run()`; it uses the saved settings.
  */
-const props = defineProps<{ behaviorId: number; target: ReplyTargetKind }>();
+const props = defineProps<{
+    behaviorId: number;
+    target: ReplyTargetKind;
+    /** The saved behavior's reply default, applied when the response does not say. */
+    visibility?: ReplyVisibility | null;
+}>();
 
 const { t } = useI18n();
 const testing = ref(false);
@@ -41,7 +46,9 @@ async function run(): Promise<void> {
 
 defineExpose({ run });
 
-const preview = computed(() => (result.value?.ok ? replyPreview(result.value.reply, props.target) : null));
+const preview = computed(() =>
+    result.value?.ok ? replyPreview(result.value.reply, props.target, props.visibility ?? null) : null
+);
 
 function noteText(note: ReplyNoteView): string {
     switch (note.kind) {

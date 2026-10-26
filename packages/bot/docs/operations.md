@@ -141,6 +141,9 @@ migrations are tracked in the `SequelizeMeta` table:
   `X-Plugin-Webhook-Test-Token` header) and sends a placeholder user, so a
   receiver that verifies only real requests answers it with 401 — expected;
   see [behaviors.md](features/behaviors.md#test-fire-requests).
+- **Reply visibility default (migration 014, #140).** Adds the nullable
+  `behavior_definitions.replyVisibility`; existing behaviors keep their
+  trigger's default (null). Re-running is a no-op.
 - **Pre-v2 DB compatibility.** The one-time encryption-v2 uplift
   migration is gone; this build can only decrypt v2 ciphertexts.
   Restoring a pre-v2 backup will throw when reading an encrypted

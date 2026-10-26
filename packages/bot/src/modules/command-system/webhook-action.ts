@@ -11,6 +11,7 @@
  */
 
 import type { BehaviorWebhookActionRow } from "../behavior/models/behavior-webhook-action.model.js";
+import type { ReplyVisibility } from "../behavior/models/behavior-definition.model.js";
 import { recordForwardOutcome } from "../behavior/models/behavior-stats.model.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { renderFailure, renderReply, type ReplyTarget } from "./reply-renderer.js";
@@ -22,6 +23,8 @@ export interface WebhookActionRun {
   webhook: BehaviorWebhookActionRow;
   payload: Record<string, unknown>;
   target: ReplyTarget;
+  /** The behavior's stored reply default (replyVisibility). */
+  visibility: ReplyVisibility | null;
 }
 
 export async function runWebhookAction(run: WebhookActionRun): Promise<void> {
@@ -36,7 +39,9 @@ export async function runWebhookAction(run: WebhookActionRun): Promise<void> {
     ok = result.ok;
     error = result.error;
     if (result.ok) {
-      const rendered = await renderReply(result.reply, target);
+      const rendered = await renderReply(result.reply, target, {
+        visibility: run.visibility,
+      });
       if (!rendered.ok) {
         ok = false;
         unreachable = rendered.dmFailed === true;

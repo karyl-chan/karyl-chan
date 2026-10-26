@@ -1385,7 +1385,21 @@
                 "none": "不验证"
             },
             "authNoteDrop": "保存后会移除密钥，webhook 不再签名。",
-            "authNoteIssue": "保存后 bot 会生成密钥，只显示一次。"
+            "authNoteIssue": "保存后 bot 会生成密钥，只显示一次。",
+            "replyVisibility": {
+                "label": "回复给谁看",
+                "command": {
+                    "private": "只有执行的人",
+                    "public": "频道里所有人"
+                },
+                "guild": {
+                    "private": "私信给触发的人",
+                    "public": "频道里所有人"
+                },
+                "defaultMark": "（默认）",
+                "hint": "服务的响应也可以自己指定（ephemeral）；这里是默认值。",
+                "notApplicable": "不适用：与 bot 的私信里只有对方看得到"
+            }
         },
         "secret": {
             "label": "Webhook 密钥",

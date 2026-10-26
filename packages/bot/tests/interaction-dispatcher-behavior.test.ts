@@ -233,6 +233,31 @@ describe("root leaf", () => {
     expect((await BehaviorStat.findByPk(leaf))?.get("lastError")).toMatch(/Invalid Form Body/);
   });
 
+  it("a leaf stored 'public' defers in the open and fills it in place", async () => {
+    const commandId = await seedCommand({ name: "ping" });
+    await seedLeaf(commandId, { replyVisibility: "public" });
+    const { interaction, raw } = fakeSlash({ commandName: "ping" });
+    await dispatcherWith(makeForwarder()).dispatch(interaction);
+    expect(raw.deferReply).toHaveBeenCalledWith({});
+    expect(raw.editReply).toHaveBeenCalledWith({ content: "hi", allowedMentions: { parse: [] } });
+    expect(raw.followUp).not.toHaveBeenCalled();
+  });
+
+  it("a failure under a public placeholder reaches only the invoker", async () => {
+    const commandId = await seedCommand({ name: "ping" });
+    await seedLeaf(commandId, { replyVisibility: "public" });
+    const forwarder = {
+      forward: vi.fn(async () => ({ ok: false, reply: {}, notes: [], error: "boom" })),
+    };
+    const { interaction, raw } = fakeSlash({ commandName: "ping" });
+    await dispatcherWith(forwarder).dispatch(interaction);
+    expect(raw.editReply).not.toHaveBeenCalled();
+    const shown = (raw.followUp as Mock).mock.calls[0][0] as { content: string; flags: number };
+    expect(shown.content).toMatch(/couldn't be completed/);
+    expect(shown.flags & MessageFlags.Ephemeral).toBe(MessageFlags.Ephemeral);
+    expect(raw.deleteReply).toHaveBeenCalledTimes(1);
+  });
+
   it("a disabled leaf is not claimed", async () => {
     const commandId = await seedCommand({ name: "ping" });
     await seedLeaf(commandId, { enabled: false });

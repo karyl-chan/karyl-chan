@@ -2,9 +2,10 @@
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { AppSelectField, AppTextField, Stack, type SelectOption } from '@karyl-chan/ui';
-import type { WebhookActionView } from '../../../api/behavior';
+import type { ReplyVisibility, WebhookActionView } from '../../../api/behavior';
 import SecretField from './SecretField.vue';
 import type { AuthChoice, WebhookDraft } from './webhook-draft';
+import type { ReplyTargetKind } from './reply-preview';
 
 /**
  * The action half of a behavior form (board 7 「轉發設定」): the Action
@@ -22,10 +23,17 @@ const props = defineProps<{
     behaviorId: number | null;
     /** A secret the last save generated — shown once. */
     issuedSecret: string | null;
+    /**
+     * Where the reply goes, for 「回覆給誰看」 (board 5): a stored default
+     * the service's response can override with `ephemeral` (#140). Left
+     * out for the System Behavior; in a DM with the bot it does not apply.
+     */
+    replyTarget?: ReplyTargetKind;
+    replyVisibility?: ReplyVisibility | null;
 }>();
 
 const emit = defineEmits<{
-    (e: 'patch', patch: Partial<WebhookDraft>): void;
+    (e: 'patch', patch: Partial<WebhookDraft & { replyVisibility: ReplyVisibility | null }>): void;
     (e: 'rotated'): void;
 }>();
 
@@ -36,6 +44,32 @@ const authOptions = computed<SelectOption<AuthChoice>[]>(() =>
 );
 
 const savedAuth = computed<AuthChoice>(() => props.saved?.authMode ?? 'none');
+
+/** Each target's own default: what null stands for. */
+const TARGET_DEFAULT: Record<'command' | 'guild', ReplyVisibility> = { command: 'private', guild: 'public' };
+
+const visibilityOptions = computed<SelectOption<ReplyVisibility>[]>(() => {
+    const target = props.replyTarget;
+    if (target !== 'command' && target !== 'guild') return [];
+    return (['private', 'public'] as const).map((v) => ({
+        value: v,
+        label:
+            t(`behaviors.action.replyVisibility.${target}.${v}`) +
+            (v === TARGET_DEFAULT[target] ? t('behaviors.action.replyVisibility.defaultMark') : ''),
+    }));
+});
+
+/** The shown choice; the stored null shows as the target's default. */
+const visibilityChoice = computed<ReplyVisibility>(() => {
+    const target = props.replyTarget === 'guild' ? 'guild' : 'command';
+    return props.replyVisibility ?? TARGET_DEFAULT[target];
+});
+
+/** Picking the target's default stores null, so it follows the default. */
+function chooseVisibility(v: ReplyVisibility): void {
+    const target = props.replyTarget === 'guild' ? 'guild' : 'command';
+    emit('patch', { replyVisibility: v === TARGET_DEFAULT[target] ? null : v });
+}
 
 /** What saving the chosen authentication will do to the secret. */
 const authNote = computed(() => {
@@ -78,6 +112,20 @@ const authNote = computed(() => {
                 <span v-if="authNote" class="field-hint">{{ authNote }}</span>
                 <p v-if="errors['webhook.authMode']" class="field-error">{{ errors['webhook.authMode'] }}</p>
             </label>
+            <label v-if="visibilityOptions.length" class="field" data-test="reply-visibility">
+                <span class="field-label">{{ t('behaviors.action.replyVisibility.label') }}</span>
+                <AppSelectField
+                    :model-value="visibilityChoice"
+                    :options="visibilityOptions"
+                    :drawer-title="t('behaviors.action.replyVisibility.label')"
+                    @update:model-value="chooseVisibility($event)"
+                />
+                <span class="field-hint">{{ t('behaviors.action.replyVisibility.hint') }}</span>
+            </label>
+            <div v-else-if="replyTarget === 'bot_dm'" class="field" data-test="reply-visibility-na">
+                <span class="field-label">{{ t('behaviors.action.replyVisibility.label') }}</span>
+                <span class="fixed">{{ t('behaviors.action.replyVisibility.notApplicable') }}</span>
+            </div>
             <SecretField
                 v-if="behaviorId !== null && (saved?.secretSet || issuedSecret)"
                 :behavior-id="behaviorId"

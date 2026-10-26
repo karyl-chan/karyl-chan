@@ -35,6 +35,7 @@ import { planRespond } from "../plugin-system/plugin-defer-state.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { resolveLocale, t } from "../../i18n/index.js";
 import { hasVisibleReply, type BehaviorReply } from "./behavior-reply.js";
+import type { ReplyVisibility } from "../behavior/models/behavior-definition.model.js";
 
 export type ReplyTarget =
   | { kind: "interaction"; interaction: ChatInputCommandInteraction }
@@ -61,14 +62,38 @@ function messageBody(reply: BehaviorReply) {
 const withFlags = <T extends object>(body: T, flags: number) =>
   flags !== 0 ? { ...body, flags } : body;
 
+export interface RenderOptions {
+  /**
+   * The behavior's stored default (replyVisibility): used when the reply
+   * itself does not say `ephemeral`; null = the target's own default.
+   */
+  visibility?: ReplyVisibility | null;
+}
+
+/**
+ * Who the reply is for: the response's `ephemeral` first, then the stored
+ * default (`private` = ephemeral), then the target's own default (left
+ * undefined).
+ */
+export function effectiveEphemeral(
+  reply: BehaviorReply,
+  visibility: ReplyVisibility | null | undefined,
+): boolean | undefined {
+  if (reply.ephemeral !== undefined) return reply.ephemeral;
+  return visibility ? visibility === "private" : undefined;
+}
+
 export async function renderReply(
   reply: BehaviorReply,
   target: ReplyTarget,
+  opts: RenderOptions = {},
 ): Promise<RenderOutcome> {
+  const resolved: BehaviorReply = { ...reply, ephemeral: effectiveEphemeral(reply, opts.visibility) };
+  if (resolved.ephemeral === undefined) delete resolved.ephemeral;
   try {
     return target.kind === "interaction"
-      ? await renderToInteraction(reply, target.interaction)
-      : await renderToMessage(reply, target.message);
+      ? await renderToInteraction(resolved, target.interaction)
+      : await renderToMessage(resolved, target.message);
   } catch (err) {
     return { ok: false, error: errorText(err) };
   }
@@ -138,7 +163,8 @@ async function renderToMessage(
 
 /**
  * Tell the user the action failed, without saying why (#114): a command's
- * invoker in its reply (the placeholder is resolved), a message author in
+ * invoker only (a private placeholder is filled with it; a public one is
+ * deleted and the line follows up privately), a message author in
  * the DM with the bot, or — for a guild message — in a DM to the author.
  * A guild channel never hears about a failure: it would be noise on a
  * broad trigger and could undo a reply meant to be private. If the DM
@@ -149,7 +175,12 @@ export async function renderFailure(target: ReplyTarget): Promise<void> {
     if (target.kind === "interaction") {
       const { interaction } = target;
       const content = t(resolveLocale(interaction), "behavior.action-failed");
-      if (interaction.deferred || interaction.replied) {
+      if ((interaction.deferred || interaction.replied) && interaction.ephemeral === false) {
+        // a public placeholder (a leaf stored 'public'): the failure goes
+        // to the invoker alone, and the public "thinking…" goes away
+        await interaction.followUp({ content, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+        await interaction.deleteReply().catch(() => {});
+      } else if (interaction.deferred || interaction.replied) {
         await interaction.editReply({ content, embeds: [], components: [], allowedMentions: { parse: [] } });
       } else {
         await interaction.reply({ content, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });

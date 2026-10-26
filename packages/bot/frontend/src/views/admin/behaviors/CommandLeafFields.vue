@@ -78,6 +78,8 @@ const { t } = useI18n();
             :saved="saved"
             :behavior-id="behaviorId"
             :issued-secret="issuedSecret"
+            reply-target="command"
+            :reply-visibility="draft.replyVisibility"
             @patch="emit('patch', $event)"
             @rotated="emit('rotated')"
         />

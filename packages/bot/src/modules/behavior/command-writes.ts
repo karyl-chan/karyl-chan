@@ -26,6 +26,7 @@ import {
   parseLeafOptions,
   rowOfBehaviorDefinition,
   type BehaviorCommandOption,
+  type ReplyVisibility,
 } from "./models/behavior-definition.model.js";
 import { BehaviorWebhookAction } from "./models/behavior-webhook-action.model.js";
 import { findStatsBulk } from "./models/behavior-stats.model.js";
@@ -45,6 +46,7 @@ export interface LeafInput {
   enabled?: boolean;
   leafDescription?: string | null;
   options?: OptionInput[];
+  replyVisibility?: ReplyVisibility | null;
   webhook: WebhookInput;
 }
 
@@ -204,6 +206,7 @@ export async function insertLeaf(
       audienceKind: "all",
       audienceUserId: null,
       audienceGroupName: null,
+      replyVisibility: input.replyVisibility ?? null,
     },
     { transaction },
   );

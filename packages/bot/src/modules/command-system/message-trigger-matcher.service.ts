@@ -242,6 +242,7 @@ export class MessageTriggerMatcher {
       webhook: behavior.webhook,
       payload: this.buildPayload(djsMessage, behavior),
       target: { kind: "message", message: djsMessage },
+      visibility: behavior.replyVisibility,
     });
 
     return { handled: true, behaviorId: behavior.id };

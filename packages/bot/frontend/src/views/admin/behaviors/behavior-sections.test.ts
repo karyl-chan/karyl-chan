@@ -37,6 +37,7 @@ function trigger(id: number, section: MessageTriggerView['section']): MessageTri
         webhook: null,
         stats: null,
         updatedAt: '2026-10-26T00:00:00.000Z',
+        replyVisibility: null,
         surface: section === 'bot_dm' ? 'bot_dm' : 'guild',
         guildId: null,
         channelId: null,

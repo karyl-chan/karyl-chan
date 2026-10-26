@@ -27,6 +27,14 @@ export type BehaviorMessageSurface = "bot_dm" | "guild";
 export type BehaviorPatternKind = "startswith" | "endswith" | "regex";
 export type BehaviorAudienceKind = "all" | "user" | "group";
 export type BehaviorWebhookAuthMode = "token" | "hmac";
+/**
+ * Who a behavior's reply is for when the webhook's response does not say
+ * (`ephemeral`): a command `private` = only the invoker, `public` = the
+ * channel; a guild message trigger `private` = the author's DMs, `public`
+ * = the channel. null = the trigger's own default. Not used in a DM with
+ * the bot, nor by the System Behavior.
+ */
+export type ReplyVisibility = "private" | "public";
 export type DiscordContext = "Guild" | "BotDM" | "PrivateChannel";
 export type DiscordIntegrationType = "guild_install" | "user_install";
 
@@ -77,6 +85,8 @@ interface BehaviorViewBase {
   webhook: WebhookActionView | null;
   stats: BehaviorStats | null;
   /** ISO time of the last write; send back as `ifUpdatedAt` to refuse a stale edit. */
+  /** null = the trigger's own default; see ReplyVisibility */
+  replyVisibility: ReplyVisibility | null;
   updatedAt: string;
 }
 
@@ -175,6 +185,7 @@ export interface MessageTriggerInput {
   audienceKind?: BehaviorAudienceKind;
   audienceUserId?: string | null;
   audienceGroupName?: string | null;
+  replyVisibility?: ReplyVisibility | null;
   webhook: WebhookInput;
 }
 
@@ -193,6 +204,7 @@ export interface CommandLeafInput {
   enabled?: boolean;
   leafDescription?: string | null;
   options?: CommandOptionInput[];
+  replyVisibility?: ReplyVisibility | null;
   webhook: WebhookInput;
 }
 

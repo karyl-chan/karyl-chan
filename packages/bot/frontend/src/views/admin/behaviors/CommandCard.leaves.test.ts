@@ -99,6 +99,26 @@ describe('CommandCard — the root leaf of a single command', () => {
         expect(wrapper.emitted('updated')).toHaveLength(1);
     });
 
+    it('saves 「回覆給誰看」 as the leaf’s default (#140)', async () => {
+        const saved = savedLeaf({ replyVisibility: 'public' });
+        api.updateBehavior.mockResolvedValue({ behavior: saved, command: savedCommand({ leaves: [saved] }) });
+        const wrapper = await mountOpen(savedCommand());
+        const form = wrapper.find('[data-test="leaf-form-root"]');
+        const field = form.find('[data-test="reply-visibility"]');
+        await field.find('button.select-trigger').trigger('click');
+        await flushPromises();
+        [...document.querySelectorAll<HTMLElement>('li')]
+            .find((li) => li.textContent?.trim() === 'behaviors.action.replyVisibility.command.public')!
+            .click();
+        await flushPromises();
+        await form.trigger('submit');
+        await flushPromises();
+        expect(api.updateBehavior).toHaveBeenCalledWith(21, {
+            replyVisibility: 'public',
+            ifUpdatedAt: '2026-10-27T00:00:00.000Z',
+        });
+    });
+
     it("an option rule Discord has shows on that option's row", async () => {
         const wrapper = await mountOpen(
             savedCommand({
