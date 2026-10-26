@@ -433,3 +433,19 @@ describe("reconcile — registerOne", () => {
     expect(g1.names()).toEqual(["ping"]);
   });
 });
+
+describe("reconcile — registerOne with nothing to register", () => {
+  it("an all-guilds command with no reachable guild is not reported as effective", async () => {
+    const id = await seedSlashBehavior();
+    const world = makeWorld([]);
+    const reconciler = new CommandReconciler(() => world.client);
+
+    const result = await reconciler.registerOne({ source: "behavior", id });
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: "registration_failed",
+      outcomes: [],
+    });
+  });
+});

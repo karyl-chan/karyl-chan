@@ -53,7 +53,8 @@ import {
 
 /**
  * registerOne 的結果。ok=true 表示展開後的每個具體目標都已在 Discord 上
- * （新建、更新或本來就一致）—— S7 的原子切換靠這個判斷「新觸發已生效」。
+ * （新建、更新或本來就一致），且至少有一個目標 —— S7 的原子切換靠這個
+ * 判斷「新觸發已生效」。
  */
 export type RegisterOneResult =
   | {
@@ -319,14 +320,18 @@ export class CommandReconciler {
     const problems = outcomes.filter(
       (o) => o.status === "failed" || o.status === "skipped",
     );
-    if (problems.length > 0) {
+    if (problems.length > 0 || outcomes.length === 0) {
       return {
         ok: false,
         key,
         reason: "registration_failed",
         name: cmd.name,
         outcomes,
-        error: describeProblems(problems),
+        // all_guilds 但 bot 不在任何伺服器：沒有地方能呼叫，不算生效
+        error:
+          outcomes.length === 0
+            ? "沒有可註冊的目標（bot 不在任何伺服器）"
+            : describeProblems(problems),
       };
     }
     return { ok: true, key, name: cmd.name, outcomes };
