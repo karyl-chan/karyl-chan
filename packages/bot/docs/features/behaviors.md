@@ -141,6 +141,38 @@ the webhook in `_meta.options` as `{ name, type, value }` entries.
 Failed dispatch (network error, non-2xx, signature failure) is recorded
 in `bot_events`. The POST has a 10-second timeout.
 
+### Webhook targets
+
+The webhook URL is checked by `resolveWebhookTarget`
+(`src/utils/host-policy.ts`) both when the behavior is saved and again
+on every forward (including the admin test-fire):
+
+| Target resolves to | Allowed? |
+|--------------------|----------|
+| Public address | Yes, `https://` only. |
+| Private address (RFC1918, `100.64.0.0/10`, IPv6 ULA `fc00::/7`) | Only when the hostname or the address is on `WEBHOOK_PRIVATE_ALLOWLIST`; `http://` is accepted for these. |
+| Loopback, cloud metadata / link-local (`169.254.0.0/16`, `fe80::/10`, …), unspecified, reserved (`0/8`, `198.18/15`, `224/4`, `240/4`, `fec0::/10`, multicast), NAT64 `64:ff9b::` / 6to4 `2002::` | Never — listing them has no effect. |
+
+`WEBHOOK_PRIVATE_ALLOWLIST` is a comma-separated list of hostnames
+(exact match, e.g. `nas.latte.lan`), bare IPs and CIDRs
+(`192.168.2.0/24`, `fd12::/16`). It is an environment variable (read at
+boot; a malformed entry stops the bot from starting) and its current
+value is shown on the admin **System settings** page under the behavior
+group. A hostname whose DNS answers include any blocked address is
+refused as a whole.
+
+Redirects are never followed.
+
+A refusal carries a machine `code` (`private_not_allowlisted`,
+`https_required`, `blocked_loopback`, `blocked_metadata`,
+`blocked_reserved`, `dns_failed`, …) next to a readable `error` that
+names the target and the setting — the save route returns it as a 400
+body, the test-fire route as `{ ok: false, error, errorCode }`.
+
+The legacy `WEBHOOK_ALLOW_PRIVATE=true` switch (allow every private
+address) still works for local development and the e2e harness, but is
+deprecated; the bot logs a warning at boot when it is on in production.
+
 ### Authentication (`webhookAuthMode`)
 
 Each custom behavior picks one authentication mode:

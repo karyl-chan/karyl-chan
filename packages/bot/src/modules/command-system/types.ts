@@ -158,6 +158,8 @@ export interface ForwardResult {
   status?: number;
   /** 錯誤描述（失敗時） */
   error?: string;
+  /** host policy 拒絕時的機器碼（HostPolicyCode，例如 private_not_allowlisted） */
+  errorCode?: string;
 }
 
 // ── WebhookForwarder 輸入 payload 型別別名────────────────────────────────────

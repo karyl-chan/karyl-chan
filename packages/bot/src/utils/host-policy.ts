@@ -1,16 +1,43 @@
 import { lookup } from "dns/promises";
 import { isIP } from "net";
 import { moduleLogger } from "../logger.js";
+import { config } from "../config.js";
 import {
+  allowlistMatches,
   classifyAddress,
+  normalizeHostname,
+  parseAllowlistEntries,
   transitionEmbeddedIPv4,
   type AddressClass,
+  type AllowlistEntry,
 } from "./ip-address.js";
 
 const log = moduleLogger("host-policy");
 
+/**
+ * Machine-readable refusal reason. `blocked` is the generic code of the
+ * plugin / RCON / external policies; the webhook policy
+ * (`resolveWebhookTarget`) uses the specific ones so the admin UI can
+ * say why and what to change.
+ */
+export type HostPolicyCode =
+  | "blocked"
+  | "invalid_url"
+  | "invalid_scheme"
+  | "invalid_host"
+  | "invalid_port"
+  | "dns_failed"
+  | "blocked_metadata"
+  | "blocked_loopback"
+  | "blocked_reserved"
+  | "private_not_allowlisted"
+  | "https_required";
+
 export class HostPolicyError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    public readonly code: HostPolicyCode = "blocked",
+  ) {
     super(message);
     this.name = "HostPolicyError";
   }
@@ -218,4 +245,166 @@ export async function assertPluginTarget(
     },
     "Plugin 目標不被允許",
   );
+}
+
+// ── behavior webhook policy ──────────────────────────────────────────────────
+
+/** Where the operator edits the allowlist — quoted in every refusal. */
+const ALLOWLIST_SETTING =
+  "環境變數 WEBHOOK_PRIVATE_ALLOWLIST（目前值見 系統設定 → 行為模組；修改後需重啟）";
+
+/** A webhook target that passed the policy, with the address it was checked at. */
+export interface WebhookTarget {
+  url: URL;
+  /** The checked IP — connect to exactly this one (DNS-rebinding guard). */
+  address: string;
+  family: 4 | 6;
+}
+
+/** True when the legacy WEBHOOK_ALLOW_PRIVATE dev hatch is on. */
+function legacyAllowPrivate(): boolean {
+  // Per-call env read, same rationale as assertExternalTarget.
+  return process.env.WEBHOOK_ALLOW_PRIVATE === "true";
+}
+
+/**
+ * Boot-time nudge: the legacy hatch opens every private address to every
+ * behavior webhook. Still honoured (the e2e harness and the local dev
+ * launcher use it) but production should list targets explicitly.
+ */
+export function warnIfLegacyWebhookAllowPrivate(): void {
+  if (legacyAllowPrivate() && process.env.NODE_ENV === "production") {
+    log.warn(
+      "WEBHOOK_ALLOW_PRIVATE=true is deprecated: it lets behavior webhooks reach every private address. List the LAN targets in WEBHOOK_PRIVATE_ALLOWLIST instead.",
+    );
+  }
+}
+
+function describeTarget(host: string, address: string): string {
+  return host === address ? address : `${host}（${address}）`;
+}
+
+/**
+ * Policy verdict for one resolved address of a webhook target. Returns
+ * the refusal, or `{ public }` telling the caller whether this address
+ * needs https.
+ */
+function judgeWebhookAddress(
+  host: string,
+  address: string,
+  allowlist: readonly AllowlistEntry[],
+): HostPolicyError | { public: boolean } {
+  const target = describeTarget(host, address);
+  switch (classOf(address)) {
+    case "public":
+      return { public: true };
+    case "private":
+      if (legacyAllowPrivate() || allowlistMatches(allowlist, host, address)) {
+        return { public: false };
+      }
+      return new HostPolicyError(
+        `目標 ${target} 是區網位址，不在允許清單；如需呼叫區網服務，請把主機或網段加入 ${ALLOWLIST_SETTING}`,
+        "private_not_allowlisted",
+      );
+    case "loopback":
+      return new HostPolicyError(
+        `目標 ${target} 是本機 loopback 位址，一律禁止（無法加入允許清單）`,
+        "blocked_loopback",
+      );
+    case "linkLocal":
+    case "metadata":
+      return new HostPolicyError(
+        `目標 ${target} 是雲端 metadata / link-local 位址，一律禁止（無法加入允許清單）`,
+        "blocked_metadata",
+      );
+    case "unspecified":
+    case "reserved":
+    case "transition":
+      return new HostPolicyError(
+        `目標 ${target} 是保留、不可路由或 IPv6 轉換位址段，一律禁止`,
+        "blocked_reserved",
+      );
+  }
+}
+
+/**
+ * resolveWebhookTarget — behavior webhook URLs (admin-configured; the bot
+ * POSTs to them). Validates the URL, resolves the host ONCE, judges every
+ * answer, and returns the address to connect to.
+ *
+ *   - public addresses pass, but only over https;
+ *   - private addresses (RFC1918 / shared 100.64/10 / ULA) pass — over
+ *     http too — only when the hostname or the address is on the
+ *     operator's WEBHOOK_PRIVATE_ALLOWLIST (or the legacy
+ *     WEBHOOK_ALLOW_PRIVATE hatch is on);
+ *   - loopback, cloud metadata / link-local, unspecified, reserved and
+ *     NAT64 / 6to4 addresses never pass, allowlisted or not.
+ *
+ * Every refusal is a HostPolicyError with a specific `code` and a
+ * message that names the target and, where it helps, the setting.
+ */
+export async function resolveWebhookTarget(
+  rawUrl: string | URL,
+  allowlist: readonly AllowlistEntry[] = parseAllowlistEntries(
+    config.behavior.webhookPrivateAllowlist,
+  ),
+): Promise<WebhookTarget> {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    throw new HostPolicyError("無效的 URL 格式", "invalid_url");
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new HostPolicyError("Webhook URL 必須使用 http 或 https", "invalid_scheme");
+  }
+  const host = stripIPv6Brackets(url.hostname);
+  if (!isValidHostnameFormat(host)) {
+    throw new HostPolicyError("無效的主機名稱", "invalid_host");
+  }
+  const port = url.port ? Number(url.port) : url.protocol === "https:" ? 443 : 80;
+  if (!isValidPort(port)) {
+    throw new HostPolicyError("無效的端口號碼", "invalid_port");
+  }
+  if (BLOCKED_HOSTNAMES.has(normalizeHostname(host))) {
+    throw new HostPolicyError(
+      `目標 ${host} 是雲端 metadata 端點，一律禁止（無法加入允許清單）`,
+      "blocked_metadata",
+    );
+  }
+
+  let answers: Array<{ address: string; family: number }>;
+  if (isIP(host) !== 0) {
+    answers = [{ address: host, family: isIP(host) }];
+  } else {
+    try {
+      answers = await lookup(host, { all: true });
+    } catch (error) {
+      log.warn({ err: error, host }, "webhook target DNS lookup failed");
+      throw new HostPolicyError(`無法解析主機名稱 ${host}`, "dns_failed");
+    }
+    if (answers.length === 0) {
+      throw new HostPolicyError(`無法解析主機名稱 ${host}`, "dns_failed");
+    }
+  }
+
+  let needsHttps = false;
+  for (const { address } of answers) {
+    const verdict = judgeWebhookAddress(host, address, allowlist);
+    if (verdict instanceof HostPolicyError) throw verdict;
+    if (verdict.public) needsHttps = true;
+  }
+  if (needsHttps && url.protocol !== "https:") {
+    throw new HostPolicyError(
+      `目標 ${host} 是公網位址，webhook 必須使用 https（只有 ${ALLOWLIST_SETTING} 內的區網目標可以用 http）`,
+      "https_required",
+    );
+  }
+
+  const pinned = answers[0];
+  return {
+    url,
+    address: pinned.address,
+    family: isIP(pinned.address) === 6 ? 6 : 4,
+  };
 }

@@ -43,6 +43,7 @@ The main variables:
 | `NODE_ENV` | no | Default `development`. |
 | `SQLITE_DB_PATH` | no | SQLite file path. Default `<bot>/data/database.sqlite`. |
 | `CERTS_DIR` and `TRUSTED_PROXY` | no | HTTPS certificate path and reverse-proxy trust settings. |
+| `WEBHOOK_PRIVATE_ALLOWLIST` | no | Comma-separated hostnames / IPs / CIDRs that behavior webhooks may call on the private network (e.g. `nas.latte.lan,192.168.2.0/24`). See [Webhook targets](features/behaviors.md#webhook-targets). |
 
 `.env.example` also exposes many optional tuning knobs (JWT TTLs, plugin
 timeouts, RCON, rate limits). They all have sensible defaults; the

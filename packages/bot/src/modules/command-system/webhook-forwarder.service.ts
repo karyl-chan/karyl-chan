@@ -23,8 +23,8 @@ import {
 } from "../../utils/hmac.js";
 import { shouldRecord } from "../bot-events/bot-event-dedup.js";
 import {
-  assertExternalTarget,
   HostPolicyError,
+  resolveWebhookTarget,
 } from "../../utils/host-policy.js";
 import { decryptSecret } from "../../utils/crypto.js";
 import type { BehaviorRow } from "../behavior/models/behavior.model.js";
@@ -246,18 +246,17 @@ export class WebhookForwarder {
       // authMode=null 且有 secret：異常狀態，不簽（已由 CR-6 DB CHECK 攔截）
     }
 
-    // host-policy 檢查
-    const port = url.port
-      ? Number(url.port)
-      : url.protocol === "https:"
-        ? 443
-        : 80;
-
+    // host-policy 檢查（與存檔時同一套：允許清單、https 規則、封鎖段）
     try {
-      await assertExternalTarget(url.hostname, port);
+      await resolveWebhookTarget(url);
     } catch (err) {
       if (!(err instanceof HostPolicyError)) throw err;
-      return { ok: false, relayContent: "", error: err.message };
+      return {
+        ok: false,
+        relayContent: "",
+        error: err.message,
+        errorCode: err.code,
+      };
     }
 
     // 發送 HTTP POST
@@ -267,7 +266,7 @@ export class WebhookForwarder {
         method: "POST",
         headers,
         body,
-        // Do NOT follow redirects. assertExternalTarget above validated the
+        // Do NOT follow redirects. resolveWebhookTarget above validated the
         // configured host, but a 3xx `Location` is attacker-controlled and
         // `redirect: "follow"` (the default) would chase it WITHOUT
         // re-validating — an SSRF into cloud metadata (169.254.169.254) or

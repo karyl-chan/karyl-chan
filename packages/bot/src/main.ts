@@ -5,6 +5,7 @@
 import { config } from "./config.js";
 import { validateMetadataCoverage } from "./config-metadata.js";
 import { createRuntime } from "./runtime/runtime.js";
+import { warnIfLegacyWebhookAllowPrivate } from "./utils/host-policy.js";
 
 // Fail-closed boot assertion: every config leaf must have explicit
 // classification in config-metadata.ts. We run this at module load
@@ -12,6 +13,7 @@ import { createRuntime } from "./runtime/runtime.js";
 // once, instead of being caught by the resetBot retry loop and crash-
 // looping every 10 seconds.
 validateMetadataCoverage(config);
+warnIfLegacyWebhookAllowPrivate();
 
 const runtime = createRuntime();
 // Fire-and-forget, as before the runtime split — nothing awaits the

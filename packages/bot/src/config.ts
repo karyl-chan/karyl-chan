@@ -17,6 +17,7 @@
 
 import { selectSecretProvider } from "./adapters/secret-provider.js";
 import { FileSecretProvider } from "./adapters/file-secret-provider.js";
+import { parseAllowlistEntries } from "./utils/ip-address.js";
 
 // Provider used at config load to source the boot-time secrets. Selected
 // from SECRET_PROVIDER; defaults to the in-process env provider.
@@ -107,6 +108,13 @@ export interface AppConfig {
   };
   behavior: {
     profileCacheTtlMs: number;
+    /**
+     * WEBHOOK_PRIVATE_ALLOWLIST — LAN targets (hostname, IP or CIDR)
+     * behavior webhooks may call. Private addresses outside it are
+     * refused; loopback / metadata can never be listed. See
+     * utils/host-policy.ts `resolveWebhookTarget`.
+     */
+    webhookPrivateAllowlist: string[];
   };
   admin: {
     profileCacheTtlMs: number;
@@ -323,6 +331,7 @@ function loadConfig(): AppConfig {
         "BEHAVIOR_PROFILE_CACHE_TTL_MS",
         5 * 60 * 1000,
       ),
+      webhookPrivateAllowlist: parseCidrListEnv("WEBHOOK_PRIVATE_ALLOWLIST"),
     },
     admin: {
       profileCacheTtlMs: parseIntEnv(
@@ -402,6 +411,10 @@ function loadConfig(): AppConfig {
       }
     }
   }
+
+  // Fail-fast: a malformed allowlist entry would otherwise silently
+  // allow nothing (throws "Config error: WEBHOOK_PRIVATE_ALLOWLIST …").
+  parseAllowlistEntries(cfg.behavior.webhookPrivateAllowlist);
 
   // production 額外強制檢查（對齊既有 main.ts / server.ts 的安全要求）
   if (env === "production") {

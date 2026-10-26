@@ -1392,6 +1392,7 @@
         "behavior": {
             "enabled": "Behavior module enabled",
             "webhookTimeout": "Webhook request timeout (ms)",
+            "webhookPrivateAllowlist": "Webhook LAN allowlist (hosts / CIDRs; http allowed for these)",
             "maxRetries": "Webhook max retries"
         },
         "admin": {
