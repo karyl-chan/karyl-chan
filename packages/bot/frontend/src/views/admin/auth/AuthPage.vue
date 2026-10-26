@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { ApiError, exchangeOneTimeToken } from '../../../api/client';
+import { ApiError, exchangeOneTimeToken, fetchLoginTrigger, type LoginTriggerHint } from '../../../api/client';
 import { isAuthenticated, setTokens } from '../../../auth';
 
 const route = useRoute();
@@ -9,6 +9,18 @@ const router = useRouter();
 
 const state = ref<'idle' | 'exchanging' | 'success' | 'error' | 'no-token'>('idle');
 const errorMessage = ref<string | null>(null);
+
+/**
+ * How to ask the bot for a new link: the login's current trigger (#146),
+ * read when the page has to say it. null while unknown (loading, or the
+ * public endpoint failed) — then the page says it generically.
+ */
+const trigger = ref<LoginTriggerHint | null>(null);
+function loadTrigger() {
+    fetchLoginTrigger()
+        .then((hint) => (trigger.value = hint))
+        .catch(() => (trigger.value = null));
+}
 
 onMounted(async () => {
     const tokenParam = route.query.token;
@@ -22,6 +34,7 @@ onMounted(async () => {
             return;
         }
         state.value = 'no-token';
+        loadTrigger();
         return;
     }
     // Strip the one-time token from the URL *before* the async exchange, so
@@ -54,6 +67,7 @@ onMounted(async () => {
         // server's exchange window.
         router.replace({ name: 'auth' });
         state.value = 'error';
+        loadTrigger();
         errorMessage.value = err instanceof ApiError
             ? err.message
             : err instanceof Error ? err.message : 'Login failed';
@@ -67,15 +81,22 @@ onMounted(async () => {
         <p v-if="state === 'exchanging'" class="muted">{{ $t('auth.exchanging') }}</p>
         <p v-else-if="state === 'success'" class="muted">{{ $t('auth.success') }}</p>
         <div v-else-if="state === 'no-token'">
-            <p>{{ $t('auth.noTokenLead') }}</p>
-            <pre><code>login</code></pre>
+            <template v-if="trigger">
+                <p>{{ trigger.kind === 'command' ? $t('auth.noTokenLeadCommand') : $t('auth.noTokenLead') }}</p>
+                <pre><code data-test="login-trigger">{{ trigger.text }}</code></pre>
+                <p v-if="trigger.kind === 'message' && trigger.match !== 'startswith'" class="muted">
+                    {{ $t(`auth.match.${trigger.match}`) }}
+                </p>
+            </template>
+            <p v-else>{{ $t('auth.noTokenLeadUnknown') }}</p>
             <p class="muted">{{ $t('auth.noTokenHint') }}</p>
         </div>
         <div v-else-if="state === 'error'">
             <p class="error">{{ errorMessage }}</p>
-            <i18n-t keypath="auth.errorHint" tag="p" class="muted">
-                <template #login><code>login</code></template>
+            <i18n-t v-if="trigger" :keypath="trigger.kind === 'command' ? 'auth.errorHintCommand' : 'auth.errorHint'" tag="p" class="muted">
+                <template #login><code data-test="login-trigger">{{ trigger.text }}</code></template>
             </i18n-t>
+            <p v-else class="muted">{{ $t('auth.errorHintUnknown') }}</p>
         </div>
     </section>
 </template>

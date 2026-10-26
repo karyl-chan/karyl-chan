@@ -20,6 +20,7 @@ import { registerAdminLoginStatusRoutes } from "../admin/admin-login-status-rout
 import { registerAdminSystemSettingsRoutes } from "../admin/admin-system-settings-routes.js";
 import { registerBotEventRoutes } from "../bot-events/bot-event-routes.js";
 import { registerBehaviorRoutes } from "../behavior/behavior-routes.js";
+import { registerLoginTriggerHintRoute } from "../behavior/login-trigger-hint-route.js";
 import { registerPluginRoutes } from "../plugin-system/plugin-routes.js";
 import { registerBotFeatureRoutes } from "../feature-toggle/bot-feature-routes.js";
 import { registerPluginRpcRoutes } from "../plugin-system/plugin-rpc-routes.js";
@@ -98,6 +99,8 @@ export async function registerModuleRoutes(
     namespace: commandNamespace,
     forwarder: webhookForwarder,
   });
+  // public (under /api/auth/, before sign-in): the login page's hint (#146)
+  registerLoginTriggerHintRoute(server);
   await registerPluginRoutes(server, { bot, reconciler });
   await registerPluginRpcRoutes(server, { bot, dmLimiter });
   await registerVoiceRpcRoutes(server, { bot });

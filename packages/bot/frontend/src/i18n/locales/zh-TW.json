@@ -304,8 +304,16 @@
         "exchanging": "正在交換登入權杖…",
         "success": "已登入,正在轉導…",
         "noTokenLead": "如要登入,請傳私訊給機器人:",
+        "noTokenLeadCommand": "如要登入，請使用機器人的這個指令：",
+        "noTokenLeadUnknown": "如要登入，請照管理員設定的方式向機器人取得登入連結。",
         "noTokenHint": "機器人會回覆一次性登入連結,請在此瀏覽器開啟。",
-        "errorHint": "請再次傳 {login} 給機器人以取得新連結。"
+        "errorHint": "請再次傳 {login} 給機器人以取得新連結。",
+        "errorHintCommand": "請再次使用 {login} 以取得新連結。",
+        "errorHintUnknown": "請再次向機器人取得新連結。",
+        "match": {
+            "endswith": "私訊機器人任何以這段文字結尾的訊息。",
+            "regex": "私訊機器人任何符合這個正規表示式的訊息。"
+        }
     },
     "dashboard": {
         "title": "儀表板",

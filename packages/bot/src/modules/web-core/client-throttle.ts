@@ -14,6 +14,8 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 
 export const AUTH_EXCHANGE_PATH = "/api/auth/exchange";
 export const AUTH_REFRESH_PATH = "/api/auth/refresh";
+/** Served by the behavior module (login-trigger-hint-route.ts). */
+export const AUTH_LOGIN_TRIGGER_PATH = "/api/auth/login-trigger";
 
 export function clientKey(request: FastifyRequest): string {
   return request.ip || "unknown";

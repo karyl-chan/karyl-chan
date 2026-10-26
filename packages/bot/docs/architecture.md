@@ -179,13 +179,18 @@ is stored.
   first and then deletes the command. Owner only (`requireOwner` in
   `web-core/route-guards.ts`, as is resyncing the login's command);
   every attempt that reaches the switch is audited with its outcome.
+- `login-trigger-hint-route.ts` — `GET /api/auth/login-trigger`, public
+  and rate-limited per client: the login's current trigger (kind + the
+  text a user sends or types) for the admin login page, which needs it
+  before anyone is signed in. Mounted outside the behavior scope.
 - `models/` — behavior-command, behavior-definition,
   behavior-webhook-action, behavior-stats, behavior-group-member (an
   Audience Group's list: settable only for a group a message trigger
   uses, dropped when the last such trigger leaves it).
 
 **External surface.** HTTP `/api/behaviors/*`,
-`/api/behavior-commands/*`, `/api/behavior-groups/*`;
+`/api/behavior-commands/*`, `/api/behavior-groups/*`, and the public
+`/api/auth/login-trigger`;
 `ensureSystemBehaviors` (startup); `getBehaviorCatalog` (read by
 command-system).
 
@@ -357,7 +362,10 @@ tokens, and the audit log (with hash chain).
 - `models/` — admin-audit-log, admin-role, admin-role-capability,
   authorized-user.
 
-**External surface.** HTTP `/api/admin/*`, `/api/auth/*`;
+**External surface.** HTTP `/api/admin/*`, `/api/auth/*` (except
+`/api/auth/login-trigger`, which the behavior module serves: it reads the
+System Behavior, and sits under `/api/auth/` only to be public and
+throttled like the other auth endpoints);
 `requireCapability` family; `recordAudit`.
 
 **Depends on.** web-core; bot-events.

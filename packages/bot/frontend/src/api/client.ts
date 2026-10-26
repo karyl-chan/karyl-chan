@@ -149,6 +149,22 @@ export async function exchangeOneTimeToken(token: string): Promise<IssuedTokens>
     return (await response.json()) as IssuedTokens;
 }
 
+/**
+ * How to ask the bot for a login link: the System Behavior's current
+ * trigger (#146). Public — the login page reads it before anyone is
+ * signed in. `null`: the bot has no login trigger to name.
+ */
+export type LoginTriggerHint =
+    | { kind: 'message'; match: 'startswith' | 'endswith' | 'regex'; text: string }
+    | { kind: 'command'; text: string };
+
+export async function fetchLoginTrigger(): Promise<LoginTriggerHint | null> {
+    const response = await fetch('/api/auth/login-trigger');
+    if (!response.ok) throw new ApiError(response.status, `HTTP ${response.status}`);
+    const body = (await response.json()) as { trigger: LoginTriggerHint | null };
+    return body.trigger;
+}
+
 export async function logout(): Promise<void> {
     const refreshToken = getRefreshToken();
     try {
