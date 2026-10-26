@@ -1,5 +1,5 @@
 {
-  "packages/bot": "1.13.0",
+  "packages/bot": "2.0.0",
   "packages/plugin-sdk": "1.0.0",
   "packages/create-karyl-plugin": "1.0.0",
   "packages/ui": "0.5.0"
