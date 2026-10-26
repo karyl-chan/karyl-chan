@@ -55,6 +55,18 @@ export function targetCovers(
   return target === concrete;
 }
 
+/**
+ * 同名指令的兩個目標是否衝突。Discord 允許全域與伺服器指令同名並存，
+ * 但伺服器的指令選單會列出兩個同名項目；karyl 把全域指令視為與任何
+ * 同名伺服器指令衝突。只有「兩個不同的指定伺服器」可以同名。
+ */
+export function targetsConflict(a: CommandTarget, b: CommandTarget): boolean {
+  const ga = targetGuildId(a);
+  const gb = targetGuildId(b);
+  if (ga !== null && gb !== null) return ga === gb;
+  return true;
+}
+
 // ── 各來源的目標推導 ─────────────────────────────────────────────────────────
 
 /**
