@@ -40,6 +40,8 @@ export interface WebhookActionView {
   url: string | null;
   authMode: BehaviorWebhookAuthMode | null;
   secretSet: boolean;
+  /** 輪換後舊密鑰仍有效到何時（ISO）；不在寬限期內為 null */
+  previousSecretExpiresAt: string | null;
 }
 
 interface BehaviorViewBase {
@@ -111,7 +113,16 @@ function webhookView(behavior: CatalogBehavior): WebhookActionView | null {
   } catch {
     url = null;
   }
-  return { url, authMode: action.authMode, secretSet: action.secret !== null };
+  const graceEnd = action.previousSecretExpiresAt;
+  return {
+    url,
+    authMode: action.authMode,
+    secretSet: action.secret !== null,
+    previousSecretExpiresAt:
+      action.previousSecret !== null && graceEnd !== null && graceEnd.getTime() > Date.now()
+        ? graceEnd.toISOString()
+        : null,
+  };
 }
 
 

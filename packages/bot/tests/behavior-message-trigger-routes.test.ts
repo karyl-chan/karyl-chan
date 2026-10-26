@@ -86,7 +86,7 @@ describe("POST /api/behaviors (message trigger)", () => {
       stopOnMatch: false,
       audienceKind: "all",
       section: "bot_dm",
-      webhook: { url: HOOK, authMode: null, secretSet: false },
+      webhook: { url: HOOK, authMode: null, secretSet: false, previousSecretExpiresAt: null },
     });
     expect(res.json()).not.toHaveProperty("secret");
     expect((await listed()).map((t) => t.id)).toEqual([behavior.id]);
@@ -112,7 +112,12 @@ describe("POST /api/behaviors (message trigger)", () => {
     expect(res.statusCode).toBe(201);
     const { behavior, secret } = res.json();
     expect(secret).toMatch(/^[0-9a-f]{64}$/);
-    expect(behavior.webhook).toEqual({ url: HOOK, authMode: "hmac", secretSet: true });
+    expect(behavior.webhook).toEqual({
+      url: HOOK,
+      authMode: "hmac",
+      secretSet: true,
+      previousSecretExpiresAt: null,
+    });
 
     const list = await server.inject({ method: "GET", url: "/api/behaviors" });
     expect(list.body).not.toContain(secret);
@@ -197,7 +202,12 @@ describe("PATCH /api/behaviors/:id (message trigger)", () => {
     expect(switched.json().behavior.webhook).toMatchObject({ authMode: "hmac", secretSet: true });
 
     const off = await patch(id, { webhook: { url: HOOK, authMode: null } });
-    expect(off.json().behavior.webhook).toEqual({ url: HOOK, authMode: null, secretSet: false });
+    expect(off.json().behavior.webhook).toEqual({
+      url: HOOK,
+      authMode: null,
+      secretSet: false,
+      previousSecretExpiresAt: null,
+    });
   });
 
   it("refuses a stale write", async () => {

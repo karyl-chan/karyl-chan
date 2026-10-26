@@ -19,6 +19,7 @@ export type BehaviorAuditAction =
   | "behavior.update"
   | "behavior.delete"
   | "behavior.reorder"
+  | "behavior.webhook_secret.rotate"
   | "behavior.group_members.replace";
 
 /**

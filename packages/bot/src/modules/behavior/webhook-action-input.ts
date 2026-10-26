@@ -6,8 +6,9 @@
  * Turning authentication on (authMode null → token / hmac) generates a
  * secret, returned to the caller once; switching between token and hmac
  * keeps it (the receiver already holds it); turning authentication off
- * drops it. A new secret for a live behavior comes from the rotation
- * endpoint instead, which keeps the old one valid for a grace period.
+ * drops it (and ends a rotation's grace period). A new secret for a live
+ * behavior comes from the rotation endpoint instead, which keeps the old
+ * one valid for a grace period (webhook-secret-rotate.ts).
  *
  * The URL is checked with the same target policy the forwarder applies
  * at send time.
@@ -43,6 +44,8 @@ export interface WebhookWrite {
     url: string;
     secret: string | null;
     authMode: BehaviorWebhookAuthMode | null;
+    previousSecret: string | null;
+    previousSecretExpiresAt: Date | null;
   };
   /** the plaintext secret, when this write generated one — shown once */
   issuedSecret: string | null;
@@ -97,7 +100,15 @@ export async function prepareWebhookWrite(
   }
 
   return {
-    values: { url: encryptSecret(input.url), secret, authMode },
+    values: {
+      url: encryptSecret(input.url),
+      secret,
+      authMode,
+      // a rotation in progress survives an edit, but not turning auth off
+      previousSecret: secret !== null ? (existing?.previousSecret ?? null) : null,
+      previousSecretExpiresAt:
+        secret !== null ? (existing?.previousSecretExpiresAt ?? null) : null,
+    },
     issuedSecret,
     audit: {
       urlFingerprint: webhookUrlFingerprint(input.url),
