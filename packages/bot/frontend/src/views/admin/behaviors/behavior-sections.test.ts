@@ -19,6 +19,7 @@ function command(id: number, section: CommandView['section'], name = `cmd${id}`)
         defaultMemberPermissions: null,
         isSystem: false,
         section,
+        updatedAt: '2026-10-26T00:00:00.000Z',
         leaves: [],
     };
 }
@@ -35,6 +36,7 @@ function trigger(id: number, section: MessageTriggerView['section']): MessageTri
         actionSource: 'webhook',
         webhook: null,
         stats: null,
+        updatedAt: '2026-10-26T00:00:00.000Z',
         surface: section === 'bot_dm' ? 'bot_dm' : 'guild',
         guildId: null,
         channelId: null,
