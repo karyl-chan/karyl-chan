@@ -34,6 +34,7 @@ import { commandNeedsPatch } from "./command-registration.js";
 import {
   expandTarget,
   guildTarget,
+  targetCovers,
   targetDiscordScope,
   targetGuildId,
   type CommandTarget,
@@ -339,11 +340,12 @@ export class CommandReconciler {
   /**
    * 增量 reconcile 單一 guild（OQ-8 補強）。
    *
-   * 在 bot 加入新 guild（guildCreate 事件）時呼叫，確保伺服器指令在該
-   * guild 自動 register，不需要重啟才生效。
+   * 在 bot 加入新 guild（guildCreate 事件）時呼叫，確保目標涵蓋這個 guild
+   * 的指令（all_guilds，或指定的正是這個 guild）自動 register，不需要重啟
+   * 才生效。
    *
    * 流程：
-   *   1. 枚舉 desired set（只取伺服器指令）
+   *   1. 枚舉 desired set（只取目標涵蓋此 guild 的項目）
    *   2. 拉取該 guild 的 Discord 現況
    *   3. diff + apply create / patch（不做 stale 清除，讓 reconcileAll 負責全量 cleanup）
    *   4. 更新 reconciler_owned_commands 名冊（限此 guild）
@@ -370,10 +372,11 @@ export class CommandReconciler {
       errors: [],
     };
 
-    // 步驟 1：枚舉 desired set，只保留伺服器指令
+    // 步驟 1：枚舉 desired set，只保留目標涵蓋此 guild 的項目（#128：
+    // 指定其他伺服器的指令不在這裡註冊）
     const here = guildTarget(guild.id);
-    const guildDesired = (await this.listDesired()).filter(
-      (c) => targetDiscordScope(c.spec.target) === "guild",
+    const guildDesired = (await this.listDesired()).filter((c) =>
+      targetCovers(c.spec.target, here),
     );
 
     if (guildDesired.length === 0) {

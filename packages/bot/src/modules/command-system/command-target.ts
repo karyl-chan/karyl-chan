@@ -58,13 +58,18 @@ export function targetCovers(
 // ── 各來源的目標推導 ─────────────────────────────────────────────────────────
 
 /**
- * Behavior 的註冊目標（由舊的 scope 欄位推導）：
- *   scope='global' → global
- *   scope='guild'  → all_guilds（每個伺服器各註冊一份，沿用既有行為）
+ * Behavior 的註冊目標（由舊的 scope + placement 欄位推導）：
+ *   scope='global'                      → global
+ *   scope='guild' + placementGuildId    → guild:<placementGuildId>
+ *     （specific_guild / specific_channel 分頁；#128）
+ *   scope='guild' 無 placement          → all_guilds（舊 all_guilds 分頁，S3 移除）
  */
 export function behaviorTarget(row: {
   scope: "global" | "guild";
   placementGuildId: string | null;
 }): CommandTarget {
-  return row.scope === "guild" ? "all_guilds" : "global";
+  if (row.scope !== "guild") return "global";
+  return row.placementGuildId !== null
+    ? guildTarget(row.placementGuildId)
+    : "all_guilds";
 }
