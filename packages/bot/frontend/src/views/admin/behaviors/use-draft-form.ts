@@ -3,6 +3,16 @@ import { keepEditsOnWith, rebaseDraftWith, type DraftModel } from './draft-rebas
 import { trackUnsavedDraft } from './use-unsaved-drafts';
 
 /**
+ * The handler for the field components' `patch` events: they send what
+ * changed, and it lands on the current draft (never on a stale copy).
+ */
+export function draftPatcher<D extends object>(draft: Ref<D>): (patch: Partial<D>) => void {
+    return (patch) => {
+        draft.value = { ...draft.value, ...patch };
+    };
+}
+
+/**
  * A behavior form's saved row and edit draft, kept apart (#105) — the
  * same lifecycle for a message trigger, a command and a command leaf:
  *
@@ -15,16 +25,6 @@ import { trackUnsavedDraft } from './use-unsaved-drafts';
  *
  * `key` names the form for that guard (see trackUnsavedDraft).
  */
-/**
- * The handler for the field components' `patch` events: they send what
- * changed, and it lands on the current draft (never on a stale copy).
- */
-export function draftPatcher<D extends object>(draft: Ref<D>): (patch: Partial<D>) => void {
-    return (patch) => {
-        draft.value = { ...draft.value, ...patch };
-    };
-}
-
 export function useDraftForm<V, D extends object>(model: DraftModel<V, D>, saved: () => V, key: string) {
     const base = ref(saved()) as Ref<V>;
     const draft = ref(model.draftOf(saved())) as Ref<D>;
