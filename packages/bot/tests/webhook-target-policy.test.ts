@@ -81,14 +81,14 @@ describe("resolveWebhookTarget — private targets", () => {
   it("allows a private IP inside an allowlisted CIDR, over plain http", async () => {
     await expect(
       resolveWebhookTarget("http://192.168.2.40:8080/hook", allow("192.168.0.0/16")),
-    ).resolves.toMatchObject({ address: "192.168.2.40", family: 4 });
+    ).resolves.toMatchObject({ addresses: [{ address: "192.168.2.40", family: 4 }] });
   });
 
   it("allows an allowlisted bare IP but not its neighbour", async () => {
     const list = allow("192.168.2.40");
     await expect(
       resolveWebhookTarget("http://192.168.2.40/hook", list),
-    ).resolves.toMatchObject({ address: "192.168.2.40" });
+    ).resolves.toMatchObject({ addresses: [{ address: "192.168.2.40" }] });
     expect((await refusal("http://192.168.2.41/hook", list)).code).toBe(
       "private_not_allowlisted",
     );
@@ -98,14 +98,14 @@ describe("resolveWebhookTarget — private targets", () => {
     stubResolve("192.168.2.40");
     await expect(
       resolveWebhookTarget("http://NAS.latte.lan/hook", allow("nas.latte.lan")),
-    ).resolves.toMatchObject({ address: "192.168.2.40", family: 4 });
+    ).resolves.toMatchObject({ addresses: [{ address: "192.168.2.40", family: 4 }] });
   });
 
   it("allows a hostname whose answer falls in an allowlisted CIDR", async () => {
     stubResolve("10.1.2.3");
     await expect(
       resolveWebhookTarget("http://svc.internal/hook", allow("10.0.0.0/8")),
-    ).resolves.toMatchObject({ address: "10.1.2.3" });
+    ).resolves.toMatchObject({ addresses: [{ address: "10.1.2.3" }] });
   });
 
   it("refuses a non-allowlisted hostname resolving to a private address", async () => {
@@ -119,21 +119,21 @@ describe("resolveWebhookTarget — private targets", () => {
   it("matches IPv6 ULA CIDRs", async () => {
     await expect(
       resolveWebhookTarget("http://[fd12:3456::5]/hook", allow("fd12::/16")),
-    ).resolves.toMatchObject({ address: "fd12:3456::5", family: 6 });
+    ).resolves.toMatchObject({ addresses: [{ address: "fd12:3456::5", family: 6 }] });
   });
 
   it("matches an IPv4-mapped answer against an IPv4 CIDR", async () => {
     stubResolve("::ffff:192.168.2.40");
     await expect(
       resolveWebhookTarget("http://nas.example/hook", allow("192.168.0.0/16")),
-    ).resolves.toMatchObject({ address: "::ffff:192.168.2.40" });
+    ).resolves.toMatchObject({ addresses: [{ address: "::ffff:192.168.2.40" }] });
   });
 
   it("keeps honouring the legacy WEBHOOK_ALLOW_PRIVATE hatch", async () => {
     process.env.WEBHOOK_ALLOW_PRIVATE = "true";
     await expect(
       resolveWebhookTarget("http://192.168.2.40/hook", allow()),
-    ).resolves.toMatchObject({ address: "192.168.2.40" });
+    ).resolves.toMatchObject({ addresses: [{ address: "192.168.2.40" }] });
   });
 });
 
@@ -190,7 +190,7 @@ describe("resolveWebhookTarget — https rule", () => {
     stubResolve("203.0.113.10");
     await expect(
       resolveWebhookTarget("https://hooks.example.com/x", allow()),
-    ).resolves.toMatchObject({ address: "203.0.113.10", family: 4 });
+    ).resolves.toMatchObject({ addresses: [{ address: "203.0.113.10", family: 4 }] });
   });
 
   it("refuses non-http(s) schemes", async () => {
@@ -208,5 +208,37 @@ describe("resolveWebhookTarget — https rule", () => {
     const err = await refusal("https://nope.example/");
     expect(err.code).toBe("dns_failed");
     expect(err.message).toContain("nope.example");
+  });
+});
+
+describe("resolveWebhookTarget — DNS rebinding", () => {
+  it("resolves once and hands back the checked address to connect to", async () => {
+    // A rebinding resolver: first answer passes, the next one would hit loopback.
+    mockedLookup
+      .mockResolvedValueOnce([{ address: "192.168.2.40", family: 4 }] as never)
+      .mockResolvedValueOnce([{ address: "127.0.0.1", family: 4 }] as never);
+    const target = await resolveWebhookTarget(
+      "http://nas.latte.lan/hook",
+      allow("nas.latte.lan"),
+    );
+    expect(target).toMatchObject({ addresses: [{ address: "192.168.2.40", family: 4 }] });
+    expect(target.url.hostname).toBe("nas.latte.lan");
+    expect(mockedLookup).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps every checked answer, in resolver order, for happy-eyeballs", async () => {
+    stubResolve("2606:4700:4700::1111", "203.0.113.10");
+    const target = await resolveWebhookTarget("https://dual.example/hook", allow());
+    expect(target.addresses).toEqual([
+      { address: "2606:4700:4700::1111", family: 6 },
+      { address: "203.0.113.10", family: 4 },
+    ]);
+  });
+
+  it("pins IPv6 answers with family 6", async () => {
+    stubResolve("2606:4700:4700::1111");
+    await expect(
+      resolveWebhookTarget("https://v6.example/hook", allow()),
+    ).resolves.toMatchObject({ addresses: [{ address: "2606:4700:4700::1111", family: 6 }] });
   });
 });

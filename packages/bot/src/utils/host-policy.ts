@@ -2,6 +2,7 @@ import { lookup } from "dns/promises";
 import { isIP } from "net";
 import { moduleLogger } from "../logger.js";
 import { config } from "../config.js";
+import type { PinnedAddress } from "./pinned-dispatcher.js";
 import {
   allowlistMatches,
   classifyAddress,
@@ -253,12 +254,14 @@ export async function assertPluginTarget(
 const ALLOWLIST_SETTING =
   "環境變數 WEBHOOK_PRIVATE_ALLOWLIST（目前值見 系統設定 → 行為模組；修改後需重啟）";
 
-/** A webhook target that passed the policy, with the address it was checked at. */
+/** A webhook target that passed the policy, with the addresses it was checked at. */
 export interface WebhookTarget {
   url: URL;
-  /** The checked IP — connect to exactly this one (DNS-rebinding guard). */
-  address: string;
-  family: 4 | 6;
+  /**
+   * Every DNS answer that passed, in resolver order (never empty).
+   * Connect only to these (DNS-rebinding guard) — see pinned-dispatcher.
+   */
+  addresses: PinnedAddress[];
 }
 
 /** True when the legacy WEBHOOK_ALLOW_PRIVATE dev hatch is on. */
@@ -330,7 +333,7 @@ function judgeWebhookAddress(
 /**
  * resolveWebhookTarget — behavior webhook URLs (admin-configured; the bot
  * POSTs to them). Validates the URL, resolves the host ONCE, judges every
- * answer, and returns the address to connect to.
+ * answer, and returns the addresses to connect to.
  *
  *   - public addresses pass, but only over https;
  *   - private addresses (RFC1918 / shared 100.64/10 / ULA) pass — over
@@ -401,10 +404,11 @@ export async function resolveWebhookTarget(
     );
   }
 
-  const pinned = answers[0];
   return {
     url,
-    address: pinned.address,
-    family: isIP(pinned.address) === 6 ? 6 : 4,
+    addresses: answers.map(({ address }) => ({
+      address,
+      family: isIP(address) === 6 ? 6 : 4,
+    })),
   };
 }

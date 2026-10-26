@@ -19,8 +19,7 @@ vi.mock("../src/utils/host-policy.js", async (importOriginal) => {
     ...mod,
     resolveWebhookTarget: vi.fn(async (u: string | URL) => ({
       url: new URL(u),
-      address: "203.0.113.10",
-      family: 4,
+      addresses: [{ address: "203.0.113.10", family: 4 }],
     })),
   };
 });

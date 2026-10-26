@@ -161,7 +161,13 @@ value is shown on the admin **System settings** page under the behavior
 group. A hostname whose DNS answers include any blocked address is
 refused as a whole.
 
-Redirects are never followed.
+The host is resolved once and the connection is made only to the
+addresses that passed the check (all of them, so a dual-stack target
+keeps its IPv4 fallback) (`src/utils/pinned-dispatcher.ts`, an
+undici Agent with a fixed `lookup`; Host header, TLS SNI and certificate
+checks still use the hostname), so a DNS answer that changes between
+check and connect (DNS rebinding) cannot redirect the request. Redirects
+are never followed.
 
 A refusal carries a machine `code` (`private_not_allowlisted`,
 `https_required`, `blocked_loopback`, `blocked_metadata`,
