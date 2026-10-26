@@ -15,9 +15,7 @@
   },
   "system": {
     "unknown-system-command": "⚙ 未知的系统指令。",
-    "webhook-failed": "⚠ Behavior 转发失败：{{error}}",
-    "behavior-wrong-place": "该指令不能在此处使用。",
-    "behavior-not-allowed": "你没有使用该指令的权限。"
+    "webhook-failed": "⚠ Behavior 转发失败：{{error}}"
   },
   "role-emoji": {
     "command": {

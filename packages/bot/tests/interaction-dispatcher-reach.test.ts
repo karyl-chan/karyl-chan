@@ -1,12 +1,11 @@
 /**
- * BH-0.1 — slash dispatch reach enforcement (audience + placement).
+ * Slash dispatch of behaviors.
  *
- * The behavior layer used to claim a slash command on (name, enabled) alone:
- * a behavior on a specific_user / specific_group / specific_channel tab could
- * be invoked by anyone who could see the command. Discord-side registration
- * only controls visibility down to guild granularity, so the dispatcher must
- * enforce audience/placement itself — exactly like the DM pattern path does
- * via collectApplicableBehaviorsForUser.
+ * ADR 0003: who sees a command and where it can be used is Discord's (and
+ * the guild admins') call — whoever can invoke it may run it. The
+ * dispatcher no longer applies a runtime audience / placement check; the
+ * action decides whether to serve the invoker (e.g. login checks
+ * authorisation).
  */
 import { vi, describe, it, expect, beforeAll, beforeEach, type Mock } from "vitest";
 
@@ -36,7 +35,6 @@ vi.mock("../src/modules/bot-events/bot-event-log.js", () => ({
 import type { Interaction } from "discord.js";
 import { sequelize } from "../src/db.js";
 import { Behavior } from "../src/modules/behavior/models/behavior.model.js";
-import { addGroupMember } from "../src/modules/behavior/models/behavior-group-member.model.js";
 import { InteractionDispatcher } from "../src/modules/command-system/interaction-dispatcher.service.js";
 import { dispatchInteractionToPlugin } from "../src/modules/plugin-system/plugin-interaction-dispatch.service.js";
 import type { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
@@ -132,8 +130,8 @@ async function seedCustomSlash(
   return row.getDataValue("id") as number;
 }
 
-describe("InteractionDispatcher — behavior reach enforcement", () => {
-  it("audience=all forwards for anyone (regression)", async () => {
+describe("InteractionDispatcher — Discord owns command visibility (ADR 0003)", () => {
+  it("forwards for anyone who can invoke the command", async () => {
     await seedCustomSlash({});
     const forwarder = makeForwarder();
     const d = new InteractionDispatcher(forwarder as unknown as WebhookForwarder);
@@ -143,7 +141,7 @@ describe("InteractionDispatcher — behavior reach enforcement", () => {
     expect(forwarder.forward).toHaveBeenCalledTimes(1);
   });
 
-  it("audience=user denies a different invoker without forwarding", async () => {
+  it("does not refuse an invoker outside a legacy audience", async () => {
     await seedCustomSlash({ audienceKind: "user", audienceUserId: "U1" });
     const forwarder = makeForwarder();
     const d = new InteractionDispatcher(forwarder as unknown as WebhookForwarder);
@@ -152,48 +150,12 @@ describe("InteractionDispatcher — behavior reach enforcement", () => {
       userId: "U2",
     });
     const outcome = await d.dispatch(interaction);
-    expect(outcome.claimed).toBe(true);
-    expect(forwarder.forward).not.toHaveBeenCalled();
-    expect(reply).toHaveBeenCalledTimes(1);
-    const arg = (reply.mock.calls[0] as unknown[])[0] as {
-      content: string;
-      ephemeral: boolean;
-    };
-    expect(arg.ephemeral).toBe(true);
-    expect(arg.content).toContain("access");
-  });
-
-  it("audience=user forwards for the target user", async () => {
-    await seedCustomSlash({ audienceKind: "user", audienceUserId: "U1" });
-    const forwarder = makeForwarder();
-    const d = new InteractionDispatcher(forwarder as unknown as WebhookForwarder);
-    const { interaction } = fakeSlash({ commandName: "reachtest", userId: "U1" });
-    await d.dispatch(interaction);
+    expect(outcome).toEqual({ claimed: true, claimedBy: "behavior_custom" });
     expect(forwarder.forward).toHaveBeenCalledTimes(1);
+    expect(reply).not.toHaveBeenCalled();
   });
 
-  it("audience=group forwards members and denies non-members", async () => {
-    await seedCustomSlash({
-      audienceKind: "group",
-      audienceGroupName: "vip",
-    });
-    await addGroupMember("vip", "M1");
-
-    const forwarder = makeForwarder();
-    const d = new InteractionDispatcher(forwarder as unknown as WebhookForwarder);
-
-    const member = fakeSlash({ commandName: "reachtest", userId: "M1" });
-    await d.dispatch(member.interaction);
-    expect(forwarder.forward).toHaveBeenCalledTimes(1);
-
-    const outsider = fakeSlash({ commandName: "reachtest", userId: "M2" });
-    const outcome = await d.dispatch(outsider.interaction);
-    expect(outcome.claimed).toBe(true);
-    expect(forwarder.forward).toHaveBeenCalledTimes(1); // unchanged
-    expect(outsider.reply).toHaveBeenCalledTimes(1);
-  });
-
-  it("placement guild/channel mismatch denies with a wrong-place message", async () => {
+  it("does not refuse an invocation outside a legacy placement channel", async () => {
     await seedCustomSlash({
       scope: "guild",
       integrationTypes: "guild_install",
@@ -203,40 +165,16 @@ describe("InteractionDispatcher — behavior reach enforcement", () => {
     });
     const forwarder = makeForwarder();
     const d = new InteractionDispatcher(forwarder as unknown as WebhookForwarder);
-
-    const wrongGuild = fakeSlash({
-      commandName: "reachtest",
-      userId: "U1",
-      guildId: "G2",
-      channelId: "C1",
-      commandGuildId: "G1",
-    });
-    await d.dispatch(wrongGuild.interaction);
-    expect(forwarder.forward).not.toHaveBeenCalled();
-    const arg1 = (wrongGuild.reply.mock.calls[0] as unknown[])[0] as {
-      content: string;
-    };
-    expect(arg1.content).toContain("available");
-
-    const wrongChannel = fakeSlash({
+    const otherChannel = fakeSlash({
       commandName: "reachtest",
       userId: "U1",
       guildId: "G1",
       channelId: "C9",
       commandGuildId: "G1",
     });
-    await d.dispatch(wrongChannel.interaction);
-    expect(forwarder.forward).not.toHaveBeenCalled();
-
-    const right = fakeSlash({
-      commandName: "reachtest",
-      userId: "U1",
-      guildId: "G1",
-      channelId: "C1",
-      commandGuildId: "G1",
-    });
-    await d.dispatch(right.interaction);
+    await d.dispatch(otherChannel.interaction);
     expect(forwarder.forward).toHaveBeenCalledTimes(1);
+    expect(otherChannel.reply).not.toHaveBeenCalled();
   });
 });
 
