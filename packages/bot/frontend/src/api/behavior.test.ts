@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "./client";
 import { clearTokens } from "../auth";
-import { createMessageTrigger, deleteBehavior, reorderMessageTriggers } from "./behavior";
+import {
+  createMessageTrigger,
+  deleteBehavior,
+  getBehaviorSchemas,
+  reorderMessageTriggers,
+} from "./behavior";
 
 function mockFetch(response: Response) {
   const spy = vi.fn(async () => response);
@@ -49,5 +54,28 @@ describe("behavior write client", () => {
     const err = await reorderMessageTriggers("bot_dm", [1]).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect(err).toMatchObject({ status: 409, code: "validation_failed", field: "ids" });
+  });
+});
+
+describe("getBehaviorSchemas", () => {
+  it("asks the server once and reuses the answer", async () => {
+    const spy = mockFetch(json({ messageTrigger: { type: "object" } }));
+    const first = await getBehaviorSchemas();
+    const second = await getBehaviorSchemas();
+    expect(first.messageTrigger).toEqual({ type: "object" });
+    expect(second).toBe(first);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect((spy.mock.calls[0] as unknown as [string])[0]).toBe("/api/behaviors/schema");
+  });
+});
+
+describe("getBehaviorSchemas after a failure", () => {
+  it("asks again next time instead of keeping the failure", async () => {
+    vi.resetModules();
+    const fresh = await import("./behavior");
+    mockFetch(json({ error: "nope" }, 500));
+    await expect(fresh.getBehaviorSchemas()).rejects.toBeInstanceOf(Error);
+    mockFetch(json({ messageTrigger: { type: "object" } }));
+    await expect(fresh.getBehaviorSchemas()).resolves.toEqual({ messageTrigger: { type: "object" } });
   });
 });

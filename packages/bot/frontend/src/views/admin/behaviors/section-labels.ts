@@ -1,7 +1,6 @@
 import type { BehaviorSection } from '../../../api/behavior';
 import { parseSection } from './behavior-sections';
-
-type Translate = (key: string, named?: Record<string, unknown>) => string;
+import type { Translate } from './translate';
 
 /** Display name of a section (guild names resolve when known). */
 export function sectionLabel(

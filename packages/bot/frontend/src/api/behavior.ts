@@ -321,6 +321,29 @@ export async function convertToSubcommands(
   );
 }
 
+/**
+ * The JSON schemas the write routes validate with (GET /api/behaviors/schema).
+ * Forms check a draft against them before sending (#108); fetched once.
+ */
+export interface BehaviorSchemas {
+  messageTrigger: Record<string, unknown>;
+}
+
+let schemas: Promise<BehaviorSchemas> | null = null;
+
+export function getBehaviorSchemas(): Promise<BehaviorSchemas> {
+  if (!schemas) {
+    schemas = authedFetch("/api/behaviors/schema")
+      .then((r) => jsonOrThrow<BehaviorSchemas>(r))
+      .catch((err: unknown) => {
+        schemas = null;
+        throw err;
+      });
+  }
+  return schemas;
+}
+
+/** Members of an Audience Group; only a group some message trigger uses can be set. */
 export async function getGroupMembers(
   groupName: string,
 ): Promise<{ groupName: string; members: string[] }> {

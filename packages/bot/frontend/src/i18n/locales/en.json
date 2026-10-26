@@ -1277,6 +1277,14 @@
             "stats": "Activity",
             "statsLine": "Last fired {when} · ok {ok} / failed {fail}",
             "statsLastError": "Last error: {error}"
+        },
+        "validation": {
+            "required": "Required",
+            "tooShort": "At least {min} characters",
+            "tooLong": "At most {max} characters",
+            "tooMany": "At most {max} entries",
+            "format": "Invalid format",
+            "invalid": "Invalid value"
         }
     },
     "config": {

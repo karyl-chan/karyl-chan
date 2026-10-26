@@ -1277,6 +1277,14 @@
             "stats": "觸發紀錄",
             "statsLine": "上次觸發 {when} · 成功 {ok} / 失敗 {fail}",
             "statsLastError": "最近錯誤：{error}"
+        },
+        "validation": {
+            "required": "必填",
+            "tooShort": "至少 {min} 個字",
+            "tooLong": "最多 {max} 個字",
+            "tooMany": "最多 {max} 項",
+            "format": "格式不正確",
+            "invalid": "值無效"
         }
     },
     "config": {
