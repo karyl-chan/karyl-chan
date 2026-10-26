@@ -4,7 +4,8 @@
  * tamper-evident.
  *
  * Actions are `behavior.<thing>.<verb>`; targets name the row
- * (`behavior:<id>`, `command:<id>`, `group:<name>`, `section:<key>`).
+ * (`behavior:<id>`, `command:<id>`, `group:<name>`, `location:<key>` —
+ * a Message Trigger Location).
  * Contexts carry what changed — never a webhook secret, never a webhook
  * URL in plaintext (a URL often embeds a token): see webhookAuditView.
  */
@@ -17,6 +18,7 @@ export type BehaviorAuditAction =
   | "behavior.create"
   | "behavior.update"
   | "behavior.delete"
+  | "behavior.reorder"
   | "behavior.group_members.replace";
 
 /**

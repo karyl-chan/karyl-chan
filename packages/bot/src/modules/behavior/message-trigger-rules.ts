@@ -37,6 +37,26 @@ function refuse(field: string, message: string): never {
   throw new BehaviorApiError("validation_failed", message, field);
 }
 
+/**
+ * A Message Trigger Location's key: `bot_dm`, `guild:all`, `guild:<id>` or
+ * `channel:<guildId>:<channelId>` (CONTEXT.md). The unit triggers are
+ * ordered in (message-trigger-reorder.ts).
+ */
+export type MessageTriggerLocation =
+  | "bot_dm"
+  | "guild:all"
+  | `guild:${string}`
+  | `channel:${string}:${string}`;
+
+export function messageTriggerLocation(
+  s: Pick<MessageTriggerState, "surface" | "guildId" | "channelId">,
+): MessageTriggerLocation {
+  if (s.surface === "bot_dm") return "bot_dm";
+  if (s.guildId === null) return "guild:all";
+  if (s.channelId !== null) return `channel:${s.guildId}:${s.channelId}`;
+  return `guild:${s.guildId}`;
+}
+
 export function checkMessageTrigger(s: MessageTriggerState): void {
   if (s.surface === "bot_dm") {
     if (s.guildId !== null) refuse("guildId", "a bot DM trigger has no guild");
