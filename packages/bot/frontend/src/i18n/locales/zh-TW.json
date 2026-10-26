@@ -1395,6 +1395,26 @@
             "registration_failed": "Discord 註冊失敗",
             "not_found": "找不到這個項目",
             "invalid_tree": "指令結構不正確"
+        },
+        "add": {
+            "open": "新增行為",
+            "title": "新增行為",
+            "intro": "在「{section}」建立行為：選擇觸發方式，再決定要轉發到哪裡。",
+            "name": "行為名稱",
+            "namePlaceholder": "例：天氣查詢",
+            "kind": "觸發類型",
+            "kinds": {
+                "command": "指令",
+                "message": "訊息比對"
+            },
+            "reason": {
+                "messageInApp": "App 指令區只能建立指令：bot 收不到使用者之間的私訊，也收不到它沒加入的伺服器裡的訊息。",
+                "commandInChannel": "Discord 無法把指令限定在單一頻道。請到上層的伺服器新增，再到 Discord 的「伺服器設定 → 整合」限制頻道。",
+                "commandLater": "指令的新增會在之後的更新開放。"
+            },
+            "create": "建立",
+            "created": "已建立「{title}」。",
+            "done": "完成"
         }
     },
     "config": {

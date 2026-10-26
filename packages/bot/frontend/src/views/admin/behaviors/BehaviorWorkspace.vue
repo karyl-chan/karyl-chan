@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { AppButton } from '@karyl-chan/ui';
+import { AppButton, Spacer } from '@karyl-chan/ui';
 import MessageTriggerCard from './MessageTriggerCard.vue';
 import CommandCard from './CommandCard.vue';
 import type { BehaviorSection, MessageTriggerView } from '../../../api/behavior';
@@ -29,6 +29,7 @@ const emit = defineEmits<{
     (e: 'reload'): void;
     (e: 'updated', trigger: MessageTriggerView): void;
     (e: 'deleted', id: number): void;
+    (e: 'add'): void;
 }>();
 
 const isEmpty = computed(
@@ -53,6 +54,10 @@ const note = computed(() => {
         <header class="ws-head">
             <h2 class="title">{{ sectionLabel(t, section, guildNames) }}</h2>
             <span class="kind-badge">{{ sectionKind(t, section) }}</span>
+            <Spacer />
+            <AppButton size="sm" icon="material-symbols:add-rounded" data-test="add-behavior" @click="emit('add')">
+                {{ t('behaviors.add.open') }}
+            </AppButton>
         </header>
 
         <div v-if="error" class="error" role="alert">

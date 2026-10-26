@@ -1395,6 +1395,26 @@
             "registration_failed": "Discord 注册失败",
             "not_found": "找不到这个项目",
             "invalid_tree": "指令结构不正确"
+        },
+        "add": {
+            "open": "新增行为",
+            "title": "新增行为",
+            "intro": "在“{section}”创建行为：选择触发方式，再决定要转发到哪里。",
+            "name": "行为名称",
+            "namePlaceholder": "例：天气查询",
+            "kind": "触发类型",
+            "kinds": {
+                "command": "指令",
+                "message": "消息匹配"
+            },
+            "reason": {
+                "messageInApp": "App 指令区只能创建指令：bot 收不到用户之间的私信，也收不到它没加入的服务器里的消息。",
+                "commandInChannel": "Discord 无法把指令限定在单一频道。请到上层的服务器新增，再到 Discord 的“服务器设置 → 整合”限制频道。",
+                "commandLater": "指令的新增会在之后的更新开放。"
+            },
+            "create": "创建",
+            "created": "已创建“{title}”。",
+            "done": "完成"
         }
     },
     "config": {

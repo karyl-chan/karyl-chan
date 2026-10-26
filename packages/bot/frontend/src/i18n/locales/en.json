@@ -1395,6 +1395,26 @@
             "registration_failed": "Discord registration failed",
             "not_found": "Not found",
             "invalid_tree": "Invalid command structure"
+        },
+        "add": {
+            "open": "New behavior",
+            "title": "New behavior",
+            "intro": "Create a behavior in “{section}”: pick how it is triggered, then where it forwards to.",
+            "name": "Behavior name",
+            "namePlaceholder": "e.g. Weather lookup",
+            "kind": "Trigger",
+            "kinds": {
+                "command": "Command",
+                "message": "Message match"
+            },
+            "reason": {
+                "messageInApp": "App commands holds commands only: the bot cannot read DMs between users or messages in servers it is not in.",
+                "commandInChannel": "Discord cannot limit a command to one channel. Add it in the server above, then limit channels in Discord’s Server Settings → Integrations.",
+                "commandLater": "Creating commands comes in a later update."
+            },
+            "create": "Create",
+            "created": "Created “{title}”.",
+            "done": "Done"
         }
     },
     "config": {

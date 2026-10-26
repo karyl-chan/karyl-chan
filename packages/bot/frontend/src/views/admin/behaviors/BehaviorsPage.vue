@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { onBeforeRouteLeave } from 'vue-router';
 import { SidebarLayout } from '../../../layouts';
@@ -7,6 +7,7 @@ import { useBreakpoint, useAppShell, useConfirm } from '@karyl-chan/ui';
 import { useGuildListStore } from '../../../stores/guildListStore';
 import BehaviorSidebar from './BehaviorSidebar.vue';
 import BehaviorWorkspace from './BehaviorWorkspace.vue';
+import AddBehaviorModal from './AddBehaviorModal.vue';
 import type { BehaviorSection } from '../../../api/behavior';
 import { countInSection, itemsInSection } from './behavior-sections';
 import { useBehaviorList } from './use-behavior-list';
@@ -18,8 +19,9 @@ const { closeOverlay } = useAppShell();
 const { confirm } = useConfirm();
 const guildList = useGuildListStore();
 
-const { view, selected, loading, error, expandId, sections, groupUse, load, applyTrigger } =
+const { view, selected, loading, error, expandId, sections, groupUse, load, applyTrigger, showCreated } =
     useBehaviorList();
+const adding = ref(false);
 const { hasUnsaved } = provideUnsavedDrafts();
 
 const counts = computed(() => {
@@ -94,8 +96,19 @@ async function onSelect(section: BehaviorSection) {
             @reload="load"
             @updated="applyTrigger($event, mayDropDrafts)"
             @deleted="load"
+            @add="adding = true"
         />
         <p v-else-if="error" class="page-error" role="alert">{{ error }}</p>
+
+        <AddBehaviorModal
+            v-if="selected"
+            :visible="adding"
+            :section="selected"
+            :guild-names="guildNames"
+            :group-names="groupNames"
+            @close="adding = false"
+            @created="showCreated($event, mayDropDrafts)"
+        />
     </SidebarLayout>
 </template>
 

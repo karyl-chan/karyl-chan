@@ -84,6 +84,34 @@ describe('useBehaviorList', () => {
         expect(state.view.value?.messageTriggers[0].section).toBe('guild:all');
     });
 
+    it('after a create, reloads the list and opens the new card where it lives (#104)', async () => {
+        listMock.mockResolvedValueOnce(list([trigger(1)]));
+        const state = useBehaviorList();
+        await state.load();
+        state.selected.value = 'guild:all';
+
+        const created = trigger(2, { surface: 'guild', guildId: GUILD, section: `guild:${GUILD}` });
+        listMock.mockResolvedValueOnce(list([trigger(1), created]));
+        await state.showCreated(created);
+
+        expect(listMock).toHaveBeenCalledTimes(2);
+        expect(state.view.value?.messageTriggers.map((m) => m.id)).toEqual([1, 2]);
+        expect(state.selected.value).toBe(`guild:${GUILD}`);
+        expect(state.expandId.value).toBe(2);
+    });
+
+    it('after a create elsewhere, asks before leaving a section with drafts', async () => {
+        listMock.mockResolvedValue(list([trigger(1)]));
+        const state = useBehaviorList();
+        await state.load();
+        state.selected.value = 'bot_dm';
+        const mayLeave = vi.fn(async () => false);
+
+        await state.showCreated(trigger(2, { surface: 'guild', section: 'guild:all' }), mayLeave);
+        expect(mayLeave).toHaveBeenCalledTimes(1);
+        expect(state.selected.value).toBe('bot_dm');
+    });
+
     it('counts the triggers using each audience group', async () => {
         listMock.mockResolvedValue(
             list([

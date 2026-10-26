@@ -70,6 +70,12 @@ export function useBehaviorList() {
         if (before && before.section !== trigger.section) await follow(trigger, mayLeave);
     }
 
+    /** A trigger was created: reload so it is listed, then open it where it lives (#104). */
+    async function showCreated(trigger: MessageTriggerView, mayLeave: MayLeave = allowLeave): Promise<void> {
+        await load();
+        await follow(trigger, mayLeave);
+    }
+
     /** Audience Groups in use, with how many message triggers use each. */
     const groupUse = computed(() => {
         const use = new Map<string, number>();
@@ -82,5 +88,5 @@ export function useBehaviorList() {
         return use;
     });
 
-    return { view, selected, loading, error, expandId, sections, groupUse, load, applyTrigger };
+    return { view, selected, loading, error, expandId, sections, groupUse, load, applyTrigger, showCreated };
 }
