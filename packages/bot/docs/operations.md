@@ -119,35 +119,85 @@ migrations are tracked in the `SequelizeMeta` table:
 - **Existing DB schema changes.** Add `src/migrations/NNN-short-name.ts`
   with an `up(ctx)` (optional `down(ctx)`); the runner applies it on next
   boot in filename-lexical order. See `src/migrations/README.md`.
-- **Behaviors table cutover (migration 011).** Back up the DB first —
-  the migration is not reversible. It moves `behaviors` /
-  `behavior_scope_tabs` to the trigger/action tables and gives every
-  copied behavior a **new id**, so a webhook's `_meta.behavior_id`
-  changes. A pattern that fired in both bot DMs and guilds becomes two
-  triggers, and its stats follow only the first (the bot DM one); if
-  such a pattern was limited to a user or group, only its bot DM half is
-  kept (with the audience) and its guild half is dropped. Rows
-  Discord cannot express are dropped, and stored
-  `behavior:<scopeKey>.manage` grants are removed; each is listed in the
-  bot event log as `migration 011: …`.
-- **Behavior webhook responses are bound to the request nonce (2.0.0,
-  #102).** A receiver must sign its response over the request's
-  `X-Karyl-Nonce` (`<METHOD>:<path>:<ts>:<request nonce>:<body>`); the
-  nonce-less form is refused with no transition window. Update every
-  self-hosted receiver before upgrading — see
-  [behaviors.md](features/behaviors.md#authentication-webhookauthmode).
-- **Behavior test-fires are signed as tests (2.0.0, #101).** The admin's
-  "test webhook" now signs under a `test:` prefix (token mode: the
-  `X-Plugin-Webhook-Test-Token` header) and sends a placeholder user, so a
-  receiver that verifies only real requests answers it with 401 — expected;
-  see [behaviors.md](features/behaviors.md#test-fire-requests).
-- **Reply visibility default (migration 014, #140).** Adds the nullable
-  `behavior_definitions.replyVisibility`; existing behaviors keep their
-  trigger's default (null). Re-running is a no-op.
+- **Upgrading to 2.0.0** runs behavior migrations that cannot be
+  undone: see [Upgrading to 2.0.0](#upgrading-to-200-behaviors-phase-1).
 - **Pre-v2 DB compatibility.** The one-time encryption-v2 uplift
   migration is gone; this build can only decrypt v2 ciphertexts.
   Restoring a pre-v2 backup will throw when reading an encrypted
   column. See [Encryption / decryption errors](#encryption--decryption-errors).
+
+### Upgrading to 2.0.0 (behaviors phase 1)
+
+Bot 2.0.0 rebuilds behaviors as triggers bound to actions
+([ADR 0003](adr/0003-behavior-trigger-action-split.md),
+[behaviors.md](features/behaviors.md)). Its migrations change the
+database in ways that **cannot be undone**, and it changes the webhook
+protocol for receiver authors.
+
+**Before upgrading:**
+
+1. **Back up the database** ([Backup](#backup); on Postgres, `pg_dump`
+   the `DB_URL` database). The only way back to 1.x is restoring that
+   backup.
+2. **Update every webhook receiver** for the BREAKING protocol changes
+   listed in
+   [Changes in bot 2.0.0](features/behavior-webhook-protocol.md#changes-in-bot-200)
+   (nonce-bound response signatures and test-fire signing among them).
+   A deployment with no custom behaviors (only the login) has nothing to
+   update.
+3. A private-network webhook target needs `WEBHOOK_PRIVATE_ALLOWLIST`
+   ([webhook targets](features/behaviors.md#webhook-targets));
+   `WEBHOOK_ALLOW_PRIVATE` is deprecated.
+
+**The migrations** run once, at the first boot, in order:
+
+| Migration | Does | Reversible |
+|-----------|------|------------|
+| 010 | Removes conversation sessions: deletes the `manual` and `break` system behaviors and their stats, turns continuous behaviors into one-shot ones, drops `behavior_sessions`. The login is untouched. | No |
+| 011 | Moves `behaviors` + `behavior_scope_tabs` to `behavior_commands`, `behavior_definitions` and `behavior_webhook_actions` (details below), rebuilds `behavior_stats` against the new table, removes stored `behavior:<scopeKey>.manage` grants, then drops the old tables. One transaction; a re-run is a no-op. | No |
+| 012 | Adds the previous-secret columns for webhook secret rotation. | Yes |
+| 013 | Deletes audience group member lists that no message trigger uses. | No |
+| 014 | Adds `behavior_definitions.replyVisibility` (null: the trigger's default). | Yes |
+
+Migration 011 in detail:
+
+- The login keeps its trigger exactly; a trigger that cannot be expressed
+  any more becomes the default DM `!login`. The login is never dropped.
+- Every copied behavior gets a **new id**, so a webhook's
+  `_meta.behavior_id` changes.
+- A message pattern that fired in both bot DMs and servers becomes two
+  triggers; its stats follow only the bot DM one. If it was limited to a
+  user or an audience group, only the bot DM half is kept (with the
+  audience); a server-only pattern with such an audience is dropped.
+- A slash command registered for all servers becomes a global command
+  usable only in servers.
+- Dropped: slash commands limited to a user, an audience group or a
+  channel (Discord cannot express them), patterns that only matched in
+  group DMs (the bot never receives those), custom rows without a
+  webhook URL, and slash commands whose name or shape Discord would
+  refuse or whose name an enabled row already holds.
+- Each dropped row is listed in the bot event log as
+  `migration 011: …`; the removed grants are logged as one count.
+
+**Other breaking changes in 2.0.0:**
+
+- Roles that relied on `behavior:<scopeKey>.manage` lose behavior
+  access; the module needs `behavior.manage` (or `admin`).
+- The behavior admin API changed: scope-tab routes are gone, the write
+  routes take the new shapes, unknown fields are refused, errors are
+  `{ error: { code, message, field? } }`, and reads no longer return
+  webhook secrets (`secretSet` instead). See the
+  [write API](features/behaviors.md#write-api).
+- Only a bot owner can change the login's trigger.
+
+**After upgrading:**
+
+- Check that the login still works (by default, DM the bot `!login`).
+- Read the `migration 011` and `migration 013` lines in the bot event
+  log for anything dropped.
+- Commands re-register with Discord when the bot connects. Check that
+  behavior commands appear where expected, and that no `/manual` or
+  `/break` command is left.
 
 ### Dependency audit
 
