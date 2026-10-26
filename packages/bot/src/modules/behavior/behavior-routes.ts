@@ -3,6 +3,7 @@
  *
  * 路由表：
  *   GET  /api/behaviors                          — { system, commands, messageTriggers }
+ *   GET  /api/behaviors/schema                   — the write schemas, for the admin UI's form checks
  *   POST /api/behaviors/:id/test                 — 對 behavior 的 webhook 動作試發
  *   POST / PATCH / DELETE /api/behaviors[/:id]   — 訊息觸發的寫入（behavior-write-routes.ts）
  *   PUT  /api/behaviors/reorder                  — 一個位置內的訊息觸發排序（message-trigger-reorder.ts）
@@ -44,7 +45,10 @@ import {
   installBehaviorRouteValidation,
 } from "./behavior-api-error.js";
 import { auditBehaviorWrite } from "./behavior-audit.js";
-import { registerBehaviorWriteRoutes } from "./behavior-write-routes.js";
+import {
+  createMessageTriggerSchema,
+  registerBehaviorWriteRoutes,
+} from "./behavior-write-routes.js";
 import { registerMessageTriggerReorderRoute } from "./message-trigger-reorder.js";
 import { registerWebhookSecretRotateRoute } from "./webhook-secret-rotate.js";
 import { registerBehaviorCommandRoutes } from "./behavior-command-routes.js";
@@ -89,6 +93,15 @@ function registerReadAndTestRoutes(
     ];
     const stats = await findStatsBulk(ids);
     return reply.send(buildBehaviorListView(catalog, stats));
+  });
+
+  // ── GET /api/behaviors/schema（#108）────────────────────────────────────────
+  // 寫入路由實際驗證用的 JSON schema。admin UI 用它在送出前檢查表單，
+  // 規則只有這一份，前端不另抄一份。schema 只涵蓋單一欄位的形狀；跨欄位
+  // 規則（message-trigger-rules.ts）由 UI 的表單結構避開，送出後仍由這裡把關。
+
+  server.get("/api/behaviors/schema", async (_request, reply) => {
+    return reply.send({ messageTrigger: createMessageTriggerSchema });
   });
 
   // ── BH-6.2：test-fire ───────────────────────────────────────────────────────

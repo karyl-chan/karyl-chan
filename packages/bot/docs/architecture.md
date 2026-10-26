@@ -129,7 +129,9 @@ is stored.
   is checked against).
 - `behavior-routes.ts` — mounts every behavior route in one Fastify
   scope (gate before validation, strict schemas, uniform errors);
-  serves `GET /api/behaviors`, test-fire, group members.
+  serves `GET /api/behaviors`, test-fire, group members, and
+  `GET /api/behaviors/schema` — the write routes' own JSON schemas, which
+  the admin UI checks its forms against instead of keeping a copy (#108).
 - `behavior-api-error.ts` — the refusal contract
   `{ error: { code, message, field? } }` (`validation_failed`,
   `name_conflict`, `system_immutable`, `registration_failed`,

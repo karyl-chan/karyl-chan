@@ -73,7 +73,11 @@ type BehaviorPatch = Partial<Omit<MessageTriggerCreate, "webhook">> &
     ifUpdatedAt?: string;
   };
 
-const createMessageTriggerSchema = {
+/**
+ * The create body — also served to the admin UI by GET /api/behaviors/schema,
+ * so the form checks a draft against the very rules this route enforces (#108).
+ */
+export const createMessageTriggerSchema = {
   type: "object",
   properties: {
     ...behaviorCommonFields,
