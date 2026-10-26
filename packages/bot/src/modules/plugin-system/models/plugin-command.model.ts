@@ -1,5 +1,6 @@
 import { DataTypes, Op } from "sequelize";
 import { sequelize } from "../../../db.js";
+import { botEventLog } from "../../bot-events/bot-event-log.js";
 import type { CommandTarget } from "../../command-system/command-target.js";
 import type { ManifestPluginCommand } from "../plugin-registry.service.js";
 
@@ -152,11 +153,24 @@ export const findPluginCommandForInvocation = async (
     commandGuildId === null
       ? target === "global"
       : target === "all_guilds" || target === `guild:${commandGuildId}`;
-  // 指定伺服器的列優先於 all_guilds（同名同伺服器時 Discord 只會留一個）
   const matching = rows.filter((r) => covers(pluginCommandRowTarget(r)));
-  return (
-    matching.find((r) => r.guildId !== null) ?? matching[0] ?? null
-  );
+  // 指定伺服器的列優先於 all_guilds（同名同伺服器時 Discord 只會留一個）。
+  // 註冊時的名稱檢查應該讓這種情況不會發生；真的發生就記下來。
+  const chosen =
+    matching.find((r) => r.guildId !== null) ?? matching[0] ?? null;
+  if (matching.length > 1 && chosen) {
+    botEventLog.record(
+      "warn",
+      "bot",
+      `plugin-commands: /${name} 有 ${matching.length} 個 plugin 指令列都涵蓋這次呼叫（commandGuildId=${commandGuildId ?? "global"}），選用 plugin ${chosen.pluginId} 的列 ${chosen.id}`,
+      {
+        cmd: name,
+        commandGuildId,
+        candidates: matching.map((r) => ({ id: r.id, pluginId: r.pluginId })),
+      },
+    );
+  }
+  return chosen;
 };
 
 export interface UpsertPluginCommandInput {

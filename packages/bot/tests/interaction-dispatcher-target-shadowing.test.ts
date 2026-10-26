@@ -36,7 +36,11 @@ import type { Interaction } from "discord.js";
 import { sequelize } from "../src/db.js";
 import { Behavior } from "../src/modules/behavior/models/behavior.model.js";
 import { Plugin } from "../src/modules/plugin-system/models/plugin.model.js";
-import { PluginCommand } from "../src/modules/plugin-system/models/plugin-command.model.js";
+import {
+  PluginCommand,
+  findPluginCommandForInvocation,
+} from "../src/modules/plugin-system/models/plugin-command.model.js";
+import { botEventLog } from "../src/modules/bot-events/bot-event-log.js";
 import { InteractionDispatcher } from "../src/modules/command-system/interaction-dispatcher.service.js";
 import type { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
 import { encryptSecret } from "../src/utils/crypto.js";
@@ -200,5 +204,34 @@ describe("dispatch matches the registration target in both layers", () => {
 
     expect(outcome.claimed).toBe(false);
     expect(reply).not.toHaveBeenCalled();
+  });
+});
+
+describe("findPluginCommandForInvocation — ambiguous guild match", () => {
+  it("prefers the guild's feature row over an all_guilds row and warns about the clash", async () => {
+    await PluginCommand.create({
+      pluginId: 99,
+      guildId: "H",
+      name: "foo",
+      featureKey: "feat",
+      manifestJson: JSON.stringify({ name: "foo" }),
+    } as Record<string, unknown>);
+
+    const row = await findPluginCommandForInvocation("foo", "H");
+
+    expect(row?.featureKey).toBe("feat");
+    expect(botEventLog.record).toHaveBeenCalledWith(
+      "warn",
+      "bot",
+      expect.stringContaining("foo"),
+      expect.anything(),
+    );
+  });
+
+  it("does not warn when exactly one row matches", async () => {
+    const row = await findPluginCommandForInvocation("foo", null);
+
+    expect(row?.guildId).toBeNull();
+    expect(botEventLog.record).not.toHaveBeenCalled();
   });
 });
