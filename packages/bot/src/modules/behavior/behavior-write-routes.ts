@@ -24,10 +24,15 @@ import {
   parseRowId,
 } from "./behavior-schemas.js";
 import { behaviorTransaction, withBehaviorWriteLock } from "./behavior-write-lock.js";
+import {
+  changedFields,
+  checkNotStale,
+  loadBehaviorRow,
+  refuseSystem,
+} from "./behavior-write-guards.js";
 import { checkMessageTrigger, type MessageTriggerState } from "./message-trigger-rules.js";
 import {
   BehaviorDefinition,
-  rowOfBehaviorDefinition,
   type BehaviorDefinitionRow,
 } from "./models/behavior-definition.model.js";
 import {
@@ -92,35 +97,6 @@ const MESSAGE_PATCH_KEYS = [
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
-export async function loadBehaviorRow(id: number): Promise<BehaviorDefinitionRow> {
-  const model = await BehaviorDefinition.findByPk(id);
-  if (!model) throw new BehaviorApiError("not_found", `behavior ${id} does not exist`);
-  return rowOfBehaviorDefinition(model);
-}
-
-export function refuseSystem(row: { systemKey: string | null }): void {
-  if (row.systemKey !== null) {
-    throw new BehaviorApiError(
-      "system_immutable",
-      "the system behavior cannot be changed or deleted here (its trigger switch comes with #139)",
-    );
-  }
-}
-
-export function checkNotStale(
-  current: { updatedAt: Date },
-  ifUpdatedAt: string | undefined,
-  what: string,
-): void {
-  if (ifUpdatedAt === undefined) return;
-  if (current.updatedAt.toISOString() !== ifUpdatedAt) {
-    throw BehaviorApiError.stale(
-      "ifUpdatedAt",
-      `${what} was changed by someone else (now at ${current.updatedAt.toISOString()}); reload and retry`,
-    );
-  }
-}
-
 async function messageTriggerViewOf(id: number): Promise<MessageTriggerView> {
   const catalog = await loadBehaviorCatalog();
   const trigger = catalog.messageTriggers.find((t) => t.id === id);
@@ -149,19 +125,6 @@ function stateOf(row: BehaviorDefinitionRow): MessageTriggerState {
     audienceUserId: row.audienceUserId,
     audienceGroupName: row.audienceGroupName,
   };
-}
-
-/** `{ field: { from, to } }` for every field whose value changes. */
-export function changedFields(
-  before: Record<string, unknown>,
-  after: Record<string, unknown>,
-): Record<string, { from: unknown; to: unknown }> {
-  const changed: Record<string, { from: unknown; to: unknown }> = {};
-  for (const [key, to] of Object.entries(after)) {
-    const from = before[key];
-    if (JSON.stringify(from) !== JSON.stringify(to)) changed[key] = { from, to };
-  }
-  return changed;
 }
 
 function trimmed<T extends { title?: string; description?: string }>(body: T): T {

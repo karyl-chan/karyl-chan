@@ -16,7 +16,7 @@ import { BehaviorApiError } from "./behavior-api-error.js";
 import { auditBehaviorWrite } from "./behavior-audit.js";
 import { idParams, parseRowId } from "./behavior-schemas.js";
 import { behaviorTransaction, withBehaviorWriteLock } from "./behavior-write-lock.js";
-import { loadBehaviorRow, refuseSystem } from "./behavior-write-routes.js";
+import { loadBehaviorRow, refuseSystem } from "./behavior-write-guards.js";
 import { BehaviorWebhookAction } from "./models/behavior-webhook-action.model.js";
 import { generateWebhookSecret } from "./webhook-action-input.js";
 
