@@ -10,7 +10,7 @@ vi.mock('../../../api/behavior', () => ({
 
 import { ApiError } from '../../../api/client';
 import { useBehaviorList } from './use-behavior-list';
-import { savedCommand } from './behavior-test-support';
+import { savedCommand, systemLoginCommand, systemLoginMessage } from './behavior-test-support';
 
 const GUILD = '123456789012345678';
 
@@ -80,6 +80,29 @@ describe('useBehaviorList — commands', () => {
         await state.showCreated(created);
         expect(state.selected.value).toBe('app');
         expect(state.expandKey.value).toBe('command:9');
+    });
+});
+
+describe('useBehaviorList — the system login (#139)', () => {
+    it('follows the login to the section its new trigger lives in, and opens it', async () => {
+        listMock.mockResolvedValue({ system: systemLoginMessage(), commands: [], messageTriggers: [] });
+        const state = useBehaviorList();
+        await state.load();
+        expect(state.selected.value).toBe('bot_dm');
+        const moved = systemLoginCommand({ integrationTypes: ['guild_install', 'user_install'], section: 'app' });
+        await state.applySystem(moved);
+        expect(state.view.value?.system).toEqual(moved);
+        expect(state.selected.value).toBe('app');
+        expect(state.expandKey.value).toBe('command:9');
+    });
+
+    it('stays in the section when the login stays there', async () => {
+        listMock.mockResolvedValue({ system: systemLoginMessage(), commands: [], messageTriggers: [] });
+        const state = useBehaviorList();
+        await state.load();
+        await state.applySystem(systemLoginCommand());
+        expect(state.selected.value).toBe('bot_dm');
+        expect(state.expandKey.value).toBeNull();
     });
 });
 

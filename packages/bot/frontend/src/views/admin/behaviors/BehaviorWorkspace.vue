@@ -6,7 +6,8 @@ import Sortable from 'sortablejs';
 import { AppButton, Spacer } from '@karyl-chan/ui';
 import MessageTriggerCard from './MessageTriggerCard.vue';
 import CommandCard from './CommandCard.vue';
-import type { BehaviorSection, CommandView, MessageTriggerView } from '../../../api/behavior';
+import SystemLoginCard from './SystemLoginCard.vue';
+import type { BehaviorItemView, BehaviorSection, CommandView, MessageTriggerView } from '../../../api/behavior';
 import { itemKey, type SectionItems } from './behavior-sections';
 import { locationOfSection } from './message-trigger-location';
 import { sectionKind, sectionLabel } from './section-labels';
@@ -31,6 +32,8 @@ const emit = defineEmits<{
     (e: 'reload'): void;
     (e: 'updated', trigger: MessageTriggerView): void;
     (e: 'commandUpdated', command: CommandView): void;
+    /** The login's trigger changed (or its command was resynced). */
+    (e: 'systemUpdated', system: BehaviorItemView): void;
     (e: 'deleted', id: number): void;
     (e: 'add'): void;
     /** A new order for this section's message triggers (its Message Trigger Location). */
@@ -113,13 +116,12 @@ const note = computed(() => {
         <template v-if="items">
             <!-- 系統列釘在所屬分區最上方（ADR 0003） -->
             <div v-if="items.system" class="card-list">
-                <CommandCard v-if="items.system.kind === 'command'" :command="items.system" :guild-names="guildNames" />
-                <MessageTriggerCard
-                    v-else
-                    :trigger="items.system"
+                <SystemLoginCard
+                    :system="items.system"
+                    :expand="expandKey === itemKey(items.system)"
                     :guild-names="guildNames"
-                    :group-names="groupNames"
-                    :group-use="groupUse"
+                    @updated="emit('systemUpdated', $event)"
+                    @reload="emit('reload')"
                 />
             </div>
 

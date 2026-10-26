@@ -258,25 +258,3 @@ describe('CommandCard — a save that moves the command', () => {
         expect(wrapper.find('[data-test="registration-result"]').attributes('data-tone')).toBe('ok');
     });
 });
-
-describe('CommandCard — the system command (#106)', () => {
-    it('nothing is editable: no form, no inputs, no menu, toggle disabled', async () => {
-        const system = savedCommand({
-            name: 'login',
-            isSystem: true,
-            leaves: [
-                savedLeaf({
-                    systemKey: 'admin-login',
-                    actionSource: 'builtin',
-                    webhook: null,
-                    options: [{ type: 'string', name: 'note', description: 'x', required: false }],
-                }),
-            ],
-        });
-        const wrapper = await mountOpen(system);
-        expect(wrapper.find('form').exists()).toBe(false);
-        expect(wrapper.find('input').exists()).toBe(false);
-        expect(wrapper.find('.more-btn').exists()).toBe(false);
-        expect(wrapper.find('[data-test="enabled-toggle"]').attributes('disabled')).toBeDefined();
-    });
-});

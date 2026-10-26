@@ -20,19 +20,16 @@ import {
     resyncBehaviorCommand,
     updateBehavior,
     updateBehaviorCommand,
-    type CommandLeafView,
     type CommandView,
     type RegistrationReport,
 } from '../../../api/behavior';
-import BehaviorActionDetails from './BehaviorActionDetails.vue';
-import BehaviorSourceNotice from './BehaviorSourceNotice.vue';
 import CommandRegistrationResult from './CommandRegistrationResult.vue';
 import CommandVisibilityFields from './CommandVisibilityFields.vue';
 import ConvertToSubcommandDialog from './ConvertToSubcommandDialog.vue';
 import SubcommandList from './SubcommandList.vue';
 import { NO_ERRORS, errorsFromRefusal, hasErrors, isStale, type FormErrors } from './behavior-errors';
 import { checkCommandDraft, commandDraftErrors, commandFieldsWithErrorLine } from './command-check';
-import { commandDraftModel, commandPath } from './command-draft';
+import { commandDraftModel } from './command-draft';
 import {
     isRegistrationRefusal,
     registrationFailure,
@@ -49,8 +46,8 @@ import { useRegistrationResult } from './use-registration-results';
  * (CommandRegistrationResult) — including a refusal, never as success.
  *
  * The saved command (`base`) and the edit draft are kept apart (#105),
- * as for message triggers. The System Behavior's command, if the login
- * ever is one, is read-only here (#106; S7 #139 adds its trigger switch).
+ * as for message triggers. The System Behavior's command is not shown
+ * here: SystemLoginCard owns the login, whatever its trigger.
  */
 const props = defineProps<{
     command: CommandView;
@@ -70,10 +67,6 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const { confirm } = useConfirm();
 const toast = useToastStore();
-
-const isSystem = computed(
-    () => props.command.isSystem || props.command.leaves.some((l) => l.systemKey !== null)
-);
 
 const open = ref(props.expand ?? false);
 const root = ref<HTMLElement | null>(null);
@@ -154,7 +147,6 @@ const saving = ref(false);
 /** The served command schema, for checking while the admin types; null until loaded. */
 const commandSchema = ref<Record<string, unknown> | null>(null);
 onMounted(() => {
-    if (isSystem.value) return;
     getBehaviorSchemas()
         .then((schemas) => (commandSchema.value = schemas.command ?? null))
         .catch(() => undefined);
@@ -256,18 +248,6 @@ const isRoot = computed(
 const unhealthy = computed(() =>
     props.command.leaves.some((l) => (l.stats?.consecutiveFailures ?? 0) >= 3)
 );
-
-function leafPath(leaf: CommandLeafView): string {
-    return commandPath(props.command.name, leaf.subcommand, leaf.subcommandGroup);
-}
-
-const registrationTarget = computed(() =>
-    props.command.registration === 'guild'
-        ? t('behaviors.card.registrationGuild', {
-              guild: props.guildNames.get(props.command.guildId ?? '') ?? props.command.guildId,
-          })
-        : t('behaviors.card.registrationGlobal')
-);
 </script>
 
 <template>
@@ -275,15 +255,12 @@ const registrationTarget = computed(() =>
         <AppItemCard
             :expanded="open"
             :disabled="!anyEnabled"
-            :accent-bar="isSystem ? 'neutral' : 'accent'"
+            accent-bar="accent"
             @update:expanded="open = $event"
         >
             <template #leading>
-                <span class="lead" :title="isSystem ? t('behaviors.card.systemRowLocked') : undefined" aria-hidden="true">
-                    <Icon
-                        :icon="isSystem ? 'material-symbols:lock-outline' : 'material-symbols:bolt-outline-rounded'"
-                        width="16" height="16"
-                    />
+                <span class="lead" aria-hidden="true">
+                    <Icon icon="material-symbols:bolt-outline-rounded" width="16" height="16" />
                 </span>
             </template>
 
@@ -302,22 +279,18 @@ const registrationTarget = computed(() =>
                 <AppBadge v-if="!isRoot" size="sm">
                     {{ t('behaviors.card.subcommandCount', { count: command.leaves.length }) }}
                 </AppBadge>
-                <AppBadge v-if="isSystem" size="sm" icon="material-symbols:settings-outline" :title="t('behaviors.card.tagSystem')">
-                    {{ t('behaviors.card.tagSystemShort') }}
-                </AppBadge>
                 <AppBadge v-if="unhealthy" size="sm" tone="danger" icon="material-symbols:heart-broken-rounded">
                     {{ t('behaviors.card.unhealthy') }}
                 </AppBadge>
                 <AppToggle
                     v-if="isRoot"
                     :model-value="command.leaves[0].enabled"
-                    :disabled="isSystem || toggling"
+                    :disabled="toggling"
                     data-test="enabled-toggle"
-                    :title="isSystem ? t('behaviors.card.toggleProtected') : undefined"
                     :aria-label="command.leaves[0].enabled ? t('behaviors.card.enabled') : t('behaviors.card.disabled')"
                     @update:model-value="setRootEnabled"
                 />
-                <AppMenu v-if="!isSystem" placement="bottom-end" :offset="[0, 6]">
+                <AppMenu placement="bottom-end" :offset="[0, 6]">
                     <template #trigger>
                         <button type="button" class="more-btn" :aria-label="t('behaviors.card.more')" :title="t('behaviors.card.more')">
                             <Icon icon="material-symbols:more-vert" width="16" height="16" />
@@ -337,21 +310,7 @@ const registrationTarget = computed(() =>
             <Stack gap="3">
                 <CommandRegistrationResult v-if="registration" :result="registration" @dismiss="registration = null" />
 
-                <template v-if="isSystem">
-                    <BehaviorSourceNotice />
-                    <dl class="details">
-                        <dt>{{ t('behaviors.command.registration.label') }}</dt>
-                        <dd>{{ registrationTarget }}</dd>
-                        <dt>{{ t('behaviors.card.contexts') }}</dt>
-                        <dd>{{ command.contexts.map((c) => t(`behaviors.card.context.${c}`)).join('、') }}</dd>
-                        <dt>{{ t('behaviors.card.integrationTypes') }}</dt>
-                        <dd>{{ command.integrationTypes.map((i) => t(`behaviors.card.integration.${i}`)).join('、') }}</dd>
-                        <dt>{{ t('behaviors.card.defaultMemberPermissions') }}</dt>
-                        <dd>{{ command.defaultMemberPermissions ?? t('behaviors.card.permissionsNone') }}</dd>
-                    </dl>
-                </template>
-
-                <form v-else class="editor" data-test="command-form" @submit.prevent="save">
+                <form class="editor" data-test="command-form" @submit.prevent="save">
                     <Stack gap="3">
                         <div class="grid">
                             <AppTextField
@@ -403,7 +362,6 @@ const registrationTarget = computed(() =>
                 </form>
 
                 <SubcommandList
-                    v-if="!isSystem"
                     ref="leafList"
                     :command="command"
                     @wrote="onLeafWrote"
@@ -414,7 +372,7 @@ const registrationTarget = computed(() =>
                     @convert="converting = true"
                 />
                 <ConvertToSubcommandDialog
-                    v-if="!isSystem && isRoot"
+                    v-if="isRoot"
                     :visible="converting"
                     :command="command"
                     :guild-names="guildNames"
@@ -422,26 +380,6 @@ const registrationTarget = computed(() =>
                     @converted="onConverted"
                 />
 
-                <ul v-if="isSystem" class="leaves">
-                    <li v-for="leaf in command.leaves" :key="leaf.id" class="leaf">
-                        <header class="leaf-head">
-                            <code class="leaf-path">{{ leafPath(leaf) }}</code>
-                            <span class="leaf-title">{{ leaf.title }}</span>
-                        </header>
-                        <p v-if="leaf.leafDescription && !isRoot" class="leaf-desc">{{ leaf.leafDescription }}</p>
-                        <p v-if="leaf.options.length > 0" class="options">
-                            {{ t('behaviors.card.options') }}:
-                            <code v-for="o in leaf.options" :key="o.name" class="option">
-                                {{ o.name }}{{ o.required ? '' : '?' }}: {{ o.type }}
-                            </code>
-                        </p>
-                        <BehaviorActionDetails
-                            :action-source="leaf.actionSource"
-                            :webhook="leaf.webhook"
-                            :stats="leaf.stats"
-                        />
-                    </li>
-                </ul>
             </Stack>
         </AppItemCard>
     </div>
@@ -488,15 +426,6 @@ const registrationTarget = computed(() =>
     gap: 0.6rem 1rem;
 }
 .mono :deep(input) { font-family: var(--font-mono, ui-monospace, monospace); }
-.details {
-    display: grid;
-    grid-template-columns: max-content 1fr;
-    gap: 0.35rem 0.75rem;
-    margin: 0;
-    font-size: 0.85rem;
-}
-dt { color: var(--text-muted); }
-dd { margin: 0; overflow-wrap: anywhere; }
 .hint { margin: 0; font-size: 0.78rem; color: var(--text-muted); }
 .conflict {
     display: flex;
@@ -517,26 +446,4 @@ dd { margin: 0; overflow-wrap: anywhere; }
     padding-top: 0.75rem;
     border-top: 1px solid var(--border);
 }
-.leaves {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-}
-.leaf {
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: 0.5rem 0.65rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-}
-.leaf-head { display: flex; align-items: center; gap: 0.5rem; }
-.leaf-path { font-weight: 600; }
-.leaf-title { color: var(--text-muted); font-size: 0.85rem; }
-.leaf-desc { margin: 0; font-size: 0.85rem; }
-.options { margin: 0; font-size: 0.82rem; color: var(--text-muted); display: flex; flex-wrap: wrap; gap: 0.35rem; }
-.option { color: var(--text); }
 </style>

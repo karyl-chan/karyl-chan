@@ -89,6 +89,20 @@ export function useBehaviorList() {
         if (before && before.section !== command.section) await follow(command, mayLeave);
     }
 
+    /**
+     * The login's trigger was switched (or its command resynced): take the
+     * server's version; follow it when the switch moved it to another
+     * section (a message pattern lives in bot DMs, a command where its
+     * visibility puts it).
+     */
+    async function applySystem(system: BehaviorItemView, mayLeave: MayLeave = allowLeave): Promise<void> {
+        const current = view.value;
+        if (!current) return;
+        const before = current.system;
+        view.value = { ...current, system };
+        if (before && before.section !== system.section) await follow(system, mayLeave);
+    }
+
     /** An item was created: reload so it is listed, then open it where it lives (#104). */
     async function showCreated(item: BehaviorItemView, mayLeave: MayLeave = allowLeave): Promise<void> {
         await load();
@@ -133,5 +147,19 @@ export function useBehaviorList() {
         return use;
     });
 
-    return { view, selected, loading, error, expandKey, sections, groupUse, load, applyTrigger, applyCommand, showCreated, reorder };
+    return {
+        view,
+        selected,
+        loading,
+        error,
+        expandKey,
+        sections,
+        groupUse,
+        load,
+        applyTrigger,
+        applyCommand,
+        applySystem,
+        showCreated,
+        reorder,
+    };
 }

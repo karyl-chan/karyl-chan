@@ -17,7 +17,6 @@ import {
 import { deleteBehavior, updateBehavior, type MessageTriggerView } from '../../../api/behavior';
 import GroupMembersPanel from './GroupMembersPanel.vue';
 import MessageTriggerFields from './MessageTriggerFields.vue';
-import MessageTriggerReadOnly from './MessageTriggerReadOnly.vue';
 import WebhookActionFields from './WebhookActionFields.vue';
 import WebhookTestResult from './WebhookTestResult.vue';
 import { NO_ERRORS, describeBehaviorError, errorsFromRefusal, hasErrors, isStale, type FormErrors } from './behavior-errors';
@@ -35,8 +34,8 @@ import { useDraftForm } from './use-draft-form';
 /**
  * A Message Trigger (board 7): the header row toggles, test-fires and
  * deletes; the expanded body edits the trigger (MessageTriggerFields) and
- * its action (WebhookActionFields). The System Behavior's trigger stays
- * read-only and pinned (S7 #139 adds its trigger switch).
+ * its action (WebhookActionFields). The System Behavior is not shown
+ * here: SystemLoginCard owns the login, whatever its trigger.
  *
  * The saved trigger (`base`) and the edit draft are kept apart (#105): a
  * new version from the server — the answer to the enabled toggle, a reload
@@ -71,7 +70,6 @@ const LAYOUT: TriggerFormLayout = {
     description: true,
 };
 
-const isSystem = computed(() => props.trigger.systemKey !== null);
 const open = ref(props.expand ?? false);
 const root = ref<HTMLElement | null>(null);
 function bringIntoView() {
@@ -227,14 +225,11 @@ const savedGroup = computed(() =>
         <AppItemCard
             :expanded="open"
             :disabled="!trigger.enabled"
-            :accent-bar="isSystem ? 'neutral' : 'accent'"
+            accent-bar="accent"
             @update:expanded="open = $event"
         >
             <template #leading>
-                <span v-if="isSystem" class="lead" :title="t('behaviors.card.systemRowLocked')">
-                    <Icon icon="material-symbols:lock-outline" width="16" height="16" aria-hidden="true" />
-                </span>
-                <slot v-else name="handle">
+                <slot name="handle">
                     <span class="lead" aria-hidden="true">
                         <Icon icon="material-symbols:chat-outline-rounded" width="16" height="16" />
                     </span>
@@ -253,9 +248,6 @@ const savedGroup = computed(() =>
                 <AppBadge size="sm" icon="material-symbols:article-outline">
                     {{ t('behaviors.card.triggerMessage') }}
                 </AppBadge>
-                <AppBadge v-if="isSystem" size="sm" icon="material-symbols:settings-outline" :title="t('behaviors.card.tagSystem')">
-                    {{ t('behaviors.card.tagSystemShort') }}
-                </AppBadge>
                 <AppBadge v-if="trigger.stopOnMatch" size="sm" tone="warn" icon="material-symbols:stop-circle-outline-rounded" :title="t('behaviors.card.tagStop')">
                     {{ t('behaviors.card.tagStopShort') }}
                 </AppBadge>
@@ -264,13 +256,12 @@ const savedGroup = computed(() =>
                 </AppBadge>
                 <AppToggle
                     :model-value="trigger.enabled"
-                    :disabled="isSystem || toggling"
+                    :disabled="toggling"
                     data-test="enabled-toggle"
-                    :title="isSystem ? t('behaviors.card.toggleProtected') : undefined"
                     :aria-label="trigger.enabled ? t('behaviors.card.enabled') : t('behaviors.card.disabled')"
                     @update:model-value="setEnabled"
                 />
-                <AppMenu v-if="!isSystem" placement="bottom-end" :offset="[0, 6]">
+                <AppMenu placement="bottom-end" :offset="[0, 6]">
                     <template #trigger>
                         <button type="button" class="more-btn" :aria-label="t('behaviors.card.more')" :title="t('behaviors.card.more')">
                             <Icon icon="material-symbols:more-vert" width="16" height="16" />
@@ -287,11 +278,7 @@ const savedGroup = computed(() =>
                 </AppMenu>
             </template>
 
-            <Stack v-if="isSystem" gap="2">
-                <MessageTriggerReadOnly :trigger="trigger" :guild-names="guildNames" />
-            </Stack>
-
-            <form v-else class="editor" @submit.prevent="save">
+            <form class="editor" @submit.prevent="save">
                 <Stack gap="3">
                     <WebhookTestResult ref="tester" :behavior-id="trigger.id" />
 

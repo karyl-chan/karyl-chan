@@ -1542,6 +1542,51 @@
             "nextLeaf": "接着设置的新子指令",
             "note": "同步后，用户原本输入的 /{command} 会变成要再选子指令。指令的可见性设置不变。",
             "submit": "转换并新增子指令"
+        },
+        "system": {
+            "triggerKind": "触发类型",
+            "kindMessage": "消息 Pattern（与 bot 的私信）",
+            "kindCommand": "Slash 指令",
+            "messageNote": "登录的消息匹配只能用在与 bot 的私信：服务器频道里的回复所有人都看得到，登录链接会外泄。只能用开头匹配或结尾匹配（不能用正则表达式）；消息前后的空白会被 Discord 去掉，所以 pattern 不能以空白开头或结尾。",
+            "commandName": "Slash 指令名称",
+            "commandDescription": "Slash 指令说明",
+            "commandNote": "登录一律注册为全局指令，不设默认成员权限，并且一定保留「服务器安装」与「bot 私信」，确保你随时找得到它；不需要参数，回复一律只有执行的人看得到。",
+            "switchToCommandHint": "改变触发方式会先把 {command} 注册到 Discord，成功后才停用 {old}。",
+            "switchToMessageHint": "改变触发方式会先启用 {pattern}，再从 Discord 移除 {old}。",
+            "save": "保存触发方式",
+            "whereMessage": "消息 Pattern · 与 bot 的私信",
+            "whereCommand": "Slash 指令 · {section}",
+            "steps": {
+                "register": "把 {command} 注册到 Discord",
+                "registerSub": "按你设置的可见性注册",
+                "confirm": "确认注册成功",
+                "confirmSub": "Discord 返回成功，指令已存在",
+                "disable": "停用 {old}",
+                "disableSub": "只有前两步都成功才会执行",
+                "enable": "启用 {pattern}",
+                "enableSub": "与 bot 的私信，保存后立即生效",
+                "remove": "从 Discord 移除 {command}",
+                "removeSub": "移除失败时留给下一次同步，登录不受影响",
+                "notRun": "未执行"
+            },
+            "switch": {
+                "title": "改变登录的触发方式",
+                "intro": "登录是唯一能进后台的方式，所以切换会按下面的顺序进行，任何一步失败都会保留 {old}：",
+                "start": "开始切换",
+                "failed": "{old} 保持启用，没有任何变更。",
+                "done": "切换完成。登录现在是 {trigger}，这一行在「{section}」的最上方。",
+                "sampleNote": "已用你的示例私信「{sample}」确认 {pattern} 会触发。"
+            },
+            "sample": "示例私信（必填）",
+            "sampleHint": "写一条你登录时会发给 bot 的私信。保存前会用它确认 pattern 真的会触发，避免打错字把自己锁在门外；示例不会被保存。",
+            "sampleRequired": "请填一条示例私信，用来确认 pattern 会触发。",
+            "sampleNoMatch": "这条示例私信不会触发这个 pattern；照这样保存，你将无法登录。",
+            "ownerOnly": "只有 bot 所有者能修改登录的触发方式。",
+            "mustKeep": "登录指令一定要保留这一项，否则你可能看不到它。",
+            "rule": {
+                "needsGuildInstall": "登录指令一定要包含「服务器安装」：只开放用户安装时，没有自行安装 app 的你会看不到它。",
+                "needsBotDm": "登录指令一定要能在「bot 私信」使用：其他地方的话，没有和 bot 同在服务器时就用不到。"
+            }
         }
     },
     "config": {
