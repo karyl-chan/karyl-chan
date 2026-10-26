@@ -35,12 +35,16 @@ vi.mock(
 
 import { ChannelType } from "discord.js";
 import { sequelize } from "../src/db.js";
-import { Behavior } from "../src/modules/behavior/models/behavior.model.js";
-import { MessagePatternMatcher } from "../src/modules/command-system/message-pattern-matcher.service.js";
+import { MessageTriggerMatcher } from "../src/modules/command-system/message-trigger-matcher.service.js";
 import { InteractionDispatcher } from "../src/modules/command-system/interaction-dispatcher.service.js";
 import { sanitizeEmbeds } from "../src/modules/command-system/webhook-forwarder.service.js";
 import type { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
-import { encryptSecret } from "../src/utils/crypto.js";
+import {
+  clearBehaviors,
+  seedCommand,
+  seedLeaf,
+  seedMessageTrigger,
+} from "./behavior-fixtures.js";
 import { CONTRACT_FIXTURES } from "@karyl-chan/plugin-wire";
 
 const C = CONTRACT_FIXTURES.behaviorWebhook;
@@ -56,35 +60,12 @@ function captureForwarder(): { forward: Mock } {
   };
 }
 
-const BASE = {
-  enabled: true,
-  sortOrder: 0,
-  stopOnMatch: false,
-  ignoreBots: true,
-  forwardType: "one_time",
-  source: "custom",
-  scope: "global",
-  integrationTypes: "guild_install,user_install",
-  contexts: "BotDM,Guild,PrivateChannel",
-  audienceKind: "all",
-  webhookUrl: encryptSecret("https://example.test/hook"),
-  scopeTabId: 1,
-} as const;
-
 describe("behavior webhook contract (BH-2.3)", () => {
   it("pattern payload matches the fixture key sets", async () => {
-    await Behavior.destroy({ where: {} });
-    await Behavior.create({
-      id: 1,
-      title: "contract-pattern",
-      triggerType: "message_pattern",
-      messagePatternKind: "startswith",
-      messagePatternValue: "!c",
-      ...BASE,
-      contexts: "BotDM",
-    } as Record<string, unknown>);
+    await clearBehaviors();
+    await seedMessageTrigger({ title: "contract-pattern", patternValue: "!c" });
     const f = captureForwarder();
-    const matcher = new MessagePatternMatcher(f as unknown as WebhookForwarder);
+    const matcher = new MessageTriggerMatcher(f as unknown as WebhookForwarder);
     await matcher.onMessage({
       id: "M1",
       content: "!c hi",
@@ -123,15 +104,10 @@ describe("behavior webhook contract (BH-2.3)", () => {
   });
 
   it("slash payload _meta matches the fixture key set", async () => {
-    await Behavior.destroy({ where: {} });
-    await Behavior.create({
-      id: 2,
+    await clearBehaviors();
+    await seedLeaf(await seedCommand({ name: "contract", description: "d" }), {
       title: "contract-slash",
-      triggerType: "slash_command",
-      slashCommandName: "contract",
-      slashCommandDescription: "d",
-      ...BASE,
-    } as Record<string, unknown>);
+    });
     const f = captureForwarder();
     const d = new InteractionDispatcher(f as unknown as WebhookForwarder);
     await d.dispatch({
@@ -144,6 +120,7 @@ describe("behavior webhook contract (BH-2.3)", () => {
       token: "tok",
       applicationId: "app",
       commandName: "contract",
+      commandGuildId: null,
       guildId: null,
       channelId: "C1",
       locale: "en-US",
@@ -156,7 +133,11 @@ describe("behavior webhook contract (BH-2.3)", () => {
         displayAvatarURL: () => "https://cdn.example/a.png",
         createDM: async () => ({ id: "DM1" }),
       },
-      options: { data: [] },
+      options: {
+        data: [],
+        getSubcommand: () => null,
+        getSubcommandGroup: () => null,
+      },
       reply: vi.fn(async () => {}),
       deferReply: vi.fn(async () => {}),
       editReply: vi.fn(async () => {}),

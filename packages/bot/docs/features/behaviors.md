@@ -1,5 +1,9 @@
 # Behaviors
 
+> **此頁描述舊模型（`behaviors` 表與範圍分頁），將於 #141 改寫。** 目前的模型見
+> [ADR 0003](../adr/0003-behavior-trigger-action-split.md) 與
+> [architecture.md](../architecture.md#modulesbehavior--behaviors)。
+
 A **behavior** is a "Discord trigger → action" rule stored in the
 `behaviors` table. Each behavior has one trigger type and one source:
 
@@ -94,7 +98,7 @@ by `CommandReconciler`; see the `command-system` module in
 
 ### message_pattern trigger (DMs + guild channels)
 
-`MessagePatternMatcher` mounts a `messageCreate` listener:
+`MessageTriggerMatcher` mounts a `messageCreate` listener:
 
 1. Collect the `message_pattern` behaviors applicable to the
    caller (filtered by `audienceKind`, ordered by `sortOrder` ascending),
@@ -295,7 +299,7 @@ direct DB exposure.
 | `src/modules/behavior/scope-tab-seed.service.ts` | Fixed scope tab seed. |
 | `src/modules/behavior/behavior-trigger.ts` | Pure `matchesTrigger` and `describeTrigger`. |
 | `src/modules/command-system/interaction-dispatcher.service.ts` | Slash command dispatch. |
-| `src/modules/command-system/message-pattern-matcher.service.ts` | DM + guild pattern dispatch. |
+| `src/modules/command-system/message-trigger-matcher.service.ts` | DM + guild pattern dispatch. |
 | `src/modules/command-system/webhook-forwarder.service.ts` | Webhook POST + HMAC. |
 | `src/modules/command-system/reconcile.service.ts` | Slash command registration in Discord. |
 | `src/utils/hmac.ts` | HMAC scheme. |

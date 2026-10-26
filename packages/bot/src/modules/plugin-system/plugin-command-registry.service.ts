@@ -262,8 +262,8 @@ function describeOwner(owner: NamespaceOwner): string {
       return "a built-in bot command";
     case "plugin_command":
       return `another plugin (id=${owner.pluginId})`;
-    case "behavior":
-      return `behavior #${owner.behaviorId}`;
+    case "behavior_command":
+      return `behavior command #${owner.commandId}`;
   }
 }
 

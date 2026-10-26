@@ -1,12 +1,9 @@
-import type { BehaviorMessagePatternKind } from "./models/behavior.model.js";
+import type { BehaviorPatternKind } from "./models/behavior-definition.model.js";
 
 /**
- * Evaluate whether a DM message body matches a message_pattern trigger.
- * Pure / synchronous; safe to call inside hot path of messageCreate.
- *
- * v2 schema 拆解：triggerType='message_pattern' + messagePatternKind（startswith/endswith/regex）
- *   - triggerType='slash_command' 從 interactionCreate 路徑處理，不走此函式。
- *   - 此函式只處理 messagePatternKind 的三種情況。
+ * Evaluate whether a message body matches a Message Trigger's pattern
+ * (startswith / endswith / regex). Pure / synchronous; safe to call inside
+ * the hot path of messageCreate.
  *
  * Regex patterns are compiled once and cached — every DM message that
  * passes through the matcher would otherwise pay an O(N_patterns)
@@ -36,7 +33,7 @@ function getRegex(patternValue: string): RegExp | null {
 }
 
 export function matchesTrigger(
-  patternKind: BehaviorMessagePatternKind,
+  patternKind: BehaviorPatternKind,
   patternValue: string,
   content: string,
 ): boolean {

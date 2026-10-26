@@ -18,7 +18,7 @@ vi.mock("../src/modules/bot-events/bot-event-log.js", () => ({
 }));
 
 import { sequelize } from "../src/db.js";
-import { Behavior } from "../src/modules/behavior/models/behavior.model.js";
+import { clearBehaviors, seedCommand, seedLeaf } from "./behavior-fixtures.js";
 import { PluginCommand } from "../src/modules/plugin-system/models/plugin-command.model.js";
 import {
   ManifestCommandError,
@@ -26,7 +26,6 @@ import {
 } from "../src/modules/plugin-system/plugin-command-registry.service.js";
 import type { PluginManifest } from "../src/modules/plugin-system/plugin-registry.service.js";
 import { CommandNamespace } from "../src/modules/command-system/command-namespace.js";
-import { encryptSecret } from "../src/utils/crypto.js";
 
 function manifestWith(
   cmds: Array<{ name: string; scope: "global" | "guild" }>,
@@ -42,23 +41,12 @@ function manifestWith(
   } as unknown as PluginManifest;
 }
 
-async function seedBehavior(overrides: Record<string, unknown>): Promise<void> {
-  await Behavior.create({
-    title: "b",
-    enabled: true,
-    sortOrder: 0,
-    source: "custom",
-    triggerType: "slash_command",
-    slashCommandName: "ping",
-    slashCommandDescription: "ping",
-    scope: "global",
-    integrationTypes: "guild_install",
-    contexts: "Guild",
-    audienceKind: "all",
-    webhookUrl: encryptSecret("http://example.invalid/hook"),
-    scopeTabId: 1,
-    ...overrides,
-  } as Record<string, unknown>);
+/** A behavior command (global `/ping` by default) with a root leaf. */
+async function seedBehavior(
+  command: Record<string, unknown>,
+  leaf: Record<string, unknown> = {},
+): Promise<void> {
+  await seedLeaf(await seedCommand(command), leaf);
 }
 
 const registry = new PluginCommandRegistry(
@@ -71,13 +59,13 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  await Behavior.destroy({ where: {} });
+  await clearBehaviors();
   await PluginCommand.destroy({ where: {} });
 });
 
 describe("PluginCommandRegistry.assertNoCollisions via CommandNamespace", () => {
   it("rejects a name owned by a disabled behavior", async () => {
-    await seedBehavior({ enabled: false });
+    await seedBehavior({}, { enabled: false });
 
     await expect(
       registry.assertNoCollisions(
@@ -90,9 +78,9 @@ describe("PluginCommandRegistry.assertNoCollisions via CommandNamespace", () => 
 
   it("rejects a scope=guild command that a specific-guild behavior already uses", async () => {
     await seedBehavior({
-      slashCommandName: "radio",
-      scope: "guild",
-      placementGuildId: "g1",
+      name: "radio",
+      registration: "guild",
+      guildId: "g1",
     });
 
     await expect(
@@ -197,9 +185,9 @@ describe("PluginCommandRegistry.assertNoCollisions via CommandNamespace", () => 
 
   it("refuses a guild-feature command whose name a behavior already uses", async () => {
     await seedBehavior({
-      slashCommandName: "quest",
-      scope: "guild",
-      placementGuildId: "g1",
+      name: "quest",
+      registration: "guild",
+      guildId: "g1",
     });
 
     await expect(

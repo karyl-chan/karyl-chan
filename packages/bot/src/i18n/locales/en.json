@@ -15,9 +15,7 @@
   },
   "system": {
     "unknown-system-command": "⚙ Unknown system command.",
-    "webhook-failed": "⚠ Behavior forward failed: {{error}}",
-    "behavior-wrong-place": "This command isn't available here.",
-    "behavior-not-allowed": "You don't have access to this command."
+    "webhook-failed": "⚠ Behavior forward failed: {{error}}"
   },
   "role-emoji": {
     "command": {

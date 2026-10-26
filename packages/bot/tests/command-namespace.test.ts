@@ -18,36 +18,21 @@ vi.mock("../src/modules/bot-events/bot-event-log.js", () => ({
 }));
 
 import { sequelize } from "../src/db.js";
-import { Behavior } from "../src/modules/behavior/models/behavior.model.js";
 import { PluginCommand } from "../src/modules/plugin-system/models/plugin-command.model.js";
 import {
   registerInProcessCommand,
   _resetInProcessRegistry,
 } from "../src/modules/builtin-features/in-process-command-registry.service.js";
 import { CommandNamespace } from "../src/modules/command-system/command-namespace.js";
-import { encryptSecret } from "../src/utils/crypto.js";
+import { clearBehaviors, seedCommand, seedLeaf } from "./behavior-fixtures.js";
 
-let nextId = 1;
-
-async function seedBehavior(overrides: Record<string, unknown>): Promise<number> {
-  const id = nextId++;
-  await Behavior.create({
-    id,
-    title: "b",
-    enabled: true,
-    sortOrder: 0,
-    source: "custom",
-    triggerType: "slash_command",
-    slashCommandName: "ping",
-    slashCommandDescription: "ping",
-    scope: "global",
-    integrationTypes: "guild_install",
-    contexts: "Guild",
-    audienceKind: "all",
-    webhookUrl: encryptSecret("http://example.invalid/hook"),
-    scopeTabId: 1,
-    ...overrides,
-  } as Record<string, unknown>);
+/** A behavior command named `ping` (global) with a root leaf. */
+async function seedBehavior(
+  command: Record<string, unknown>,
+  leaf: Record<string, unknown> = {},
+): Promise<number> {
+  const id = await seedCommand(command);
+  await seedLeaf(id, leaf);
   return id;
 }
 
@@ -80,7 +65,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  await Behavior.destroy({ where: {} });
+  await clearBehaviors();
   await PluginCommand.destroy({ where: {} });
 });
 
@@ -93,32 +78,32 @@ describe("CommandNamespace.check", () => {
     expect(await ns.check("free", "global")).toEqual({ ok: true });
   });
 
-  it("a disabled behavior still owns its name", async () => {
-    const id = await seedBehavior({ enabled: false });
+  it("a command whose leaves are all disabled still owns its name", async () => {
+    const id = await seedBehavior({}, { enabled: false });
 
     expect(await ns.check("ping", "global")).toEqual({
       ok: false,
       conflict: {
         name: "ping",
         target: "global",
-        owner: { kind: "behavior", behaviorId: id },
+        owner: { kind: "behavior_command", commandId: id },
       },
     });
   });
 
-  it("behaviors in two different specific guilds may share a name", async () => {
-    await seedBehavior({ scope: "guild", placementGuildId: "g2" });
+  it("commands in two different specific guilds may share a name", async () => {
+    await seedBehavior({ registration: "guild", guildId: "g2" });
 
     expect(await ns.check("ping", "guild:g1")).toEqual({ ok: true });
     expect((await ns.check("ping", "guild:g2")).ok).toBe(false);
   });
 
   it("a global name conflicts with a guild command of the same name, both ways", async () => {
-    await seedBehavior({ scope: "guild", placementGuildId: "g1" });
+    await seedBehavior({ registration: "guild", guildId: "g1" });
     expect((await ns.check("ping", "global")).ok).toBe(false);
 
-    await Behavior.destroy({ where: {} });
-    await seedBehavior({ scope: "global" });
+    await clearBehaviors();
+    await seedBehavior({});
     expect((await ns.check("ping", "guild:g1")).ok).toBe(false);
   });
 
@@ -148,12 +133,12 @@ describe("CommandNamespace.check", () => {
 
   it("excludes the caller's own commands", async () => {
     await seedPluginCommand({ pluginId: 7, name: "radio" });
-    const id = await seedBehavior({ slashCommandName: "mine" });
+    const id = await seedBehavior({ name: "mine" });
 
     expect(await ns.check("radio", "global", { pluginId: 7 })).toEqual({
       ok: true,
     });
-    expect(await ns.check("mine", "global", { behaviorId: id })).toEqual({
+    expect(await ns.check("mine", "global", { commandId: id })).toEqual({
       ok: true,
     });
     expect((await ns.check("radio", "global", { pluginId: 8 })).ok).toBe(false);

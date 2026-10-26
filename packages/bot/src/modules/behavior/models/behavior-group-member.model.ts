@@ -7,11 +7,10 @@ import { sequelize } from "../../../db.js";
  * 舊表以 behaviorId 為鍵，導致同一個 group tab 上的多條 behavior 各自有
  * 成員清單、必須逐條同步（而且從未有寫入路徑，永遠是空表）。group 的
  * 心智模型是「一個名字、一份名單、掛在上面的 behaviors 共享」——以
- * groupName 為鍵讓 specific_group tab 與 audienceKind='group' 的 behavior
- * 天然共用同一份名單。
+ * groupName 為鍵讓 audienceKind='group' 的訊息觸發天然共用同一份名單。
  *
  *   - PK：(groupName, userId)
- *   - groupName 對應 behaviors.audienceGroupName / scope tab 的 groupName
+ *   - groupName 對應 behavior_definitions.audienceGroupName
  *
  * 舊表由 migration 002 清除（從未有資料，無需搬遷）。
  */

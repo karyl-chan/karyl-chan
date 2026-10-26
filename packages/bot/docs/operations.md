@@ -56,7 +56,8 @@ docker compose start bot
 | `RoleEmojis` | Emoji → role mappings. |
 | `RoleReceiveMessages` | Watched messages for role-emoji. |
 | `RconForwardChannels` | RCON forward settings (with encrypted password). |
-| `behaviors` and `behavior_scope_tabs` | Behavior rules and scope tabs. |
+| `behavior_commands`, `behavior_definitions`, `behavior_webhook_actions` | Behaviors: commands, triggers + action sources, webhook actions (encrypted). |
+| `behavior_stats`, `behavior_group_members` | Per-behavior forward stats; audience group lists. |
 | `plugins` and `plugin_commands` | Plugin registry and commands. |
 | `admin_roles` and `admin_role_capabilities` | Admin roles and capability tokens. |
 
@@ -102,8 +103,9 @@ git pull && docker compose up -d --build bot
 
 The schema is defined by the Sequelize models, and `sequelize.sync()`
 creates missing tables at startup. `sync()` only **creates** missing
-tables; it never ALTERs an existing table (no column additions, no index
-changes, no CHECK changes).
+tables; it never ALTERs an existing table's columns or CHECKs. (It does
+add a model's missing indexes to an existing table, which is why indexes
+that depend on a migration live in that migration.)
 
 Incremental schema changes are handled by an Umzug-backed migration runner
 (`packages/bot/src/db-migrations.ts`), called on every boot right after
@@ -111,10 +113,23 @@ Incremental schema changes are handled by an Umzug-backed migration runner
 migrations are tracked in the `SequelizeMeta` table:
 
 - **Fresh install.** `sync()` builds the current table shapes; the runner
-  then records the existing `src/migrations/NNN-*` files as applied.
+  then runs every `src/migrations/NNN-*` file, each of which is a no-op
+  against the current shapes (a migration on a table that no longer
+  exists skips itself).
 - **Existing DB schema changes.** Add `src/migrations/NNN-short-name.ts`
   with an `up(ctx)` (optional `down(ctx)`); the runner applies it on next
   boot in filename-lexical order. See `src/migrations/README.md`.
+- **Behaviors table cutover (migration 011).** Back up the DB first —
+  the migration is not reversible. It moves `behaviors` /
+  `behavior_scope_tabs` to the trigger/action tables and gives every
+  copied behavior a **new id**, so a webhook's `_meta.behavior_id`
+  changes. A pattern that fired in both bot DMs and guilds becomes two
+  triggers, and its stats follow only the first (the bot DM one); if
+  such a pattern was limited to a user or group, only its bot DM half is
+  kept (with the audience) and its guild half is dropped. Rows
+  Discord cannot express are dropped, and stored
+  `behavior:<scopeKey>.manage` grants are removed; each is listed in the
+  bot event log as `migration 011: …`.
 - **Pre-v2 DB compatibility.** The one-time encryption-v2 uplift
   migration is gone; this build can only decrypt v2 ciphertexts.
   Restoring a pre-v2 backup will throw when reading an encrypted

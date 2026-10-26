@@ -102,28 +102,41 @@ voice (voice RPC backend).
 
 ### `modules/behavior/` — behaviors
 
-**What it does.** A behavior is a "Discord trigger → action" rule.
-Triggers are `slash_command` or `message_pattern`; sources are `custom`
-(webhook forward) or `system` (built-in handler). All behaviors share
-one `behaviors` table, attached to a scope tab. See
-[`features/behaviors.md`](features/behaviors.md).
+**What it does.** A Behavior is one trigger bound to one action
+(ADR 0003). Triggers are a Command Leaf (a command or one of its
+subcommands) or a Message Trigger (bot DMs, or guilds: all / one guild /
+one channel); actions are a webhook, or the built-in login action that
+only the System Behavior uses. Three tables: `behavior_commands` (a
+Command and its visibility settings), `behavior_definitions` (one
+Behavior: its trigger, action source and `systemKey`) and
+`behavior_webhook_actions` (encrypted URL / secret, auth mode). The
+admin UI groups behaviors by a derived Behavior Section; nothing about
+sections is stored.
 
 **Key files.**
-- `behavior-routes.ts` — `/api/behaviors/*` CRUD + resync.
-- `scope-tab-routes.ts` — `/api/behavior-tabs/*` CRUD.
-- `behavior-helpers.ts` — shared helpers (profile, decrypted view,
-  permission).
-- `behavior-trigger.ts` — pure `matchesTrigger` / `describeTrigger`.
-- `system-seed.service.ts` — idempotent seed of the three system
-  behaviors (login / manual / break).
-- `scope-tab-seed.service.ts` — idempotent seed of the four fixed scope
-  tabs.
-- `models/` — behavior, behavior-scope-tab, behavior-audience-member,
-  behavior-session.
+- `behavior-catalog.ts` — `loadBehaviorCatalog()` reads commands with
+  their leaves, message triggers, webhook actions and group members in
+  one go; `getBehaviorCatalog()` is the in-memory snapshot the runtime
+  reads per message / interaction, invalidated by any write to those
+  tables (model hooks; after commit inside a transaction) with a 30 s
+  TTL backstop for writes from other processes.
+- `behavior-section.ts` — `behaviorSection()`, the one rule that derives
+  a trigger's Behavior Section. Pure.
+- `behavior-list-view.ts` — the read-only `GET /api/behaviors` shape
+  (`{ system, commands, messageTriggers }`, secrets only as `secretSet`).
+- `behavior-routes.ts` — `GET /api/behaviors`, test-fire, group members.
+  The write routes return with S4 (#136).
+- `behavior-helpers.ts` — the `behavior.manage` gate and the save-time
+  validators (webhook target, regex, leaf options).
+- `behavior-trigger.ts` — pure `matchesTrigger`.
+- `system-seed.service.ts` — adds the System Behavior (login, DM
+  `!login`) when it is missing.
+- `models/` — behavior-command, behavior-definition,
+  behavior-webhook-action, behavior-stats, behavior-group-member.
 
-**External surface.** HTTP `/api/behaviors/*`, `/api/behavior-tabs/*`;
-`ensureSystemBehaviors` and `ensureFixedScopeTabs` (called by `main.ts`
-at startup).
+**External surface.** HTTP `/api/behaviors/*`,
+`/api/behavior-groups/*`; `ensureSystemBehaviors` (startup);
+`getBehaviorCatalog` (read by command-system).
 
 **Depends on.** web-core; admin (audit + capability).
 
@@ -134,10 +147,10 @@ at startup).
 
 ### `modules/command-system/` — command sync + interaction dispatch
 
-**What it does.** Reconciles `behaviors` (track 2) and `plugin_commands`
-(track 3) into Discord application commands at runtime, dispatches all
-interactions, and matches DM patterns. This is the bot's command
-backbone.
+**What it does.** Reconciles behavior commands (track 2) and
+`plugin_commands` (track 3) into Discord application commands at
+runtime, dispatches all interactions, and matches message triggers.
+This is the bot's command backbone.
 
 **Key files.**
 - `reconcile.service.ts` — `CommandReconciler`: compute the desired
@@ -162,19 +175,19 @@ backbone.
 - `interaction-dispatcher.service.ts` — `InteractionDispatcher`:
   unified `interactionCreate` entry; in order, tries behaviors slash,
   plugin command, plugin component, then in-process command.
-- `message-pattern-matcher.service.ts` — `MessagePatternMatcher`:
-  `messageCreate` listener that handles `message_pattern` triggers in
-  bot DMs and guild channels.
+- `message-trigger-matcher.service.ts` — `MessageTriggerMatcher`:
+  `messageCreate` listener that matches Message Triggers in bot DMs and
+  guild channels.
 - `webhook-forwarder.service.ts` — `WebhookForwarder`: webhook POST +
   HMAC signing and verification.
 - `models/reconciler-owned-command.model.ts` — reconciler's command
   ownership ledger.
 
 **External surface.** `CommandReconciler`, `InteractionDispatcher`,
-`MessagePatternMatcher`, `WebhookForwarder` (all instantiated and wired
+`MessageTriggerMatcher`, `WebhookForwarder` (all instantiated and wired
 by `main.ts`).
 
-**Depends on.** behavior (reads `behaviors`); plugin-system (reads
+**Depends on.** behavior (reads the behavior catalog); plugin-system (reads
 `plugin_commands`, dispatches plugin interactions); admin; web-core.
 
 ---
@@ -556,7 +569,12 @@ boot, on fresh and existing DBs alike). A migration is only needed when
    for the **fresh-install** schema — `sequelize.sync()` creates the
    table from it. Later changes to an **existing** table (new column,
    altered index/type) need an Umzug migration (`src/migrations/NNN-*.ts`),
-   because `sync()` only creates missing tables and never ALTERs.
+   because `sync()` never ALTERs a column. It does, however, add a
+   model's *missing indexes* to an existing table — before migrations
+   run — so an index on a column a migration has yet to add crashes the
+   boot. Tables whose indexes depend on migrations (the behavior tables,
+   migration 011) create their indexes in the migration instead of the
+   model, on fresh and upgraded DBs alike.
 6. Don't export the raw sequelize; route all access through model
    methods or services.
 ```
@@ -616,7 +634,11 @@ When refactoring, hold the following invariants:
 7. **Do not drop the `.js` extension from imports** — ESM + NodeNext
    requires it; runtime will break.
 8. **Schema changes go in the model** — the model is the single source
-   of truth.
+   of truth. One exception: indexes on tables whose shape migrations
+   still change are created by a migration, not the model, because
+   `sync()` adds a model's missing indexes to an existing table before
+   any migration runs (the behavior tables' indexes live in migration
+   011).
 
 ---
 

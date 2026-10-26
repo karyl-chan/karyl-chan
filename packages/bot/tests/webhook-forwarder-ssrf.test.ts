@@ -24,16 +24,15 @@ vi.mock("../src/utils/host-policy.js", () => ({
 
 import { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
 import { encryptSecret } from "../src/utils/crypto.js";
-import type { BehaviorRow } from "../src/modules/behavior/models/behavior.model.js";
+import type { BehaviorWebhookActionRow } from "../src/modules/behavior/models/behavior-webhook-action.model.js";
 
-function customBehavior(url: string): BehaviorRow {
+function customBehavior(url: string): BehaviorWebhookActionRow {
   return {
-    id: 1,
-    source: "custom",
-    webhookUrl: encryptSecret(url),
-    webhookSecret: null,
-    webhookAuthMode: null,
-  } as unknown as BehaviorRow;
+    behaviorId: 1,
+    url: encryptSecret(url),
+    secret: null,
+    authMode: null,
+  };
 }
 
 describe("WebhookForwarder redirect / SSRF handling", () => {

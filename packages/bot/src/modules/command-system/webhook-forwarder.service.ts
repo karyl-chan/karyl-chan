@@ -1,15 +1,15 @@
 /**
  * command-system/webhook-forwarder.service.ts
  *
- * WebhookForwarder：把 `source='custom'` behavior 的 webhook 轉發到 admin
- * 設定的外部 URL（POST schema 對齊 RESTPostAPIWebhookWithTokenJSONBody）。
+ * WebhookForwarder：執行 behavior 的 webhook 動作 —— 把 payload 轉發到
+ * admin 設定的外部 URL（POST schema 對齊 RESTPostAPIWebhookWithTokenJSONBody）。
  *
- *   - HMAC 簽署依 behavior.webhookAuthMode（CR-2）：
+ *   - 輸入是 behavior_webhook_actions 的一列（url / secret 為密文）
+ *   - 簽署依 authMode（CR-2）：
  *       'token'  → X-Plugin-Webhook-Token: <secret>
  *       'hmac'   → X-Karyl-Signature + X-Karyl-Timestamp
  *       null     → 不簽（裸 HTTP）
- *   - source='system' 不發外部 HTTP（InteractionDispatcher 不會呼叫 forward()）
- *   - URL 從 behaviors.webhookUrl 解密讀
+ *   - URL 解密後才用
  *   - 解析 response 拿 relayContent / relayEmbeds
  *   - 回 ForwardResult { ok, relayContent, relayEmbeds?, status?, error? }
  */
@@ -31,7 +31,7 @@ import { createPinnedAgent } from "../../utils/pinned-dispatcher.js";
 import { webhookAllowlist } from "../../config.js";
 import type { AllowlistEntry } from "../../utils/webhook-allowlist.js";
 import { decryptSecret } from "../../utils/crypto.js";
-import type { BehaviorRow } from "../behavior/models/behavior.model.js";
+import type { BehaviorWebhookActionRow } from "../behavior/models/behavior-webhook-action.model.js";
 import type { ForwardResult, SanitizedEmbed } from "./types.js";
 
 // ── BH-2.2A：embeds 白名單清洗 ───────────────────────────────────────────────
@@ -125,45 +125,30 @@ export class WebhookForwarder {
   ) {}
 
   /**
-   * 轉發 behavior webhook POST。
+   * 執行一個 webhook 動作。
    *
-   * @param behavior  behaviors 表的 row（含三軸欄位）
-   * @param payload   Discord webhook 形狀的 body（RESTPostAPIWebhookWithTokenJSONBody 相容）
-   * @returns         含 relayContent / relayEmbeds 的結果
+   * @param action   behavior_webhook_actions 的列（url / secret 為密文）
+   * @param payload  Discord webhook 形狀的 body（RESTPostAPIWebhookWithTokenJSONBody 相容）
+   * @returns        含 relayContent / relayEmbeds 的結果
    */
   async forward(
-    behavior: BehaviorRow,
+    action: BehaviorWebhookActionRow,
     payload: Record<string, unknown>,
   ): Promise<ForwardResult> {
-    // source=system 不應該流到這裡
-    if (behavior.source === "system") {
-      botEventLog.record(
-        "warn",
-        "bot",
-        `webhook-forwarder: source=system behavior ${behavior.id} 不應呼叫 forward()，跳過`,
-        { behaviorId: behavior.id },
-      );
+    let webhookUrl: string;
+    try {
+      webhookUrl = decryptSecret(action.url);
+    } catch (err) {
       return {
         ok: false,
         relayContent: "",
-        error: "source=system behaviors 不走外部 HTTP 轉發",
+        error: `webhookUrl 解密失敗：${err instanceof Error ? err.message : String(err)}`,
       };
     }
-
-    // 計算目標 URL
-    const urlResult = await this.resolveUrl(behavior);
-    if (!urlResult.ok) {
-      return {
-        ok: false,
-        relayContent: "",
-        error: urlResult.error,
-      };
-    }
-    const webhookUrl = urlResult.url;
 
     // 計算 secret（需在解密後才能簽署）
-    const rawSecret = behavior.webhookSecret
-      ? this.safeDecrypt(behavior.webhookSecret, behavior.id)
+    const rawSecret = action.secret
+      ? this.safeDecrypt(action.secret, action.behaviorId)
       : null;
 
     // hmac mode is fail-CLOSED by contract (see doPost's response-verification
@@ -173,12 +158,12 @@ export class WebhookForwarder {
     // safeDecrypt returns null on a rotated-out key id / corrupt ciphertext —
     // a reachable operational state, not merely a missing secret (which the
     // model's CHECK already forbids for hmac mode).
-    if (behavior.webhookAuthMode === "hmac" && rawSecret === null) {
+    if (action.authMode === "hmac" && rawSecret === null) {
       botEventLog.record(
         "warn",
         "bot",
-        `webhook-forwarder: behavior ${behavior.id} is hmac mode but its webhookSecret could not be decrypted — refusing to forward (fail closed).`,
-        { behaviorId: behavior.id },
+        `webhook-forwarder: behavior ${action.behaviorId} is hmac mode but its webhookSecret could not be decrypted — refusing to forward (fail closed).`,
+        { behaviorId: action.behaviorId },
       );
       return {
         ok: false,
@@ -188,31 +173,7 @@ export class WebhookForwarder {
       };
     }
 
-    return this.doPost(webhookUrl, payload, behavior, rawSecret);
-  }
-
-  // ── 私有：URL 解析 ────────────────────────────────────────────────────────
-
-  private async resolveUrl(
-    behavior: BehaviorRow,
-  ): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
-    if (behavior.source === "custom") {
-      // source=custom：URL 從 behaviors.webhookUrl 解密讀
-      if (!behavior.webhookUrl) {
-        return { ok: false, error: "custom behavior 缺少 webhookUrl" };
-      }
-      try {
-        const decrypted = decryptSecret(behavior.webhookUrl);
-        return { ok: true, url: decrypted };
-      } catch (err) {
-        return {
-          ok: false,
-          error: `webhookUrl 解密失敗：${err instanceof Error ? err.message : String(err)}`,
-        };
-      }
-    }
-
-    return { ok: false, error: `未知或不可轉發的 source：${behavior.source}` };
+    return this.doPost(webhookUrl, payload, action, rawSecret);
   }
 
   // ── 私有：HTTP POST ───────────────────────────────────────────────────────
@@ -220,7 +181,7 @@ export class WebhookForwarder {
   private async doPost(
     webhookUrl: string,
     payload: Record<string, unknown>,
-    behavior: BehaviorRow,
+    action: BehaviorWebhookActionRow,
     rawSecret: string | null,
   ): Promise<ForwardResult> {
     let url: URL;
@@ -242,7 +203,7 @@ export class WebhookForwarder {
     };
 
     // HMAC 簽署（CR-2 兩 mode）
-    const authMode = behavior.webhookAuthMode;
+    const authMode = action.authMode;
     if (rawSecret) {
       if (authMode === "token") {
         // token mode：X-Plugin-Webhook-Token: <secret>（裸 shared secret）
@@ -368,13 +329,13 @@ export class WebhookForwarder {
     } else if (
       authMode === "token" &&
       rawText.length > 0 &&
-      shouldRecord(`webhook-token-unsigned:${behavior.id}`)
+      shouldRecord(`webhook-token-unsigned:${action.behaviorId}`)
     ) {
       botEventLog.record(
         "warn",
         "bot",
-        `webhook-forwarder: behavior ${behavior.id} (token mode) returned an unsigned response — content is being relayed unauthenticated. Switch to hmac mode or sign responses with the shared secret to harden.`,
-        { behaviorId: behavior.id, authMode },
+        `webhook-forwarder: behavior ${action.behaviorId} (token mode) returned an unsigned response — content is being relayed unauthenticated. Switch to hmac mode or sign responses with the shared secret to harden.`,
+        { behaviorId: action.behaviorId, authMode },
       );
     }
 

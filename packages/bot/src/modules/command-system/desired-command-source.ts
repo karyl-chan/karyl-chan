@@ -5,17 +5,20 @@
  * adapter，reconciler 只認得 DesiredCommand（名稱 + 註冊目標 + Discord 資料），
  * 不知道背後是哪張表。
  *
- *   - BehaviorCommandSource：behaviors 表（軌二）。目前每條指令觸發的
- *     behavior 是一個只有根葉節點的指令；S3 改讀指令容器 + 葉節點表。
+ *   - BehaviorCommandSource：behavior_commands + 葉節點（軌二）。每個指令
+ *     容器是一個 desired 指令，啟用中的葉節點組成它的子指令樹。
  *   - PluginCommandSource：plugin_commands 表 featureKey IS NULL 的列（軌三）。
  */
 
 import { Op } from "sequelize";
 import {
-  Behavior,
-  rowOfBehavior,
-  type BehaviorRow,
-} from "../behavior/models/behavior.model.js";
+  loadBehaviorCatalog,
+  type CatalogCommand,
+} from "../behavior/behavior-catalog.js";
+import {
+  leafPathOf,
+  parseLeafOptions,
+} from "../behavior/models/behavior-definition.model.js";
 import {
   PluginCommand,
   parsePluginCommandManifest,
@@ -33,11 +36,10 @@ import { resolveDefaultMemberPermissions } from "../plugin-system/plugin-command
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import {
   deriveRegistrationCall,
-  parseContexts,
-  parseIntegrationTypes,
   type CommandDefinition,
 } from "./command-registration.js";
-import { behaviorTarget, type CommandTarget } from "./command-target.js";
+import { behaviorCommandTarget, type CommandTarget } from "./command-target.js";
+import { parseContexts, parseIntegrationTypes } from "../../utils/command-axes.js";
 import type { DiscordRegistrationSpec } from "./types.js";
 import { RejectionError } from "./types.js";
 
@@ -45,7 +47,10 @@ import { RejectionError } from "./types.js";
 
 export type CommandSourceKind = "behavior" | "plugin_command";
 
-/** 一個 desired 指令在來源裡的身分（registerOne 的 key）。 */
+/**
+ * 一個 desired 指令在來源裡的身分（registerOne 的 key）。behavior 來源的
+ * id 是 behavior_commands.id（指令容器），plugin_command 是 plugin_commands.id。
+ */
 export interface CommandKey {
   source: CommandSourceKind;
   id: number;
@@ -95,59 +100,67 @@ export interface DesiredCommandSource {
 
 // ── Behavior adapter ─────────────────────────────────────────────────────────
 
-function behaviorDefinition(row: BehaviorRow): CommandDefinition {
-  // BH-2.2C：admin 定義的 options（JSON 欄位）→ 註冊 payload。
-  // 形狀已在路由層用 parseSlashCommandOptions 驗證過；這裡只防禦
-  // 解析失敗（手改 DB 等），壞 JSON 記 warn 並以無參數註冊。
-  let options: ManifestCommandOption[] | undefined;
-  if (row.slashCommandOptions) {
-    try {
-      const parsed = JSON.parse(
-        row.slashCommandOptions,
-      ) as ManifestCommandOption[];
-      if (Array.isArray(parsed) && parsed.length > 0) options = parsed;
-    } catch {
-      botEventLog.record(
-        "warn",
-        "bot",
-        `command-reconciler: behavior ${row.id} slashCommandOptions JSON 解析失敗，以無參數註冊`,
-        { behaviorId: row.id },
-      );
-    }
+/** 葉節點的 options → manifest 形狀；壞 JSON 記 warn 並以無參數註冊。 */
+function leafOptions(
+  leafId: number,
+  raw: string | null,
+): ManifestCommandOption[] | undefined {
+  const options = parseLeafOptions(raw);
+  if (options === null) {
+    botEventLog.record(
+      "warn",
+      "bot",
+      `command-reconciler: behavior ${leafId} options JSON 解析失敗，以無參數註冊`,
+      { behaviorId: leafId },
+    );
+    return undefined;
   }
-  const description = row.slashCommandDescription ?? row.title;
+  return options.length > 0 ? options : undefined;
+}
+
+function behaviorCommandDefinition(command: CatalogCommand): CommandDefinition {
   return {
-    name: row.slashCommandName ?? "",
-    description,
-    integrationTypes: parseIntegrationTypes(row.integrationTypes),
-    contexts: parseContexts(row.contexts),
-    // 今天每條 behavior 是只有根葉節點的指令；S3 改由葉節點表組樹
-    leaves: [{ path: [], description, options }],
+    name: command.name,
+    description: command.description,
+    integrationTypes: parseIntegrationTypes(command.integrationTypes),
+    contexts: parseContexts(command.contexts),
+    defaultMemberPermissions: command.defaultMemberPermissions,
+    // 只有啟用中的葉節點進子指令樹；路徑：根葉節點 []、子指令 [sub]、
+    // 預留的群組 [group, sub]（組樹時拒絕）
+    leaves: command.leaves
+      .filter((leaf) => leaf.enabled)
+      .map((leaf) => {
+        const { subcommandGroup, subcommand } = leafPathOf(leaf);
+        return {
+          path: [subcommandGroup, subcommand].filter((p) => p !== ""),
+          description: leaf.leafDescription || leaf.title,
+          options: leafOptions(leaf.id, leaf.options),
+        };
+      }),
   };
 }
 
-/** 單一 behavior 列 → DesiredLookup（純函式，不查 DB）。 */
-export function lookupBehaviorRow(row: BehaviorRow): DesiredLookup {
-  // message_pattern 不在 Discord 指令登記範疇
-  if (row.triggerType !== "slash_command" || !row.slashCommandName) {
-    return { status: "unmanaged" };
-  }
-  const target = behaviorTarget(row);
-  if (!row.enabled) {
+/** 單一指令容器（含葉節點）→ DesiredLookup（純函式，不查 DB）。 */
+export function lookupBehaviorCommand(command: CatalogCommand): DesiredLookup {
+  const target = behaviorCommandTarget(command);
+  if (!command.leaves.some((leaf) => leaf.enabled)) {
     return {
       status: "not_desired",
-      reason: "behavior 已停用",
-      name: row.slashCommandName,
+      reason: "沒有啟用中的葉節點",
+      name: command.name,
       target,
     };
   }
   try {
-    const spec = deriveRegistrationCall(behaviorDefinition(row), target);
+    const spec = deriveRegistrationCall(
+      behaviorCommandDefinition(command),
+      target,
+    );
     return {
       status: "desired",
       command: {
-        key: { source: "behavior", id: row.id },
-        name: row.slashCommandName,
+        key: { source: "behavior", id: command.id },
+        name: command.name,
         spec,
       },
     };
@@ -161,24 +174,21 @@ export function lookupBehaviorRow(row: BehaviorRow): DesiredLookup {
 
 export class BehaviorCommandSource implements DesiredCommandSource {
   readonly kind = "behavior" as const;
-  readonly notFoundMessage = "behavior not found";
+  readonly notFoundMessage = "behavior command not found";
   readonly deleteWhenNotDesired = true;
 
   async listDesired(): Promise<DesiredCommand[]> {
-    const rows = await Behavior.findAll({
-      where: { enabled: true, triggerType: "slash_command" },
-    });
+    const { commands } = await loadBehaviorCatalog();
     const out: DesiredCommand[] = [];
-    for (const model of rows) {
-      const row = rowOfBehavior(model);
-      const res = lookupBehaviorRow(row);
+    for (const command of commands) {
+      const res = lookupBehaviorCommand(command);
       if (res.status === "desired") out.push(res.command);
       else if (res.status === "invalid") {
         botEventLog.record(
           "warn",
           "bot",
-          `command-reconciler: behavior ${row.id} 三軸非法，跳過：${res.reason}`,
-          { behaviorId: row.id },
+          `command-reconciler: behavior 指令 ${command.id} (/${command.name}) 設定非法，跳過：${res.reason}`,
+          { behaviorCommandId: command.id },
         );
       }
     }
@@ -186,9 +196,9 @@ export class BehaviorCommandSource implements DesiredCommandSource {
   }
 
   async lookup(id: number): Promise<DesiredLookup> {
-    const model = await Behavior.findByPk(id);
-    if (!model) return { status: "not_found" };
-    return lookupBehaviorRow(rowOfBehavior(model));
+    const { commands } = await loadBehaviorCatalog();
+    const command = commands.find((c) => c.id === id);
+    return command ? lookupBehaviorCommand(command) : { status: "not_found" };
   }
 }
 
