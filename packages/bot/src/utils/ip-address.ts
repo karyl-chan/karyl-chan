@@ -135,6 +135,14 @@ function mappedIPv4(bytes: number[]): number[] | null {
   return isMapped ? bytes.slice(12) : null;
 }
 
+/** NAT64 well-known prefix 64:ff9b::/96 (IPv4 in the last 32 bits). */
+function isNat64WellKnown(b: number[]): boolean {
+  return (
+    startsWith(b, [0x00, 0x64, 0xff, 0x9b]) &&
+    b.slice(4, 12).every((x) => x === 0)
+  );
+}
+
 function classifyIPv6(b: number[]): AddressClass {
   const mapped = mappedIPv4(b);
   if (mapped) return classifyIPv4(mapped);
@@ -147,9 +155,7 @@ function classifyIPv6(b: number[]): AddressClass {
   if (b[0] === 0xfe && (b[1] & 0xc0) === 0xc0) return "reserved"; // fec0::/10
   if ((b[0] & 0xfe) === 0xfc) return "private"; // fc00::/7
   if (b[0] === 0xff) return "reserved"; // ff00::/8 multicast
-  if (startsWith(b, [0x00, 0x64, 0xff, 0x9b]) && b.slice(4, 12).every((x) => x === 0)) {
-    return "transition"; // NAT64 well-known 64:ff9b::/96
-  }
+  if (isNat64WellKnown(b)) return "transition";
   if (startsWith(b, [0x00, 0x64, 0xff, 0x9b, 0x00, 0x01])) {
     return "transition"; // NAT64 local-use 64:ff9b:1::/48
   }
@@ -167,12 +173,7 @@ function classifyIPv6(b: number[]): AddressClass {
 export function transitionEmbeddedIPv4(ip: string): string | null {
   const b = parseIPv6Bytes(normalizeIpLiteral(ip));
   if (!b) return null;
-  if (
-    startsWith(b, [0x00, 0x64, 0xff, 0x9b]) &&
-    b.slice(4, 12).every((x) => x === 0)
-  ) {
-    return b.slice(12).join(".");
-  }
+  if (isNat64WellKnown(b)) return b.slice(12).join(".");
   if (startsWith(b, [0x20, 0x02])) return b.slice(2, 6).join(".");
   return null;
 }

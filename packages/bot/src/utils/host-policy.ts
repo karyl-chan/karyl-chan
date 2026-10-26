@@ -101,13 +101,65 @@ function embeddedClass(ip: string): AddressClass | null {
 }
 
 /**
- * Shared host-check skeleton: normalise + validate the host and port,
- * refuse the metadata hostnames, then hand every address the host
- * stands for (the literal itself, or every DNS answer) to `isDenied`.
- * Any non-HostPolicyError DNS failure becomes a HostPolicyError.
+ * How a policy turns a refusal into an error. The webhook policy keeps
+ * the specific `code`; the boolean policies (RCON / plugin / external)
+ * have always thrown the generic `blocked` code.
+ */
+type Refuse = (code: HostPolicyCode, message: string) => HostPolicyError;
+const refuseCoded: Refuse = (code, message) => new HostPolicyError(message, code);
+const refuseGeneric: Refuse = (_code, message) => new HostPolicyError(message);
+
+/**
+ * Normalise + validate a host and port and refuse the metadata
+ * hostnames (worded per policy by `blockedHostMessage`). Returns the
+ * bracket-stripped host.
+ */
+function vetHost(
+  rawHost: string,
+  port: number,
+  refuse: Refuse,
+  blockedHostMessage: (host: string) => string,
+): string {
+  const host = stripIPv6Brackets(rawHost);
+  if (!isValidHostnameFormat(host)) {
+    throw refuse("invalid_host", "無效的主機名稱");
+  }
+  if (!isValidPort(port)) {
+    throw refuse("invalid_port", "無效的端口號碼");
+  }
+  if (BLOCKED_HOSTNAMES.has(normalizeHostname(host))) {
+    throw refuse("blocked_metadata", blockedHostMessage(host));
+  }
+  return host;
+}
+
+/**
+ * Every address a vetted host stands for: the literal itself, or every
+ * DNS answer (resolved once). A failed lookup is refused as
+ * `dns_failed` with `dnsFailedMessage`.
+ */
+async function hostAddresses(
+  host: string,
+  refuse: Refuse,
+  dnsFailedMessage: string,
+): Promise<string[]> {
+  if (isIP(host) !== 0) return [host];
+  try {
+    const answers = await lookup(host, { all: true });
+    return answers.map(({ address }) => address);
+  } catch (error) {
+    log.error({ err: error, host }, "DNS lookup failed");
+    throw refuse("dns_failed", dnsFailedMessage);
+  }
+}
+
+/**
+ * Shared skeleton of the boolean policies: vet the host, then refuse if
+ * any address it stands for `isDenied`.
  *
  * Does not defend against DNS rebinding between this check and the
- * caller's own connect — see the webhook path for the pinned variant.
+ * caller's own connect — `resolveWebhookTarget` returns the checked
+ * addresses so its caller can pin them.
  */
 async function checkHost(
   rawHost: string,
@@ -115,30 +167,9 @@ async function checkHost(
   isDenied: (address: string) => boolean,
   denyMessage: string,
 ): Promise<void> {
-  const host = stripIPv6Brackets(rawHost);
-  if (!isValidHostnameFormat(host)) {
-    throw new HostPolicyError("無效的主機名稱");
-  }
-  if (!isValidPort(port)) {
-    throw new HostPolicyError("無效的端口號碼");
-  }
-  if (BLOCKED_HOSTNAMES.has(host.toLowerCase().replace(/\.$/, ""))) {
-    throw new HostPolicyError(denyMessage);
-  }
-
-  if (isIP(host) !== 0) {
-    if (isDenied(host)) throw new HostPolicyError(denyMessage);
-    return;
-  }
-
-  let resolved: Array<{ address: string; family: number }>;
-  try {
-    resolved = await lookup(host, { all: true });
-  } catch (error) {
-    log.error({ err: error, host }, "DNS lookup failed");
-    throw new HostPolicyError("無法解析主機名稱");
-  }
-  for (const { address } of resolved) {
+  const host = vetHost(rawHost, port, refuseGeneric, () => denyMessage);
+  const addresses = await hostAddresses(host, refuseGeneric, "無法解析主機名稱");
+  for (const address of addresses) {
     if (isDenied(address)) throw new HostPolicyError(denyMessage);
   }
 }
@@ -361,38 +392,21 @@ export async function resolveWebhookTarget(
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new HostPolicyError("Webhook URL 必須使用 http 或 https", "invalid_scheme");
   }
-  const host = stripIPv6Brackets(url.hostname);
-  if (!isValidHostnameFormat(host)) {
-    throw new HostPolicyError("無效的主機名稱", "invalid_host");
-  }
   const port = url.port ? Number(url.port) : url.protocol === "https:" ? 443 : 80;
-  if (!isValidPort(port)) {
-    throw new HostPolicyError("無效的端口號碼", "invalid_port");
-  }
-  if (BLOCKED_HOSTNAMES.has(normalizeHostname(host))) {
-    throw new HostPolicyError(
-      `目標 ${host} 是雲端 metadata 端點，一律禁止（無法加入允許清單）`,
-      "blocked_metadata",
-    );
-  }
-
-  let answers: Array<{ address: string; family: number }>;
-  if (isIP(host) !== 0) {
-    answers = [{ address: host, family: isIP(host) }];
-  } else {
-    try {
-      answers = await lookup(host, { all: true });
-    } catch (error) {
-      log.warn({ err: error, host }, "webhook target DNS lookup failed");
-      throw new HostPolicyError(`無法解析主機名稱 ${host}`, "dns_failed");
-    }
-    if (answers.length === 0) {
-      throw new HostPolicyError(`無法解析主機名稱 ${host}`, "dns_failed");
-    }
+  const host = vetHost(
+    url.hostname,
+    port,
+    refuseCoded,
+    (h) => `目標 ${h} 是雲端 metadata 端點，一律禁止（無法加入允許清單）`,
+  );
+  const dnsFailed = `無法解析主機名稱 ${host}`;
+  const addresses = await hostAddresses(host, refuseCoded, dnsFailed);
+  if (addresses.length === 0) {
+    throw new HostPolicyError(dnsFailed, "dns_failed");
   }
 
   let needsHttps = false;
-  for (const { address } of answers) {
+  for (const address of addresses) {
     const verdict = judgeWebhookAddress(host, address, allowlist);
     if (verdict instanceof HostPolicyError) throw verdict;
     if (verdict.public) needsHttps = true;
@@ -406,7 +420,7 @@ export async function resolveWebhookTarget(
 
   return {
     url,
-    addresses: answers.map(({ address }) => ({
+    addresses: addresses.map((address) => ({
       address,
       family: isIP(address) === 6 ? 6 : 4,
     })),

@@ -5,6 +5,7 @@
  * 所有型別在此集中宣告，四個 service 共用。
  */
 
+import type { HostPolicyCode } from "../../utils/host-policy.js";
 import type {
   ApplicationCommandData,
   RESTPostAPIWebhookWithTokenJSONBody,
@@ -158,8 +159,8 @@ export interface ForwardResult {
   status?: number;
   /** 錯誤描述（失敗時） */
   error?: string;
-  /** host policy 拒絕時的機器碼（HostPolicyCode，例如 private_not_allowlisted） */
-  errorCode?: string;
+  /** host policy 拒絕時的機器碼（例如 private_not_allowlisted） */
+  errorCode?: HostPolicyCode;
 }
 
 // ── WebhookForwarder 輸入 payload 型別別名────────────────────────────────────
