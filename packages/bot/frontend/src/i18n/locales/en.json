@@ -1208,11 +1208,14 @@
                 "guild": "Server",
                 "channel": "Channel"
             },
-            "readOnly": "Read-only for now — editing returns in an upcoming update.",
             "loadError": "Could not load behaviors: {error}",
             "empty": "No behaviors here yet.",
             "commands": "Commands",
-            "messageTriggers": "Message triggers"
+            "messageTriggers": "Message triggers",
+            "note": {
+                "guild": "To limit which roles or channels in this server can use a command, use Discord’s Server Settings → Integrations.",
+                "channel": "Discord cannot limit a command to one channel, so only message triggers live here."
+            }
         },
         "card": {
             "systemRowLocked": "System behavior — always listed first",
@@ -1231,21 +1234,11 @@
             "tagStopShort": "Stop",
             "unhealthy": "Failing",
             "toggleProtected": "The system behavior cannot be disabled",
-            "toggleReadOnly": "Read-only in this version",
+            "toggleReadOnly": "Editing commands comes in a later update",
             "enabled": "Enabled",
             "disabled": "Disabled",
-            "where": "Where",
-            "whereBotDm": "DMs with the bot",
-            "whereGuildAll": "Every server",
-            "whereGuild": "Server {guild}",
-            "whereChannel": "Channel {channel} in server {guild}",
-            "audience": "Who",
-            "audienceAll": "Everyone",
             "audienceUser": "User {user}",
             "audienceGroup": "Group {group}",
-            "ignoreBots": "Ignore bot messages",
-            "yes": "Yes",
-            "no": "No",
             "registration": "Registered",
             "registrationGlobal": "Globally",
             "registrationGuild": "In server {guild}",
@@ -1276,7 +1269,19 @@
             "secretUnset": "no secret",
             "stats": "Activity",
             "statsLine": "Last fired {when} · ok {ok} / failed {fail}",
-            "statsLastError": "Last error: {error}"
+            "statsLastError": "Last error: {error}",
+            "more": "More actions",
+            "test": "Test webhook",
+            "testing": "Sending a test…",
+            "testOk": "Test succeeded. The service replied:",
+            "testFailed": "Test failed: {error}",
+            "testSavedOnly": "The test uses the saved settings, not unsaved edits.",
+            "delete": "Delete",
+            "deleteTitle": "Delete this behavior?",
+            "deleteMessage": "“{title}” will be deleted. This cannot be undone.",
+            "titleLabel": "Title",
+            "descriptionLabel": "Description",
+            "descriptionHint": "For admins only; never sent to Discord."
         },
         "validation": {
             "required": "Required",
@@ -1285,6 +1290,79 @@
             "tooMany": "At most {max} entries",
             "format": "Invalid format",
             "invalid": "Invalid value"
+        },
+        "location": {
+            "label": "Location",
+            "bot_dm": "DMs with the bot",
+            "guild_all": "All servers",
+            "guild": "One server",
+            "channel": "One channel",
+            "guildPicker": "Server",
+            "channelPicker": "Channel",
+            "guildPlaceholder": "Pick a server",
+            "channelPlaceholder": "Pick a channel",
+            "idHint": "Discord ID (17–20 digits)"
+        },
+        "trigger": {
+            "title": "Trigger",
+            "moved": "Once saved, this row moves to “{section}”.",
+            "patternKind": "Match",
+            "patternValue": "Pattern",
+            "patternPlaceholder": "e.g. !weather",
+            "kind": {
+                "startswith": "Starts with",
+                "endswith": "Ends with",
+                "regex": "Regular expression"
+            },
+            "try": "Try it",
+            "tryPlaceholder": "Type a message to see whether it fires",
+            "preview": {
+                "match": "Fires",
+                "no_match": "Does not fire",
+                "invalid": "The regular expression is invalid"
+            },
+            "ignoreBots": "Skip messages from other bots and webhooks",
+            "stopOnMatch": "Stop after a match; skip the behaviors below",
+            "movedPublic": "Replies will be posted in the channel, where everyone can see them."
+        },
+        "audience": {
+            "title": "Audience",
+            "label": "Who triggers it in DMs",
+            "all": "Everyone",
+            "user": "One user",
+            "group": "Group",
+            "groupPlaceholder": "Pick a group",
+            "newGroup": "+ New group…",
+            "newGroupName": "New group name",
+            "newGroupHint": "Once saved, you can set the group’s members."
+        },
+        "group": {
+            "membersTitle": "Members of “{group}”",
+            "count": "{count} members",
+            "shared": "{count} behaviors share this list; changes apply to all of them.",
+            "empty": "No members yet.",
+            "remove": "Remove {user}",
+            "addPlaceholder": "Discord user ID",
+            "add": "Add",
+            "saveFirst": "Once saved, you can set the group’s members.",
+            "dropOnSave": "Once saved, no behavior uses the group “{group}” any more, so its list of {count} members is deleted with it.",
+            "dropOnDelete": "It is the only behavior using the group “{group}”, so that group's list of {count} members is deleted too."
+        },
+        "action": {
+            "title": "Forwarding",
+            "source": "Action source",
+            "sourceWebhook": "Webhook",
+            "sourcePluginLater": "Plugin actions arrive in phase 2.",
+            "url": "Webhook URL",
+            "urlHint": "Public URLs need https; LAN addresses must be on the bot’s LAN allowlist.",
+            "authLabel": "Authentication",
+            "auth": {
+                "hmac": "HMAC (recommended)",
+                "token": "Token",
+                "none": "None"
+            },
+            "authNoteDrop": "Saving removes the secret; requests are no longer signed.",
+            "authNoteIssue": "Saving makes the bot generate a secret, shown once."
         },
         "secret": {
             "label": "Webhook secret",

@@ -1208,11 +1208,14 @@
                 "guild": "指定伺服器",
                 "channel": "指定頻道"
             },
-            "readOnly": "目前為唯讀檢視，之後的更新會開放編輯。",
             "loadError": "無法載入行為：{error}",
             "empty": "這裡還沒有行為。",
             "commands": "指令",
-            "messageTriggers": "訊息觸發"
+            "messageTriggers": "訊息觸發",
+            "note": {
+                "guild": "要限制這個伺服器裡哪些身分組或頻道能用指令，請到 Discord 的「伺服器設定 → 整合」。",
+                "channel": "Discord 無法把指令限定在單一頻道，所以這裡只有訊息比對。"
+            }
         },
         "card": {
             "systemRowLocked": "系統行為，固定排在最前面",
@@ -1231,21 +1234,11 @@
             "tagStopShort": "停止",
             "unhealthy": "連續失敗",
             "toggleProtected": "系統行為不可停用",
-            "toggleReadOnly": "此版本為唯讀",
+            "toggleReadOnly": "指令的編輯會在之後的更新開放",
             "enabled": "已啟用",
             "disabled": "已停用",
-            "where": "在哪裡",
-            "whereBotDm": "與 bot 的私訊",
-            "whereGuildAll": "全部伺服器",
-            "whereGuild": "伺服器 {guild}",
-            "whereChannel": "伺服器 {guild} 的頻道 {channel}",
-            "audience": "對象",
-            "audienceAll": "所有人",
             "audienceUser": "使用者 {user}",
             "audienceGroup": "群組 {group}",
-            "ignoreBots": "忽略 bot 訊息",
-            "yes": "是",
-            "no": "否",
             "registration": "註冊範圍",
             "registrationGlobal": "全域",
             "registrationGuild": "伺服器 {guild}",
@@ -1276,7 +1269,19 @@
             "secretUnset": "未設定密鑰",
             "stats": "觸發紀錄",
             "statsLine": "上次觸發 {when} · 成功 {ok} / 失敗 {fail}",
-            "statsLastError": "最近錯誤：{error}"
+            "statsLastError": "最近錯誤：{error}",
+            "more": "更多操作",
+            "test": "測試 webhook",
+            "testing": "正在送出測試…",
+            "testOk": "測試成功，服務回覆：",
+            "testFailed": "測試失敗：{error}",
+            "testSavedOnly": "測試的是已儲存的設定，未儲存的修改不會用到。",
+            "delete": "刪除",
+            "deleteTitle": "刪除這個行為？",
+            "deleteMessage": "「{title}」會被刪除，無法復原。",
+            "titleLabel": "標題",
+            "descriptionLabel": "說明",
+            "descriptionHint": "只給管理員看，不會送到 Discord。"
         },
         "validation": {
             "required": "必填",
@@ -1285,6 +1290,79 @@
             "tooMany": "最多 {max} 項",
             "format": "格式不正確",
             "invalid": "值無效"
+        },
+        "location": {
+            "label": "位置",
+            "bot_dm": "與 bot 的私訊",
+            "guild_all": "全部伺服器",
+            "guild": "指定伺服器",
+            "channel": "指定頻道",
+            "guildPicker": "伺服器",
+            "channelPicker": "頻道",
+            "guildPlaceholder": "選擇伺服器",
+            "channelPlaceholder": "選擇頻道",
+            "idHint": "Discord ID（17–20 位數字）"
+        },
+        "trigger": {
+            "title": "觸發",
+            "moved": "儲存後，這列會移到「{section}」。",
+            "patternKind": "比對方式",
+            "patternValue": "比對內容",
+            "patternPlaceholder": "例：!weather",
+            "kind": {
+                "startswith": "開頭符合",
+                "endswith": "結尾符合",
+                "regex": "正規表示式"
+            },
+            "try": "試試看",
+            "tryPlaceholder": "輸入一則訊息，看會不會觸發",
+            "preview": {
+                "match": "會觸發",
+                "no_match": "不會觸發",
+                "invalid": "正規表示式寫法有誤"
+            },
+            "ignoreBots": "略過其他 bot 與 webhook 的訊息",
+            "stopOnMatch": "比對到之後停止，不再檢查後面的行為",
+            "movedPublic": "回覆會貼在頻道裡，所有人都看得到。"
+        },
+        "audience": {
+            "title": "對象",
+            "label": "誰私訊時觸發",
+            "all": "所有人",
+            "user": "指定使用者",
+            "group": "群組",
+            "groupPlaceholder": "選擇群組",
+            "newGroup": "＋ 新增群組…",
+            "newGroupName": "新群組名稱",
+            "newGroupHint": "儲存後就能設定這個群組的成員。"
+        },
+        "group": {
+            "membersTitle": "群組「{group}」的成員",
+            "count": "{count} 人",
+            "shared": "這份名單由 {count} 個行為共用，修改會套用到全部。",
+            "empty": "還沒有成員。",
+            "remove": "移除 {user}",
+            "addPlaceholder": "Discord 使用者 ID",
+            "add": "加入",
+            "saveFirst": "儲存後就能設定這個群組的成員。",
+            "dropOnSave": "儲存後沒有其他行為使用群組「{group}」，它的 {count} 位成員名單會一起被清除。",
+            "dropOnDelete": "它是群組「{group}」唯一的使用者，這個群組的 {count} 位成員名單也會一起被清除。"
+        },
+        "action": {
+            "title": "轉發設定",
+            "source": "動作來源",
+            "sourceWebhook": "Webhook",
+            "sourcePluginLater": "Plugin 動作會在第二階段開放。",
+            "url": "Webhook URL",
+            "urlHint": "公開網址需用 https；區網位址需在 bot 的區網白名單上。",
+            "authLabel": "驗證模式",
+            "auth": {
+                "hmac": "HMAC（建議）",
+                "token": "Token",
+                "none": "不驗證"
+            },
+            "authNoteDrop": "儲存後會移除密鑰，webhook 不再簽章。",
+            "authNoteIssue": "儲存後 bot 會產生密鑰，只顯示一次。"
         },
         "secret": {
             "label": "Webhook 密鑰",

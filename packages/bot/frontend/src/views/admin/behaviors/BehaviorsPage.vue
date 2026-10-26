@@ -1,23 +1,21 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted } from 'vue';
 import { SidebarLayout } from '../../../layouts';
 import { useBreakpoint, useAppShell } from '@karyl-chan/ui';
 import { useGuildListStore } from '../../../stores/guildListStore';
 import BehaviorSidebar from './BehaviorSidebar.vue';
 import BehaviorWorkspace from './BehaviorWorkspace.vue';
-import { listBehaviors, type BehaviorListView, type BehaviorSection } from '../../../api/behavior';
-import { countInSection, itemsInSection, sidebarSections } from './behavior-sections';
+import type { BehaviorSection } from '../../../api/behavior';
+import { countInSection, itemsInSection } from './behavior-sections';
+import { useBehaviorList } from './use-behavior-list';
 
 const { isMobile } = useBreakpoint();
 const { closeOverlay } = useAppShell();
 const guildList = useGuildListStore();
 
-const view = ref<BehaviorListView | null>(null);
-const selected = ref<BehaviorSection | null>(null);
-const loading = ref(false);
-const error = ref<string | null>(null);
+const { view, selected, loading, error, expandId, sections, groupUse, load, applyTrigger } =
+    useBehaviorList();
 
-const sections = computed(() => (view.value ? sidebarSections(view.value) : []));
 const counts = computed(() => {
     const map: Record<string, number> = {};
     if (view.value) for (const s of sections.value) map[s] = countInSection(view.value, s);
@@ -26,23 +24,8 @@ const counts = computed(() => {
 const selectedItems = computed(() =>
     view.value && selected.value ? itemsInSection(view.value, selected.value) : null
 );
+const groupNames = computed(() => [...groupUse.value.keys()].sort());
 const guildNames = computed(() => new Map(guildList.guilds.map((g) => [g.id, g.name])));
-
-async function load() {
-    loading.value = true;
-    error.value = null;
-    try {
-        view.value = await listBehaviors();
-        // Land on the section the login lives in — where the owner looks first.
-        if (!selected.value || !sections.value.includes(selected.value)) {
-            selected.value = view.value.system?.section ?? 'app';
-        }
-    } catch (err) {
-        error.value = err instanceof Error ? err.message : String(err);
-    } finally {
-        loading.value = false;
-    }
-}
 
 onMounted(() => {
     void load();
@@ -74,9 +57,15 @@ function onSelect(section: BehaviorSection) {
             :section="selected"
             :items="selectedItems"
             :guild-names="guildNames"
+            :group-names="groupNames"
+            :group-use="groupUse"
+            :expand-id="expandId"
             :loading="loading"
             :error="error"
             @retry="load"
+            @reload="load"
+            @updated="applyTrigger"
+            @deleted="load"
         />
         <p v-else-if="error" class="page-error" role="alert">{{ error }}</p>
     </SidebarLayout>

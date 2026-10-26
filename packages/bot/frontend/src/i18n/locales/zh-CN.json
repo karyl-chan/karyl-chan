@@ -1208,11 +1208,14 @@
                 "guild": "指定服务器",
                 "channel": "指定频道"
             },
-            "readOnly": "目前为只读视图，之后的更新会开放编辑。",
             "loadError": "无法加载行为：{error}",
             "empty": "这里还没有行为。",
             "commands": "指令",
-            "messageTriggers": "消息触发"
+            "messageTriggers": "消息触发",
+            "note": {
+                "guild": "要限制这个服务器里哪些身份组或频道能用指令，请到 Discord 的“服务器设置 → 整合”。",
+                "channel": "Discord 无法把指令限定在单一频道，所以这里只有消息匹配。"
+            }
         },
         "card": {
             "systemRowLocked": "系统行为，固定排在最前面",
@@ -1231,21 +1234,11 @@
             "tagStopShort": "停止",
             "unhealthy": "连续失败",
             "toggleProtected": "系统行为不可停用",
-            "toggleReadOnly": "此版本为只读",
+            "toggleReadOnly": "指令的编辑会在之后的更新开放",
             "enabled": "已启用",
             "disabled": "已停用",
-            "where": "在哪里",
-            "whereBotDm": "与 bot 的私信",
-            "whereGuildAll": "全部服务器",
-            "whereGuild": "服务器 {guild}",
-            "whereChannel": "服务器 {guild} 的频道 {channel}",
-            "audience": "对象",
-            "audienceAll": "所有人",
             "audienceUser": "用户 {user}",
             "audienceGroup": "群组 {group}",
-            "ignoreBots": "忽略 bot 消息",
-            "yes": "是",
-            "no": "否",
             "registration": "注册范围",
             "registrationGlobal": "全局",
             "registrationGuild": "服务器 {guild}",
@@ -1276,7 +1269,19 @@
             "secretUnset": "未设置密钥",
             "stats": "触发记录",
             "statsLine": "上次触发 {when} · 成功 {ok} / 失败 {fail}",
-            "statsLastError": "最近错误：{error}"
+            "statsLastError": "最近错误：{error}",
+            "more": "更多操作",
+            "test": "测试 webhook",
+            "testing": "正在发送测试…",
+            "testOk": "测试成功，服务回复：",
+            "testFailed": "测试失败：{error}",
+            "testSavedOnly": "测试的是已保存的设置，未保存的修改不会用到。",
+            "delete": "删除",
+            "deleteTitle": "删除这个行为？",
+            "deleteMessage": "“{title}”会被删除，无法恢复。",
+            "titleLabel": "标题",
+            "descriptionLabel": "说明",
+            "descriptionHint": "只给管理员看，不会发送到 Discord。"
         },
         "validation": {
             "required": "必填",
@@ -1285,6 +1290,79 @@
             "tooMany": "最多 {max} 项",
             "format": "格式不正确",
             "invalid": "值无效"
+        },
+        "location": {
+            "label": "位置",
+            "bot_dm": "与 bot 的私信",
+            "guild_all": "全部服务器",
+            "guild": "指定服务器",
+            "channel": "指定频道",
+            "guildPicker": "服务器",
+            "channelPicker": "频道",
+            "guildPlaceholder": "选择服务器",
+            "channelPlaceholder": "选择频道",
+            "idHint": "Discord ID（17–20 位数字）"
+        },
+        "trigger": {
+            "title": "触发",
+            "moved": "保存后，这一行会移到“{section}”。",
+            "patternKind": "匹配方式",
+            "patternValue": "匹配内容",
+            "patternPlaceholder": "例：!weather",
+            "kind": {
+                "startswith": "开头匹配",
+                "endswith": "结尾匹配",
+                "regex": "正则表达式"
+            },
+            "try": "试试看",
+            "tryPlaceholder": "输入一条消息，看会不会触发",
+            "preview": {
+                "match": "会触发",
+                "no_match": "不会触发",
+                "invalid": "正则表达式写法有误"
+            },
+            "ignoreBots": "忽略其他 bot 与 webhook 的消息",
+            "stopOnMatch": "匹配到之后停止，不再检查后面的行为",
+            "movedPublic": "回复会发在频道里，所有人都看得到。"
+        },
+        "audience": {
+            "title": "对象",
+            "label": "谁私信时触发",
+            "all": "所有人",
+            "user": "指定用户",
+            "group": "群组",
+            "groupPlaceholder": "选择群组",
+            "newGroup": "＋ 新增群组…",
+            "newGroupName": "新群组名称",
+            "newGroupHint": "保存后就能设置这个群组的成员。"
+        },
+        "group": {
+            "membersTitle": "群组“{group}”的成员",
+            "count": "{count} 人",
+            "shared": "这份名单由 {count} 个行为共用，修改会应用到全部。",
+            "empty": "还没有成员。",
+            "remove": "移除 {user}",
+            "addPlaceholder": "Discord 用户 ID",
+            "add": "加入",
+            "saveFirst": "保存后就能设置这个群组的成员。",
+            "dropOnSave": "保存后没有其他行为使用群组“{group}”，它的 {count} 位成员名单会一起被清除。",
+            "dropOnDelete": "它是群组“{group}”唯一的使用者，这个群组的 {count} 位成员名单也会一起被清除。"
+        },
+        "action": {
+            "title": "转发设置",
+            "source": "动作来源",
+            "sourceWebhook": "Webhook",
+            "sourcePluginLater": "Plugin 动作会在第二阶段开放。",
+            "url": "Webhook URL",
+            "urlHint": "公开网址需用 https；局域网地址需在 bot 的局域网白名单上。",
+            "authLabel": "验证模式",
+            "auth": {
+                "hmac": "HMAC（推荐）",
+                "token": "Token",
+                "none": "不验证"
+            },
+            "authNoteDrop": "保存后会移除密钥，webhook 不再签名。",
+            "authNoteIssue": "保存后 bot 会生成密钥，只显示一次。"
         },
         "secret": {
             "label": "Webhook 密钥",

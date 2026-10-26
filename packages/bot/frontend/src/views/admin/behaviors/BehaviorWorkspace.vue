@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Icon } from '@iconify/vue';
 import { AppButton } from '@karyl-chan/ui';
-import BehaviorCard from './BehaviorCard.vue';
+import MessageTriggerCard from './MessageTriggerCard.vue';
 import CommandCard from './CommandCard.vue';
-import type { BehaviorSection } from '../../../api/behavior';
+import type { BehaviorSection, MessageTriggerView } from '../../../api/behavior';
 import type { SectionItems } from './behavior-sections';
+import { locationOfSection } from './message-trigger-location';
 import { sectionKind, sectionLabel } from './section-labels';
 
 const { t } = useI18n();
@@ -15,12 +15,20 @@ const props = defineProps<{
     section: BehaviorSection;
     items: SectionItems | null;
     guildNames: ReadonlyMap<string, string>;
+    /** Audience Groups in use, sorted, and how many triggers use each. */
+    groupNames: readonly string[];
+    groupUse: ReadonlyMap<string, number>;
+    /** The card to open (a trigger that just moved here or was created). */
+    expandId: number | null;
     loading?: boolean;
     error?: string | null;
 }>();
 
 const emit = defineEmits<{
     (e: 'retry'): void;
+    (e: 'reload'): void;
+    (e: 'updated', trigger: MessageTriggerView): void;
+    (e: 'deleted', id: number): void;
 }>();
 
 const isEmpty = computed(
@@ -30,6 +38,14 @@ const isEmpty = computed(
             props.items.commands.length === 0 &&
             props.items.messageTriggers.length === 0)
 );
+
+/** What this section can and cannot hold, in Discord's terms (board 1). */
+const note = computed(() => {
+    const kind = locationOfSection(props.section)?.kind;
+    if (kind === 'guild') return t('behaviors.workspace.note.guild');
+    if (kind === 'channel') return t('behaviors.workspace.note.channel');
+    return '';
+});
 </script>
 
 <template>
@@ -38,11 +54,6 @@ const isEmpty = computed(
             <h2 class="title">{{ sectionLabel(t, section, guildNames) }}</h2>
             <span class="kind-badge">{{ sectionKind(t, section) }}</span>
         </header>
-
-        <p class="notice">
-            <Icon icon="material-symbols:visibility-outline-rounded" width="16" height="16" aria-hidden="true" />
-            {{ t('behaviors.workspace.readOnly') }}
-        </p>
 
         <div v-if="error" class="error" role="alert">
             <span>{{ t('behaviors.workspace.loadError', { error }) }}</span>
@@ -56,7 +67,13 @@ const isEmpty = computed(
             <!-- 系統列釘在所屬分區最上方（ADR 0003） -->
             <div v-if="items.system" class="card-list">
                 <CommandCard v-if="items.system.kind === 'command'" :command="items.system" />
-                <BehaviorCard v-else :trigger="items.system" />
+                <MessageTriggerCard
+                    v-else
+                    :trigger="items.system"
+                    :guild-names="guildNames"
+                    :group-names="groupNames"
+                    :group-use="groupUse"
+                />
             </div>
 
             <template v-if="items.commands.length > 0">
@@ -69,10 +86,23 @@ const isEmpty = computed(
             <template v-if="items.messageTriggers.length > 0">
                 <h3 class="group-title">{{ t('behaviors.workspace.messageTriggers') }}</h3>
                 <div class="card-list">
-                    <BehaviorCard v-for="m in items.messageTriggers" :key="m.id" :trigger="m" />
+                    <MessageTriggerCard
+                        v-for="m in items.messageTriggers"
+                        :key="m.id"
+                        :trigger="m"
+                        :expand="expandId === m.id"
+                        :guild-names="guildNames"
+                        :group-names="groupNames"
+                        :group-use="groupUse"
+                        @updated="emit('updated', $event)"
+                        @deleted="emit('deleted', $event)"
+                        @reload="emit('reload')"
+                    />
                 </div>
             </template>
         </template>
+
+        <p v-if="note" class="note">{{ note }}</p>
     </section>
 </template>
 
@@ -91,6 +121,7 @@ const isEmpty = computed(
     align-items: center;
     gap: 0.5rem;
     flex-shrink: 0;
+    flex-wrap: wrap;
 }
 .title { margin: 0; font-size: 1.05rem; color: var(--text-strong); }
 .kind-badge {
@@ -99,14 +130,6 @@ const isEmpty = computed(
     border-radius: 999px;
     background: var(--bg-page);
     border: 1px solid var(--border);
-    color: var(--text-muted);
-}
-.notice {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    margin: 0;
-    font-size: 0.82rem;
     color: var(--text-muted);
 }
 .group-title {
@@ -120,6 +143,7 @@ const isEmpty = computed(
 .card-list { display: flex; flex-direction: column; gap: 0.5rem; }
 .muted { color: var(--text-muted); }
 .center { padding: 1rem; text-align: center; }
+.note { margin: 0.25rem 0 0; font-size: 0.78rem; line-height: 1.6; color: var(--text-muted); }
 .error {
     display: flex;
     align-items: center;
