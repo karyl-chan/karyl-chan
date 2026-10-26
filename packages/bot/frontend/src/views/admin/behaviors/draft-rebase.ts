@@ -1,6 +1,3 @@
-import type { MessageTriggerView } from '../../../api/behavior';
-import { draftFromTrigger, toPatchBody, type MessageTriggerDraft } from './message-trigger-draft';
-
 /**
  * Saved state vs. the edit draft (#105): what a new version of a saved
  * row from the server means for edits in progress, and how "keep my
@@ -27,7 +24,7 @@ function same(a: unknown, b: unknown): boolean {
  * stats, order) the edits are rebased onto it; when any form field changed
  * — edited here or not — the draft stays on the old version and
  * `conflict` is set: saving would be refused as stale, so the form asks
- * what to keep (keepEditsOn).
+ * what to keep (keepEditsOnWith).
  */
 export function rebaseDraftWith<V, D extends object>(
     model: DraftModel<V, D>,
@@ -52,27 +49,4 @@ export function keepEditsOnWith<V, D extends object>(model: DraftModel<V, D>, ba
         Object.entries(draft).filter(([key, value]) => !same(value, before[key as keyof D]))
     );
     return { ...model.draftOf(latest), ...mine };
-}
-
-const messageTriggerModel: DraftModel<MessageTriggerView, MessageTriggerDraft> = {
-    draftOf: draftFromTrigger,
-    patchOf: toPatchBody,
-};
-
-/** rebaseDraftWith for a Message Trigger. */
-export function rebaseDraft(
-    base: MessageTriggerView,
-    draft: MessageTriggerDraft,
-    incoming: MessageTriggerView,
-): { base: MessageTriggerView; draft: MessageTriggerDraft; conflict: boolean } {
-    return rebaseDraftWith(messageTriggerModel, base, draft, incoming);
-}
-
-/** keepEditsOnWith for a Message Trigger. */
-export function keepEditsOn(
-    base: MessageTriggerView,
-    draft: MessageTriggerDraft,
-    latest: MessageTriggerView,
-): MessageTriggerDraft {
-    return keepEditsOnWith(messageTriggerModel, base, draft, latest);
 }

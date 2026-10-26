@@ -107,6 +107,11 @@ export function commandPatch(saved: CommandView, draft: CommandDraft): CommandPa
     return { ...(patch as CommandPatch), ifUpdatedAt: saved.updatedAt };
 }
 
+/** How Discord shows a leaf: `/name`, `/name sub`, `/name group sub`. */
+export function commandPath(name: string, subcommand = '', group = ''): string {
+    return '/' + [name, group, subcommand].filter(Boolean).join(' ');
+}
+
 export const commandDraftModel: DraftModel<CommandView, CommandDraft> = {
     draftOf: draftFromCommand,
     patchOf: commandPatch,

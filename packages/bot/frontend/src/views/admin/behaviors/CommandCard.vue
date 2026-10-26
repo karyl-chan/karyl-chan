@@ -24,21 +24,23 @@ import {
     type CommandView,
     type RegistrationReport,
 } from '../../../api/behavior';
-import { ApiError } from '../../../api/client';
 import BehaviorActionDetails from './BehaviorActionDetails.vue';
 import BehaviorSourceNotice from './BehaviorSourceNotice.vue';
 import CommandRegistrationResult from './CommandRegistrationResult.vue';
 import CommandVisibilityFields from './CommandVisibilityFields.vue';
 import ConvertToSubcommandDialog from './ConvertToSubcommandDialog.vue';
 import SubcommandList from './SubcommandList.vue';
-import { NO_ERRORS, errorsFromRefusal, isStale, type FormErrors } from './behavior-errors';
+import { NO_ERRORS, errorsFromRefusal, hasErrors, isStale, type FormErrors } from './behavior-errors';
 import { checkCommandDraft, commandDraftErrors, commandFieldsWithErrorLine } from './command-check';
-import { commandDraftModel, draftFromCommand, type CommandDraft } from './command-draft';
-import { keepEditsOnWith, rebaseDraftWith } from './draft-rebase';
-import { hasErrors } from './message-trigger-check';
-import { registrationFailure, registrationResult, type RegistrationResult } from './registration-result';
+import { commandDraftModel, commandPath } from './command-draft';
+import {
+    isRegistrationRefusal,
+    registrationFailure,
+    registrationResult,
+    type RegistrationResult,
+} from './registration-result';
+import { useDraftForm } from './use-draft-form';
 import { useRegistrationResult } from './use-registration-results';
-import { trackUnsavedDraft } from './use-unsaved-drafts';
 
 /**
  * A Command (board 5): its name, description and visibility, and its
@@ -136,40 +138,11 @@ async function resync() {
 
 // ── saved command vs. edit draft ────────────────────────────────────────────
 
-const base = ref(props.command);
-const draft = ref<CommandDraft>(draftFromCommand(props.command));
-const conflict = ref(false);
-const stale = ref(false);
-const dirty = computed(() => commandDraftModel.patchOf(base.value, draft.value) !== null);
-trackUnsavedDraft(`command:${props.command.id}`, dirty);
-
-watch(
-    () => props.command,
-    (incoming) => {
-        if (incoming === base.value) return;
-        const next = rebaseDraftWith(commandDraftModel, base.value, draft.value, incoming);
-        base.value = next.base;
-        draft.value = next.draft;
-        conflict.value = next.conflict;
-    }
-);
-
-function applyPatch(patch: Partial<CommandDraft>) {
-    draft.value = { ...draft.value, ...patch };
-}
-
-function keepMine() {
-    stale.value = false;
-    draft.value = keepEditsOnWith(commandDraftModel, base.value, draft.value, props.command);
-    base.value = props.command;
-    conflict.value = false;
-}
+const form = useDraftForm(commandDraftModel, () => props.command, `command:${props.command.id}`);
+const { base, draft, conflict, stale, dirty, applyPatch, keepMine } = form;
 
 function discard() {
-    stale.value = false;
-    base.value = props.command;
-    draft.value = draftFromCommand(props.command);
-    conflict.value = false;
+    form.discard();
     errors.value = NO_ERRORS;
 }
 
@@ -202,7 +175,7 @@ const canSave = computed(
 );
 
 async function save() {
-    const patch = commandDraftModel.patchOf(base.value, draft.value);
+    const patch = form.pendingPatch();
     if (!patch || !canSave.value) return;
     saving.value = true;
     stale.value = false;
@@ -212,17 +185,15 @@ async function save() {
         if (hasErrors(found)) return;
         registration.value = null;
         const result = await updateBehaviorCommand(props.command.id, patch);
-        base.value = result.command;
-        draft.value = draftFromCommand(result.command);
+        form.adopt(result.command);
         showRegistration(registrationResult(t, result.registration, props.guildNames));
         emit('updated', result.command);
     } catch (err) {
         if (isStale(err)) {
-            conflict.value = true;
-            stale.value = true;
+            form.refusedAsStale();
             errors.value = NO_ERRORS;
             emit('reload');
-        } else if (err instanceof ApiError && err.code === 'registration_failed') {
+        } else if (isRegistrationRefusal(err)) {
             // nothing was saved: the edit stays in the draft, Discord's answer above it
             errors.value = NO_ERRORS;
             showRegistration(registrationFailure(t, err, props.guildNames));
@@ -287,7 +258,7 @@ const unhealthy = computed(() =>
 );
 
 function leafPath(leaf: CommandLeafView): string {
-    return [props.command.name, leaf.subcommandGroup, leaf.subcommand].filter(Boolean).join(' ');
+    return commandPath(props.command.name, leaf.subcommand, leaf.subcommandGroup);
 }
 
 const registrationTarget = computed(() =>
@@ -454,7 +425,7 @@ const registrationTarget = computed(() =>
                 <ul v-if="isSystem" class="leaves">
                     <li v-for="leaf in command.leaves" :key="leaf.id" class="leaf">
                         <header class="leaf-head">
-                            <code class="leaf-path">/{{ leafPath(leaf) }}</code>
+                            <code class="leaf-path">{{ leafPath(leaf) }}</code>
                             <span class="leaf-title">{{ leaf.title }}</span>
                         </header>
                         <p v-if="leaf.leafDescription && !isRoot" class="leaf-desc">{{ leaf.leafDescription }}</p>

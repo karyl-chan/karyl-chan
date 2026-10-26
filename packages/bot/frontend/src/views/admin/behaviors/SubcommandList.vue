@@ -12,11 +12,12 @@ import {
 import { ApiError } from '../../../api/client';
 import CommandLeafFields from './CommandLeafFields.vue';
 import CommandLeafItem from './CommandLeafItem.vue';
-import { NO_ERRORS, errorsFromRefusal, type FormErrors } from './behavior-errors';
+import { NO_ERRORS, errorsFromRefusal, hasErrors, type FormErrors } from './behavior-errors';
+import { commandPath } from './command-draft';
 import { MAX_COMMAND_CHARS, MAX_SUBCOMMANDS, commandCharCount } from './command-rules';
 import { checkLeafDraft, leafFieldsWithErrorLine } from './leaf-check';
 import { emptyLeafDraft, leafBody, type LeafDraft } from './leaf-draft';
-import { hasErrors } from './message-trigger-check';
+import { isRegistrationRefusal } from './registration-result';
 import { trackUnsavedDraft } from './use-unsaved-drafts';
 
 /**
@@ -67,7 +68,7 @@ async function remove(leaf: CommandLeafView) {
     if (props.command.leaves.length <= 1) return askDeleteCommand();
     const ok = await confirm({
         title: t('behaviors.leaf.deleteTitle'),
-        message: t('behaviors.leaf.deleteMessage', { path: `/${props.command.name} ${leaf.subcommand}` }),
+        message: t('behaviors.leaf.deleteMessage', { path: commandPath(props.command.name, leaf.subcommand) }),
         confirmLabel: t('behaviors.leaf.delete'),
         confirmVariant: 'danger',
         cancelLabel: t('common.cancel'),
@@ -129,7 +130,7 @@ async function create() {
         adding.value = false;
         emit('wrote', { command: result.command, registration: result.registration });
     } catch (err) {
-        if (err instanceof ApiError && err.code === 'registration_failed') {
+        if (isRegistrationRefusal(err)) {
             errors.value = NO_ERRORS;
             emit('refused', err);
         } else {

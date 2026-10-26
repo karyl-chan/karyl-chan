@@ -10,26 +10,30 @@ import {
     type CommandView,
     type MessageTriggerView,
 } from '../../../api/behavior';
-import { ApiError } from '../../../api/client';
 import CommandRegistrationResult from './CommandRegistrationResult.vue';
 import MessageTriggerFields from './MessageTriggerFields.vue';
 import OneTimeSecret from './OneTimeSecret.vue';
 import WebhookActionFields from './WebhookActionFields.vue';
-import { NO_ERRORS, errorsFromRefusal, onFields, type FormErrors } from './behavior-errors';
+import { NO_ERRORS, errorsFromRefusal, hasErrors, onFields, type FormErrors } from './behavior-errors';
 import { checkCommandDraft } from './command-check';
-import { commandBody, newCommandVisibility, type CommandDraft } from './command-draft';
+import { commandBody, commandPath, newCommandVisibility, type CommandDraft } from './command-draft';
 import { checkLeafDraft } from './leaf-check';
 import { emptyLeafDraft } from './leaf-draft';
 import {
     checkMessageTriggerDraft,
     fieldsWithErrorLine,
-    hasErrors,
     type TriggerFormLayout,
 } from './message-trigger-check';
-import { draftPatcher, emptyDraft, toCreateBody, type MessageTriggerDraft } from './message-trigger-draft';
+import { emptyDraft, toCreateBody, type MessageTriggerDraft } from './message-trigger-draft';
 import { newBehaviorOptions } from './new-behavior-options';
-import { registrationFailure, registrationResult, type RegistrationResult } from './registration-result';
+import {
+    isRegistrationRefusal,
+    registrationFailure,
+    registrationResult,
+    type RegistrationResult,
+} from './registration-result';
 import { sectionLabel } from './section-labels';
+import { draftPatcher } from './use-draft-form';
 import { webhookBody } from './webhook-draft';
 
 /**
@@ -180,12 +184,12 @@ async function createCommand() {
             title: leaf.title.trim(),
             registration: registrationResult(t, result.registration, props.guildNames),
             secrets: (result.secrets ?? []).map((s) => ({
-                label: ['/' + result.command.name, s.subcommand].filter(Boolean).join(' '),
+                label: commandPath(result.command.name, s.subcommand),
                 secret: s.secret,
             })),
         };
     } catch (err) {
-        if (err instanceof ApiError && err.code === 'registration_failed') {
+        if (isRegistrationRefusal(err)) {
             refused.value = registrationFailure(t, err, props.guildNames);
             // Discord refused and the rows are normally taken back — unless
             // that undo failed ("the change is still stored"): reload so the

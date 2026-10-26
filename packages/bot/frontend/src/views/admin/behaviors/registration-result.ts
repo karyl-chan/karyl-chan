@@ -74,13 +74,18 @@ function failedTargets(details: unknown): RegistrationTargetOutcome[] {
         : [];
 }
 
+/** Discord refused (or could not be reached for) a command write: nothing changed there. */
+export function isRegistrationRefusal(err: unknown): err is ApiError {
+    return err instanceof ApiError && err.code === 'registration_failed';
+}
+
 /** A command write that was refused: Discord's own error first, then each target. */
 export function registrationFailure(
     t: Translate,
     err: unknown,
     guildNames: ReadonlyMap<string, string>,
 ): RegistrationResult {
-    if (err instanceof ApiError && err.code === 'registration_failed') {
+    if (isRegistrationRefusal(err)) {
         return {
             tone: 'danger',
             headline: t('behaviors.registration.failed'),

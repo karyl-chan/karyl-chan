@@ -1,4 +1,3 @@
-import type { Ref } from 'vue';
 import type {
     BehaviorAudienceKind,
     BehaviorPatch,
@@ -7,6 +6,7 @@ import type {
     MessageTriggerInput,
     MessageTriggerView,
 } from '../../../api/behavior';
+import type { DraftModel } from './draft-rebase';
 import { kindHasGuild, locationKindOf, type LocationKind, type TriggerLocation } from './message-trigger-location';
 import { NEW_WEBHOOK, savedWebhookBody, webhookBody, webhookDraftOf, type WebhookDraft } from './webhook-draft';
 
@@ -103,16 +103,6 @@ export function draftLocation(d: MessageTriggerDraft): TriggerLocation | null {
     }
 }
 
-/**
- * The handler for the field components' `patch` events: they send what
- * changed, and it lands on the current draft (never on a stale copy).
- */
-export function draftPatcher(draft: Ref<MessageTriggerDraft>): (patch: Partial<MessageTriggerDraft>) => void {
-    return (patch) => {
-        draft.value = { ...draft.value, ...patch };
-    };
-}
-
 /** The trigger fields of a request body (everything but the webhook). */
 type TriggerBody = Omit<MessageTriggerInput, 'webhook' | 'enabled'> & {
     description: string;
@@ -206,3 +196,8 @@ export function previewMatch(kind: BehaviorPatternKind, pattern: string, text: s
     }
     return re.test(text) ? 'match' : 'no_match';
 }
+
+export const messageTriggerDraftModel: DraftModel<MessageTriggerView, MessageTriggerDraft> = {
+    draftOf: draftFromTrigger,
+    patchOf: toPatchBody,
+};

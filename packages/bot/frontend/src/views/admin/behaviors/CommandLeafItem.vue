@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@iconify/vue';
 import { AppBadge, AppButton, AppMenu, AppMenuItem, AppToggle, Stack } from '@karyl-chan/ui';
@@ -9,15 +9,14 @@ import {
     type CommandView,
     type RegistrationReport,
 } from '../../../api/behavior';
-import { ApiError } from '../../../api/client';
 import CommandLeafFields from './CommandLeafFields.vue';
 import WebhookTestResult from './WebhookTestResult.vue';
-import { NO_ERRORS, errorsFromRefusal, isStale, type FormErrors } from './behavior-errors';
-import { keepEditsOnWith, rebaseDraftWith } from './draft-rebase';
+import { NO_ERRORS, errorsFromRefusal, hasErrors, isStale, type FormErrors } from './behavior-errors';
 import { checkLeafDraft, leafFieldsWithErrorLine, type LeafFormKind } from './leaf-check';
-import { draftFromLeaf, leafDraftModel, type LeafDraft } from './leaf-draft';
-import { hasErrors } from './message-trigger-check';
-import { trackUnsavedDraft } from './use-unsaved-drafts';
+import { commandPath } from './command-draft';
+import { leafDraftModel } from './leaf-draft';
+import { isRegistrationRefusal } from './registration-result';
+import { useDraftForm } from './use-draft-form';
 
 /**
  * One Command Leaf of a command card (board 5): the root leaf (the command
@@ -47,44 +46,15 @@ const { t } = useI18n();
 const kind = computed<LeafFormKind>(() => (props.leaf.subcommand === '' ? 'root' : 'subcommand'));
 const isRoot = computed(() => kind.value === 'root');
 const open = ref(isRoot.value || !!props.addedSecret);
-const path = computed(() => ['/' + props.command.name, props.leaf.subcommand].filter(Boolean).join(' '));
+const path = computed(() => commandPath(props.command.name, props.leaf.subcommand));
 
 // ── saved leaf vs. edit draft ───────────────────────────────────────────────
 
-const base = ref(props.leaf);
-const draft = ref<LeafDraft>(draftFromLeaf(props.leaf));
-const conflict = ref(false);
-const stale = ref(false);
-const dirty = computed(() => leafDraftModel.patchOf(base.value, draft.value) !== null);
-trackUnsavedDraft(`behavior:${props.leaf.id}`, dirty);
-
-watch(
-    () => props.leaf,
-    (incoming) => {
-        if (incoming === base.value) return;
-        const next = rebaseDraftWith(leafDraftModel, base.value, draft.value, incoming);
-        base.value = next.base;
-        draft.value = next.draft;
-        conflict.value = next.conflict;
-    }
-);
-
-function applyPatch(patch: Partial<LeafDraft>) {
-    draft.value = { ...draft.value, ...patch };
-}
-
-function keepMine() {
-    stale.value = false;
-    draft.value = keepEditsOnWith(leafDraftModel, base.value, draft.value, props.leaf);
-    base.value = props.leaf;
-    conflict.value = false;
-}
+const form = useDraftForm(leafDraftModel, () => props.leaf, `behavior:${props.leaf.id}`);
+const { base, draft, conflict, stale, dirty, applyPatch, keepMine } = form;
 
 function discard() {
-    stale.value = false;
-    base.value = props.leaf;
-    draft.value = draftFromLeaf(props.leaf);
-    conflict.value = false;
+    form.discard();
     errors.value = NO_ERRORS;
 }
 
@@ -95,12 +65,8 @@ const saving = ref(false);
 const issuedSecret = ref<string | null>(props.addedSecret ?? null);
 const canSave = computed(() => dirty.value && !saving.value && !conflict.value);
 
-function isRegistrationRefusal(err: unknown): boolean {
-    return err instanceof ApiError && err.code === 'registration_failed';
-}
-
 async function save() {
-    const patch = leafDraftModel.patchOf(base.value, draft.value);
+    const patch = form.pendingPatch();
     if (!patch || !canSave.value) return;
     saving.value = true;
     stale.value = false;
@@ -111,13 +77,11 @@ async function save() {
         const result = await updateBehavior(props.leaf.id, patch);
         const saved = result.behavior as CommandLeafView;
         issuedSecret.value = result.secret ?? null;
-        base.value = saved;
-        draft.value = draftFromLeaf(saved);
+        form.adopt(saved);
         if (result.command) emit('wrote', { command: result.command, registration: result.registration });
     } catch (err) {
         if (isStale(err)) {
-            conflict.value = true;
-            stale.value = true;
+            form.refusedAsStale();
             errors.value = NO_ERRORS;
             emit('reload');
         } else if (isRegistrationRefusal(err)) {

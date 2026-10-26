@@ -36,6 +36,10 @@ export interface FormErrors {
 
 export const NO_ERRORS: FormErrors = { fields: {}, general: null };
 
+export function hasErrors(errors: FormErrors): boolean {
+    return Object.keys(errors.fields).length > 0 || errors.general !== null;
+}
+
 /** Schema issues → errors on the form's fields (anything else is general). */
 export function errorsFromIssues(t: Translate, issues: SchemaIssues, fields: readonly string[]): FormErrors {
     const out: FormErrors = { fields: {}, general: null };
