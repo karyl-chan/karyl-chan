@@ -67,7 +67,7 @@ export async function registerBehaviorRoutes(
       if (!requireBehaviorAdmin(request, reply)) return reply;
     });
     registerReadAndTestRoutes(scope, options);
-    registerBehaviorWriteRoutes(scope);
+    registerBehaviorWriteRoutes(scope, options.reconciler);
     registerMessageTriggerReorderRoute(scope);
     registerWebhookSecretRotateRoute(scope);
     registerBehaviorCommandRoutes(scope, options);

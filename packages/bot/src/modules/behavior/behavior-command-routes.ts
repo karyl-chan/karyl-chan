@@ -6,6 +6,11 @@
  *   PATCH  /api/behavior-commands/:id         — edit name / description / visibility
  *   DELETE /api/behavior-commands/:id         — delete it with its leaves
  *   POST   /api/behavior-commands/:id/resync  — register it again as stored
+ *   POST   /api/behavior-commands/:id/leaves  — add a subcommand leaf
+ *   POST   /api/behavior-commands/:id/convert-to-subcommands
+ *                                             — the root leaf becomes the first subcommand
+ *
+ * (A leaf is edited / removed through PATCH / DELETE /api/behaviors/:id.)
  *
  * Every write is checked against Discord's rules (command-tree-rules.ts)
  * and the shared command namespace — builtin, plugin and behavior
@@ -134,6 +139,22 @@ const createCommandSchema = {
     leaves: { type: "array", minItems: 1, maxItems: 25, items: leafInputSchema },
   },
   required: ["name", "description", "registration", "leaves"],
+  additionalProperties: false,
+} as const;
+
+const addLeafSchema = {
+  ...leafInputSchema,
+  properties: { ...leafInputSchema.properties, subcommand: commandNameSchema },
+  required: ["subcommand", "title", "webhook"],
+} as const;
+
+const convertSchema = {
+  type: "object",
+  properties: {
+    subcommand: commandNameSchema,
+    leafDescription: commandLeafFields.leafDescription,
+  },
+  required: ["subcommand"],
   additionalProperties: false,
 } as const;
 
@@ -498,6 +519,116 @@ export function registerBehaviorCommandRoutes(
         registration: registration.status,
       });
       return reply.send({ registration });
+    },
+  );
+
+  server.post(
+    "/api/behavior-commands/:id/leaves",
+    { schema: { params: idParams, body: addLeafSchema } },
+    async (request, reply) => {
+      const commandId = parseRowId(request.params);
+      const body = request.body as LeafInput;
+      const auditContext = (webhook: WebhookWrite["audit"]) => ({
+        kind: "command_leaf",
+        commandId,
+        subcommand: body.subcommand,
+        title: body.title.trim(),
+        webhook,
+      });
+      const result = await withBehaviorWriteLock(async () => {
+        const command = await loadCommandRow(commandId);
+        refuseSystemCommand(command);
+        const stored = await storedLeafShapes(commandId);
+        const shape = leafShapeOf(body);
+        checkCommandTree(command, [...stored, shape], (i) =>
+          i === stored.length ? "" : "leaves",
+        );
+        const webhook = await prepareWebhookWrite(body.webhook, null);
+        const snapshot = await snapshotCommand(commandId);
+        const behaviorId = await behaviorTransaction(async (transaction) => {
+          const max = (await BehaviorDefinition.max("sortOrder", {
+            where: { commandId },
+            transaction,
+          })) as number | null;
+          return insertLeaf(
+            commandId,
+            body,
+            webhook,
+            Number.isFinite(max) ? (max as number) + 1 : 0,
+            transaction,
+          );
+        });
+        const at = registeredNameOf(command);
+        const registration = await registerCommandWrite(deps.reconciler, commandId, at, at, snapshot, {
+          request,
+          action: "behavior.create",
+          target: `behavior:${behaviorId}`,
+          context: auditContext(webhook.audit),
+        });
+        return { behaviorId, webhook, registration };
+      });
+
+      await auditBehaviorWrite(request, "behavior.create", `behavior:${result.behaviorId}`, {
+        ...auditContext(result.webhook.audit),
+        registration: result.registration.status,
+      });
+      const command = await commandViewOf(commandId);
+      return reply.code(201).send({
+        behavior: command.leaves.find((l) => l.id === result.behaviorId),
+        command,
+        registration: result.registration,
+        ...(result.webhook.issuedSecret !== null ? { secret: result.webhook.issuedSecret } : {}),
+      });
+    },
+  );
+
+  server.post(
+    "/api/behavior-commands/:id/convert-to-subcommands",
+    { schema: { params: idParams, body: convertSchema } },
+    async (request, reply) => {
+      const commandId = parseRowId(request.params);
+      const body = request.body as { subcommand: string; leafDescription?: string | null };
+      const result = await withBehaviorWriteLock(async () => {
+        const command = await loadCommandRow(commandId);
+        refuseSystemCommand(command);
+        const stored = await storedLeafShapes(commandId);
+        const root = stored.length === 1 && stored[0]!.subcommand === "" ? stored[0]! : null;
+        if (!root) {
+          throw new BehaviorApiError(
+            "invalid_tree",
+            "only a command whose single leaf is its root leaf can be converted; this one already has subcommands",
+          );
+        }
+        const leafDescription =
+          body.leafDescription !== undefined
+            ? (body.leafDescription?.trim() ?? null)
+            : root.leafDescription;
+        checkCommandTree(command, [{ ...root, subcommand: body.subcommand, leafDescription }], () => "");
+        const snapshot = await snapshotCommand(commandId);
+        await behaviorTransaction(async (transaction) => {
+          const model = await BehaviorDefinition.findByPk(root.id, { transaction });
+          model!.set({ subcommand: body.subcommand, leafDescription });
+          await model!.save({ transaction });
+        });
+        const at = registeredNameOf(command);
+        const registration = await registerCommandWrite(deps.reconciler, commandId, at, at, snapshot, {
+          request,
+          action: "behavior.command.convert",
+          target: `command:${commandId}`,
+          context: { behaviorId: root.id, subcommand: body.subcommand },
+        });
+        return { behaviorId: root.id, registration };
+      });
+
+      await auditBehaviorWrite(request, "behavior.command.convert", `command:${commandId}`, {
+        behaviorId: result.behaviorId,
+        subcommand: body.subcommand,
+        registration: result.registration.status,
+      });
+      return reply.send({
+        command: await commandViewOf(commandId),
+        registration: result.registration,
+      });
     },
   );
 

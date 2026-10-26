@@ -52,6 +52,11 @@ function refuse(field: string, message: string): never {
   throw new BehaviorApiError("validation_failed", message, field);
 }
 
+/** `prefix.child`, or just `child` when the prefix is empty. */
+export function joinField(prefix: string, child: string): string {
+  return prefix ? `${prefix}.${child}` : child;
+}
+
 export function checkCommandSettings(c: CommandSettings): void {
   if (c.registration === "guild") {
     if (c.guildId === null) refuse("guildId", "a guild command needs its guildId");
@@ -80,11 +85,11 @@ export function checkLeafOptions(
   let sawOptional = false;
   options.forEach((option, i) => {
     if (seen.has(option.name)) {
-      refuse(`${field}.${i}.name`, `option '${option.name}' appears twice`);
+      refuse(joinField(field, `${i}.name`), `option '${option.name}' appears twice`);
     }
     seen.add(option.name);
     if (option.required && sawOptional) {
-      refuse(`${field}.${i}.required`, "required options come before optional ones");
+      refuse(joinField(field, `${i}.required`), "required options come before optional ones");
     }
     if (!option.required) sawOptional = true;
   });
@@ -113,8 +118,9 @@ export function commandCharCount(
 }
 
 /**
- * The leaf tree. `fieldOf(i)` names leaf i in a refusal (`leaves.<i>` on
- * create, the leaf's own fields on a later edit).
+ * The leaf tree. `fieldOf(i)` is the field prefix of leaf i in a refusal:
+ * `leaves.<i>` on create, `""` for the leaf a request edits (its own
+ * fields are top-level there).
  */
 export function checkCommandTree(
   command: Pick<CommandSettings, "name" | "description">,
@@ -122,7 +128,7 @@ export function checkCommandTree(
   fieldOf: (index: number) => string = (i) => `leaves.${i}`,
 ): void {
   if (leaves.length === 0) refuse("leaves", "a command needs at least one leaf");
-  leaves.forEach((leaf, i) => checkLeafOptions(leaf.options, `${fieldOf(i)}.options`));
+  leaves.forEach((leaf, i) => checkLeafOptions(leaf.options, joinField(fieldOf(i), "options")));
 
   const seen = new Set<string>();
   leaves.forEach((leaf, i) => {
@@ -132,7 +138,7 @@ export function checkCommandTree(
         leaf.subcommand === ""
           ? "the command already has a root leaf"
           : `subcommand '${leaf.subcommand}' already exists`,
-        `${fieldOf(i)}.subcommand`,
+        joinField(fieldOf(i), "subcommand"),
       );
     }
     seen.add(leaf.subcommand);

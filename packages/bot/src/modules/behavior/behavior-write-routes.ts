@@ -2,8 +2,12 @@
  * Behavior write routes (#136) on /api/behaviors:
  *
  *   POST   /api/behaviors        — create a Message Trigger
- *   PATCH  /api/behaviors/:id    — edit a Message Trigger
- *   DELETE /api/behaviors/:id    — delete a Message Trigger
+ *   PATCH  /api/behaviors/:id    — edit a Message Trigger or a Command Leaf
+ *   DELETE /api/behaviors/:id    — delete a Message Trigger or a Command Leaf
+ *
+ * Leaves are created under their command (POST
+ * /api/behavior-commands/:id/leaves); their edits and removals re-register
+ * the command (command-leaf-writes.ts).
  *
  * Registered inside the behavior scope (strict schemas, uniform errors,
  * the behavior.manage gate — see behavior-routes.ts). The System Behavior
@@ -18,6 +22,7 @@ import { loadBehaviorCatalog } from "./behavior-catalog.js";
 import { messageTriggerView, type MessageTriggerView } from "./behavior-list-view.js";
 import {
   behaviorCommonFields,
+  commandLeafFields,
   idParams,
   ifUpdatedAtSchema,
   messageTriggerFields,
@@ -31,6 +36,9 @@ import {
   refuseSystem,
 } from "./behavior-write-guards.js";
 import { checkMessageTrigger, type MessageTriggerState } from "./message-trigger-rules.js";
+import { subcommandSchema } from "./behavior-command-routes.js";
+import { deleteCommandLeaf, patchCommandLeaf, type LeafPatch } from "./command-leaf-writes.js";
+import type { BehaviorCommandRegistrar } from "./command-registration-sync.js";
 import {
   BehaviorDefinition,
   type BehaviorDefinitionRow,
@@ -59,10 +67,11 @@ interface MessageTriggerCreate extends Partial<MessageTriggerState> {
   webhook: WebhookInput;
 }
 
-type BehaviorPatch = Partial<Omit<MessageTriggerCreate, "webhook">> & {
-  webhook?: WebhookInput;
-  ifUpdatedAt?: string;
-};
+type BehaviorPatch = Partial<Omit<MessageTriggerCreate, "webhook">> &
+  LeafPatch & {
+    webhook?: WebhookInput;
+    ifUpdatedAt?: string;
+  };
 
 const createMessageTriggerSchema = {
   type: "object",
@@ -75,11 +84,14 @@ const createMessageTriggerSchema = {
   additionalProperties: false,
 } as const;
 
+/** One schema for both kinds; the handler refuses the other kind's fields. */
 const patchBehaviorSchema = {
   type: "object",
   properties: {
     ...behaviorCommonFields,
     ...messageTriggerFields,
+    subcommand: subcommandSchema,
+    ...commandLeafFields,
     webhook: webhookInputSchema,
     ifUpdatedAt: ifUpdatedAtSchema,
   },
@@ -95,7 +107,21 @@ const MESSAGE_PATCH_KEYS = [
   ...(Object.keys(messageTriggerFields) as Array<keyof typeof messageTriggerFields>),
 ] as const;
 
+const LEAF_ONLY_KEYS = ["subcommand", ...Object.keys(commandLeafFields)];
+
 // ── helpers ─────────────────────────────────────────────────────────────────
+
+/** A field of the other trigger kind in a PATCH body → validation_failed. */
+function refuseForeignFields(body: object, keys: readonly string[], kind: string): void {
+  const foreign = keys.find((k) => k in body);
+  if (foreign !== undefined) {
+    throw new BehaviorApiError(
+      "validation_failed",
+      `${foreign} does not apply to a ${kind}`,
+      foreign,
+    );
+  }
+}
 
 async function messageTriggerViewOf(id: number): Promise<MessageTriggerView> {
   const catalog = await loadBehaviorCatalog();
@@ -137,7 +163,10 @@ function trimmed<T extends { title?: string; description?: string }>(body: T): T
 
 // ── routes ──────────────────────────────────────────────────────────────────
 
-export function registerBehaviorWriteRoutes(server: FastifyInstance): void {
+export function registerBehaviorWriteRoutes(
+  server: FastifyInstance,
+  reconciler: BehaviorCommandRegistrar | undefined,
+): void {
   server.post(
     "/api/behaviors",
     { schema: { body: createMessageTriggerSchema } },
@@ -210,19 +239,23 @@ export function registerBehaviorWriteRoutes(server: FastifyInstance): void {
         const row = await loadBehaviorRow(id);
         refuseSystem(row);
         checkNotStale(row, body.ifUpdatedAt, `behavior ${id}`);
-        if (row.triggerKind !== "message") {
-          throw new BehaviorApiError(
-            "validation_failed",
-            "command leaves are edited through the command routes",
-          );
+        if (row.triggerKind === "command") {
+          refuseForeignFields(body, Object.keys(messageTriggerFields), "command leaf");
+          const { audit, ...response } = await patchCommandLeaf(reconciler, request, row, body);
+          return { audit, response };
         }
-        return patchMessageTrigger(row, body);
+        refuseForeignFields(body, LEAF_ONLY_KEYS, "message trigger");
+        const { audit, issuedSecret } = await patchMessageTrigger(row, body);
+        return {
+          audit,
+          response: {
+            behavior: await messageTriggerViewOf(id),
+            ...(issuedSecret !== null ? { secret: issuedSecret } : {}),
+          },
+        };
       });
       await auditBehaviorWrite(request, "behavior.update", `behavior:${id}`, result.audit);
-      return reply.send({
-        behavior: await messageTriggerViewOf(id),
-        ...(result.issuedSecret !== null ? { secret: result.issuedSecret } : {}),
-      });
+      return reply.send(result.response);
     },
   );
 
@@ -231,23 +264,20 @@ export function registerBehaviorWriteRoutes(server: FastifyInstance): void {
     { schema: { params: idParams } },
     async (request, reply) => {
       const id = parseRowId(request.params);
-      const row = await withBehaviorWriteLock(async () => {
+      const result = await withBehaviorWriteLock(async () => {
         const current = await loadBehaviorRow(id);
         refuseSystem(current);
-        if (current.triggerKind !== "message") {
-          throw new BehaviorApiError(
-            "validation_failed",
-            "command leaves are removed through the command routes",
-          );
+        if (current.triggerKind === "command") {
+          return deleteCommandLeaf(reconciler, request, current);
         }
         await BehaviorDefinition.destroy({ where: { id } });
-        return current;
+        return { audit: { kind: "message", title: current.title }, registration: null };
       });
-      await auditBehaviorWrite(request, "behavior.delete", `behavior:${id}`, {
-        kind: row.triggerKind,
-        title: row.title,
-      });
-      return reply.code(204).send();
+      await auditBehaviorWrite(request, "behavior.delete", `behavior:${id}`, result.audit);
+      // a leaf's removal changed a Discord command: report its registration
+      return result.registration
+        ? reply.send({ registration: result.registration })
+        : reply.code(204).send();
     },
   );
 }
