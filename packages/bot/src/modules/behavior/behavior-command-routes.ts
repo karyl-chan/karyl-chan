@@ -20,12 +20,9 @@
  */
 
 import type { FastifyInstance } from "fastify";
-import { UniqueConstraintError, type Transaction } from "sequelize";
-import type { NamespaceCheck } from "../command-system/command-namespace.js";
+import { sortJoin } from "../../utils/sort-join.js";
 import { BehaviorApiError } from "./behavior-api-error.js";
 import { auditBehaviorWrite } from "./behavior-audit.js";
-import { loadBehaviorCatalog } from "./behavior-catalog.js";
-import { commandView, type CommandView } from "./behavior-list-view.js";
 import {
   behaviorCommonFields,
   commandFields,
@@ -34,42 +31,40 @@ import {
   idParams,
   ifUpdatedAtSchema,
   parseRowId,
+  subcommandSchema,
 } from "./behavior-schemas.js";
-import { changedFields, checkNotStale } from "./behavior-write-guards.js";
+import { changedFields, checkNotStale, refuseSystemCommand } from "./behavior-write-guards.js";
 import { behaviorTransaction, withBehaviorWriteLock } from "./behavior-write-lock.js";
 import {
   registerCommandWrite,
   registeredNameOf,
   releaseDeletedCommand,
+  rewriteCommand,
   type BehaviorCommandRegistrar,
   type CommandNamespaceChecker,
-  type RegisteredName,
 } from "./command-registration-sync.js";
-import { destroyCommandRows, snapshotCommand } from "./command-snapshot.js";
+import { destroyCommandRows } from "./command-snapshot.js";
 import {
   checkCommandSettings,
   checkCommandTree,
-  RESERVED_COMMAND_NAMES,
   type CommandSettings,
-  type LeafShape,
 } from "./command-tree-rules.js";
 import {
-  BehaviorCommand,
-  rowOfBehaviorCommand,
-  type BehaviorCommandRow,
-} from "./models/behavior-command.model.js";
-import {
-  BehaviorDefinition,
-  parseLeafOptions,
-  rowOfBehaviorDefinition,
-  type BehaviorCommandOption,
-} from "./models/behavior-definition.model.js";
-import { BehaviorWebhookAction } from "./models/behavior-webhook-action.model.js";
-import { findStatsBulk } from "./models/behavior-stats.model.js";
+  asNameConflict,
+  checkNameFree,
+  commandViewOf,
+  insertLeaf,
+  leafShapeOf,
+  loadCommandRow,
+  settingsOf,
+  storedLeafShapes,
+  type LeafInput,
+} from "./command-writes.js";
+import { BehaviorCommand } from "./models/behavior-command.model.js";
+import { BehaviorDefinition } from "./models/behavior-definition.model.js";
 import {
   prepareWebhookWrite,
   webhookInputSchema,
-  type WebhookInput,
   type WebhookWrite,
 } from "./webhook-action-input.js";
 
@@ -81,23 +76,6 @@ export interface BehaviorCommandDeps {
 }
 
 // ── shapes ──────────────────────────────────────────────────────────────────
-
-interface OptionInput {
-  type: BehaviorCommandOption["type"];
-  name: string;
-  description: string;
-  required?: boolean;
-}
-
-export interface LeafInput {
-  subcommand?: string;
-  title: string;
-  description?: string;
-  enabled?: boolean;
-  leafDescription?: string | null;
-  options?: OptionInput[];
-  webhook: WebhookInput;
-}
 
 interface CommandInput {
   name: string;
@@ -115,12 +93,7 @@ interface CommandCreate extends CommandInput {
 
 type CommandPatch = Partial<CommandInput> & { ifUpdatedAt?: string };
 
-/** '' = the root leaf; otherwise a subcommand name. */
-export const subcommandSchema = {
-  anyOf: [{ const: "" }, commandNameSchema],
-} as const;
-
-export const leafInputSchema = {
+const leafInputSchema = {
   type: "object",
   properties: {
     subcommand: subcommandSchema,
@@ -164,171 +137,6 @@ const patchCommandSchema = {
   minProperties: 1,
   additionalProperties: false,
 } as const;
-
-// ── helpers ─────────────────────────────────────────────────────────────────
-
-/** Sorted, comma-joined — how behavior_commands stores the two axes. */
-const sortJoin = (values: readonly string[]): string => [...values].sort().join(",");
-
-export function normalizeOptions(options: OptionInput[] | undefined): BehaviorCommandOption[] {
-  return (options ?? []).map((o) => ({
-    type: o.type,
-    name: o.name,
-    description: o.description.trim(),
-    required: o.required ?? false,
-  }));
-}
-
-export function leafShapeOf(input: LeafInput): LeafShape {
-  return {
-    subcommand: input.subcommand ?? "",
-    title: input.title.trim(),
-    leafDescription: input.leafDescription?.trim() ?? null,
-    options: normalizeOptions(input.options),
-  };
-}
-
-export function settingsOf(command: BehaviorCommandRow): CommandSettings {
-  return {
-    name: command.name,
-    description: command.description,
-    registration: command.registration,
-    guildId: command.guildId,
-    integrationTypes: command.integrationTypes.split(","),
-    contexts: command.contexts.split(","),
-  };
-}
-
-export async function loadCommandRow(id: number): Promise<BehaviorCommandRow> {
-  const model = await BehaviorCommand.findByPk(id);
-  if (!model) throw new BehaviorApiError("not_found", `command ${id} does not exist`);
-  return rowOfBehaviorCommand(model);
-}
-
-export function refuseSystemCommand(command: { isSystem: boolean }): void {
-  if (command.isSystem) {
-    throw new BehaviorApiError(
-      "system_immutable",
-      "the system login command cannot be changed here (its trigger switch comes with #139)",
-    );
-  }
-}
-
-/** The leaves of a command as tree-rule shapes, in leaf order. */
-export async function storedLeafShapes(
-  commandId: number,
-): Promise<Array<LeafShape & { id: number }>> {
-  const rows = await BehaviorDefinition.findAll({
-    where: { commandId },
-    order: [
-      ["sortOrder", "ASC"],
-      ["id", "ASC"],
-    ],
-  });
-  return rows.map((m) => {
-    const row = rowOfBehaviorDefinition(m);
-    return {
-      id: row.id,
-      subcommand: row.subcommand ?? "",
-      title: row.title,
-      leafDescription: row.leafDescription,
-      options: parseLeafOptions(row.options) ?? [],
-    };
-  });
-}
-
-function describeOwner(conflict: Extract<NamespaceCheck, { ok: false }>["conflict"]): string {
-  const where = conflict.target === "global" ? "globally" : `in ${conflict.target}`;
-  switch (conflict.owner.kind) {
-    case "builtin":
-      return `a built-in command (${where})`;
-    case "plugin_command":
-      return `a command of plugin #${conflict.owner.pluginId} (${where})`;
-    case "behavior_command":
-      return `behavior command #${conflict.owner.commandId} (${where})`;
-  }
-}
-
-/** Save-time half of #96: the name must be free where it will be registered. */
-export async function checkNameFree(
-  namespace: CommandNamespaceChecker,
-  at: RegisteredName,
-  ownCommandId: number | null,
-): Promise<void> {
-  if (RESERVED_COMMAND_NAMES.has(at.name)) {
-    throw new BehaviorApiError(
-      "name_conflict",
-      `/${at.name} is reserved for the system login`,
-      "name",
-    );
-  }
-  const verdict = await namespace.check(
-    at.name,
-    at.target,
-    ownCommandId !== null ? { commandId: ownCommandId } : undefined,
-  );
-  if (!verdict.ok) {
-    throw new BehaviorApiError(
-      "name_conflict",
-      `/${at.name} is already taken by ${describeOwner(verdict.conflict)}`,
-      "name",
-    );
-  }
-}
-
-/** A unique index caught what the namespace check could not (a race). */
-export function asNameConflict(err: unknown, name: string): never {
-  if (err instanceof UniqueConstraintError) {
-    throw new BehaviorApiError("name_conflict", `/${name} is already taken`, "name");
-  }
-  throw err;
-}
-
-export async function commandViewOf(id: number): Promise<CommandView> {
-  const catalog = await loadBehaviorCatalog();
-  const command = catalog.commands.find((c) => c.id === id);
-  if (!command) throw new BehaviorApiError("not_found", `command ${id} does not exist`);
-  return commandView(command, await findStatsBulk(command.leaves.map((l) => l.id)));
-}
-
-/** Insert one leaf (with its webhook action) under `commandId`. */
-export async function insertLeaf(
-  commandId: number,
-  input: LeafInput,
-  webhook: WebhookWrite,
-  sortOrder: number,
-  transaction: Transaction,
-): Promise<number> {
-  const shape = leafShapeOf(input);
-  const row = await BehaviorDefinition.create(
-    {
-      title: shape.title,
-      description: input.description?.trim() ?? "",
-      enabled: input.enabled ?? true,
-      sortOrder,
-      systemKey: null,
-      triggerKind: "command",
-      actionSource: "webhook",
-      commandId,
-      subcommandGroup: "",
-      subcommand: shape.subcommand,
-      leafDescription: shape.leafDescription,
-      options: shape.options.length > 0 ? JSON.stringify(shape.options) : null,
-      surface: null,
-      guildId: null,
-      channelId: null,
-      patternKind: null,
-      patternValue: null,
-      audienceKind: "all",
-      audienceUserId: null,
-      audienceGroupName: null,
-    },
-    { transaction },
-  );
-  const behaviorId = row.getDataValue("id") as number;
-  await BehaviorWebhookAction.create({ behaviorId, ...webhook.values }, { transaction });
-  return behaviorId;
-}
 
 // ── routes ──────────────────────────────────────────────────────────────────
 
@@ -387,8 +195,8 @@ export function registerBehaviorCommandRoutes(
               description: settings.description,
               registration: settings.registration,
               guildId: settings.guildId,
-              integrationTypes: sortJoin(settings.integrationTypes),
-              contexts: sortJoin(settings.contexts),
+              integrationTypes: sortJoin([...settings.integrationTypes]),
+              contexts: sortJoin([...settings.contexts]),
               defaultMemberPermissions: body.defaultMemberPermissions ?? null,
               isSystem: false,
             },
@@ -462,32 +270,37 @@ export function registerBehaviorCommandRoutes(
         }
         checkCommandSettings(after);
         checkCommandTree(after, await storedLeafShapes(id), () => "leaves");
-        const previous = registeredNameOf(current);
         const at = registeredNameOf(after);
         await checkNameFree(namespace(), at, id);
 
-        const snapshot = await snapshotCommand(id);
-        await behaviorTransaction(async (transaction) => {
-          // instance save: the model's cross-field validator needs every field
-          const model = await BehaviorCommand.findByPk(id, { transaction });
-          model!.set({
-            name: after.name,
-            description: after.description,
-            registration: after.registration,
-            guildId: after.guildId,
-            integrationTypes: sortJoin(after.integrationTypes),
-            contexts: sortJoin(after.contexts),
-            defaultMemberPermissions: after.defaultMemberPermissions,
-          });
-          await model!.save({ transaction }).catch((err: unknown) => asNameConflict(err, after.name));
-        });
         const changed = changedFields(before, after);
-        const report = await registerCommandWrite(deps.reconciler, id, at, previous, snapshot, {
-          request,
-          action: "behavior.command.update",
-          target: `command:${id}`,
-          context: { changed },
-        });
+        const { registration: report } = await rewriteCommand(
+          deps.reconciler,
+          current,
+          async (transaction) => {
+            // instance save: the model's cross-field validator needs every field
+            const model = await BehaviorCommand.findByPk(id, { transaction });
+            model!.set({
+              name: after.name,
+              description: after.description,
+              registration: after.registration,
+              guildId: after.guildId,
+              integrationTypes: sortJoin([...after.integrationTypes]),
+              contexts: sortJoin([...after.contexts]),
+              defaultMemberPermissions: after.defaultMemberPermissions,
+            });
+            await model!
+              .save({ transaction })
+              .catch((err: unknown) => asNameConflict(err, after.name));
+          },
+          () => ({
+            request,
+            action: "behavior.command.update",
+            target: `command:${id}`,
+            context: { changed },
+          }),
+          at,
+        );
         return {
           registration: report,
           audit: { changed, registration: report.status },
@@ -544,27 +357,29 @@ export function registerBehaviorCommandRoutes(
           i === stored.length ? "" : "leaves",
         );
         const webhook = await prepareWebhookWrite(body.webhook, null);
-        const snapshot = await snapshotCommand(commandId);
-        const behaviorId = await behaviorTransaction(async (transaction) => {
-          const max = (await BehaviorDefinition.max("sortOrder", {
-            where: { commandId },
-            transaction,
-          })) as number | null;
-          return insertLeaf(
-            commandId,
-            body,
-            webhook,
-            Number.isFinite(max) ? (max as number) + 1 : 0,
-            transaction,
-          );
-        });
-        const at = registeredNameOf(command);
-        const registration = await registerCommandWrite(deps.reconciler, commandId, at, at, snapshot, {
-          request,
-          action: "behavior.create",
-          target: `behavior:${behaviorId}`,
-          context: auditContext(webhook.audit),
-        });
+        const { value: behaviorId, registration } = await rewriteCommand(
+          deps.reconciler,
+          command,
+          async (transaction) => {
+            const max = (await BehaviorDefinition.max("sortOrder", {
+              where: { commandId },
+              transaction,
+            })) as number | null;
+            return insertLeaf(
+              commandId,
+              body,
+              webhook,
+              Number.isFinite(max) ? (max as number) + 1 : 0,
+              transaction,
+            );
+          },
+          (id) => ({
+            request,
+            action: "behavior.create",
+            target: `behavior:${id}`,
+            context: auditContext(webhook.audit),
+          }),
+        );
         return { behaviorId, webhook, registration };
       });
 
@@ -604,19 +419,21 @@ export function registerBehaviorCommandRoutes(
             ? (body.leafDescription?.trim() ?? null)
             : root.leafDescription;
         checkCommandTree(command, [{ ...root, subcommand: body.subcommand, leafDescription }], () => "");
-        const snapshot = await snapshotCommand(commandId);
-        await behaviorTransaction(async (transaction) => {
-          const model = await BehaviorDefinition.findByPk(root.id, { transaction });
-          model!.set({ subcommand: body.subcommand, leafDescription });
-          await model!.save({ transaction });
-        });
-        const at = registeredNameOf(command);
-        const registration = await registerCommandWrite(deps.reconciler, commandId, at, at, snapshot, {
-          request,
-          action: "behavior.command.convert",
-          target: `command:${commandId}`,
-          context: { behaviorId: root.id, subcommand: body.subcommand },
-        });
+        const { registration } = await rewriteCommand(
+          deps.reconciler,
+          command,
+          async (transaction) => {
+            const model = await BehaviorDefinition.findByPk(root.id, { transaction });
+            model!.set({ subcommand: body.subcommand, leafDescription });
+            await model!.save({ transaction });
+          },
+          () => ({
+            request,
+            action: "behavior.command.convert",
+            target: `command:${commandId}`,
+            context: { behaviorId: root.id, subcommand: body.subcommand },
+          }),
+        );
         return { behaviorId: root.id, registration };
       });
 

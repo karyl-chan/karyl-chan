@@ -1,7 +1,8 @@
 /**
  * Checks every behavior write route makes before it changes anything:
- * the row exists, it is not the System Behavior, the admin's edit is based
- * on the current version — plus the `{ from, to }` diff the audit records.
+ * the row exists, it is not the System Behavior (or its command), the
+ * admin's edit is based on the current version — plus the `{ from, to }`
+ * diff the audit records.
  */
 
 import { BehaviorApiError } from "./behavior-api-error.js";
@@ -22,6 +23,16 @@ export function refuseSystem(row: { systemKey: string | null }): void {
     throw new BehaviorApiError(
       "system_immutable",
       "the system behavior cannot be changed or deleted here (its trigger switch comes with #139)",
+    );
+  }
+}
+
+/** The system login's command container (S7 #139 will allow its trigger switch). */
+export function refuseSystemCommand(command: { isSystem: boolean }): void {
+  if (command.isSystem) {
+    throw new BehaviorApiError(
+      "system_immutable",
+      "the system login command cannot be changed here (its trigger switch comes with #139)",
     );
   }
 }

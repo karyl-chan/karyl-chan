@@ -45,8 +45,13 @@ import type { FastifyRequest } from "fastify";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { BehaviorApiError } from "./behavior-api-error.js";
 import { auditBehaviorWrite, type BehaviorAuditAction } from "./behavior-audit.js";
-import { restoreCommand, type CommandSnapshot } from "./command-snapshot.js";
-import type { BehaviorCommandRegistration } from "./models/behavior-command.model.js";
+import type { Transaction } from "sequelize";
+import { behaviorTransaction } from "./behavior-write-lock.js";
+import { restoreCommand, snapshotCommand, type CommandSnapshot } from "./command-snapshot.js";
+import type {
+  BehaviorCommandRegistration,
+  BehaviorCommandRow,
+} from "./models/behavior-command.model.js";
 
 export type BehaviorCommandRegistrar = Pick<
   CommandReconciler,
@@ -218,4 +223,33 @@ export async function releaseDeletedCommand(
   return outcome === "unavailable"
     ? { status: "deferred", reason: "Discord could not be reached; the next full reconcile removes it" }
     : { status: "removed" };
+}
+
+/**
+ * One write to an existing command, the whole way: snapshot its rows,
+ * run `write` in a behavior transaction, register the command as it now
+ * is (restoring the snapshot if Discord refuses). `command` is the row as
+ * stored before the write; `next` is where the write registers it (a
+ * rename or a registration change moves it; the old place is released
+ * once the new one registered). `audit` is the entry for this write, used
+ * when a refused registration cannot be undone.
+ */
+export async function rewriteCommand<T>(
+  registrar: BehaviorCommandRegistrar | undefined,
+  command: BehaviorCommandRow,
+  write: (transaction: Transaction) => Promise<T>,
+  audit: (value: T) => PendingCommandAudit,
+  next: RegisteredName = registeredNameOf(command),
+): Promise<{ value: T; registration: RegistrationReport }> {
+  const snapshot = await snapshotCommand(command.id);
+  const value = await behaviorTransaction(write);
+  const registration = await registerCommandWrite(
+    registrar,
+    command.id,
+    next,
+    registeredNameOf(command),
+    snapshot,
+    audit(value),
+  );
+  return { value, registration };
 }

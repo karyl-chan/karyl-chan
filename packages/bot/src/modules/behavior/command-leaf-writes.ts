@@ -14,25 +14,23 @@
  */
 
 import type { FastifyRequest } from "fastify";
+import type { Transaction } from "sequelize";
 import { BehaviorApiError } from "./behavior-api-error.js";
 import type { CommandLeafView, CommandView } from "./behavior-list-view.js";
-import { changedFields } from "./behavior-write-guards.js";
+import { changedFields, refuseSystemCommand } from "./behavior-write-guards.js";
 import { behaviorTransaction } from "./behavior-write-lock.js";
 import {
   commandViewOf,
   loadCommandRow,
   normalizeOptions,
-  refuseSystemCommand,
   storedLeafShapes,
   type LeafInput,
-} from "./behavior-command-routes.js";
+} from "./command-writes.js";
 import {
-  registerCommandWrite,
-  registeredNameOf,
+  rewriteCommand,
   type BehaviorCommandRegistrar,
   type RegistrationReport,
 } from "./command-registration-sync.js";
-import { snapshotCommand } from "./command-snapshot.js";
 import { checkCommandTree, leafDiscordDescription, type LeafShape } from "./command-tree-rules.js";
 import {
   BehaviorDefinition,
@@ -143,8 +141,7 @@ export async function patchCommandLeaf(
     discordFacing({ ...current, enabled: row.enabled }) !==
     discordFacing({ ...next, enabled: after.enabled });
 
-  const snapshot = reregister ? await snapshotCommand(commandId) : null;
-  await behaviorTransaction(async (transaction) => {
+  const write = async (transaction: Transaction) => {
     const model = await BehaviorDefinition.findByPk(row.id, { transaction });
     model!.set({
       title: after.title,
@@ -158,22 +155,24 @@ export async function patchCommandLeaf(
     if (webhook) {
       await BehaviorWebhookAction.upsert({ behaviorId: row.id, ...webhook.values }, { transaction });
     }
-  });
-  const at = registeredNameOf(command);
+  };
   const audit = {
     kind: "command_leaf",
     commandId,
     changed: changedFields(before, after),
     ...(webhook ? { webhook: webhook.audit } : {}),
   };
-  const registration = reregister
-    ? await registerCommandWrite(registrar, commandId, at, at, snapshot, {
-        request,
-        action: "behavior.update",
-        target: `behavior:${row.id}`,
-        context: audit,
-      })
-    : undefined;
+  let registration: RegistrationReport | undefined;
+  if (reregister) {
+    ({ registration } = await rewriteCommand(registrar, command, write, () => ({
+      request,
+      action: "behavior.update",
+      target: `behavior:${row.id}`,
+      context: audit,
+    })));
+  } else {
+    await behaviorTransaction(write);
+  }
 
   const view = await commandViewOf(commandId);
   return {
@@ -204,24 +203,21 @@ export async function deleteCommandLeaf(
     );
   }
 
-  const snapshot = await snapshotCommand(commandId);
-  await behaviorTransaction(async (transaction) => {
-    await BehaviorWebhookAction.destroy({ where: { behaviorId: row.id }, transaction });
-    await BehaviorStat.destroy({ where: { behaviorId: row.id }, transaction });
-    await BehaviorDefinition.destroy({ where: { id: row.id }, transaction });
-  });
-  const at = registeredNameOf(command);
   const audit = {
     kind: "command_leaf",
     commandId,
     subcommand: row.subcommand ?? "",
     title: row.title,
   };
-  const registration = await registerCommandWrite(registrar, commandId, at, at, snapshot, {
-    request,
-    action: "behavior.delete",
-    target: `behavior:${row.id}`,
-    context: audit,
-  });
+  const { registration } = await rewriteCommand(
+    registrar,
+    command,
+    async (transaction) => {
+      await BehaviorWebhookAction.destroy({ where: { behaviorId: row.id }, transaction });
+      await BehaviorStat.destroy({ where: { behaviorId: row.id }, transaction });
+      await BehaviorDefinition.destroy({ where: { id: row.id }, transaction });
+    },
+    () => ({ request, action: "behavior.delete", target: `behavior:${row.id}`, context: audit }),
+  );
   return { registration, audit: { ...audit, registration: registration.status } };
 }

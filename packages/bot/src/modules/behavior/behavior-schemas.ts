@@ -77,6 +77,11 @@ export const COMMAND_NAME_PATTERN = "^[a-z0-9_-]{1,32}$";
 
 export const commandNameSchema = { type: "string", pattern: COMMAND_NAME_PATTERN } as const;
 
+/** '' = the root leaf; otherwise a subcommand name. */
+export const subcommandSchema = {
+  anyOf: [{ const: "" }, commandNameSchema],
+} as const;
+
 /** A Discord description: 1–100 characters, not blank (#97). */
 export const discordDescriptionSchema = {
   type: "string",

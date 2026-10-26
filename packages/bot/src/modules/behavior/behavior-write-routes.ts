@@ -27,6 +27,7 @@ import {
   ifUpdatedAtSchema,
   messageTriggerFields,
   parseRowId,
+  subcommandSchema,
 } from "./behavior-schemas.js";
 import { behaviorTransaction, withBehaviorWriteLock } from "./behavior-write-lock.js";
 import {
@@ -36,7 +37,6 @@ import {
   refuseSystem,
 } from "./behavior-write-guards.js";
 import { checkMessageTrigger, type MessageTriggerState } from "./message-trigger-rules.js";
-import { subcommandSchema } from "./behavior-command-routes.js";
 import { deleteCommandLeaf, patchCommandLeaf, type LeafPatch } from "./command-leaf-writes.js";
 import type { BehaviorCommandRegistrar } from "./command-registration-sync.js";
 import {

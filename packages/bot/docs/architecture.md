@@ -142,12 +142,15 @@ is stored.
   `message-trigger-rules.ts` is the pure trigger rule set.
 - `behavior-command-routes.ts` — `/api/behavior-commands`: commands,
   added leaves, convert-to-subcommands, resync; `command-leaf-writes.ts`
-  edits and removes leaves; `command-tree-rules.ts` is Discord's
-  rule set for a command and its leaves (pure).
+  edits and removes leaves; `command-writes.ts` holds what both share
+  (leaf shapes, row loads, the namespace check, the view);
+  `command-tree-rules.ts` is Discord's rule set for a command and its
+  leaves (pure).
 - `command-registration-sync.ts` — commit → `registerOne` → release the
   old name; a refusal restores the rows from `command-snapshot.ts` and
   answers `registration_failed` (the consistency story is in the file
-  header).
+  header). `rewriteCommand()` is that whole sequence for one write to an
+  existing command.
 - `message-trigger-reorder.ts` — `PUT /api/behaviors/reorder`, one
   location at a time, keeping the global matching order.
 - `webhook-action-input.ts` / `webhook-secret-rotate.ts` — webhook
