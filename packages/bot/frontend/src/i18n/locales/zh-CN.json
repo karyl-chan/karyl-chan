@@ -1418,6 +1418,25 @@
             "create": "创建",
             "created": "已创建“{title}”。",
             "done": "完成"
+        },
+        "command": {
+            "resync": "重新同步到 Discord"
+        },
+        "registration": {
+            "registered": "已同步到 Discord。",
+            "deferred": "已保存，但还没同步到 Discord；bot 连上 Discord 后会自动注册。",
+            "removed": "已从 Discord 移除。",
+            "failed": "Discord 没有接受：",
+            "target": {
+                "global": "全局"
+            },
+            "outcome": {
+                "created": "已创建",
+                "patched": "已更新",
+                "unchanged": "已是最新",
+                "skipped": "没有注册：bot 不在这个服务器",
+                "failed": "失败"
+            }
         }
     },
     "config": {

@@ -1,5 +1,5 @@
 import { createI18n } from 'vue-i18n';
-import type { MessageTriggerView } from '../../../api/behavior';
+import type { CommandLeafView, CommandView, MessageTriggerView } from '../../../api/behavior';
 
 /**
  * Shared fixtures for the behaviors page's component tests (not a test
@@ -61,6 +61,47 @@ export function savedTrigger(overrides: Partial<MessageTriggerView> = {}): Messa
         audienceUserId: null,
         audienceGroupName: null,
         section: 'bot_dm',
+        ...overrides,
+    };
+}
+
+/** A leaf of a saved command: the root leaf, id 21, HMAC webhook. */
+export function savedLeaf(overrides: Partial<CommandLeafView> = {}): CommandLeafView {
+    return {
+        id: 21,
+        title: 'Status',
+        description: '',
+        enabled: true,
+        sortOrder: 0,
+        systemKey: null,
+        actionSource: 'webhook',
+        webhook: { url: 'https://hook.example/s', authMode: 'hmac', secretSet: true, previousSecretExpiresAt: null },
+        stats: null,
+        updatedAt: '2026-10-27T00:00:00.000Z',
+        subcommandGroup: '',
+        subcommand: '',
+        leafDescription: null,
+        options: [],
+        ...overrides,
+    };
+}
+
+/** A saved global command, id 4, `/status` usable only in bot DMs, with one root leaf. */
+export function savedCommand(overrides: Partial<CommandView> = {}): CommandView {
+    return {
+        kind: 'command',
+        id: 4,
+        name: 'status',
+        description: 'Service status',
+        registration: 'global',
+        guildId: null,
+        integrationTypes: ['guild_install'],
+        contexts: ['BotDM'],
+        defaultMemberPermissions: null,
+        isSystem: false,
+        section: 'bot_dm',
+        updatedAt: '2026-10-27T00:00:00.000Z',
+        leaves: [savedLeaf()],
         ...overrides,
     };
 }

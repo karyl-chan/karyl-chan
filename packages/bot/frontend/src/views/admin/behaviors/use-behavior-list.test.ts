@@ -10,6 +10,7 @@ vi.mock('../../../api/behavior', () => ({
 
 import { ApiError } from '../../../api/client';
 import { useBehaviorList } from './use-behavior-list';
+import { savedCommand } from './behavior-test-support';
 
 const GUILD = '123456789012345678';
 
@@ -48,6 +49,17 @@ function list(messageTriggers: MessageTriggerView[]): BehaviorListView {
 beforeEach(() => {
     listMock.mockReset();
     reorderMock.mockReset();
+});
+
+describe('useBehaviorList — commands', () => {
+    it('takes a command the server answered with in place', async () => {
+        const command = savedCommand();
+        listMock.mockResolvedValue({ system: null, commands: [command, savedCommand({ id: 5, name: 'other' })], messageTriggers: [] });
+        const state = useBehaviorList();
+        await state.load();
+        await state.applyCommand(savedCommand({ description: 'Resynced' }));
+        expect(state.view.value?.commands.map((c) => c.description)).toEqual(['Resynced', 'Service status']);
+    });
 });
 
 describe('useBehaviorList', () => {

@@ -1418,6 +1418,25 @@
             "create": "Create",
             "created": "Created “{title}”.",
             "done": "Done"
+        },
+        "command": {
+            "resync": "Sync to Discord again"
+        },
+        "registration": {
+            "registered": "Synced to Discord.",
+            "deferred": "Saved, but not on Discord yet; the bot registers it once it connects.",
+            "removed": "Removed from Discord.",
+            "failed": "Discord did not accept it:",
+            "target": {
+                "global": "Global"
+            },
+            "outcome": {
+                "created": "created",
+                "patched": "updated",
+                "unchanged": "already up to date",
+                "skipped": "not registered: the bot is not in this server",
+                "failed": "failed"
+            }
         }
     },
     "config": {

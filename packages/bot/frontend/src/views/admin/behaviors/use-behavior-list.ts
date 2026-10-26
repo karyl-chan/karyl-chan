@@ -4,6 +4,7 @@ import {
     reorderMessageTriggers,
     type BehaviorListView,
     type BehaviorSection,
+    type CommandView,
     type MessageTriggerLocation,
     type MessageTriggerView,
 } from '../../../api/behavior';
@@ -72,6 +73,16 @@ export function useBehaviorList() {
         if (before && before.section !== trigger.section) await follow(trigger, mayLeave);
     }
 
+    /** A command was written (resync, edit): take the server's version. */
+    async function applyCommand(command: CommandView): Promise<void> {
+        const current = view.value;
+        if (!current) return;
+        view.value = {
+            ...current,
+            commands: current.commands.map((c) => (c.id === command.id ? command : c)),
+        };
+    }
+
     /** A trigger was created: reload so it is listed, then open it where it lives (#104). */
     async function showCreated(trigger: MessageTriggerView, mayLeave: MayLeave = allowLeave): Promise<void> {
         await load();
@@ -116,5 +127,5 @@ export function useBehaviorList() {
         return use;
     });
 
-    return { view, selected, loading, error, expandId, sections, groupUse, load, applyTrigger, showCreated, reorder };
+    return { view, selected, loading, error, expandId, sections, groupUse, load, applyTrigger, applyCommand, showCreated, reorder };
 }

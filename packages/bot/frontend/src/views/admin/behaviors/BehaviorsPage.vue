@@ -22,7 +22,7 @@ const { confirm } = useConfirm();
 const guildList = useGuildListStore();
 
 const toast = useToastStore();
-const { view, selected, loading, error, expandId, sections, groupUse, load, applyTrigger, showCreated, reorder } =
+const { view, selected, loading, error, expandId, sections, groupUse, load, applyTrigger, applyCommand, showCreated, reorder } =
     useBehaviorList();
 const adding = ref(false);
 const { hasUnsaved } = provideUnsavedDrafts();
@@ -110,6 +110,7 @@ async function onSelect(section: BehaviorSection) {
             @retry="load"
             @reload="load"
             @updated="applyTrigger($event, mayDropDrafts)"
+            @command-updated="applyCommand"
             @deleted="load"
             @add="adding = true"
             @reorder="onReorder"

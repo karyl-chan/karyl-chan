@@ -2,22 +2,46 @@
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@iconify/vue';
-import { AppBadge, AppItemCard, AppToggle } from '@karyl-chan/ui';
-import type { CommandLeafView, CommandView } from '../../../api/behavior';
+import { AppBadge, AppItemCard, AppMenu, AppMenuItem, AppToggle } from '@karyl-chan/ui';
+import { resyncBehaviorCommand, type CommandLeafView, type CommandView } from '../../../api/behavior';
 import BehaviorActionDetails from './BehaviorActionDetails.vue';
 import BehaviorSourceNotice from './BehaviorSourceNotice.vue';
+import CommandRegistrationResult from './CommandRegistrationResult.vue';
+import { registrationFailure, registrationResult, type RegistrationResult } from './registration-result';
 
 /**
- * Read-only card for a Command (S3): the command's visibility settings and
- * its leaves — the root leaf, or one row per subcommand. Editing returns
- * with the write API (S4 / S6).
+ * Card for a Command (board 5): the command's visibility settings and its
+ * leaves — the root leaf, or one row per subcommand. The menu registers
+ * the command again (resync) and says honestly what Discord answered.
  */
 const props = defineProps<{
     command: CommandView;
+    guildNames: ReadonlyMap<string, string>;
+}>();
+
+const emit = defineEmits<{
+    /** The server's version of the command after a write. */
+    (e: 'updated', command: CommandView): void;
 }>();
 
 const { t } = useI18n();
 const open = ref(false);
+
+// ── what the last write did on Discord ──────────────────────────────────────
+
+const registration = ref<RegistrationResult | null>(null);
+
+async function resync() {
+    open.value = true;
+    registration.value = null;
+    try {
+        const result = await resyncBehaviorCommand(props.command.id);
+        registration.value = registrationResult(t, result.registration, props.guildNames);
+        emit('updated', result.command);
+    } catch (err) {
+        registration.value = registrationFailure(t, err, props.guildNames);
+    }
+}
 
 const isSystem = computed(
     () => props.command.isSystem || props.command.leaves.some((l) => l.systemKey !== null)
@@ -34,9 +58,11 @@ function leafPath(leaf: CommandLeafView): string {
     return [props.command.name, leaf.subcommandGroup, leaf.subcommand].filter(Boolean).join(' ');
 }
 
-const registration = computed(() =>
+const registrationTarget = computed(() =>
     props.command.registration === 'guild'
-        ? t('behaviors.card.registrationGuild', { guild: props.command.guildId })
+        ? t('behaviors.card.registrationGuild', {
+              guild: props.guildNames.get(props.command.guildId ?? '') ?? props.command.guildId,
+          })
         : t('behaviors.card.registrationGlobal')
 );
 </script>
@@ -82,13 +108,25 @@ const registration = computed(() =>
                 :title="isSystem ? t('behaviors.card.toggleProtected') : t('behaviors.card.toggleReadOnly')"
                 :aria-label="command.leaves[0].enabled ? t('behaviors.card.enabled') : t('behaviors.card.disabled')"
             />
+            <AppMenu v-if="!isSystem" placement="bottom-end" :offset="[0, 6]">
+                <template #trigger>
+                    <button type="button" class="more-btn" :aria-label="t('behaviors.card.more')" :title="t('behaviors.card.more')">
+                        <Icon icon="material-symbols:more-vert" width="16" height="16" />
+                    </button>
+                </template>
+                <AppMenuItem data-test="resync" @click="resync">
+                    <Icon icon="material-symbols:sync-rounded" width="16" height="16" />
+                    {{ t('behaviors.command.resync') }}
+                </AppMenuItem>
+            </AppMenu>
         </template>
 
         <div class="body">
+            <CommandRegistrationResult v-if="registration" :result="registration" @dismiss="registration = null" />
             <BehaviorSourceNotice v-if="isSystem" />
             <dl class="details">
                 <dt>{{ t('behaviors.card.registration') }}</dt>
-                <dd>{{ registration }}</dd>
+                <dd>{{ registrationTarget }}</dd>
                 <dt>{{ t('behaviors.card.contexts') }}</dt>
                 <dd>{{ command.contexts.map((c) => t(`behaviors.card.context.${c}`)).join('、') }}</dd>
                 <dt>{{ t('behaviors.card.integrationTypes') }}</dt>
@@ -151,6 +189,20 @@ const registration = computed(() =>
     white-space: nowrap;
     min-width: 0;
 }
+.more-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0;
+}
+.more-btn:hover { background: var(--bg-surface-hover, var(--bg-page)); color: var(--text); }
 .body { display: flex; flex-direction: column; gap: 0.6rem; }
 .details {
     display: grid;

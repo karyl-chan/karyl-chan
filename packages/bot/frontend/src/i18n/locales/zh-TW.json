@@ -1418,6 +1418,25 @@
             "create": "建立",
             "created": "已建立「{title}」。",
             "done": "完成"
+        },
+        "command": {
+            "resync": "重新同步到 Discord"
+        },
+        "registration": {
+            "registered": "已同步到 Discord。",
+            "deferred": "已儲存，但還沒同步到 Discord；bot 連上 Discord 後會自動註冊。",
+            "removed": "已從 Discord 移除。",
+            "failed": "Discord 沒有接受：",
+            "target": {
+                "global": "全域"
+            },
+            "outcome": {
+                "created": "已建立",
+                "patched": "已更新",
+                "unchanged": "已是最新",
+                "skipped": "沒有註冊：bot 不在這個伺服器",
+                "failed": "失敗"
+            }
         }
     },
     "config": {

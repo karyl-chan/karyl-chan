@@ -6,6 +6,7 @@ import {
   deleteBehavior,
   getBehaviorSchemas,
   reorderMessageTriggers,
+  resyncBehaviorCommand,
 } from "./behavior";
 
 function mockFetch(response: Response) {
@@ -54,6 +55,29 @@ describe("behavior write client", () => {
     const err = await reorderMessageTriggers("bot_dm", [1]).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect(err).toMatchObject({ status: 409, code: "validation_failed", field: "ids" });
+  });
+});
+
+describe("command registration refusals", () => {
+  it("a refused resync is an ApiError carrying each target's outcome (#107)", async () => {
+    const targets = [
+      { target: "guild:1", status: "failed", attempted: "patch", error: "Missing Access" },
+    ];
+    mockFetch(
+      json(
+        {
+          error: {
+            code: "registration_failed",
+            message: "Discord did not accept /nas: Missing Access",
+            details: { targets },
+          },
+        },
+        502,
+      ),
+    );
+    const err = await resyncBehaviorCommand(4).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err).toMatchObject({ status: 502, code: "registration_failed", details: { targets } });
   });
 });
 
