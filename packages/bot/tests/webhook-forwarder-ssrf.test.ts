@@ -32,6 +32,8 @@ function customBehavior(url: string): BehaviorWebhookActionRow {
     url: encryptSecret(url),
     secret: null,
     authMode: null,
+    previousSecret: null,
+    previousSecretExpiresAt: null,
   };
 }
 

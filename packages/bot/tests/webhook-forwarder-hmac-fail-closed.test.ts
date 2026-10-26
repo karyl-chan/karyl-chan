@@ -34,6 +34,8 @@ function hmacBehavior(webhookSecret: string | null): BehaviorWebhookActionRow {
     url: encryptSecret(HOOK_URL),
     secret: webhookSecret,
     authMode: "hmac",
+    previousSecret: null,
+    previousSecretExpiresAt: null,
   };
 }
 

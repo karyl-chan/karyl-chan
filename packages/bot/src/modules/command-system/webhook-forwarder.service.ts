@@ -7,8 +7,14 @@
  *   - 輸入是 behavior_webhook_actions 的一列（url / secret 為密文）
  *   - 簽署依 authMode（CR-2）：
  *       'token'  → X-Plugin-Webhook-Token: <secret>
- *       'hmac'   → X-Karyl-Signature + X-Karyl-Timestamp
+ *       'hmac'   → X-Karyl-Signature + X-Karyl-Timestamp + X-Karyl-Nonce
  *       null     → 不簽（裸 HTTP）
+ *   - 密鑰輪換的寬限期（#99，previousSecret 未過期時）：標準 header 一律用
+ *     新密鑰，另外附上舊密鑰的版本 —— X-Plugin-Webhook-Token-Previous /
+ *     X-Karyl-Signature-Previous（同一組 timestamp / nonce / body）；回應用
+ *     新舊任一把簽都接受。標準 header 在輪換當下就改用新密鑰（格式不變），
+ *     只認得舊密鑰又只讀標準 header 的 receiver 會立刻拒收 —— 無停機輪換
+ *     要 receiver 先同時接受 -Previous header（docs/features/behaviors.md）。
  *   - URL 解密後才用
  *   - 解析 response 拿 relayContent / relayEmbeds
  *   - 回 ForwardResult { ok, relayContent, relayEmbeds?, status?, error? }
@@ -18,8 +24,11 @@ import type { RESTPostAPIWebhookWithTokenJSONBody } from "discord.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import {
   buildOutboundSignatureHeaders,
-  verifyInboundSignature,
+  signBody,
+  verifyInboundSignatureWithKeys,
+  NONCE_HEADER,
   SIGNATURE_HEADER,
+  TIMESTAMP_HEADER,
 } from "../../utils/hmac.js";
 import { shouldRecord } from "../bot-events/bot-event-dedup.js";
 import {
@@ -112,6 +121,10 @@ export function sanitizeEmbeds(raw: unknown): SanitizedEmbed[] {
 /** X-Plugin-Webhook-Token header name（CR-2 token mode）。 */
 const PLUGIN_WEBHOOK_TOKEN_HEADER = "x-plugin-webhook-token";
 
+/** 輪換寬限期內，舊密鑰的 token / 簽章（#99）。 */
+export const PREVIOUS_TOKEN_HEADER = "x-plugin-webhook-token-previous";
+export const PREVIOUS_SIGNATURE_HEADER = "x-karyl-signature-previous";
+
 // ── WebhookForwarder ─────────────────────────────────────────────────────────
 
 export class WebhookForwarder {
@@ -173,7 +186,16 @@ export class WebhookForwarder {
       };
     }
 
-    return this.doPost(webhookUrl, payload, action, rawSecret);
+    // 輪換寬限期內的舊密鑰；過期或解不開就當作沒有
+    const rawPrevious =
+      rawSecret !== null &&
+      action.previousSecret !== null &&
+      action.previousSecretExpiresAt !== null &&
+      action.previousSecretExpiresAt.getTime() > Date.now()
+        ? this.safeDecrypt(action.previousSecret, action.behaviorId)
+        : null;
+
+    return this.doPost(webhookUrl, payload, action, rawSecret, rawPrevious);
   }
 
   // ── 私有：HTTP POST ───────────────────────────────────────────────────────
@@ -183,6 +205,7 @@ export class WebhookForwarder {
     payload: Record<string, unknown>,
     action: BehaviorWebhookActionRow,
     rawSecret: string | null,
+    rawPrevious: string | null,
   ): Promise<ForwardResult> {
     let url: URL;
     try {
@@ -208,6 +231,7 @@ export class WebhookForwarder {
       if (authMode === "token") {
         // token mode：X-Plugin-Webhook-Token: <secret>（裸 shared secret）
         headers[PLUGIN_WEBHOOK_TOKEN_HEADER] = rawSecret;
+        if (rawPrevious) headers[PREVIOUS_TOKEN_HEADER] = rawPrevious;
       } else if (authMode === "hmac") {
         const sigHeaders = buildOutboundSignatureHeaders(
           rawSecret,
@@ -216,6 +240,16 @@ export class WebhookForwarder {
           body,
         );
         Object.assign(headers, sigHeaders);
+        if (rawPrevious) {
+          headers[PREVIOUS_SIGNATURE_HEADER] = signBody(
+            rawPrevious,
+            "POST",
+            url.pathname,
+            sigHeaders[TIMESTAMP_HEADER]!,
+            sigHeaders[NONCE_HEADER]!,
+            body,
+          );
+        }
       }
       // authMode=null 且有 secret：異常狀態，不簽（已由 CR-6 DB CHECK 攔截）
     }
@@ -310,8 +344,8 @@ export class WebhookForwarder {
     //  buildOutboundSignatureHeaders helper from utils/hmac.ts.
     const hasSignatureHeaders = res.headers.has(SIGNATURE_HEADER);
     if (rawSecret && (authMode === "hmac" || hasSignatureHeaders)) {
-      const verdict = verifyInboundSignature(
-        rawSecret,
+      const verdict = verifyInboundSignatureWithKeys(
+        rawPrevious ? [rawSecret, rawPrevious] : [rawSecret],
         res.headers,
         rawText,
         Math.floor(Date.now() / 1000),

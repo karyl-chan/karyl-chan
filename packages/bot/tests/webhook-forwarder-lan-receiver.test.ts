@@ -73,6 +73,8 @@ describe.skipIf(lanIp === null)("webhook forward to a LAN receiver (real policy)
       url: encryptSecret(url),
       secret: null,
       authMode: null,
+      previousSecret: null,
+      previousSecretExpiresAt: null,
     };
   }
 
