@@ -25,6 +25,11 @@ vi.hoisted(() => {
 vi.mock("../src/modules/bot-events/bot-event-log.js", () => ({
   botEventLog: { record: vi.fn() },
 }));
+// the real action, made rejectable per test (a rejection inside the queue)
+vi.mock("../src/modules/command-system/webhook-action.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/modules/command-system/webhook-action.js")>();
+  return { ...actual, runWebhookAction: vi.fn(actual.runWebhookAction) };
+});
 vi.mock("../src/modules/admin/admin-login.service.js", () => ({
   mintLoginLink: vi.fn(async () => ({
     ok: true,
@@ -47,6 +52,7 @@ import {
   __resetGuildForwardWindowsForTests,
 } from "../src/modules/command-system/message-trigger-matcher.service.js";
 import type { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
+import { runWebhookAction } from "../src/modules/command-system/webhook-action.js";
 import {
   clearBehaviors,
   seedMessageTrigger,
@@ -593,5 +599,72 @@ describe("one conversation at a time", () => {
 
     forwarder.open();
     await stuck;
+  });
+
+  it("a conversation holds one running and three waiting messages; more are dropped and logged once", async () => {
+    const id = await seedMessageTrigger({ surface: "guild" });
+    await getBehaviorCatalog();
+    const forwarder = heldForwarder();
+    const m = matcherWith(forwarder);
+    const send = (n: number) =>
+      m.onMessage(guildMsg({ userId: "U-Q", channelId: "CQ", content: `!go ${n}` }).message);
+    const queueFullWarnings = () =>
+      vi
+        .mocked(botEventLog.record)
+        .mock.calls.filter(([level, , , meta]) => {
+          const at = meta as { userId?: string; channelId?: string } | undefined;
+          return level === "warn" && at?.userId === "U-Q" && at.channelId === "CQ";
+        });
+
+    const accepted = [send(1), send(2), send(3), send(4)];
+    expect(await settledNow(send(5))).toEqual({ handled: false });
+    expect(forwardedContents(forwarder)).toEqual(["!go 1"]);
+    expect(queueFullWarnings()).toHaveLength(1);
+
+    expect(await settledNow(send(6))).toEqual({ handled: false });
+    expect(queueFullWarnings()).toHaveLength(1);
+
+    forwarder.open();
+    await Promise.all(accepted);
+    expect(forwardedContents(forwarder)).toEqual(["!go 1", "!go 2", "!go 3", "!go 4"]);
+    // a dropped message is not counted
+    expect((await BehaviorStat.findByPk(id))?.get("successCount")).toBe(4);
+  });
+
+  it("a finished conversation leaves nothing behind", async () => {
+    await seedMessageTrigger({ surface: "guild" });
+    await getBehaviorCatalog();
+    const forwarder = heldForwarder();
+    const m = matcherWith(forwarder);
+
+    const running = [
+      m.onMessage(guildMsg({ userId: "U-GC", channelId: "C-GC1", content: "!go" }).message),
+      m.onMessage(guildMsg({ userId: "U-GC", channelId: "C-GC1", content: "!go" }).message),
+      m.onMessage(guildMsg({ userId: "U-GC", channelId: "C-GC2", content: "!go" }).message),
+    ];
+    await settle();
+    expect(m.__conversationCountForTests()).toBe(2);
+
+    forwarder.open();
+    await Promise.all(running);
+    expect(m.__conversationCountForTests()).toBe(0);
+  });
+
+  it("a message whose webhook action rejects still frees the conversation for the next one", async () => {
+    await seedMessageTrigger({ surface: "guild" });
+    await getBehaviorCatalog();
+    const forwarder = heldForwarder();
+    const m = matcherWith(forwarder);
+    vi.mocked(runWebhookAction).mockRejectedValueOnce(new Error("action blew up"));
+
+    const failing = m.onMessage(guildMsg({ userId: "U-REJ", channelId: "C-REJ", content: "!go 1" }).message);
+    const next = m.onMessage(guildMsg({ userId: "U-REJ", channelId: "C-REJ", content: "!go 2" }).message);
+    await expect(failing).rejects.toThrow("action blew up");
+    await settle();
+    expect(forwardedContents(forwarder)).toEqual(["!go 2"]);
+
+    forwarder.open();
+    expect(await next).toMatchObject({ handled: true });
+    expect(m.__conversationCountForTests()).toBe(0);
   });
 });

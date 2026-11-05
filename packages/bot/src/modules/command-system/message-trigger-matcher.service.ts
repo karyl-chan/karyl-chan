@@ -24,6 +24,7 @@ import {
 } from "../behavior/behavior-catalog.js";
 import { matchesTrigger, triggerCaptures } from "../behavior/behavior-trigger.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
+import { shouldRecord } from "../bot-events/bot-event-dedup.js";
 import type { MessageMatchOutcome } from "./types.js";
 import type { WebhookForwarder } from "./webhook-forwarder.service.js";
 import { runLoginAction } from "./builtin-login-action.js";
@@ -70,6 +71,18 @@ export function __resetGuildForwardWindowsForTests(): void {
   guildForwardWarned.clear();
 }
 
+// #118：每個對話（使用者 × 頻道）最多一則執行中加這麼多則等待；再來的
+// 訊息靜默丟棄，並記一筆 botEventLog（去重）。最壞等待約
+// (1 + MAX_QUEUED_PER_KEY) × webhook 逾時 × 每則命中的觸發數。
+const MAX_QUEUED_PER_KEY = 3;
+
+interface ConversationQueue {
+  /** settles when the conversation's last accepted message is done; never rejects */
+  tail: Promise<void>;
+  /** running + waiting messages */
+  size: number;
+}
+
 function mergeOutcomes(
   a: MessageMatchOutcome,
   b: MessageMatchOutcome,
@@ -85,33 +98,47 @@ function mergeOutcomes(
 
 export class MessageTriggerMatcher {
   /**
-   * Per-conversation in-process mutex, keyed by (user, channel): one user's
+   * Per-conversation in-process queue, keyed by (user, channel): one user's
    * messages in one channel (or in their DM with the bot, which is its own
    * channel) have their webhook triggers run in the order they arrived.
    * Other channels and other users never wait for it, and neither does a
-   * message that fires no webhook trigger (#118).
+   * message that fires no webhook trigger (#118). An entry lives only
+   * while the conversation has a message running.
    */
-  private readonly conversationLocks = new Map<string, Promise<unknown>>();
+  private readonly conversations = new Map<string, ConversationQueue>();
 
   constructor(private readonly forwarder: WebhookForwarder) {}
 
-  private async withConversationLock<T>(
+  /** 測試用：目前有訊息在跑的對話數。 */
+  __conversationCountForTests(): number {
+    return this.conversations.size;
+  }
+
+  /**
+   * Runs fn after the conversation's earlier messages. Null when the
+   * conversation already holds 1 + MAX_QUEUED_PER_KEY messages: fn is
+   * dropped and never runs. Takes the slot synchronously, so callers
+   * queue in call order.
+   */
+  private inConversation<T>(
     key: string,
     fn: () => Promise<T>,
-  ): Promise<T> {
-    const prev = this.conversationLocks.get(key) ?? Promise.resolve();
-    const next = prev.then(fn, fn);
-    // Store as `unknown` so generic T doesn't widen the map's value type.
-    this.conversationLocks.set(key, next);
-    try {
-      return await next;
-    } finally {
-      // Only clear when we're still the tail — concurrent callers chain on
-      // top of `next` and will install their own promise.
-      if (this.conversationLocks.get(key) === next) {
-        this.conversationLocks.delete(key);
-      }
-    }
+  ): Promise<T> | null {
+    const queue = this.conversations.get(key) ?? {
+      tail: Promise.resolve(),
+      size: 0,
+    };
+    if (queue.size >= 1 + MAX_QUEUED_PER_KEY) return null;
+    queue.size++;
+    this.conversations.set(key, queue);
+    const run = queue.tail.then(fn).finally(() => {
+      if (--queue.size === 0) this.conversations.delete(key);
+    });
+    queue.tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   }
 
   /**
@@ -178,13 +205,24 @@ export class MessageTriggerMatcher {
       groupMembers,
     );
 
-    const key = `${userId}:${djsMessage.channel.id}`;
+    const channelId = djsMessage.channel.id;
+    let queued: Promise<MessageMatchOutcome> | null = null;
+    if (webhooks.length > 0) {
+      queued = this.inConversation(`${userId}:${channelId}`, () =>
+        this.runWebhookTriggers(webhooks, djsMessage, userId),
+      );
+      // 排隊已滿：不回覆使用者、不計統計，只記一次（#118）
+      if (!queued && shouldRecord(`behavior-queue-full:${userId}:${channelId}`)) {
+        botEventLog.record(
+          "warn",
+          "bot",
+          `message-trigger-matcher: user ${userId} 在 channel ${channelId} 已有 ${1 + MAX_QUEUED_PER_KEY} 則訊息排隊，丟棄新訊息`,
+          { userId, channelId },
+        );
+      }
+    }
     const [forwarded, login] = await Promise.all([
-      webhooks.length > 0
-        ? this.withConversationLock(key, () =>
-            this.runWebhookTriggers(webhooks, djsMessage, userId),
-          )
-        : null,
+      queued,
       builtin
         ? this.handleMatchedSystemBehavior(builtin, djsMessage, userId)
         : null,
