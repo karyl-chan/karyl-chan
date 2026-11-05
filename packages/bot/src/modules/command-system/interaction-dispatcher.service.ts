@@ -41,6 +41,7 @@ import { runLoginAction } from "./builtin-login-action.js";
 import { renderFailure } from "./reply-renderer.js";
 import { runWebhookAction } from "./webhook-action.js";
 import { takeBehaviorRun } from "./behavior-rate-limits.js";
+import { toWebhookAttachment } from "./webhook-attachment.js";
 import type { DispatchOutcome } from "./types.js";
 import type { WebhookForwarder } from "./webhook-forwarder.service.js";
 import { tForInteraction } from "../../i18n/index.js";
@@ -54,9 +55,11 @@ import { tForInteraction } from "../../i18n/index.js";
  * Discord webhook 原生欄位（content / username / avatar_url）帶 interaction 資訊，
  * plugin 可直接用標準 Discord webhook 消費邏輯處理。
  * _meta 欄位帶完整 interaction 元資訊供需要的 plugin 使用（behavior webhook 可忽略）。
+ * 不帶 interaction token：webhook 是裸外部 URL，回覆由 bot 代為送出。
  */
 function buildWebhookPayload(
   interaction: ChatInputCommandInteraction,
+  behaviorId: number,
   subcommandGroup: string,
   subcommand: string,
 ): Record<string, unknown> {
@@ -67,6 +70,14 @@ function buildWebhookPayload(
     data[0]?.type === ApplicationCommandOptionType.Subcommand
       ? (data[0].options ?? [])
       : data;
+  // attachment 參數的檔案（#152），依參數順序；value 是 attachment id，
+  // 檔案在 interaction 的 resolved 資料裡
+  const resolved = interaction.options.resolved?.attachments;
+  const attachments = invoked
+    .filter((opt) => opt.type === ApplicationCommandOptionType.Attachment)
+    .map((opt) => resolved?.get(String(opt.value)))
+    .filter((a) => a !== undefined)
+    .map(toWebhookAttachment);
   return {
     // Discord webhook 原生欄位：content 帶指令路徑（供 webhook 識別觸發入口；
     // 結構化的路徑在 _meta.sub_command_name / sub_command_group）
@@ -77,7 +88,6 @@ function buildWebhookPayload(
     // _meta：完整 interaction 元資訊
     _meta: {
       interaction_id: interaction.id,
-      interaction_token: interaction.token,
       application_id: interaction.applicationId,
       command_name: interaction.commandName,
       // 被呼叫的葉節點路徑，與 plugin 指令 payload 同名（#140）；根葉節點為 null
@@ -99,6 +109,10 @@ function buildWebhookPayload(
         type: opt.type,
         value: opt.value ?? null,
       })),
+      // BH-2.1：與 pattern 路徑對齊 — 帶 behavior_id 供 webhook 端在多條
+      // behavior 指向同一端點時辨識來源
+      behavior_id: behaviorId,
+      attachments,
     },
   };
 }
@@ -300,8 +314,7 @@ export class InteractionDispatcher {
   // ── webhook 動作 ────────────────────────────────────────────────────────
 
   /**
-   * webhook 動作：建構 payload（不含 interaction_token，webhook 是裸外部
-   * URL）後呼叫 WebhookForwarder。
+   * webhook 動作：建構 payload 後呼叫 WebhookForwarder。
    */
   private async dispatchWebhookBehavior(
     interaction: ChatInputCommandInteraction,
@@ -320,11 +333,7 @@ export class InteractionDispatcher {
       await renderFailure({ kind: "interaction", interaction });
       return { claimed: true, claimedBy: "behavior_custom" };
     }
-    const payload = buildWebhookPayload(interaction, subcommandGroup, subcommand);
-    delete (payload._meta as Record<string, unknown>).interaction_token;
-    // BH-2.1：與 pattern 路徑對齊 — _meta 帶 behavior_id 供 webhook 端
-    // 在多條 behavior 指向同一端點時辨識來源。
-    (payload._meta as Record<string, unknown>).behavior_id = leaf.id;
+    const payload = buildWebhookPayload(interaction, leaf.id, subcommandGroup, subcommand);
 
     // 速率限制（#119）：每使用者 5 次 / 10 秒。超量仍要回應 interaction
     // （否則 Discord 顯示「interaction failed」）：只讓呼叫者看到，不轉送、

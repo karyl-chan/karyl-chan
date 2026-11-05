@@ -66,6 +66,11 @@ The top level has the shape of a Discord webhook body, so a receiver that
 already handles Discord webhooks can read it. `_meta` carries the rest.
 What `_meta` holds depends on the trigger.
 
+The bot may add fields to the request, at the top level or in `_meta`,
+without calling it a breaking change. Ignore the fields you don't know: a
+receiver that refuses unknown fields (a schema with
+`additionalProperties: false`, say) breaks on such an addition.
+
 ### From a message trigger
 
 A message trigger fires on a message in a DM with the bot, or in a guild
@@ -75,14 +80,14 @@ guild, as in `guild_id`.)
 | Field | Value |
 |-------|-------|
 | `content` | The message text, exactly as Discord delivered it. |
-| `username` | The author's Discord username. |
+| `username` | The author's Discord username, never their global name. This differs from a command. To tell users apart use `_meta.user.id`; to show a name use `_meta.user.global_name ?? _meta.user.username`. |
 | `avatar_url` | The author's avatar URL. |
 | `_meta.user` | `{ id, username, global_name, discriminator, avatar }`. Use `user.id` to tell users apart: names change. |
 | `_meta.message_id` | The message id. |
 | `_meta.channel_id` | The channel id (the DM channel in a DM with the bot). |
 | `_meta.guild_id` | The guild id, or `null` in a DM with the bot. |
 | `_meta.behavior_id` | The behavior that fired. |
-| `_meta.attachments` | `[{ url, filename, content_type, size }]`, empty when the message has none. |
+| `_meta.attachments` | `[{ id, url, filename, content_type, size }]`, empty when the message has none. `id` is the Discord attachment id; `url` is Discord's CDN link, signed and valid for a limited time, so download the file soon. |
 | `_meta.captures` | A regex trigger's capture groups, group 1 first. A named group counts by its position, and an optional group that took no part is `null`. `天氣 台北` against `^天氣\s+(.+)` sends `["台北"]`. Always `[]` for `startswith` / `endswith`. |
 
 One message can fire more than one behavior, unless a behavior stops the
@@ -97,7 +102,7 @@ A command fires when a user runs one of the behavior's Discord commands.
 | Field | Value |
 |-------|-------|
 | `content` | The invoked path, `/name` or `/name sub`. |
-| `username` | The user's display name (their global name, or their username when they have none). This differs from a message trigger, which sends the username. |
+| `username` | The user's display name (their global name, or their username when they have none). This differs from a message trigger, which sends the username. To tell users apart use `_meta.user.id`; to show a name use `_meta.user.global_name ?? _meta.user.username`, the same on both triggers. |
 | `avatar_url` | The user's avatar URL. |
 | `_meta.interaction_id` | The interaction id. |
 | `_meta.application_id` | The bot's application id. |
@@ -108,12 +113,14 @@ A command fires when a user runs one of the behavior's Discord commands.
 | `_meta.channel_id` | The channel the command was used in. |
 | `_meta.user` | `{ id, username, global_name, discriminator, avatar }`. |
 | `_meta.locale` | The user's Discord locale, or `null`. |
-| `_meta.options` | The invoked command's or subcommand's options, `[{ name, type, value }]`. `type` is Discord's numeric option type. An `attachment` option's `value` is the attachment id. |
+| `_meta.options` | The invoked command's or subcommand's options, `[{ name, type, value }]`. `type` is Discord's numeric option type. An `attachment` option's (type 11) `value` is the attachment id: its file is the `_meta.attachments` entry with that `id`. |
 | `_meta.behavior_id` | The behavior (command leaf) that fired. |
+| `_meta.attachments` | The files of the invoked command's or subcommand's `attachment` options, in option order: `[{ id, url, filename, content_type, size }]`, the same shape as a message trigger's. Empty when it has none. |
 
 The interaction token is **not** sent: the bot answers the interaction
-itself, with your reply. A command's payload has no `message_id` and no
-`attachments` (see #152).
+itself, with your reply. A command's payload has no `message_id`, not
+even a `null` one: an interaction has no message. To tell one invocation
+from another, use `_meta.interaction_id`.
 
 Discord stops a command from being used where its settings don't allow it.
 Past that, the bot does no check of its own on who runs a command, so a
@@ -132,6 +139,7 @@ values:
 | `_meta.test` | `true` |
 | `_meta.behavior_id` | The behavior under test. |
 | `_meta.user` | The placeholder `{ id: "0", username: "karyl-test", global_name: null, discriminator: "0", avatar: null }`, never the admin who pressed the button. |
+| `_meta.attachments` | `[]`. |
 | `_meta.captures` | `[]` (a message trigger's test). |
 | `_meta.sub_command_name` / `sub_command_group` | The leaf's own path (a command's test). |
 
@@ -530,5 +538,7 @@ changes the protocol. Update a receiver **before** the bot is upgraded:
   limits), `_meta.captures` on message triggers, and
   `_meta.sub_command_name` / `_meta.sub_command_group` on commands.
 - New: secret rotation with the `-Previous` headers (#99).
+- New: `id` on each `_meta.attachments` entry, and `_meta.attachments` on
+  commands, with the files of the `attachment` options (#152).
 - Removed: conversation sessions and the `[BEHAVIOR:END]` marker. A reply
   never starts or ends a session.

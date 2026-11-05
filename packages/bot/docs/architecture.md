@@ -266,6 +266,10 @@ This is the bot's command backbone.
   trigger — forward, render, count the outcome, and on failure log the
   detail and give the user only the generic line (never in a guild
   channel).
+- `webhook-attachment.ts` — `toWebhookAttachment`: the
+  `_meta.attachments[]` entry `{ id, url, filename, content_type, size }`
+  both triggers send (#152): a message's files, or a command's
+  attachment options' files. Pure.
 - `builtin-login-action.ts` — the System Behavior's built-in action: mints
   the login link (admin) and answers with a Behavior Reply (embed + link
   button, `ephemeral: true`).

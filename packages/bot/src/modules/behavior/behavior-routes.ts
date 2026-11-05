@@ -170,7 +170,8 @@ function registerReadAndTestRoutes(
           user: TEST_FIRE_USER,
           // the keys a real trigger sends, so a receiver routes a test the
           // way it routes the real thing (a test matched no message, so no
-          // groups; a leaf's own path)
+          // groups and no files; a leaf's own path)
+          attachments: [],
           ...(behavior.triggerKind === "message"
             ? { captures: [] }
             : {

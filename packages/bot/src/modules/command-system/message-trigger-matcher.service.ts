@@ -30,6 +30,7 @@ import type { WebhookForwarder } from "./webhook-forwarder.service.js";
 import { runLoginAction } from "./builtin-login-action.js";
 import { runWebhookAction } from "./webhook-action.js";
 import { takeBehaviorRun } from "./behavior-rate-limits.js";
+import { toWebhookAttachment } from "./webhook-attachment.js";
 
 // BH-0.3 multi-match：一則訊息可以連發多條 behavior，
 // outcome 取聯集；behaviorId 報第一條命中的（log 用途）。
@@ -295,12 +296,7 @@ export class MessageTriggerMatcher {
     match: TriggerMatch,
   ): Record<string, unknown> {
     const attachments = djsMessage.attachments
-      ? [...djsMessage.attachments.values()].map((a) => ({
-          url: a.url,
-          filename: a.name ?? null,
-          content_type: a.contentType ?? null,
-          size: a.size ?? null,
-        }))
+      ? [...djsMessage.attachments.values()].map(toWebhookAttachment)
       : [];
     return {
       content: djsMessage.content ?? "",
