@@ -229,3 +229,33 @@ describe("RconConnectionService – connection limit", () => {
     expect(warnCalls).toHaveLength(0);
   });
 });
+
+describe("RconConnectionService – failed connect", () => {
+  it("leaves no unhandled rejection when nobody waits on the connect", async () => {
+    vi.resetModules();
+    const mod = (await import(
+      "../src/modules/builtin-features/rcon-forward/rcon-connection.service.js"
+    )) as ServiceModule;
+    const policy = await import("../src/utils/host-policy.js");
+    vi.mocked(policy.assertAllowedTarget).mockRejectedValueOnce(
+      new policy.HostPolicyError("主機目標不被允許"),
+    );
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    try {
+      await expect(
+        mod.RconConnectionService.initializeConnection(
+          "refused-conn",
+          "169.254.169.254",
+          25575,
+          "secret",
+          makeChannel(),
+        ),
+      ).resolves.toBe(false);
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      process.off("unhandledRejection", unhandled);
+    }
+    expect(unhandled).not.toHaveBeenCalled();
+  });
+});

@@ -84,6 +84,9 @@ export class RconConnectionService {
       lockResolver.resolve = resolve;
       lockResolver.reject = reject;
     });
+    // Waiters see a failure through their own await; without this, a
+    // failed connect nobody waited on is an unhandled rejection.
+    connectionLockPromise.catch(() => {});
     this.connectionLocks.set(connectionName, connectionLockPromise);
 
     try {
