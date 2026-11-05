@@ -22,6 +22,7 @@ import { sequelize } from "../src/db.js";
 import { registerBehaviorRoutes } from "../src/modules/behavior/behavior-routes.js";
 import { listAudit } from "../src/modules/admin/admin-audit.service.js";
 import { decryptSecret } from "../src/utils/crypto.js";
+import { linearRegexAvailable } from "../src/utils/linear-regex.js";
 import { clearBehaviors, seedMessageTrigger, seedSystemLogin } from "./behavior-fixtures.js";
 
 const HOOK = "https://203.0.113.10/hook";
@@ -152,6 +153,30 @@ describe("POST /api/behaviors (message trigger)", () => {
     expect(res.statusCode).toBe(400);
     expect(res.json().error).toMatchObject({ code: "validation_failed", field });
   });
+});
+
+// #119：regex 在線性時間引擎執行；它跑不了的語法存檔時就拒絕
+describe.runIf(linearRegexAvailable)("a regex the linear-time engine cannot run", () => {
+  const backreference = { patternKind: "regex", patternValue: "^(\\w)\\1" };
+
+  it("is refused on create, naming the pattern and why", async () => {
+    const res = await create({ ...dmTrigger, ...backreference });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toMatchObject({ code: "validation_failed", field: "patternValue" });
+    expect(res.json().error.message).toMatch(/linear time/);
+  });
+
+  it("is refused on edit", async () => {
+    const id = (await create({ ...dmTrigger, patternKind: "regex", patternValue: "^!go" })).json().behavior.id;
+    const res = await patch(id, { patternValue: backreference.patternValue });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toMatchObject({ code: "validation_failed", field: "patternValue" });
+  });
+});
+
+it("a regex that does not compile says so, with or without the linear-time engine", async () => {
+  const res = await create({ ...dmTrigger, patternKind: "regex", patternValue: "(" });
+  expect(res.json().error.message).toBe("the regex does not compile");
 });
 
 describe("PATCH /api/behaviors/:id (message trigger)", () => {

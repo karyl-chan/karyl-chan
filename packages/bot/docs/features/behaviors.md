@@ -125,6 +125,14 @@ registers the new name first and only then removes the old one.
 **Resync** registers a command again exactly as stored, for example after
 someone deleted it on Discord.
 
+### Rate limit
+
+One user runs command webhook actions at most 5 times per 10 seconds,
+across every command. Past that, the invocation is answered privately
+with "You're using this too often" (in the user's language), not
+forwarded and not counted; the drop is noted once per window in the bot
+event log. The system login is never limited.
+
 ## Message triggers
 
 A message trigger matches messages the bot receives. It has a
@@ -142,7 +150,7 @@ trigger for other DMs.
 
 | Setting | Rule |
 |---------|------|
-| Pattern | `startswith`, `endswith` or `regex`, 1–500 characters. A regex is a JavaScript regular expression without flags (so it is case-sensitive) and must compile. `startswith` and `endswith` compare exactly, case included. |
+| Pattern | `startswith`, `endswith` or `regex`, 1–500 characters. A regex is a JavaScript regular expression without flags (so it is case-sensitive), run on V8's linear-time engine: it must compile there, so backreferences, lookahead and large repeat counts are refused (see [regex triggers](#regex-triggers)). `startswith` and `endswith` compare exactly, case included. |
 | Audience | DMs with the bot only: **everyone**, **one user** (a user id), or an **audience group**. In servers a trigger always applies to everyone. |
 | Skip other bots (`ignoreBots`) | Servers only, on by default: skip messages from other bots and webhooks. The bot's own messages are always skipped, and in DMs messages from bots always are. |
 | Stop after a match (`stopOnMatch`) | Off by default. See [matching order](#matching-order). |
@@ -151,6 +159,45 @@ An **audience group** is a name with a member list. Triggers that use the
 same name share one list. A group exists only while a trigger uses it:
 its list can be set only then, and it is deleted with the last trigger
 that uses it (the admin UI warns before that happens).
+
+### Regex triggers
+
+A regex is written by an admin but runs on messages anyone sends, so a
+pattern that backtracks (`(a+)+$`) plus one crafted message could stall
+the whole bot, the login included. The bot therefore runs regexes on
+V8's non-backtracking engine (the `l` flag, turned on at startup), where
+matching takes time linear in the message, whatever the pattern.
+
+That engine cannot run every regex. Saving one it cannot run is refused
+(`validation_failed` on `patternValue`, with the reason). On the bot's
+Docker image (Node 22, V8 12.4):
+
+| Syntax | Example | Linear engine |
+|--------|---------|---------------|
+| Groups, named groups, optional groups, classes, `\b`, lazy quantifiers | `^天氣\s+(.+)`, `^!(\w+)\s+(?<arg>\S+)` | yes |
+| Nested repeats | `(a+)+$` | yes, in linear time |
+| Lookbehind | `(?<=a)b`, `(?<!a)b` | yes |
+| Small repeat counts | `x{1,10}`, `\d{1,3}`, `[a-z]{16}` | yes |
+| Backreferences | `(a)\1`, `(?<n>a)\k<n>` | no |
+| Lookahead | `(?=a)a`, `(?!a)b` | no |
+| Repeat counts above about 16 | `x{1,1000}`, `[a-z]{2,64}` | no: use `+` or `*` |
+
+Another V8 accepts a different set (Node 20 refuses lookbehind). The bot
+asks the engine rather than assuming, so on any Node a pattern is
+refused on save exactly when it would not run. A stored regex that stops
+compiling (after a Node upgrade, or saved before this check) never
+matches; the bot event log names each one at startup, and again when a
+message reaches it.
+
+If V8 ever drops the engine, the bot runs degraded and says so in the bot
+event log at startup: matching uses the normal engine, and both saving
+and matching refuse a repeat inside a repeat (`safe-regex2`). A stored
+pattern with a nested repeat is therefore disabled (it never matches),
+and the startup check lists each one.
+
+The admin UI's **Try it** box runs the browser's own engine, which has no
+linear mode: a pattern the bot refuses still previews there, and saving
+shows the bot's reason on the pattern.
 
 ### Matching order
 
@@ -169,9 +216,12 @@ For one message, several triggers can fire, one after another:
 
 Other limits:
 
-- In servers, each channel fires at most 5 webhook requests per 10
-  seconds. Further matches in that window are dropped and noted once in
-  the bot event log. DMs are not limited.
+- Webhook actions are rate-limited to 5 requests per 10 seconds: in
+  servers per channel, in DMs with the bot per user, and for commands per
+  user ([rate limit](#rate-limit)). A message over the limit is dropped
+  without a reply. A drop is not counted in the behavior's stats and is
+  noted once per window in the bot event log. The system login is never
+  limited.
 - One user's messages in one channel (or in their DM with the bot) are
   handled one at a time, in order. A slow webhook therefore delays only
   that user's next message there, not their messages elsewhere and not
@@ -459,7 +509,8 @@ Schema changes and the 2.0 upgrade are in
 | `src/modules/behavior/message-trigger-reorder.ts` | Reorder. |
 | `src/modules/behavior/webhook-action-input.ts`, `webhook-secret-rotate.ts` | Webhook intake and rotation. |
 | `src/modules/behavior/system-seed.service.ts`, `system-login-trigger.ts`, `system-login-trigger-route.ts`, `login-trigger-hint-route.ts` | The system login. |
-| `src/modules/behavior/behavior-trigger.ts` | Pattern matching. |
+| `src/modules/behavior/behavior-trigger.ts`, `regex-trigger-boot-check.ts`, `src/utils/linear-regex.ts` | Pattern matching; the linear-time regex engine and its startup check. |
+| `src/modules/command-system/behavior-rate-limits.ts` | Rate limits. |
 | `src/modules/command-system/interaction-dispatcher.service.ts` | Runs command triggers. |
 | `src/modules/command-system/message-trigger-matcher.service.ts` | Runs message triggers. |
 | `src/modules/command-system/webhook-action.ts`, `webhook-forwarder.service.ts` | Calls the webhook, signs and verifies. |

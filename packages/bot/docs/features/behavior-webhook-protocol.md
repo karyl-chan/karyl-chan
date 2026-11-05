@@ -33,6 +33,9 @@ wiring example are not tested.
 
 - Each time a behavior fires, the bot sends **one `POST`** with a JSON body
   to the URL the admin saved. It waits at most **10 seconds** for the answer.
+  It sends at most 5 per 10 seconds per server channel, per bot DM user
+  and per command user; over that it sends nothing
+  ([behaviors.md](behaviors.md#matching-order)).
 - The answer's body is the **reply**: what the bot shows the user. An empty
   body means "say nothing".
 - With authentication on, every request is signed (`hmac`) or carries a
@@ -521,6 +524,8 @@ changes the protocol. Update a receiver **before** the bot is upgraded:
 - **Behavior ids changed.** Migration 011 copied every behavior to new
   tables with new ids, so `_meta.behavior_id` is different after the
   upgrade.
+- New: rate limits in bot DMs and on commands (5 per 10 s per user),
+  beside the per-channel one in servers (#119).
 - New: the reply model above (link buttons, `ephemeral`, `flags`, the
   limits), `_meta.captures` on message triggers, and
   `_meta.sub_command_name` / `_meta.sub_command_group` on commands.

@@ -27,6 +27,7 @@ import {
   startBotEventLogPruner,
 } from "../modules/bot-events/bot-event-log.js";
 import { ensureSystemBehaviors } from "../modules/behavior/system-seed.service.js";
+import { checkRegexTriggersAtBoot } from "../modules/behavior/regex-trigger-boot-check.js";
 import { runMigrations } from "../db-migrations.js";
 import { initJwtSigningAuthority } from "../modules/web-core/jwt.service.js";
 import { pluginRegistry } from "../modules/plugin-system/plugin-registry.service.js";
@@ -73,6 +74,11 @@ export async function runStartup(ctx: RuntimeContext): Promise<void> {
     // 之前完成，登入若改用指令觸發，desired set 才會含它。
     await ensureSystemBehaviors().catch((err: unknown) => {
       log.error({ err }, "ensureSystemBehaviors failed");
+    });
+    // regex 觸發在這個 process 跑不了的（降級模式、已存的不支援語法）
+    // 開機就記進 bot event log（#119）
+    await checkRegexTriggersAtBoot().catch((err: unknown) => {
+      log.error({ err }, "checkRegexTriggersAtBoot failed");
     });
     // behavior_session.expiresAt legacy fixup now lives in
     // src/migrations/000-migrate-legacy-expires-at.ts — applied via

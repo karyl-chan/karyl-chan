@@ -1,35 +1,81 @@
 import type { BehaviorPatternKind } from "./models/behavior-definition.model.js";
+import { checkTriggerRegex, compileTriggerRegex } from "../../utils/linear-regex.js";
+import { botEventLog } from "../bot-events/bot-event-log.js";
+import { shouldRecord } from "../bot-events/bot-event-dedup.js";
 
 /**
  * Evaluate whether a message body matches a Message Trigger's pattern
- * (startswith / endswith / regex). Pure / synchronous; safe to call inside
- * the hot path of messageCreate.
+ * (startswith / endswith / regex). Synchronous; safe to call inside the
+ * hot path of messageCreate.
  *
- * Regex patterns are compiled once and cached — every DM message that
- * passes through the matcher would otherwise pay an O(N_patterns)
- * compilation tax even though the patterns are static between writes
- * to the behaviors table. The cache is keyed by source string;
- * updating a behavior's pattern produces a new key so a stale entry
- * is never reused.
+ * A regex is written by an admin but its input is any member's message,
+ * so it runs on V8's linear-time engine (`compileTriggerRegex`, #119): a
+ * crafted message cannot make it backtrack for seconds. A stored pattern
+ * this process cannot compile that way (written before the save check,
+ * or a Node upgrade changed what the engine accepts) never matches, and
+ * says so in the bot event log once.
  *
- * NB the ReDoS surface is bounded by the trust model: only admin
- * operators with `behavior.manage` can author regex patterns, and
- * they're authoring against their own bot. A catastrophic
- * backtracking pattern is a self-DoS, not an external attack.
+ * Compiled regexes are cached by source string — the patterns are static
+ * between writes, so recompiling per message would be waste. Editing a
+ * pattern makes a new entry; at REGEX_CACHE_MAX entries the oldest goes.
  */
+const REGEX_CACHE_MAX = 500;
 const regexCache = new Map<string, RegExp | null>();
 
 function getRegex(patternValue: string): RegExp | null {
   const cached = regexCache.get(patternValue);
   if (cached !== undefined) return cached;
-  let compiled: RegExp | null;
-  try {
-    compiled = new RegExp(patternValue);
-  } catch {
-    compiled = null;
+  const compiled = compileTriggerRegex(patternValue);
+  if (compiled === null) warnUnusable(patternValue);
+  if (regexCache.size >= REGEX_CACHE_MAX) {
+    regexCache.delete(regexCache.keys().next().value as string);
   }
   regexCache.set(patternValue, compiled);
   return compiled;
+}
+
+function warnUnusable(patternValue: string): void {
+  if (!shouldRecord(`behavior-regex-unusable:${patternValue}`)) return;
+  botEventLog.record(
+    "warn",
+    "bot",
+    `behavior-trigger: regex /${patternValue}/ 無法執行（${checkTriggerRegex(patternValue)}），這個觸發不會命中`,
+    { patternValue },
+  );
+}
+
+/** 測試用：快取的 regex 數。 */
+export function __regexCacheSizeForTests(): number {
+  return regexCache.size;
+}
+
+/** A match: a regex trigger's capture groups, empty for the other kinds. */
+export interface TriggerMatch {
+  /**
+   * Group 1 first; a named group counts by its position; null for an
+   * optional group that took no part — sent to the webhook as
+   * `_meta.captures` (#140).
+   */
+  captures: Array<string | null>;
+}
+
+/** The match, or null — a regex runs once for both (#119). */
+export function matchTrigger(
+  patternKind: BehaviorPatternKind,
+  patternValue: string,
+  content: string,
+): TriggerMatch | null {
+  if (patternKind === "startswith") {
+    return content.startsWith(patternValue) ? { captures: [] } : null;
+  }
+  if (patternKind === "endswith") {
+    return content.endsWith(patternValue) ? { captures: [] } : null;
+  }
+  if (patternKind === "regex") {
+    const match = getRegex(patternValue)?.exec(content);
+    return match ? { captures: match.slice(1).map((g) => g ?? null) } : null;
+  }
+  return null;
 }
 
 export function matchesTrigger(
@@ -37,31 +83,5 @@ export function matchesTrigger(
   patternValue: string,
   content: string,
 ): boolean {
-  if (patternKind === "startswith") {
-    return content.startsWith(patternValue);
-  }
-  if (patternKind === "endswith") {
-    return content.endsWith(patternValue);
-  }
-  if (patternKind === "regex") {
-    const re = getRegex(patternValue);
-    return re !== null && re.test(content);
-  }
-  return false;
-}
-
-/**
- * The capture groups of a regex trigger's match, in order (group 1 first;
- * a named group counts by its position; null for an optional group that
- * took no part) — sent to the webhook as `_meta.captures` (#140). Empty
- * for startswith / endswith, a regex without groups, or no match.
- */
-export function triggerCaptures(
-  patternKind: BehaviorPatternKind,
-  patternValue: string,
-  content: string,
-): Array<string | null> {
-  if (patternKind !== "regex") return [];
-  const match = getRegex(patternValue)?.exec(content);
-  return match ? match.slice(1).map((g) => g ?? null) : [];
+  return matchTrigger(patternKind, patternValue, content) !== null;
 }

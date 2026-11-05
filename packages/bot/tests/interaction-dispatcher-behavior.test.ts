@@ -11,6 +11,8 @@
  *   - builtin action (the system login) → its handler; webhook → forwarder
  *   - a leaf that cannot run its action (no webhook action, or Discord
  *     refuses the deferral) is still claimed and never forwarded
+ *   - webhook leaves are rate-limited per user, 5 per 10 s; over it the
+ *     invoker is told privately; the system login never is (#119)
  */
 import { vi, describe, it, expect, beforeAll, beforeEach, type Mock } from "vitest";
 
@@ -50,6 +52,7 @@ import { ApplicationCommandOptionType, MessageFlags, type Interaction } from "di
 import { sequelize } from "../src/db.js";
 import { BehaviorStat } from "../src/modules/behavior/models/behavior-stats.model.js";
 import { InteractionDispatcher } from "../src/modules/command-system/interaction-dispatcher.service.js";
+import { __resetBehaviorRateLimitsForTests } from "../src/modules/command-system/behavior-rate-limits.js";
 import { dispatchInteractionToPlugin } from "../src/modules/plugin-system/plugin-interaction-dispatch.service.js";
 import { mintLoginLink } from "../src/modules/admin/admin-login.service.js";
 import { botEventLog } from "../src/modules/bot-events/bot-event-log.js";
@@ -66,6 +69,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  __resetBehaviorRateLimitsForTests();
   await clearBehaviors();
 });
 
@@ -314,6 +318,56 @@ describe("a leaf that cannot run its action", () => {
     expect(raw.editReply).not.toHaveBeenCalled();
     expect(raw.followUp).not.toHaveBeenCalled();
     expect(await BehaviorStat.findByPk(leaf)).toBeNull();
+  });
+});
+
+describe("rate limit (#119)", () => {
+  it("the 6th invocation in 10 s is told privately and neither deferred nor forwarded", async () => {
+    const commandId = await seedCommand({ name: "ping" });
+    const leaf = await seedLeaf(commandId);
+    const forwarder = makeForwarder();
+    const dispatcher = dispatcherWith(forwarder);
+    for (let i = 0; i < 5; i++) {
+      await dispatcher.dispatch(fakeSlash({ commandName: "ping", userId: "U-SL-RL" }).interaction);
+    }
+    const { interaction, reply, raw } = fakeSlash({ commandName: "ping", userId: "U-SL-RL" });
+
+    const outcome = await dispatcher.dispatch(interaction);
+
+    expect(outcome).toEqual({ claimed: true, claimedBy: "behavior_custom" });
+    expect(raw.deferReply).not.toHaveBeenCalled();
+    expect(forwarder.forward).toHaveBeenCalledTimes(5);
+    const sent = (reply as Mock).mock.calls[0][0] as { content: string; flags: number };
+    expect(sent.content).toMatch(/too often/);
+    expect(sent.flags & MessageFlags.Ephemeral).toBe(MessageFlags.Ephemeral);
+    // logged once, not counted
+    const warnings = vi.mocked(botEventLog.record).mock.calls.filter(([level, , message, meta]) =>
+      level === "warn" && /rate limit/.test(message) && (meta as { userId?: string })?.userId === "U-SL-RL",
+    );
+    expect(warnings).toHaveLength(1);
+    expect((await BehaviorStat.findByPk(leaf))?.get("successCount")).toBe(5);
+    // someone else still gets through
+    await dispatcher.dispatch(fakeSlash({ commandName: "ping", userId: "U-SL-RL-2" }).interaction);
+    expect(forwarder.forward).toHaveBeenCalledTimes(6);
+  });
+
+  it("never holds back the system login", async () => {
+    const pingId = await seedCommand({ name: "ping" });
+    await seedLeaf(pingId);
+    const loginId = await seedCommand({
+      name: "login",
+      isSystem: true,
+      contexts: "BotDM",
+      integrationTypes: "guild_install,user_install",
+    });
+    await seedLeaf(loginId, { systemKey: "admin-login", actionSource: "builtin" });
+    const dispatcher = dispatcherWith(makeForwarder());
+    for (let i = 0; i < 6; i++) {
+      await dispatcher.dispatch(fakeSlash({ commandName: "ping", userId: "U-SL-RL-3" }).interaction);
+    }
+    const outcome = await dispatcher.dispatch(fakeSlash({ commandName: "login", userId: "U-SL-RL-3" }).interaction);
+    expect(outcome).toEqual({ claimed: true, claimedBy: "behavior_system" });
+    expect(mintLoginLink).toHaveBeenCalledTimes(1);
   });
 });
 

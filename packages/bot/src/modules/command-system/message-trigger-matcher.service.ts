@@ -22,54 +22,19 @@ import {
   getBehaviorCatalog,
   type CatalogBehavior,
 } from "../behavior/behavior-catalog.js";
-import { matchesTrigger, triggerCaptures } from "../behavior/behavior-trigger.js";
+import { matchTrigger, type TriggerMatch } from "../behavior/behavior-trigger.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { shouldRecord } from "../bot-events/bot-event-dedup.js";
 import type { MessageMatchOutcome } from "./types.js";
 import type { WebhookForwarder } from "./webhook-forwarder.service.js";
 import { runLoginAction } from "./builtin-login-action.js";
 import { runWebhookAction } from "./webhook-action.js";
+import { takeBehaviorRun } from "./behavior-rate-limits.js";
 
 // BH-0.3 multi-match：一則訊息可以連發多條 behavior，
 // outcome 取聯集；behaviorId 報第一條命中的（log 用途）。
-// BH-3：guild 頻道 forward 的 per-channel rate limit（防高頻頻道把 webhook
-// 刷爆 / webhook 回貼造成的迴圈放大）。sliding window，超量靜默丟棄並記
-// botEventLog（每 channel 每 window 至多記一次）。DM 不限流。
-const GUILD_FORWARD_LIMIT = 5;
-const GUILD_FORWARD_WINDOW_MS = 10_000;
-const guildForwardWindows = new Map<string, number[]>();
-const guildForwardWarned = new Map<string, number>();
-
-function guildForwardAllowed(channelId: string): boolean {
-  const now = Date.now();
-  const stamps = (guildForwardWindows.get(channelId) ?? []).filter(
-    (ts) => now - ts < GUILD_FORWARD_WINDOW_MS,
-  );
-  if (stamps.length >= GUILD_FORWARD_LIMIT) {
-    guildForwardWindows.set(channelId, stamps);
-    const lastWarn = guildForwardWarned.get(channelId) ?? 0;
-    if (now - lastWarn >= GUILD_FORWARD_WINDOW_MS) {
-      guildForwardWarned.set(channelId, now);
-      botEventLog.record(
-        "warn",
-        "bot",
-        `message-trigger-matcher: guild channel ${channelId} 觸發超過 ${GUILD_FORWARD_LIMIT}/${GUILD_FORWARD_WINDOW_MS / 1000}s，rate limit 丟棄`,
-        { channelId },
-      );
-    }
-    return false;
-  }
-  stamps.push(now);
-  guildForwardWindows.set(channelId, stamps);
-  if (stamps.length === 1) guildForwardWarned.delete(channelId);
-  return true;
-}
-
-/** 測試用：清空 rate limit 視窗。 */
-export function __resetGuildForwardWindowsForTests(): void {
-  guildForwardWindows.clear();
-  guildForwardWarned.clear();
-}
+// 速率限制（#119）：behavior-rate-limits.ts。伺服器頻道每頻道、私訊每使用者
+// 5 次 / 10 秒；超量靜默丟棄、記一次、不計統計。系統登入不受限。
 
 // #118：每個對話（使用者 × 頻道）最多一則執行中加這麼多則等待；再來的
 // 訊息靜默丟棄，並記一筆 botEventLog（去重）。最壞等待約
@@ -234,14 +199,15 @@ export class MessageTriggerMatcher {
 
   /** 依序執行一則訊息命中的 webhook 觸發（在對話鎖內）。 */
   private async runWebhookTriggers(
-    triggers: readonly CatalogBehavior[],
+    triggers: readonly MatchedTrigger[],
     djsMessage: DjsMessage,
     userId: string,
   ): Promise<MessageMatchOutcome> {
     let aggregate: MessageMatchOutcome | null = null;
-    for (const trigger of triggers) {
+    for (const { trigger, match } of triggers) {
       const outcome = await this.handleMatchedBehavior(
         trigger,
+        match,
         djsMessage,
         userId,
       );
@@ -254,14 +220,16 @@ export class MessageTriggerMatcher {
 
   private async handleMatchedBehavior(
     behavior: CatalogBehavior,
+    match: TriggerMatch,
     djsMessage: DjsMessage,
     userId: string,
   ): Promise<MessageMatchOutcome> {
-    const channelId = djsMessage.channel.id;
-    // BH-3：guild 頻道 forward 受 per-channel rate limit
-    if (djsMessage.guildId && !guildForwardAllowed(channelId)) {
-      return { handled: false };
-    }
+    const allowed = takeBehaviorRun(
+      djsMessage.guildId
+        ? { kind: "guild_channel", channelId: djsMessage.channel.id }
+        : { kind: "dm_user", userId },
+    );
+    if (!allowed) return { handled: false };
     if (!behavior.webhook) {
       botEventLog.record(
         "warn",
@@ -278,7 +246,7 @@ export class MessageTriggerMatcher {
       forwarder: this.forwarder,
       behaviorId: behavior.id,
       webhook: behavior.webhook,
-      payload: this.buildPayload(djsMessage, behavior),
+      payload: this.buildPayload(djsMessage, behavior, match),
       target: { kind: "message", message: djsMessage },
       visibility: behavior.replyVisibility,
     });
@@ -324,6 +292,7 @@ export class MessageTriggerMatcher {
   private buildPayload(
     djsMessage: DjsMessage,
     behavior: CatalogBehavior,
+    match: TriggerMatch,
   ): Record<string, unknown> {
     const attachments = djsMessage.attachments
       ? [...djsMessage.attachments.values()].map((a) => ({
@@ -351,11 +320,8 @@ export class MessageTriggerMatcher {
         behavior_id: behavior.id,
         attachments,
         // regex 觸發的擷取群組（第 1 組起；沒參與的選用群組為 null），
-        // 其他比對方式為 []（#140）
-        captures:
-          behavior.patternKind && behavior.patternValue !== null
-            ? triggerCaptures(behavior.patternKind, behavior.patternValue, djsMessage.content ?? "")
-            : [],
+        // 其他比對方式為 []（#140）；取自比對時的那一次 exec（#119）
+        captures: match.captures,
       },
     };
   }
@@ -363,9 +329,15 @@ export class MessageTriggerMatcher {
 
 // ── 這則訊息要執行哪些觸發 ──────────────────────────────────────────────
 
+/** 命中的觸發與它的比對結果（擷取群組）。 */
+interface MatchedTrigger {
+  trigger: CatalogBehavior;
+  match: TriggerMatch;
+}
+
 interface TriggersToRun {
   /** 依 sortOrder 命中的 webhook 觸發 */
-  webhooks: CatalogBehavior[];
+  webhooks: MatchedTrigger[];
   /** 命中的內建動作（系統登入）；它一定收尾 */
   builtin: CatalogBehavior | null;
 }
@@ -383,16 +355,15 @@ function triggersToRun(
   groupMembers: ReadonlyMap<string, ReadonlySet<string>>,
 ): TriggersToRun {
   const content = djsMessage.content ?? "";
-  const webhooks: CatalogBehavior[] = [];
+  const webhooks: MatchedTrigger[] = [];
   for (const trigger of triggers) {
     if (!trigger.enabled) continue;
     if (!trigger.patternKind || trigger.patternValue === null) continue;
     if (!appliesTo(trigger, djsMessage, userId, isDm, groupMembers)) continue;
-    if (!matchesTrigger(trigger.patternKind, trigger.patternValue, content)) {
-      continue;
-    }
+    const match = matchTrigger(trigger.patternKind, trigger.patternValue, content);
+    if (!match) continue;
     if (trigger.actionSource === "builtin") return { webhooks, builtin: trigger };
-    webhooks.push(trigger);
+    webhooks.push({ trigger, match });
     if (trigger.stopOnMatch) break;
   }
   return { webhooks, builtin: null };

@@ -40,6 +40,7 @@ import { dispatchInProcessInteraction } from "../builtin-features/in-process-com
 import { runLoginAction } from "./builtin-login-action.js";
 import { renderFailure } from "./reply-renderer.js";
 import { runWebhookAction } from "./webhook-action.js";
+import { takeBehaviorRun } from "./behavior-rate-limits.js";
 import type { DispatchOutcome } from "./types.js";
 import type { WebhookForwarder } from "./webhook-forwarder.service.js";
 import { tForInteraction } from "../../i18n/index.js";
@@ -324,6 +325,19 @@ export class InteractionDispatcher {
     // BH-2.1：與 pattern 路徑對齊 — _meta 帶 behavior_id 供 webhook 端
     // 在多條 behavior 指向同一端點時辨識來源。
     (payload._meta as Record<string, unknown>).behavior_id = leaf.id;
+
+    // 速率限制（#119）：每使用者 5 次 / 10 秒。超量仍要回應 interaction
+    // （否則 Discord 顯示「interaction failed」）：只讓呼叫者看到，不轉送、
+    // 不計統計
+    if (!takeBehaviorRun({ kind: "slash_user", userId: interaction.user.id })) {
+      await interaction
+        .reply({
+          content: tForInteraction(interaction, "behavior.rate-limited"),
+          flags: MessageFlags.Ephemeral,
+        })
+        .catch(() => {});
+      return { claimed: true, claimedBy: "behavior_custom" };
+    }
 
     // Defer reply（slash command 需要在 3s 內 ack）
     try {

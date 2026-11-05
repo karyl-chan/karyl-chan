@@ -14,7 +14,8 @@
     "internal-error": "⚠ 內部錯誤：{{msg}}"
   },
   "behavior": {
-    "action-failed": "⚠ 目前無法完成，請稍後再試。"
+    "action-failed": "⚠ 目前無法完成，請稍後再試。",
+    "rate-limited": "⚠ 使用得太頻繁了，請等幾秒再試。"
   },
   "system": {
     "unknown-system-command": "⚙ 未知的系統指令。"
