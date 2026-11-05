@@ -80,7 +80,7 @@ guild, as in `guild_id`.)
 | Field | Value |
 |-------|-------|
 | `content` | The message text, exactly as Discord delivered it. |
-| `username` | The author's Discord username. |
+| `username` | The author's Discord username, never their global name. This differs from a command. To tell users apart use `_meta.user.id`; to show a name use `_meta.user.global_name ?? _meta.user.username`. |
 | `avatar_url` | The author's avatar URL. |
 | `_meta.user` | `{ id, username, global_name, discriminator, avatar }`. Use `user.id` to tell users apart: names change. |
 | `_meta.message_id` | The message id. |
@@ -102,7 +102,7 @@ A command fires when a user runs one of the behavior's Discord commands.
 | Field | Value |
 |-------|-------|
 | `content` | The invoked path, `/name` or `/name sub`. |
-| `username` | The user's display name (their global name, or their username when they have none). This differs from a message trigger, which sends the username. |
+| `username` | The user's display name (their global name, or their username when they have none). This differs from a message trigger, which sends the username. To tell users apart use `_meta.user.id`; to show a name use `_meta.user.global_name ?? _meta.user.username`, the same on both triggers. |
 | `avatar_url` | The user's avatar URL. |
 | `_meta.interaction_id` | The interaction id. |
 | `_meta.application_id` | The bot's application id. |
@@ -118,7 +118,9 @@ A command fires when a user runs one of the behavior's Discord commands.
 | `_meta.attachments` | The files of the invoked command's or subcommand's `attachment` options, in option order: `[{ id, url, filename, content_type, size }]`, the same shape as a message trigger's. Empty when it has none. |
 
 The interaction token is **not** sent: the bot answers the interaction
-itself, with your reply. A command's payload has no `message_id`.
+itself, with your reply. A command's payload has no `message_id`, not
+even a `null` one: an interaction has no message. To tell one invocation
+from another, use `_meta.interaction_id`.
 
 Discord stops a command from being used where its settings don't allow it.
 Past that, the bot does no check of its own on who runs a command, so a
