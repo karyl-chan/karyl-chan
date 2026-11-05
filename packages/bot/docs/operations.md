@@ -238,7 +238,10 @@ Privileged intents are not enabled in the Discord developer portal. See
 - Verify the RCON server is listening on the right port with the right
   password.
 - If the host is a cloud metadata endpoint, the host policy rejects it
-  by design.
+  by design. A hostname is resolved and checked again on every
+  reconnect, so a DNS answer that later changes to such an address
+  fails the reconnect too (the container log has `重新連接嘗試失敗`
+  with the `HostPolicyError`).
 
 ### Encryption / decryption errors
 

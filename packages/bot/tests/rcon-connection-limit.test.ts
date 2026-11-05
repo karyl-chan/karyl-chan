@@ -14,21 +14,24 @@ vi.mock("../src/modules/bot-events/bot-event-log.js", () => ({
 vi.mock("../src/utils/host-policy.js", () => {
   class HostPolicyError extends Error {}
   return {
-    assertAllowedTarget: vi.fn().mockResolvedValue(undefined),
+    resolveAllowedTarget: vi
+      .fn()
+      .mockResolvedValue([{ address: "10.0.0.9", family: 4 }]),
     HostPolicyError,
   };
 });
 
-// Rcon must be mocked as a class (constructor). Using function syntax so
-// `new Rcon(...)` works correctly.
-vi.mock("rcon", () => {
-  function MockRcon(
+// The client must be mocked as a class (constructor). Using function
+// syntax so `new PinnedRcon(...)` works correctly.
+vi.mock("../src/modules/builtin-features/rcon-forward/pinned-rcon.js", () => {
+  function MockPinnedRcon(
     this: {
       connect: ReturnType<typeof vi.fn>;
       disconnect: ReturnType<typeof vi.fn>;
       send: ReturnType<typeof vi.fn>;
       removeAllListeners: ReturnType<typeof vi.fn>;
       on: ReturnType<typeof vi.fn>;
+      repin: ReturnType<typeof vi.fn>;
     },
   ) {
     this.connect = vi.fn().mockResolvedValue(undefined);
@@ -36,8 +39,9 @@ vi.mock("rcon", () => {
     this.send = vi.fn();
     this.removeAllListeners = vi.fn();
     this.on = vi.fn().mockReturnThis();
+    this.repin = vi.fn();
   }
-  return { default: MockRcon };
+  return { PinnedRcon: MockPinnedRcon };
 });
 
 vi.mock("../src/config.js", () => ({
@@ -237,7 +241,7 @@ describe("RconConnectionService – failed connect", () => {
       "../src/modules/builtin-features/rcon-forward/rcon-connection.service.js"
     )) as ServiceModule;
     const policy = await import("../src/utils/host-policy.js");
-    vi.mocked(policy.assertAllowedTarget).mockRejectedValueOnce(
+    vi.mocked(policy.resolveAllowedTarget).mockRejectedValueOnce(
       new policy.HostPolicyError("主機目標不被允許"),
     );
     const unhandled = vi.fn();
