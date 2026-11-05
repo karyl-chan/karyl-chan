@@ -1621,6 +1621,19 @@
                 "hmac": "响应签名正确（HMAC）。",
                 "token": "响应签名正确（token）。"
             }
+        },
+        "deliveries": {
+            "title": "最近投递",
+            "refresh": "刷新",
+            "loading": "加载中…",
+            "empty": "还没有投递记录。",
+            "ok": "成功",
+            "failed": "失败",
+            "verified": {
+                "hmac": "签名已验证（HMAC）",
+                "token": "签名已验证（token）"
+            },
+            "retention": "保留最近 20 条、最多 7 天内的投递；测试 webhook 不计入。"
         }
     },
     "config": {

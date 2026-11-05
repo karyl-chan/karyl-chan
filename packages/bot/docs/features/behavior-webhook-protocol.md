@@ -369,10 +369,11 @@ Then:
   | Message in a DM with the bot | The DM. |
   | Message in a guild channel | A DM to the author. If that DM fails too, nothing is said. A guild channel never sees a failure. |
 
-- The detail goes to the bot event log and to the behavior's statistics,
-  which the admin UI shows. For a non-2xx answer, the detail is the first
-  500 characters of your response body, so don't put secrets in error
-  bodies.
+- The detail goes to the bot event log, to the behavior's statistics and
+  to its delivery log (status, latency and error code per call), which
+  the admin UI shows. For a non-2xx answer, the detail is the first 500
+  characters of your response body (300 in the delivery log), so don't
+  put secrets in error bodies.
 - There is no retry.
 
 ## Reference receiver

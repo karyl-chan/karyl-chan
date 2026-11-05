@@ -320,7 +320,7 @@ export interface TestFireResult {
   /** The reply as the bot would render it; `{}` when failed or empty. */
   reply: BehaviorReplyView;
   notes: ReplyNoteView[];
-  /** The webhook's HTTP status, when it answered with a failure. */
+  /** The webhook's HTTP status; null when no response came back. */
   status: number | null;
   error: string | null;
   /** e.g. a host-policy code, or `response_signature` */
@@ -331,6 +331,39 @@ export interface TestFireResult {
 
 export async function testBehavior(id: number): Promise<TestFireResult> {
   return jsonOrThrow(await send("POST", `/api/behaviors/${id}/test`));
+}
+
+/**
+ * One webhook delivery of a behavior (#120), from
+ * GET /api/behaviors/:id/deliveries — mirrors behavior-deliveries.ts.
+ * Never a URL, a secret, the message or the reply.
+ */
+export interface BehaviorDelivery {
+  id: number;
+  /** ISO 8601: when the delivery started. */
+  firedAt: string;
+  via: "command" | "message";
+  ok: boolean;
+  /** The receiver's HTTP status; null when no response came back. */
+  httpStatus: number | null;
+  /** Forward + reply rendering; null when nothing was forwarded. */
+  durationMs: number | null;
+  /**
+   * A host-policy code, `response_signature`, `http_error`,
+   * `invalid_reply`, `request_failed`, `render_failed`, `dm_failed` or
+   * `defer_failed`; null on success.
+   */
+  errorCode: string | null;
+  /** At most 300 characters; null on success. */
+  error: string | null;
+  verified: "hmac" | "token" | null;
+}
+
+/** A behavior's last 20 deliveries, newest first. */
+export async function getBehaviorDeliveries(
+  id: number,
+): Promise<{ deliveries: BehaviorDelivery[] }> {
+  return jsonOrThrow(await send("GET", `/api/behaviors/${id}/deliveries`));
 }
 
 export async function createBehaviorCommand(

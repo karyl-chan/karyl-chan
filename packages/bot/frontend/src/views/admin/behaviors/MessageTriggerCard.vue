@@ -15,6 +15,7 @@ import {
     useToastStore,
 } from '@karyl-chan/ui';
 import { deleteBehavior, updateBehavior, type MessageTriggerView } from '../../../api/behavior';
+import BehaviorDeliveries from './BehaviorDeliveries.vue';
 import GroupMembersPanel from './GroupMembersPanel.vue';
 import MessageTriggerFields from './MessageTriggerFields.vue';
 import WebhookActionFields from './WebhookActionFields.vue';
@@ -34,8 +35,9 @@ import { useDraftForm } from './use-draft-form';
 /**
  * A Message Trigger (board 7): the header row toggles, test-fires and
  * deletes; the expanded body edits the trigger (MessageTriggerFields) and
- * its action (WebhookActionFields). The System Behavior is not shown
- * here: SystemLoginCard owns the login, whatever its trigger.
+ * its action (WebhookActionFields), and lists its recent deliveries
+ * (BehaviorDeliveries). The System Behavior is not shown here:
+ * SystemLoginCard owns the login, whatever its trigger.
  *
  * The saved trigger (`base`) and the edit draft are kept apart (#105): a
  * new version from the server — the answer to the enabled toggle, a reload
@@ -322,6 +324,8 @@ const savedGroup = computed(() =>
                         @patch="applyPatch"
                         @rotated="emit('reload')"
                     />
+
+                    <BehaviorDeliveries :behavior-id="trigger.id" />
 
                     <p v-if="groupDropWarning" class="warning" role="status" data-test="group-drop">{{ groupDropWarning }}</p>
 

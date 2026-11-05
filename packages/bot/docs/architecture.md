@@ -187,8 +187,14 @@ is stored.
   and rate-limited per client: the login's current trigger (kind + the
   text a user sends or types) for the admin login page, which needs it
   before anyone is signed in. Mounted outside the behavior scope.
+- `behavior-deliveries.ts` — the delivery log (#120): `recordDelivery`
+  (best-effort, called by `runWebhookAction` and on a refused command
+  deferral), `findRecentDeliveries`, and the pruner started at boot
+  (`startDeliveryPruner`: the last 20 per behavior, at most 7 days, every
+  10 minutes).
 - `models/` — behavior-command, behavior-definition,
-  behavior-webhook-action, behavior-stats, behavior-group-member (an
+  behavior-webhook-action, behavior-stats, behavior-delivery,
+  behavior-group-member (an
   Audience Group's list: settable only for a group a message trigger
   uses, dropped when the last such trigger leaves it).
 
@@ -263,9 +269,9 @@ This is the bot's command backbone.
   trigger (message). A deferred command answers through the plugin defer
   table (`planRespond` in plugin-system).
 - `webhook-action.ts` — `runWebhookAction`: a webhook action for either
-  trigger — forward, render, count the outcome, and on failure log the
-  detail and give the user only the generic line (never in a guild
-  channel).
+  trigger — forward, render, count the outcome and record the delivery,
+  and on failure log the detail and give the user only the generic line
+  (never in a guild channel).
 - `webhook-attachment.ts` — `toWebhookAttachment`: the
   `_meta.attachments[]` entry `{ id, url, filename, content_type, size }`
   both triggers send (#152): a message's files, or a command's
@@ -281,7 +287,7 @@ This is the bot's command backbone.
 by `main.ts`).
 
 **Depends on.** behavior (reads the behavior catalog, records behavior
-stats); plugin-system (reads `plugin_commands`, dispatches plugin
+stats and deliveries); plugin-system (reads `plugin_commands`, dispatches plugin
 interactions); admin (mints the login link); bot-events (logs failures);
 web-core.
 
