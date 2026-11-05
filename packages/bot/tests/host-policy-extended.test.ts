@@ -5,7 +5,7 @@ vi.mock("dns/promises", () => ({
 }));
 
 const { lookup } = await import("dns/promises");
-const { assertExternalTarget, assertPluginTarget, HostPolicyError } =
+const { assertPublicMediaTarget, assertPluginTarget, HostPolicyError } =
   await import("../src/utils/host-policy.js");
 
 const mockedLookup = vi.mocked(lookup);
@@ -17,9 +17,9 @@ function stubResolve(address: string, family: 4 | 6 = 4) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// assertExternalTarget
+// assertPublicMediaTarget
 // ─────────────────────────────────────────────────────────────────────────────
-describe("assertExternalTarget", () => {
+describe("assertPublicMediaTarget", () => {
   beforeEach(() => {
     mockedLookup.mockReset();
     delete process.env.WEBHOOK_ALLOW_PRIVATE;
@@ -31,105 +31,105 @@ describe("assertExternalTarget", () => {
 
   it("rejects cloud metadata 169.254.169.254", async () => {
     await expect(
-      assertExternalTarget("169.254.169.254", 80),
+      assertPublicMediaTarget("169.254.169.254", 80),
     ).rejects.toBeInstanceOf(HostPolicyError);
   });
 
   it("rejects RFC1918 10.0.0.5", async () => {
-    await expect(assertExternalTarget("10.0.0.5", 80)).rejects.toBeInstanceOf(
+    await expect(assertPublicMediaTarget("10.0.0.5", 80)).rejects.toBeInstanceOf(
       HostPolicyError,
     );
   });
 
   it("rejects RFC1918 172.16.0.1", async () => {
-    await expect(assertExternalTarget("172.16.0.1", 80)).rejects.toBeInstanceOf(
+    await expect(assertPublicMediaTarget("172.16.0.1", 80)).rejects.toBeInstanceOf(
       HostPolicyError,
     );
   });
 
   it("rejects RFC1918 192.168.1.1", async () => {
     await expect(
-      assertExternalTarget("192.168.1.1", 80),
+      assertPublicMediaTarget("192.168.1.1", 80),
     ).rejects.toBeInstanceOf(HostPolicyError);
   });
 
   it("rejects CGNAT / shared address space 100.64.0.1", async () => {
     await expect(
-      assertExternalTarget("100.64.0.1", 80),
+      assertPublicMediaTarget("100.64.0.1", 80),
     ).rejects.toBeInstanceOf(HostPolicyError);
   });
 
   it("rejects CGNAT edge 100.127.255.255", async () => {
     await expect(
-      assertExternalTarget("100.127.255.255", 80),
+      assertPublicMediaTarget("100.127.255.255", 80),
     ).rejects.toBeInstanceOf(HostPolicyError);
   });
 
   it("allows 100.63.x and 100.128.x (just outside CGNAT)", async () => {
-    await expect(assertExternalTarget("100.63.0.1", 80)).resolves.toBeUndefined();
+    await expect(assertPublicMediaTarget("100.63.0.1", 80)).resolves.toBeUndefined();
     await expect(
-      assertExternalTarget("100.128.0.1", 80),
+      assertPublicMediaTarget("100.128.0.1", 80),
     ).resolves.toBeUndefined();
   });
 
   it("rejects loopback 127.0.0.1", async () => {
-    await expect(assertExternalTarget("127.0.0.1", 80)).rejects.toBeInstanceOf(
+    await expect(assertPublicMediaTarget("127.0.0.1", 80)).rejects.toBeInstanceOf(
       HostPolicyError,
     );
   });
 
   it("rejects loopback 127.255.255.255", async () => {
     await expect(
-      assertExternalTarget("127.255.255.255", 80),
+      assertPublicMediaTarget("127.255.255.255", 80),
     ).rejects.toBeInstanceOf(HostPolicyError);
   });
 
   it("rejects unspecified 0.0.0.0", async () => {
-    await expect(assertExternalTarget("0.0.0.0", 80)).rejects.toBeInstanceOf(
+    await expect(assertPublicMediaTarget("0.0.0.0", 80)).rejects.toBeInstanceOf(
       HostPolicyError,
     );
   });
 
   it("rejects IPv6 loopback ::1", async () => {
-    await expect(assertExternalTarget("::1", 80)).rejects.toBeInstanceOf(
+    await expect(assertPublicMediaTarget("::1", 80)).rejects.toBeInstanceOf(
       HostPolicyError,
     );
   });
 
   it("rejects IPv6 link-local fe80::1", async () => {
-    await expect(assertExternalTarget("fe80::1", 80)).rejects.toBeInstanceOf(
+    await expect(assertPublicMediaTarget("fe80::1", 80)).rejects.toBeInstanceOf(
       HostPolicyError,
     );
   });
 
   it("rejects IPv6 unique-local fd00::1", async () => {
-    await expect(assertExternalTarget("fd00::1", 80)).rejects.toBeInstanceOf(
+    await expect(assertPublicMediaTarget("fd00::1", 80)).rejects.toBeInstanceOf(
       HostPolicyError,
     );
   });
 
   it("resolves public IP 8.8.8.8", async () => {
-    await expect(assertExternalTarget("8.8.8.8", 443)).resolves.toBeUndefined();
+    await expect(assertPublicMediaTarget("8.8.8.8", 443)).resolves.toBeUndefined();
   });
 
   it("resolves public hostname (discord.com -> public IP)", async () => {
     stubResolve("162.159.130.234");
     await expect(
-      assertExternalTarget("discord.com", 443),
+      assertPublicMediaTarget("discord.com", 443),
     ).resolves.toBeUndefined();
   });
 
   it("rejects hostname resolving to RFC1918", async () => {
     stubResolve("10.0.0.5");
     await expect(
-      assertExternalTarget("internal.corp", 80),
+      assertPublicMediaTarget("internal.corp", 80),
     ).rejects.toBeInstanceOf(HostPolicyError);
   });
 
   it("rejects hostname resolving to metadata IP", async () => {
     stubResolve("169.254.169.254");
     await expect(
-      assertExternalTarget("sneaky.example.com", 80),
+      assertPublicMediaTarget("sneaky.example.com", 80),
     ).rejects.toBeInstanceOf(HostPolicyError);
   });
 
@@ -140,32 +140,32 @@ describe("assertExternalTarget", () => {
 
     it("allows RFC1918 10.0.0.5 when escape hatch enabled", async () => {
       await expect(
-        assertExternalTarget("10.0.0.5", 80),
+        assertPublicMediaTarget("10.0.0.5", 80),
       ).resolves.toBeUndefined();
     });
 
     it("allows CGNAT 100.64.0.1 when escape hatch enabled", async () => {
       await expect(
-        assertExternalTarget("100.64.0.1", 80),
+        assertPublicMediaTarget("100.64.0.1", 80),
       ).resolves.toBeUndefined();
     });
 
     it("still rejects metadata 169.254.169.254 even with escape hatch", async () => {
       await expect(
-        assertExternalTarget("169.254.169.254", 80),
+        assertPublicMediaTarget("169.254.169.254", 80),
       ).rejects.toBeInstanceOf(HostPolicyError);
     });
 
     it("still rejects loopback 127.0.0.1 even with escape hatch", async () => {
       await expect(
-        assertExternalTarget("127.0.0.1", 80),
+        assertPublicMediaTarget("127.0.0.1", 80),
       ).rejects.toBeInstanceOf(HostPolicyError);
     });
 
     it("allows RFC1918 hostname with escape hatch", async () => {
       stubResolve("10.0.0.5");
       await expect(
-        assertExternalTarget("internal.corp", 80),
+        assertPublicMediaTarget("internal.corp", 80),
       ).resolves.toBeUndefined();
     });
   });
@@ -258,31 +258,31 @@ describe("IPv6 bypass guards", () => {
 
   it("blocks IPv4-mapped IPv6 loopback ::ffff:127.0.0.1 (literal)", async () => {
     await expect(
-      assertExternalTarget("::ffff:127.0.0.1", 80),
+      assertPublicMediaTarget("::ffff:127.0.0.1", 80),
     ).rejects.toBeInstanceOf(HostPolicyError);
   });
 
   it("blocks IPv4-mapped IPv6 metadata ::ffff:169.254.169.254 (literal)", async () => {
     await expect(
-      assertExternalTarget("::ffff:169.254.169.254", 80),
+      assertPublicMediaTarget("::ffff:169.254.169.254", 80),
     ).rejects.toBeInstanceOf(HostPolicyError);
   });
 
   it("blocks IPv4-mapped IPv6 RFC1918 ::ffff:10.0.0.5 (literal)", async () => {
     await expect(
-      assertExternalTarget("::ffff:10.0.0.5", 80),
+      assertPublicMediaTarget("::ffff:10.0.0.5", 80),
     ).rejects.toBeInstanceOf(HostPolicyError);
   });
 
   it("blocks IPv4-mapped IPv6 hex form ::ffff:7f00:1 (= 127.0.0.1)", async () => {
     await expect(
-      assertExternalTarget("::ffff:7f00:1", 80),
+      assertPublicMediaTarget("::ffff:7f00:1", 80),
     ).rejects.toBeInstanceOf(HostPolicyError);
   });
 
   it("blocks IPv4-mapped IPv6 hex form ::ffff:a9fe:a9fe (= 169.254.169.254)", async () => {
     await expect(
-      assertExternalTarget("::ffff:a9fe:a9fe", 80),
+      assertPublicMediaTarget("::ffff:a9fe:a9fe", 80),
     ).rejects.toBeInstanceOf(HostPolicyError);
   });
 
@@ -291,31 +291,31 @@ describe("IPv6 bypass guards", () => {
       { address: "::ffff:169.254.169.254", family: 6 },
     ] as unknown as Awaited<ReturnType<typeof lookup>>);
     await expect(
-      assertExternalTarget("evil.example", 80),
+      assertPublicMediaTarget("evil.example", 80),
     ).rejects.toBeInstanceOf(HostPolicyError);
   });
 
   it("blocks IPv6 unspecified ::", async () => {
-    await expect(assertExternalTarget("::", 80)).rejects.toBeInstanceOf(
+    await expect(assertPublicMediaTarget("::", 80)).rejects.toBeInstanceOf(
       HostPolicyError,
     );
   });
 
   it("blocks IPv6 loopback expanded form 0:0:0:0:0:0:0:1", async () => {
     await expect(
-      assertExternalTarget("0:0:0:0:0:0:0:1", 80),
+      assertPublicMediaTarget("0:0:0:0:0:0:0:1", 80),
     ).rejects.toBeInstanceOf(HostPolicyError);
   });
 
   it("strips brackets from IPv6 literal hostnames", async () => {
-    await expect(assertExternalTarget("[::1]", 80)).rejects.toBeInstanceOf(
+    await expect(assertPublicMediaTarget("[::1]", 80)).rejects.toBeInstanceOf(
       HostPolicyError,
     );
   });
 
   it("allows public IPv6 (e.g. Cloudflare 2606:4700::1111)", async () => {
     await expect(
-      assertExternalTarget("2606:4700:4700::1111", 443),
+      assertPublicMediaTarget("2606:4700:4700::1111", 443),
     ).resolves.toBeUndefined();
   });
 
@@ -336,7 +336,7 @@ describe("IPv6 bypass guards", () => {
 
   it("blocks metadata hostname with trailing dot (FQDN form)", async () => {
     await expect(
-      assertExternalTarget("metadata.google.internal.", 80),
+      assertPublicMediaTarget("metadata.google.internal.", 80),
     ).rejects.toBeInstanceOf(HostPolicyError);
   });
 });

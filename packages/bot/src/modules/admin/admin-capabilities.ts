@@ -29,7 +29,7 @@ export const GLOBAL_CAPABILITY_DESCRIPTIONS = {
   "guild.message": "讀寫所有公會的頻道訊息、反應",
   "guild.manage": "管理所有公會的成員、角色、設定與 bot 功能",
   "system.read": "查看系統事件記錄與統計資訊",
-  "behavior.manage": "管理 webhook 行為模組的所有目標對象與行為設定",
+  "behavior.manage": "管理 behaviors 模組的所有觸發與動作設定",
 } as const;
 
 export type GlobalCapability = keyof typeof GLOBAL_CAPABILITY_DESCRIPTIONS;
@@ -56,13 +56,6 @@ export type GuildGlobalCapability = `guild.${GuildScope}`;
 export type GuildScopedCapability = `guild:${string}.${GuildScope}`;
 
 /**
- * Per-target behavior scope. Granting `behavior:42.manage` lets the
- * holder CRUD behaviors UNDER target id 42, but NOT add or delete
- * targets themselves — that's reserved for `admin` / `behavior.manage`.
- */
-export type BehaviorScopedCapability = `behavior:${string}.manage`;
-
-/**
  * Capability declared by a plugin for its own needs. Token shape:
  * `plugin:<pluginKey>:<capKey>`, e.g. `plugin:karyl-radio:manage`.
  *
@@ -71,7 +64,7 @@ export type BehaviorScopedCapability = `behavior:${string}.manage`;
  * admin role-permission modal as a per-plugin tab. On plugin delete
  * the tokens are purged from every role.
  *
- * Recognition here is purely structural (like behavior tokens) — a
+ * Recognition here is purely structural — a
  * stranded token from a removed plugin still parses but simply won't
  * appear in the catalog endpoint, so the modal won't offer it.
  */
@@ -83,70 +76,11 @@ export type PluginScopedCapability = `plugin:${string}:${string}`;
 export type AdminCapability =
   | GlobalCapability
   | GuildScopedCapability
-  | BehaviorScopedCapability
   | PluginScopedCapability;
 
 const SCOPED_GUILD_RE = /^guild:([^.:]+)\.(message|manage)$/;
-/** Allow any character in the audience segment (user IDs, group names with Unicode/punctuation). */
-const SCOPED_BEHAVIOR_RE = /^behavior:(.+)\.manage$/;
 /** pluginKey = plugin.id shape ([a-z0-9][a-z0-9-]*); capKey = [a-z0-9][a-z0-9._-]*. */
 const SCOPED_PLUGIN_RE = /^plugin:([a-z0-9][a-z0-9-]*):([a-z0-9][a-z0-9._-]*)$/;
-
-/**
- * Typed audience key — mirrors the frontend AudienceKey type.
- * Three formats: 'all' | 'user:<userId>' | 'group:<groupName>'
- * @deprecated Use tab-based tokens (makeBehaviorTabToken) instead.
- */
-export type AudienceKey =
-  | { kind: "all" }
-  | { kind: "user"; userId: string }
-  | { kind: "group"; groupName: string };
-
-/**
- * @deprecated Use makeBehaviorTabToken instead.
- */
-export function makeBehaviorAudienceToken(
-  key: AudienceKey,
-): BehaviorScopedCapability {
-  if (key.kind === "all") return "behavior:all.manage";
-  if (key.kind === "user") return `behavior:user:${key.userId}.manage`;
-  return `behavior:group:${key.groupName}.manage`;
-}
-
-/**
- * @deprecated Use parseBehaviorTabToken instead.
- */
-export function parseBehaviorCapabilityToken(
-  token: string,
-): AudienceKey | null {
-  const m = SCOPED_BEHAVIOR_RE.exec(token);
-  if (!m) return null;
-  const segment = m[1];
-  if (segment === "all") return { kind: "all" };
-  if (segment.startsWith("user:"))
-    return { kind: "user", userId: segment.slice(5) };
-  if (segment.startsWith("group:"))
-    return { kind: "group", groupName: segment.slice(6) };
-  return { kind: "user", userId: segment };
-}
-
-/**
- * Per-scope-tab capability token: `behavior:<scopeKey>.manage`.
- * The scope key is derived from the tab's content (tabType + discriminator),
- * not its auto-increment ID, so grants survive database rebuilds.
- *
- * Examples:
- *   - `behavior:global_all.manage`
- *   - `behavior:all_dms.manage`
- *   - `behavior:guild:123456789.manage`
- *   - `behavior:user:987654321.manage`
- *   - `behavior:group:VIP.manage`
- */
-export function makeBehaviorScopeToken(
-  scopeKey: string,
-): BehaviorScopedCapability {
-  return `behavior:${scopeKey}.manage`;
-}
 
 function isGlobalCapability(value: string): value is GlobalCapability {
   return Object.prototype.hasOwnProperty.call(
@@ -161,12 +95,6 @@ function parseScopedGuild(
   const m = SCOPED_GUILD_RE.exec(value);
   if (!m) return null;
   return { guildId: m[1], scope: m[2] as GuildScope };
-}
-
-function parseScopedBehavior(value: string): { audienceKey: string } | null {
-  const m = SCOPED_BEHAVIOR_RE.exec(value);
-  if (!m) return null;
-  return { audienceKey: m[1] };
 }
 
 /**
@@ -186,7 +114,6 @@ export function isAdminCapability(value: string): value is AdminCapability {
   return (
     isGlobalCapability(value) ||
     parseScopedGuild(value) !== null ||
-    parseScopedBehavior(value) !== null ||
     parsePluginCapabilityToken(value) !== null
   );
 }
@@ -196,12 +123,6 @@ export function makeGuildScopedCapability(
   scope: GuildScope,
 ): GuildScopedCapability {
   return `guild:${guildId}.${scope}`;
-}
-
-export function makeBehaviorScopedCapability(
-  targetId: number | string,
-): BehaviorScopedCapability {
-  return `behavior:${targetId}.manage`;
 }
 
 /**
@@ -294,62 +215,6 @@ export function accessibleGuildIds(
     if (cap === "guild.message" || cap === "guild.manage") return "all";
     const parsed = parseScopedGuild(cap);
     if (parsed) ids.add(parsed.guildId);
-  }
-  return ids;
-}
-
-/**
- * Pure evaluator for behavior-tab-bound routes. Satisfied by:
- *   - `admin`
- *   - `behavior.manage`                    (full module)
- *   - `behavior:<scopeKey>.manage`         (matching per-scope-tab token)
- *
- * Adding/removing TABS themselves is NOT covered here — those
- * mutate the catalog and stay restricted to admin / behavior.manage
- * (call hasAdminCapability(caps, 'behavior.manage') for that).
- */
-export function hasBehaviorCapability(
-  granted: Iterable<AdminCapability>,
-  scopeKey: string,
-): boolean {
-  const token = makeBehaviorScopeToken(scopeKey);
-  for (const cap of granted) {
-    if (cap === "admin") return true;
-    if (cap === "behavior.manage") return true;
-    if (cap === token) return true;
-  }
-  return false;
-}
-
-/**
- * Returns the set of behavior scope keys the user can access, or `'all'`
- * when they hold `admin` / `behavior.manage` (no filter needed).
- */
-export function accessibleBehaviorScopeKeys(
-  granted: Iterable<AdminCapability>,
-): "all" | Set<string> {
-  const keys = new Set<string>();
-  for (const cap of granted) {
-    if (cap === "admin") return "all";
-    if (cap === "behavior.manage") return "all";
-    const parsed = parseScopedBehavior(cap);
-    if (parsed) keys.add(parsed.audienceKey);
-  }
-  return keys;
-}
-
-/**
- * @deprecated Use accessibleBehaviorTabIds instead.
- */
-export function accessibleBehaviorTargetIds(
-  granted: Iterable<AdminCapability>,
-): "all" | Set<string> {
-  const ids = new Set<string>();
-  for (const cap of granted) {
-    if (cap === "admin") return "all";
-    if (cap === "behavior.manage") return "all";
-    const parsed = parseScopedBehavior(cap);
-    if (parsed) ids.add(parsed.audienceKey);
   }
   return ids;
 }

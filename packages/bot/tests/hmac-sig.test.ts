@@ -79,7 +79,7 @@ describe("signBody", () => {
 
 describe("buildOutboundSignatureHeaders", () => {
   it("includes signature + timestamp + nonce headers (BH-2.4)", () => {
-    const h = buildOutboundSignatureHeaders(SECRET, METHOD, PATH, BODY, TS);
+    const h = buildOutboundSignatureHeaders(SECRET, METHOD, PATH, BODY, { ts: TS });
     expect(h[TIMESTAMP_HEADER]).toBe(TS);
     expect(h[NONCE_HEADER]).toMatch(/^[0-9a-f]{32}$/);
     expect(h[SIGNATURE_HEADER]).toBe(

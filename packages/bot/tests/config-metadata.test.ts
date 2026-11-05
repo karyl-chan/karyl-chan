@@ -59,7 +59,7 @@ const stubConfig: AppConfig = {
     dmWindowMs: 1_000,
     autoApproveScopes: true,
   },
-  behavior: { profileCacheTtlMs: 300_000 },
+  behavior: { profileCacheTtlMs: 300_000, webhookPrivateAllowlist: [] },
   admin: { profileCacheTtlMs: 300_000, sessionCacheTtlMs: 30_000 },
   rcon: {
     maxRetryAttempts: 3,

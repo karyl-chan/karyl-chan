@@ -19,10 +19,9 @@ vi.hoisted(() => {
 
 import type { Client } from "discord.js";
 import { sequelize } from "../src/db.js";
-import { Behavior } from "../src/modules/behavior/models/behavior.model.js";
 import { PluginCommand } from "../src/modules/plugin-system/models/plugin-command.model.js";
 import { CommandReconciler } from "../src/modules/command-system/reconcile.service.js";
-import { encryptSecret } from "../src/utils/crypto.js";
+import { clearBehaviors, seedCommand, seedLeaf } from "./behavior-fixtures.js";
 
 function makeCommands(create?: ReturnType<typeof vi.fn>) {
   return {
@@ -46,23 +45,9 @@ function makeClient(
 }
 
 async function seedGuildBehavior(): Promise<number> {
-  await Behavior.create({
-    id: 1,
-    title: "ping",
-    enabled: true,
-    sortOrder: 0,
-    source: "custom",
-    triggerType: "slash_command",
-    slashCommandName: "ping",
-    slashCommandDescription: "ping",
-    scope: "guild",
-    integrationTypes: "guild_install",
-    contexts: "Guild",
-    audienceKind: "all",
-    webhookUrl: encryptSecret("http://example.invalid/hook"),
-    scopeTabId: 1,
-  } as Record<string, unknown>);
-  return 1;
+  const id = await seedCommand({ name: "ping", description: "ping", registration: "guild", guildId: "g1" });
+  await seedLeaf(id, { title: "ping" });
+  return id;
 }
 
 beforeAll(async () => {
@@ -70,19 +55,19 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  await Behavior.destroy({ where: {} });
+  await clearBehaviors();
   await PluginCommand.destroy({ where: {} });
 });
 
 describe("reconcile guild-scope action reporting", () => {
-  it("reconcileForBehavior reports action=create for a guild-scope create (not noop)", async () => {
+  it("reconcileForBehaviorCommand reports action=create for a guild-scope create (not noop)", async () => {
     const id = await seedGuildBehavior();
     const guildCmds = makeCommands();
     const reconciler = new CommandReconciler(() =>
       makeClient(makeCommands(), guildCmds),
     );
 
-    const result = await reconciler.reconcileForBehavior(id);
+    const result = await reconciler.reconcileForBehaviorCommand(id);
 
     expect(result.ok).toBe(true);
     // Pre-fix this was "noop" even though a command was created.
@@ -106,23 +91,11 @@ describe("reconcile guild-scope action reporting", () => {
   });
 
   it("reconcileAll does not count a failed create as created (Fix 2)", async () => {
-    // A global-scope behavior whose Discord create throws.
-    await Behavior.create({
-      id: 2,
-      title: "boom",
-      enabled: true,
-      sortOrder: 0,
-      source: "custom",
-      triggerType: "slash_command",
-      slashCommandName: "boom",
-      slashCommandDescription: "boom",
-      scope: "global",
-      integrationTypes: "guild_install",
-      contexts: "BotDM",
-      audienceKind: "all",
-      webhookUrl: encryptSecret("http://example.invalid/hook"),
-      scopeTabId: 1,
-    } as Record<string, unknown>);
+    // A global behavior command whose Discord create throws.
+    await seedLeaf(
+      await seedCommand({ name: "boom", description: "boom", contexts: "BotDM" }),
+      { title: "boom" },
+    );
 
     const throwingCreate = vi.fn(async () => {
       throw new Error("Discord 500");

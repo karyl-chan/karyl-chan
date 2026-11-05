@@ -1,1070 +1,285 @@
 /**
- * behavior-routes.ts — admin/behaviors REST API
+ * behavior-routes.ts — admin behaviors REST API（ADR 0003 trigger/action 模型）
  *
  * 路由表：
- *   GET    /api/behaviors                  — list（可帶 audienceKind/source/triggerType filter）
- *   GET    /api/behaviors/:id              — 單條
- *   POST   /api/behaviors                  — 建立（custom source 才能用）
- *   PATCH  /api/behaviors/:id              — 修改（source 依據限制不同欄位）
- *   DELETE /api/behaviors/:id              — 刪除（system/plugin 不可刪）
- *   POST   /api/behaviors/:id/resync       — 觸發 CommandReconciler.reconcileForBehavior
+ *   GET  /api/behaviors                          — { system, commands, messageTriggers }
+ *   GET  /api/behaviors/schema                   — the write schemas, for the admin UI's form checks
+ *   POST /api/behaviors/:id/test                 — 對 behavior 的 webhook 動作試發
+ *   POST / PATCH / DELETE /api/behaviors[/:id]   — 訊息觸發的寫入（behavior-write-routes.ts）
+ *   PUT  /api/behaviors/reorder                  — 一個位置內的訊息觸發排序（message-trigger-reorder.ts）
+ *   POST /api/behaviors/:id/webhook-secret/rotate — 輪換 webhook 密鑰（webhook-secret-rotate.ts）
+ *   /api/behavior-commands[/:id[/resync]]        — 指令的寫入與重新註冊（behavior-command-routes.ts）
+ *   PUT  /api/behaviors/system/login/trigger     — 切換登入系統列的觸發（system-login-trigger-route.ts）
+ *   GET  /api/behavior-groups/:groupName/members — 群組名單
+ *   PUT  /api/behavior-groups/:groupName/members — 全量替換群組名單
  *
- * 權限：requireBehaviorAdmin（需 behavior.manage 或 admin）。
- *
- * 審計 log：CRUD 後寫 botEventLog。
+ * 權限：requireBehaviorAdmin（behavior.manage 或 admin），在 schema 驗證之前。
+ * 拒絕一律是 `{ error: { code, message, field? } }`（behavior-api-error.ts）。
  */
 
 import type { FastifyInstance } from "fastify";
-import type { BehaviorRoutesOptions } from "./behavior-helpers.js";
 import {
   requireBehaviorAdmin,
-  requireAnyBehaviorAccess,
-  hasGlobalBehaviorManage,
-  behaviorScopeAllowed,
-  decryptedView,
-  isValidWebhookUrl,
-  isValidRegex,
-  parseSlashCommandOptions,
+  type BehaviorRoutesOptions,
 } from "./behavior-helpers.js";
-import { sortJoin } from "../../utils/sort-join.js";
+import { loadBehaviorCatalog } from "./behavior-catalog.js";
+import { buildBehaviorListView } from "./behavior-list-view.js";
 import {
-  Behavior,
-  rowOfBehavior,
-  type BehaviorRow,
-  type BehaviorTriggerType,
-  type BehaviorAudienceKind,
-  type BehaviorWebhookAuthMode,
-} from "./models/behavior.model.js";
+  BehaviorDefinition,
+  rowOfBehaviorDefinition,
+} from "./models/behavior-definition.model.js";
 import {
-  BehaviorScopeTab,
-  deriveFieldsFromTab,
-  scopeKeyOf,
-  rowOf as tabRowOf,
-} from "./models/behavior-scope-tab.model.js";
+  BehaviorWebhookAction,
+  rowOfBehaviorWebhookAction,
+} from "./models/behavior-webhook-action.model.js";
 import { findStatsBulk } from "./models/behavior-stats.model.js";
-import type { BehaviorStatRow } from "./models/behavior-stats.model.js";
-import { WebhookForwarder } from "../command-system/webhook-forwarder.service.js";
 import {
   findGroupMembers,
+  groupInUse,
   replaceGroupMembers,
 } from "./models/behavior-group-member.model.js";
-import { Op, fn, col } from "sequelize";
-import { sequelize } from "../../db.js";
-import { encryptSecret } from "../../utils/crypto.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
-import type { CommandReconciler } from "../command-system/reconcile.service.js";
+import {
+  BehaviorApiError,
+  installBehaviorRouteValidation,
+} from "./behavior-api-error.js";
+import { auditBehaviorWrite } from "./behavior-audit.js";
+import { behaviorTransaction, withBehaviorWriteLock } from "./behavior-write-lock.js";
+import {
+  createMessageTriggerSchema,
+  registerBehaviorWriteRoutes,
+} from "./behavior-write-routes.js";
+import { registerMessageTriggerReorderRoute } from "./message-trigger-reorder.js";
+import { registerWebhookSecretRotateRoute } from "./webhook-secret-rotate.js";
+import {
+  addLeafSchema,
+  createCommandSchema,
+  registerBehaviorCommandRoutes,
+} from "./behavior-command-routes.js";
+import { idParams, parseRowId, snowflake } from "./behavior-schemas.js";
+import {
+  loginTriggerSchema,
+  registerSystemLoginTriggerRoute,
+} from "./system-login-trigger-route.js";
 
 export type { BehaviorRoutesOptions };
 
-/** The valid `messagePatternKind` values, single-sourced for every
- *  validation site in this module (create, PATCH switch, PATCH sub-field). */
-const MESSAGE_PATTERN_KINDS = ["startswith", "endswith", "regex"];
-
-// ── 主函式 ────────────────────────────────────────────────────────────────────
+/** The placeholder user a test-fire carries instead of a real identity (#101). */
+const TEST_FIRE_USER = {
+  id: "0",
+  username: "karyl-test",
+  global_name: null,
+  discriminator: "0",
+  avatar: null,
+} as const;
 
 export async function registerBehaviorRoutes(
   server: FastifyInstance,
   options: BehaviorRoutesOptions = {},
 ): Promise<void> {
-  /**
-   * BH-5：per-row scope 守衛。全域 token 直接過；scoped token 比對該
-   * behavior 所屬 tab 的 scopeKey。tab 消失（理論上 FK 擋住）按拒絕處理。
-   */
-  async function guardRowScope(
-    request: Parameters<typeof requireAnyBehaviorAccess>[0],
-    reply: Parameters<typeof requireAnyBehaviorAccess>[1],
-    scopeTabId: number,
-  ): Promise<boolean> {
-    if (hasGlobalBehaviorManage(request)) return true;
-    const tabRow = await BehaviorScopeTab.findByPk(scopeTabId);
-    const key = tabRow ? scopeKeyOf(tabRowOf(tabRow)) : null;
-    if (key && behaviorScopeAllowed(request, key)) return true;
-    void reply.code(403).send({ error: "缺少此範圍的 behavior 管理權限" });
-    return false;
-  }
+  // One encapsulated scope: the strict validator and the uniform error
+  // body apply to the behavior routes and to nothing else.
+  await server.register(async (scope) => {
+    installBehaviorRouteValidation(scope);
+    // The gate runs before validation, so a caller without the
+    // capability learns nothing about the request shape.
+    scope.addHook("preValidation", async (request, reply) => {
+      if (!requireBehaviorAdmin(request, reply)) return reply;
+    });
+    registerReadAndTestRoutes(scope, options);
+    registerBehaviorWriteRoutes(scope, options.reconciler);
+    registerMessageTriggerReorderRoute(scope);
+    registerWebhookSecretRotateRoute(scope);
+    registerBehaviorCommandRoutes(scope, options);
+    registerSystemLoginTriggerRoute(scope, options);
+    registerGroupMemberRoutes(scope);
+  });
+}
 
-  function getReconciler(): CommandReconciler {
-    if (!options.reconciler) {
-      throw new Error("CommandReconciler not provided to behavior routes");
-    }
-    return options.reconciler;
-  }
-
-  /**
-   * Fire-and-forget reconcileAll after CRUD that could shift Discord 指令
-   * 登記（CREATE / UPDATE / DELETE behavior row）。不 await，避免 admin
-   * UI 多吃一個 Discord round-trip 的延遲；失敗只記 log，因為 bot ready
-   * 時的 reconcileAll 仍會兜底，下次重啟會自我修復。
-   *
-   * 為什麼需要：PATCH 把 triggerType 從 slash_command 切到 message_pattern
-   * 後，DB row 的 slashCommandName 已被清成 null。reconcileForBehavior 對
-   * non-slash_command 直接 noop，且抓不到舊指令名，因此無法刪除 Discord
-   * 端的舊登記。reconcileAll 走 owned_commands 名冊 + desired set diff，
-   * 能正確識別 stale 並清除。
-   */
-  function scheduleReconcileAfterMutation(reason: string): void {
-    getReconciler()
-      .reconcileAll()
-      .then((report) => {
-        // Tests stub reconciler.reconcileAll as `() => undefined`; production
-        // returns a real ReconcileReport. Tolerate either shape rather than
-        // letting an undefined-deref leak into the warn branch in test runs.
-        if (!report) return;
-        botEventLog.record(
-          "info",
-          "bot",
-          `behavior-routes: reconcileAll(${reason}) created=${report.created} patched=${report.patched} deleted=${report.deleted} errors=${report.errors.length}`,
-        );
-      })
-      .catch((err: unknown) => {
-        botEventLog.record(
-          "warn",
-          "bot",
-          `behavior-routes: reconcileAll(${reason}) 失敗：${err instanceof Error ? err.message : String(err)}`,
-        );
-      });
-  }
-
+function registerReadAndTestRoutes(
+  server: FastifyInstance,
+  options: BehaviorRoutesOptions,
+): void {
   // ── GET /api/behaviors ──────────────────────────────────────────────────────
 
   server.get("/api/behaviors", async (request, reply) => {
-    if (!requireAnyBehaviorAccess(request, reply)) return;
-
-    const query = request.query as {
-      scopeTabId?: string;
-      audienceKind?: string;
-      audienceUserId?: string;
-      audienceGroupName?: string;
-      source?: string;
-      triggerType?: string;
-    };
-
-    const where: Record<string, unknown> = {};
-    if (query.scopeTabId) {
-      const tabId = parseInt(query.scopeTabId, 10);
-      if (!isNaN(tabId)) where["scopeTabId"] = tabId;
-    }
-    if (
-      query.audienceKind &&
-      ["all", "user", "group"].includes(query.audienceKind)
-    ) {
-      where["audienceKind"] = query.audienceKind;
-    }
-    if (query.audienceUserId) {
-      where["audienceUserId"] = query.audienceUserId;
-    }
-    if (query.audienceGroupName) {
-      where["audienceGroupName"] = query.audienceGroupName;
-    }
-    if (query.source && ["custom", "system"].includes(query.source)) {
-      where["source"] = query.source;
-    }
-    if (
-      query.triggerType &&
-      ["slash_command", "message_pattern"].includes(query.triggerType)
-    ) {
-      where["triggerType"] = query.triggerType;
-    }
-
-    const rows = await Behavior.findAll({
-      where: Object.keys(where).length > 0 ? where : undefined,
-      order: [
-        ["sortOrder", "ASC"],
-        ["id", "ASC"],
-      ],
-    });
-
-    // BH-5：scoped token 只看得到自己 tab 的 rows
-    let visible = rows;
-    if (!hasGlobalBehaviorManage(request)) {
-      const tabRows = await BehaviorScopeTab.findAll();
-      const allowedTabIds = new Set(
-        tabRows
-          .filter((t) => behaviorScopeAllowed(request, scopeKeyOf(tabRowOf(t))))
-          .map((t) => t.getDataValue("id") as number),
-      );
-      visible = rows.filter((r) =>
-        allowedTabIds.has(r.getDataValue("scopeTabId") as number),
-      );
-    }
-
+    const catalog = await loadBehaviorCatalog();
     // BH-6.1：附上 forward 統計（admin UI 顯示 last-fired / 健康警示）
-    const stats = await findStatsBulk(
-      visible.map((r) => r.getDataValue("id") as number),
-    );
-    const behaviors = visible.map((r) => ({
-      ...decryptedView(rowOfBehavior(r)),
-      stats: stats.get(r.getDataValue("id") as number) ?? null,
-    }));
-    return reply.send({ behaviors });
+    const ids = [
+      ...catalog.messageTriggers.map((t) => t.id),
+      ...catalog.commands.flatMap((c) => c.leaves.map((l) => l.id)),
+    ];
+    const stats = await findStatsBulk(ids);
+    return reply.send(buildBehaviorListView(catalog, stats));
   });
 
-  // ── GET /api/behaviors/:id ──────────────────────────────────────────────────
+  // ── GET /api/behaviors/schema（#108）────────────────────────────────────────
+  // 寫入路由實際驗證用的 JSON schema：訊息觸發、指令（含葉節點）與新增的
+  // 子指令。admin UI 用它在送出前檢查欄位格式，schema 只有這一份，前端不另抄。
+  // 跨欄位規則不在 schema 裡：訊息觸發的（message-trigger-rules.ts）由 UI 的
+  // 表單結構避開；指令的（command-tree-rules.ts）是唯一例外，前端有一份鏡像
+  // （frontend/.../command-rules.ts），由 tests/behavior-command-rules-mirror.test.ts
+  // 釘住兩邊一致（見 architecture.md）。送出後一律仍由這裡把關。
 
-  server.get("/api/behaviors/:id", async (request, reply) => {
-    if (!requireAnyBehaviorAccess(request, reply)) return;
-
-    const { id } = request.params as { id: string };
-    const numId = parseInt(id, 10);
-    if (isNaN(numId)) {
-      return reply.code(400).send({ error: "無效的 behavior ID" });
-    }
-
-    const row = await Behavior.findByPk(numId);
-    if (!row) {
-      return reply.code(404).send({ error: "Behavior 不存在" });
-    }
-    if (
-      !(await guardRowScope(
-        request,
-        reply,
-        row.getDataValue("scopeTabId") as number,
-      ))
-    ) {
-      return;
-    }
-
-    return reply.send({ behavior: decryptedView(rowOfBehavior(row)) });
-  });
-
-  // ── POST /api/behaviors ─────────────────────────────────────────────────────
-  // admin 只能建立 source=custom（webhook URL）的 behavior；system 由系統 seed。
-
-  server.post("/api/behaviors", async (request, reply) => {
-    if (!requireAnyBehaviorAccess(request, reply)) return;
-    // BH-5：建立目標 tab 的 scope 檢查（未帶 scopeTabId 時預設 global_all=1）
-    {
-      const tabId =
-        (request.body as { scopeTabId?: number } | null)?.scopeTabId ?? 1;
-      if (!(await guardRowScope(request, reply, tabId))) return;
-    }
-
-    const body = request.body as {
-      title?: string;
-      description?: string;
-      triggerType?: BehaviorTriggerType;
-      messagePatternKind?: string;
-      messagePatternValue?: string;
-      slashCommandName?: string;
-      slashCommandDescription?: string;
-      slashCommandOptions?: unknown;
-      scope?: string;
-      integrationTypes?: string;
-      contexts?: string;
-      audienceKind?: BehaviorAudienceKind;
-      audienceUserId?: string;
-      audienceGroupName?: string;
-      webhookUrl?: string;
-      webhookSecret?: string;
-      webhookAuthMode?: BehaviorWebhookAuthMode;
-      stopOnMatch?: boolean;
-      ignoreBots?: boolean;
-      enabled?: boolean;
-      scopeTabId?: number;
-    };
-
-    // 基本驗證
-    if (!body.title?.trim()) {
-      return reply.code(400).send({ error: "title 為必填" });
-    }
-    if (
-      !body.triggerType ||
-      !["slash_command", "message_pattern"].includes(body.triggerType)
-    ) {
-      return reply.code(400).send({ error: "無效的 triggerType" });
-    }
-
-    // webhookUrl（custom behavior 必填）驗證
-    if (!body.webhookUrl?.trim()) {
-      return reply.code(400).send({ error: "需要 webhookUrl" });
-    }
-    const urlCheck = await isValidWebhookUrl(body.webhookUrl.trim());
-    if (!urlCheck.ok) {
-      return reply.code(400).send({ error: urlCheck.reason });
-    }
-
-    // triggerType 相關驗證
-    if (body.triggerType === "message_pattern") {
-      if (
-        !body.messagePatternKind ||
-        !MESSAGE_PATTERN_KINDS.includes(body.messagePatternKind)
-      ) {
-        return reply.code(400).send({ error: "無效的 messagePatternKind" });
-      }
-      if (!body.messagePatternValue?.trim()) {
-        return reply.code(400).send({ error: "messagePatternValue 為必填" });
-      }
-      if (
-        body.messagePatternKind === "regex" &&
-        !isValidRegex(body.messagePatternValue)
-      ) {
-        return reply.code(400).send({ error: "regex 格式錯誤" });
-      }
-    } else {
-      // slash_command
-      if (!body.slashCommandName?.trim()) {
-        return reply.code(400).send({ error: "slashCommandName 為必填" });
-      }
-    }
-
-    // webhookAuthMode 與 webhookSecret 一致性
-    if (body.webhookAuthMode && !body.webhookSecret) {
-      return reply.code(400).send({
-        error: "設定 webhookAuthMode 需要先設定 webhookSecret",
-      });
-    }
-
-    // Resolve scope tab — derive scope/contexts/audience/placement
-    let derivedScope = body.scope ?? "global";
-    let derivedContexts: string;
-    let derivedAudienceKind = body.audienceKind ?? "all";
-    let derivedAudienceUserId = body.audienceUserId ?? null;
-    let derivedAudienceGroupName = body.audienceGroupName ?? null;
-    let derivedPlacementGuildId: string | null = null;
-    let derivedPlacementChannelId: string | null = null;
-    // tab 同步來的 integrationTypes (null = 該 tab 不指定,admin 自選)
-    let tabIntegrationTypes: string | null = null;
-    let resolvedTabId = body.scopeTabId ?? 1;
-
-    if (body.scopeTabId) {
-      const tabRow = await BehaviorScopeTab.findByPk(body.scopeTabId);
-      if (!tabRow) {
-        return reply.code(400).send({ error: "無效的 scopeTabId" });
-      }
-      const tab = tabRowOf(tabRow);
-      const derived = deriveFieldsFromTab(tab);
-      derivedScope = derived.scope;
-      derivedContexts = derived.contexts;
-      derivedAudienceKind = derived.audienceKind;
-      derivedAudienceUserId = derived.audienceUserId;
-      derivedAudienceGroupName = derived.audienceGroupName;
-      derivedPlacementGuildId = derived.placementGuildId;
-      derivedPlacementChannelId = derived.placementChannelId;
-      tabIntegrationTypes = derived.integrationTypes;
-      resolvedTabId = body.scopeTabId;
-    } else {
-      derivedContexts = sortJoin(body.contexts || "Guild");
-    }
-
-    // integrationTypes:tab 寫死的優先（admin 在非 global_all tab 上的
-    // 設定會被覆蓋）；tab 沒寫死才採 body 給的值，最後才落到預設。
-    // message_pattern 不經指令註冊、沒有安裝面 — body 給的值一律忽略，
-    // 只存 tab 衍生/預設值（BH-0.2；PATCH 端對顯式設定則直接 400）。
-    const integrationTypes =
-      tabIntegrationTypes ??
-      sortJoin(
-        (body.triggerType === "message_pattern"
-          ? ""
-          : body.integrationTypes || "") || "guild_install",
-      );
-    const contexts = body.scopeTabId
-      ? derivedContexts
-      : sortJoin(body.contexts || "Guild");
-
-    // 最大 sortOrder
-    const maxSortRow = await Behavior.findOne({
-      order: [["sortOrder", "DESC"]],
-      attributes: ["sortOrder"],
+  server.get("/api/behaviors/schema", async (_request, reply) => {
+    return reply.send({
+      messageTrigger: createMessageTriggerSchema,
+      command: createCommandSchema,
+      commandLeaf: addLeafSchema,
+      loginTrigger: loginTriggerSchema,
     });
-    const nextSortOrder = maxSortRow
-      ? (maxSortRow.getDataValue("sortOrder") as number) + 1
-      : 0;
-
-    // BH-2.2C：slash options 定義（pattern 不適用）
-    let slashOptionsJson: string | null = null;
-    if (body.triggerType === "slash_command" && body.slashCommandOptions !== undefined) {
-      const parsed = parseSlashCommandOptions(body.slashCommandOptions);
-      if (!parsed.ok) {
-        return reply.code(400).send({ error: parsed.reason });
-      }
-      slashOptionsJson = parsed.options.length > 0 ? JSON.stringify(parsed.options) : null;
-    }
-
-    const row = await Behavior.create({
-      title: body.title.trim(),
-      description: body.description ?? "",
-      source: "custom",
-      triggerType: body.triggerType,
-      messagePatternKind:
-        body.triggerType === "message_pattern" ? body.messagePatternKind : null,
-      messagePatternValue:
-        body.triggerType === "message_pattern"
-          ? body.messagePatternValue
-          : null,
-      slashCommandName:
-        body.triggerType === "slash_command"
-          ? body.slashCommandName?.trim()
-          : null,
-      slashCommandDescription:
-        body.triggerType === "slash_command"
-          ? (body.slashCommandDescription ?? "")
-          : null,
-      slashCommandOptions: slashOptionsJson,
-      scope: derivedScope,
-      integrationTypes,
-      contexts,
-      audienceKind: derivedAudienceKind,
-      audienceUserId:
-        derivedAudienceKind === "user" ? derivedAudienceUserId : null,
-      audienceGroupName:
-        derivedAudienceKind === "group" ? derivedAudienceGroupName : null,
-      placementGuildId: derivedPlacementGuildId,
-      placementChannelId: derivedPlacementChannelId,
-      webhookUrl: encryptSecret(body.webhookUrl.trim()),
-      webhookSecret: body.webhookSecret
-        ? encryptSecret(body.webhookSecret)
-        : null,
-      webhookAuthMode: body.webhookSecret
-        ? (body.webhookAuthMode ?? "token")
-        : null,
-      systemKey: null,
-      // Continuous sessions were removed (ADR 0003); every behavior is
-      // one-time. The column stays until the trigger/action model rewrite.
-      forwardType: "one_time",
-      // stopOnMatch 僅 message_pattern 有語意（BH-0.3）；slash 一律存 false
-      stopOnMatch:
-        body.triggerType === "message_pattern" ? !!body.stopOnMatch : false,
-      // ignoreBots 僅 guild-context pattern 有語意（BH-3）；預設 true（防 bot 迴圈）
-      ignoreBots:
-        body.triggerType === "message_pattern"
-          ? (body.ignoreBots ?? true)
-          : true,
-      sessionExpireHours: null,
-      enabled: body.enabled !== undefined ? !!body.enabled : true,
-      sortOrder: nextSortOrder,
-      scopeTabId: resolvedTabId,
-    });
-
-    const created = decryptedView(rowOfBehavior(row));
-
-    botEventLog.record(
-      "info",
-      "web",
-      `behavior 已建立 id=${created.id} source=${created.source}`,
-      {
-        behaviorId: created.id,
-      },
-    );
-
-    scheduleReconcileAfterMutation(`create id=${created.id}`);
-
-    return reply.code(201).send({ behavior: created });
-  });
-
-  // ── PATCH /api/behaviors/:id ────────────────────────────────────────────────
-  // custom：全欄位可改
-  // system：只能改 trigger value（slashCommandName / messagePatternValue）+ enabled
-
-  server.patch("/api/behaviors/:id", async (request, reply) => {
-    if (!requireAnyBehaviorAccess(request, reply)) return;
-
-    const { id } = request.params as { id: string };
-    const numId = parseInt(id, 10);
-    if (isNaN(numId)) {
-      return reply.code(400).send({ error: "無效的 behavior ID" });
-    }
-
-    const existing = await Behavior.findByPk(numId);
-    if (!existing) {
-      return reply.code(404).send({ error: "Behavior 不存在" });
-    }
-
-    const existingRow = rowOfBehavior(existing);
-    if (!(await guardRowScope(request, reply, existingRow.scopeTabId))) {
-      return;
-    }
-    const body = request.body as Record<string, unknown>;
-    const patch: Record<string, unknown> = {};
-
-    if (existingRow.source === "system") {
-      // system：可改 triggerType（+ 對應子欄位）、enabled。title /
-      // description / 三軸 / audience / forward / webhook 仍鎖住 —
-      // 由 system-seed 控制，其他欄位若 body 帶來會被忽略而非報錯。
-      const touchesTrigger =
-        "triggerType" in body ||
-        "slashCommandName" in body ||
-        "slashCommandDescription" in body ||
-        "messagePatternKind" in body ||
-        "messagePatternValue" in body;
-
-      if (touchesTrigger) {
-        const newTriggerType =
-          "triggerType" in body
-            ? (body["triggerType"] as string)
-            : existingRow.triggerType;
-        if (!["slash_command", "message_pattern"].includes(newTriggerType)) {
-          return reply.code(400).send({ error: "無效的 triggerType" });
-        }
-        const switching = newTriggerType !== existingRow.triggerType;
-
-        if (newTriggerType === "slash_command") {
-          const name =
-            "slashCommandName" in body
-              ? ((body["slashCommandName"] as string | null) ?? "").trim()
-              : (existingRow.slashCommandName ?? "").trim();
-          if (!name) {
-            return reply.code(400).send({ error: "slashCommandName 為必填" });
-          }
-          patch["slashCommandName"] = name;
-          if ("slashCommandDescription" in body) {
-            patch["slashCommandDescription"] =
-              (body["slashCommandDescription"] as string | null) ?? null;
-          }
-          if (switching) {
-            patch["triggerType"] = "slash_command";
-            // Null out message_pattern 側，滿足 triggerTypeShape invariant。
-            patch["messagePatternKind"] = null;
-            patch["messagePatternValue"] = null;
-          }
-        } else {
-          const kind =
-            "messagePatternKind" in body
-              ? (body["messagePatternKind"] as string)
-              : existingRow.messagePatternKind;
-          if (!kind || !MESSAGE_PATTERN_KINDS.includes(kind)) {
-            return reply
-              .code(400)
-              .send({ error: "無效的 messagePatternKind" });
-          }
-          const val =
-            "messagePatternValue" in body
-              ? ((body["messagePatternValue"] as string | null) ?? "").trim()
-              : (existingRow.messagePatternValue ?? "").trim();
-          if (!val) {
-            return reply
-              .code(400)
-              .send({ error: "messagePatternValue 為必填" });
-          }
-          if (kind === "regex" && !isValidRegex(val)) {
-            return reply.code(400).send({ error: "regex 格式錯誤" });
-          }
-          patch["messagePatternKind"] = kind;
-          patch["messagePatternValue"] = val;
-          if (switching) {
-            patch["triggerType"] = "message_pattern";
-            patch["slashCommandName"] = null;
-            patch["slashCommandDescription"] = null;
-          }
-        }
-      }
-
-      if ("enabled" in body) {
-        const nextEnabled = !!body["enabled"];
-        // admin-login 是進後台的唯一入口，一旦被停用就找不回後台。
-        if (!nextEnabled && existingRow.systemKey === "admin-login") {
-          return reply.code(403).send({
-            error: `系統行為 ${existingRow.systemKey} 不可停用`,
-          });
-        }
-        patch["enabled"] = nextEnabled;
-      }
-    } else {
-      // custom：全欄位可改
-      if ("title" in body) {
-        const title = (body["title"] as string)?.trim();
-        if (!title) return reply.code(400).send({ error: "title 不可為空" });
-        patch["title"] = title;
-      }
-      if ("description" in body)
-        patch["description"] = body["description"] ?? "";
-      if ("triggerType" in body) {
-        if (
-          !["slash_command", "message_pattern"].includes(
-            body["triggerType"] as string,
-          )
-        ) {
-          return reply.code(400).send({ error: "無效的 triggerType" });
-        }
-        patch["triggerType"] = body["triggerType"];
-      }
-      if ("messagePatternKind" in body)
-        patch["messagePatternKind"] = body["messagePatternKind"] ?? null;
-      if ("messagePatternValue" in body) {
-        const val =
-          (body["messagePatternValue"] as string | null)?.trim() ?? null;
-        if (
-          val &&
-          (body["messagePatternKind"] ?? existingRow.messagePatternKind) ===
-            "regex" &&
-          !isValidRegex(val)
-        ) {
-          return reply.code(400).send({ error: "regex 格式錯誤" });
-        }
-        patch["messagePatternValue"] = val;
-      }
-      if ("slashCommandName" in body)
-        patch["slashCommandName"] =
-          (body["slashCommandName"] as string | null)?.trim() ?? null;
-      if ("slashCommandDescription" in body)
-        patch["slashCommandDescription"] =
-          body["slashCommandDescription"] ?? null;
-      if ("slashCommandOptions" in body) {
-        // BH-2.2C：僅 slash trigger 有 options 定義
-        const effectiveTrigger =
-          (body["triggerType"] as string | undefined) ??
-          existingRow.triggerType;
-        if (effectiveTrigger !== "slash_command") {
-          return reply.code(400).send({
-            error: "slashCommandOptions 僅對 slash_command behavior 有效",
-          });
-        }
-        if (body["slashCommandOptions"] === null) {
-          patch["slashCommandOptions"] = null;
-        } else {
-          const parsed = parseSlashCommandOptions(body["slashCommandOptions"]);
-          if (!parsed.ok) {
-            return reply.code(400).send({ error: parsed.reason });
-          }
-          patch["slashCommandOptions"] =
-            parsed.options.length > 0 ? JSON.stringify(parsed.options) : null;
-        }
-      }
-      // When triggerType is (re)set, enforce the cross-field invariant the
-      // model validates on save (triggerTypeShape): a row must carry ONLY
-      // its trigger type's columns, with the required one present. The
-      // per-field blocks above can leave the previous type's columns stale,
-      // and because the PATCH applies via an instance update (full row in
-      // the validate context), a switch then throws and 500s the edit
-      // instead of clearing the old side. Reconcile here — mirrors the
-      // system branch and the create path.
-      if ("triggerType" in body) {
-        if (body["triggerType"] === "slash_command") {
-          const name = String(
-            (patch["slashCommandName"] as string | null | undefined) ??
-              existingRow.slashCommandName ??
-              "",
-          ).trim();
-          if (!name) {
-            return reply.code(400).send({ error: "slashCommandName 為必填" });
-          }
-          patch["slashCommandName"] = name;
-          patch["messagePatternKind"] = null;
-          patch["messagePatternValue"] = null;
-        } else {
-          patch["slashCommandOptions"] = null;
-          const kind =
-            (patch["messagePatternKind"] as string | null | undefined) ??
-            existingRow.messagePatternKind ??
-            null;
-          const val = String(
-            (patch["messagePatternValue"] as string | null | undefined) ??
-              existingRow.messagePatternValue ??
-              "",
-          ).trim();
-          if (!kind || !MESSAGE_PATTERN_KINDS.includes(kind)) {
-            return reply.code(400).send({ error: "無效的 messagePatternKind" });
-          }
-          if (!val) {
-            return reply
-              .code(400)
-              .send({ error: "messagePatternValue 為必填" });
-          }
-          if (kind === "regex" && !isValidRegex(val)) {
-            return reply.code(400).send({ error: "regex 格式錯誤" });
-          }
-          patch["messagePatternKind"] = kind;
-          patch["messagePatternValue"] = val;
-          patch["slashCommandName"] = null;
-          patch["slashCommandDescription"] = null;
-        }
-      } else {
-        // triggerType is NOT changing in this PATCH. The per-field blocks
-        // above still let a caller set a sub-field that belongs to the
-        // OTHER trigger type (or an out-of-enum messagePatternKind) without
-        // going through the reconcile block. Validate against the EXISTING
-        // type here so we return a clean 400 instead of (a) letting the
-        // model's triggerTypeShape validator throw a 500 on update, or
-        // (b) silently writing a behavior that never fires (matchesTrigger
-        // returns false for an unknown kind).
-        if (existingRow.triggerType === "slash_command") {
-          if (
-            ("messagePatternKind" in body &&
-              patch["messagePatternKind"] != null) ||
-            ("messagePatternValue" in body &&
-              patch["messagePatternValue"] != null)
-          ) {
-            return reply.code(400).send({
-              error: "messagePattern 欄位不適用於 slash_command behavior",
-            });
-          }
-        } else {
-          if (
-            ("slashCommandName" in body && patch["slashCommandName"] != null) ||
-            ("slashCommandDescription" in body &&
-              patch["slashCommandDescription"] != null)
-          ) {
-            return reply.code(400).send({
-              error: "slashCommand 欄位不適用於 message_pattern behavior",
-            });
-          }
-          if (
-            "messagePatternKind" in body &&
-            patch["messagePatternKind"] != null &&
-            !MESSAGE_PATTERN_KINDS.includes(
-              patch["messagePatternKind"] as string,
-            )
-          ) {
-            return reply
-              .code(400)
-              .send({ error: "無效的 messagePatternKind" });
-          }
-        }
-      }
-      if ("scope" in body) patch["scope"] = body["scope"];
-      if ("integrationTypes" in body) {
-        // integrationTypes 是 slash 指令的安裝面設定（Discord application
-        // command install scope）；message_pattern 不經指令註冊，設定它
-        // 沒有任何效果 — 拒絕，不留「看似生效」的假象（BH-0.2）。
-        const effectiveTrigger =
-          (body["triggerType"] as string | undefined) ??
-          existingRow.triggerType;
-        if (effectiveTrigger === "message_pattern") {
-          return reply.code(400).send({
-            error:
-              "message_pattern behavior 不使用 integrationTypes（僅 slash command 有安裝面）",
-          });
-        }
-        // integrationTypes 只在 global_all tab 上可自選 — 其他 tab 由
-        // deriveFieldsFromTab() 寫死。若 admin 嘗試覆蓋,拒絕並告知。
-        const tabRow = await BehaviorScopeTab.findByPk(existingRow.scopeTabId);
-        if (!tabRow) {
-          return reply.code(400).send({ error: "無效的 scopeTabId" });
-        }
-        const tabFixed = deriveFieldsFromTab(tabRowOf(tabRow)).integrationTypes;
-        const wanted = sortJoin(body["integrationTypes"] as string);
-        if (tabFixed !== null && tabFixed !== wanted) {
-          return reply.code(400).send({
-            error:
-              "integrationTypes 由範圍分頁決定,僅「全範圍」分頁可自訂",
-          });
-        }
-        patch["integrationTypes"] = wanted;
-      }
-      if ("contexts" in body) {
-        patch["contexts"] = sortJoin(body["contexts"] as string);
-      }
-      if ("audienceKind" in body) patch["audienceKind"] = body["audienceKind"];
-      if ("audienceUserId" in body)
-        patch["audienceUserId"] = body["audienceUserId"] ?? null;
-      if ("audienceGroupName" in body)
-        patch["audienceGroupName"] = body["audienceGroupName"] ?? null;
-      if ("enabled" in body) patch["enabled"] = !!body["enabled"];
-      if ("stopOnMatch" in body) {
-        // stopOnMatch 是 message_pattern 的 multi-match 停止旗標（BH-0.3）；
-        // slash 指令名唯一、天然單一匹配，設定它沒有任何效果 — 拒絕。
-        const effectiveTrigger =
-          (body["triggerType"] as string | undefined) ??
-          existingRow.triggerType;
-        if (effectiveTrigger !== "message_pattern") {
-          return reply.code(400).send({
-            error:
-              "stopOnMatch 僅對 message_pattern behavior 有效（slash 指令名唯一、單一匹配）",
-          });
-        }
-        patch["stopOnMatch"] = !!body["stopOnMatch"];
-      }
-      if ("ignoreBots" in body) {
-        // ignoreBots 是 guild-context pattern 的旗標（BH-3）；slash 不適用。
-        const effectiveTrigger =
-          (body["triggerType"] as string | undefined) ??
-          existingRow.triggerType;
-        if (effectiveTrigger !== "message_pattern") {
-          return reply.code(400).send({
-            error: "ignoreBots 僅對 message_pattern behavior 有效",
-          });
-        }
-        patch["ignoreBots"] = !!body["ignoreBots"];
-      }
-      if ("webhookUrl" in body) {
-        const url = (body["webhookUrl"] as string | null)?.trim();
-        if (url) {
-          const urlCheck = await isValidWebhookUrl(url);
-          if (!urlCheck.ok)
-            return reply.code(400).send({ error: urlCheck.reason });
-          patch["webhookUrl"] = encryptSecret(url);
-        } else {
-          patch["webhookUrl"] = null;
-        }
-      }
-      if ("webhookSecret" in body) {
-        const secret = body["webhookSecret"] as string | null;
-        if (secret === null || secret === "") {
-          patch["webhookSecret"] = null;
-          patch["webhookAuthMode"] = null;
-        } else {
-          patch["webhookSecret"] = encryptSecret(secret);
-          patch["webhookAuthMode"] =
-            (body["webhookAuthMode"] as BehaviorWebhookAuthMode) ?? "token";
-        }
-      } else if ("webhookAuthMode" in body) {
-        const mode = body["webhookAuthMode"] as BehaviorWebhookAuthMode | null;
-        const currentSecret = existingRow.webhookSecret;
-        if (mode && !currentSecret) {
-          return reply
-            .code(400)
-            .send({ error: "設定 webhookAuthMode 需要先設定 webhookSecret" });
-        }
-        patch["webhookAuthMode"] = mode ?? null;
-      }
-    }
-
-    if (Object.keys(patch).length === 0) {
-      return reply.send({ behavior: decryptedView(existingRow) });
-    }
-
-    await existing.update(patch);
-    const updated = decryptedView(rowOfBehavior(existing));
-
-    botEventLog.record(
-      "info",
-      "web",
-      `behavior 已更新 id=${numId} source=${existingRow.source}`,
-      {
-        behaviorId: numId,
-      },
-    );
-
-    scheduleReconcileAfterMutation(`patch id=${numId}`);
-
-    return reply.send({ behavior: updated });
-  });
-
-  // ── DELETE /api/behaviors/:id ───────────────────────────────────────────────
-
-  server.delete("/api/behaviors/:id", async (request, reply) => {
-    if (!requireAnyBehaviorAccess(request, reply)) return;
-
-    const { id } = request.params as { id: string };
-    const numId = parseInt(id, 10);
-    if (isNaN(numId)) {
-      return reply.code(400).send({ error: "無效的 behavior ID" });
-    }
-
-    const existing = await Behavior.findByPk(numId);
-    if (!existing) {
-      return reply.code(404).send({ error: "Behavior 不存在" });
-    }
-
-    const existingRow = rowOfBehavior(existing);
-    if (!(await guardRowScope(request, reply, existingRow.scopeTabId))) {
-      return;
-    }
-    if (existingRow.source === "system") {
-      return reply.code(403).send({ error: "system behavior 不可刪除" });
-    }
-
-    await existing.destroy();
-
-    botEventLog.record("info", "web", `behavior 已刪除 id=${numId}`, {
-      behaviorId: numId,
-    });
-
-    scheduleReconcileAfterMutation(`delete id=${numId}`);
-
-    return reply.code(204).send();
-  });
-
-  // ── POST /api/behaviors/:id/resync ──────────────────────────────────────────
-
-  server.post("/api/behaviors/:id/resync", async (request, reply) => {
-    if (!requireAnyBehaviorAccess(request, reply)) return;
-
-    const { id } = request.params as { id: string };
-    const numId = parseInt(id, 10);
-    if (isNaN(numId)) {
-      return reply.code(400).send({ error: "無效的 behavior ID" });
-    }
-
-    const existing = await Behavior.findByPk(numId);
-    if (!existing) {
-      return reply.code(404).send({ error: "Behavior 不存在" });
-    }
-    if (
-      !(await guardRowScope(
-        request,
-        reply,
-        existing.getDataValue("scopeTabId") as number,
-      ))
-    ) {
-      return;
-    }
-
-    const result = await getReconciler().reconcileForBehavior(numId);
-
-    botEventLog.record(
-      "info",
-      "web",
-      `behavior resync id=${numId} result=${result.ok ? "ok" : "fail"}`,
-      {
-        behaviorId: numId,
-      },
-    );
-
-    return reply.send({ result });
-  });
-
-  // ── PATCH /api/behaviors/reorder ────────────────────────────────────────────
-  // 接受 orderedIds: number[]，只針對 source=custom 的排序
-
-  server.patch("/api/behaviors/reorder", async (request, reply) => {
-    if (!requireBehaviorAdmin(request, reply)) return;
-
-    const body = request.body as { orderedIds?: number[] };
-    if (!Array.isArray(body.orderedIds)) {
-      return reply.code(400).send({ error: "orderedIds 為必填陣列" });
-    }
-    // Cap the batch so a malicious / typo'd request can't ship a
-    // gigantic array that takes the lock for seconds.
-    if (body.orderedIds.length > 500) {
-      return reply.code(400).send({ error: "orderedIds 過長 (max 500)" });
-    }
-
-    // Single transaction: a concurrent read of the behaviors table
-    // mid-reorder used to see partially-applied sort orders, and a
-    // failure on the Nth update left the first N-1 rows reordered
-    // with no rollback. Sequelize will wrap the entire block in a
-    // BEGIN/COMMIT against SQLite.
-    await sequelize.transaction(async (transaction) => {
-      for (let index = 0; index < body.orderedIds!.length; index++) {
-        await Behavior.update(
-          { sortOrder: index },
-          {
-            where: { id: body.orderedIds![index], source: "custom" },
-            transaction,
-          },
-        );
-      }
-    });
-
-    return reply.send({ ok: true });
   });
 
   // ── BH-6.2：test-fire ───────────────────────────────────────────────────────
-  // 對 behavior 的 webhook 發一發測試 payload（_meta.test=true），把結果
+  // 對 behavior 的 webhook 動作發一發測試 payload（_meta.test=true），把結果
   // 直接回給 admin —— 「裝好了有沒有通」從猜變成按一下。不改任何狀態、
   // 不 relay 到任何頻道、不計入統計。
-
-  server.post("/api/behaviors/:id/test", async (request, reply) => {
-    if (!requireAnyBehaviorAccess(request, reply)) return;
-    const { id } = request.params as { id: string };
-    const numId = parseInt(id, 10);
-    if (isNaN(numId)) {
-      return reply.code(400).send({ error: "無效的 behavior ID" });
-    }
-    const row = await Behavior.findByPk(numId);
-    if (!row) {
-      return reply.code(404).send({ error: "Behavior 不存在" });
-    }
-    if (
-      !(await guardRowScope(
-        request,
-        reply,
-        row.getDataValue("scopeTabId") as number,
-      ))
-    ) {
-      return;
-    }
-    const behaviorRow = rowOfBehavior(row);
-    if (behaviorRow.source !== "custom") {
-      return reply
-        .code(400)
-        .send({ error: "system behavior 走 in-process handler，無 webhook 可測" });
-    }
-    const forwarder = options.forwarder ?? new WebhookForwarder();
-    const payload = {
-      content: "(test fire from admin UI)",
-      username: "karyl-admin-test",
-      avatar_url: "",
-      _meta: {
-        test: true,
-        behavior_id: behaviorRow.id,
-        user: {
-          id: request.authUserId ?? "admin",
-          username: "admin-test",
-          global_name: null,
-          discriminator: "0",
-          avatar: null,
-        },
-      },
-    };
-    const result = await forwarder.forward(behaviorRow, payload);
-    return reply.send({
-      ok: result.ok,
-      relayContent: result.relayContent,
-      relayEmbeds: result.relayEmbeds ?? [],
-      error: result.error ?? null,
-    });
-  });
-
-  // ── audience group 成員管理（BH-1）─────────────────────────────────────────
   //
-  // group 以名字為單位（behaviors.audienceGroupName / specific_group tab 的
-  // groupName），名單存 behavior_group_members，同名 group 的 behaviors 共享。
+  // #101：測試請求不能被當成真的使用者 —— 以獨立的簽章前綴 / token header
+  // 送出（WebhookForwarder 的 test 選項），且不帶任何真實身分：_meta.user
+  // 是固定的佔位使用者，不是按下按鈕的管理員。
 
+  server.post(
+    "/api/behaviors/:id/test",
+    { schema: { params: idParams } },
+    async (request, reply) => {
+      const numId = parseRowId(request.params);
+      const row = await BehaviorDefinition.findByPk(numId);
+      if (!row) {
+        throw new BehaviorApiError("not_found", `behavior ${numId} does not exist`);
+      }
+      const behavior = rowOfBehaviorDefinition(row);
+      const action = await BehaviorWebhookAction.findByPk(numId);
+      if (behavior.actionSource !== "webhook" || !action) {
+        throw new BehaviorApiError(
+          "validation_failed",
+          "this behavior has no webhook action to test (the system behavior runs a built-in action)",
+        );
+      }
+      // injected (runtime.ts builds the one WebhookForwarder): behavior
+      // holds only command-system types, so the module edge stays one-way
+      const forwarder = options.forwarder;
+      if (!forwarder) throw new Error("WebhookForwarder not provided to behavior routes");
+      const payload = {
+        content: "(test fire from admin UI)",
+        username: "karyl-admin-test",
+        avatar_url: "",
+        _meta: {
+          test: true,
+          behavior_id: behavior.id,
+          user: TEST_FIRE_USER,
+          // the keys a real trigger sends, so a receiver routes a test the
+          // way it routes the real thing (a test matched no message, so no
+          // groups; a leaf's own path)
+          ...(behavior.triggerKind === "message"
+            ? { captures: [] }
+            : {
+                sub_command_name: behavior.subcommand || null,
+                sub_command_group: behavior.subcommandGroup || null,
+              }),
+        },
+      };
+      const result = await forwarder.forward(
+        rowOfBehaviorWebhookAction(action),
+        payload,
+        { test: true },
+      );
+      // 回覆預覽（#140）：解析後的回覆與被規則改掉的部分，admin UI 依觸發
+      // 種類顯示誰看得到。
+      return reply.send({
+        ok: result.ok,
+        reply: result.reply,
+        notes: result.notes,
+        status: result.status ?? null,
+        error: result.error ?? null,
+        errorCode: result.errorCode ?? null,
+        // which key verified the response's signature (null: unsigned)
+        verified: result.verified ?? null,
+      });
+    },
+  );
+}
+
+// ── audience group 成員管理（BH-1）─────────────────────────────────────────
+//
+// group 以名字為單位（訊息觸發的 audienceGroupName），名單存
+// behavior_group_members，同名 group 的 behaviors 共享。group 沒有自己的
+// 列：只有被訊息觸發引用的 group 能設名單，沒有觸發用了名單就清掉
+// （behavior-group-member.model.ts），不會留下孤兒名單（#137）。
+
+const groupParams = {
+  type: "object",
+  properties: { groupName: { type: "string", minLength: 1, maxLength: 200 } },
+  required: ["groupName"],
+  additionalProperties: false,
+} as const;
+
+const MAX_GROUP_MEMBERS = 1000;
+
+function groupNameOf(params: unknown): string {
+  const groupName = (params as { groupName: string }).groupName.trim();
+  if (!groupName) {
+    throw new BehaviorApiError("validation_failed", "groupName is required", "groupName");
+  }
+  return groupName;
+}
+
+function registerGroupMemberRoutes(server: FastifyInstance): void {
   // GET /api/behavior-groups/:groupName/members
-  server.get("/api/behavior-groups/:groupName/members", async (request, reply) => {
-    if (!requireAnyBehaviorAccess(request, reply)) return;
-    const groupName = decodeURIComponent(
-      (request.params as { groupName: string }).groupName,
-    ).trim();
-    if (!groupName) {
-      return reply.code(400).send({ error: "groupName 為必填" });
-    }
-    if (
-      !hasGlobalBehaviorManage(request) &&
-      !behaviorScopeAllowed(request, `group:${groupName}`)
-    ) {
-      return reply.code(403).send({ error: "缺少此 group 的管理權限" });
-    }
-    const members = await findGroupMembers(groupName);
-    return reply.send({ groupName, members });
-  });
+  server.get(
+    "/api/behavior-groups/:groupName/members",
+    { schema: { params: groupParams } },
+    async (request, reply) => {
+      const groupName = groupNameOf(request.params);
+      const members = await findGroupMembers(groupName);
+      return reply.send({ groupName, members });
+    },
+  );
 
   // PUT /api/behavior-groups/:groupName/members { userIds: string[] }
   // 全量替換（與 UI 的編輯-儲存模型一致；增/刪都走同一條）。
-  server.put("/api/behavior-groups/:groupName/members", async (request, reply) => {
-    if (!requireAnyBehaviorAccess(request, reply)) return;
-    const groupName = decodeURIComponent(
-      (request.params as { groupName: string }).groupName,
-    ).trim();
-    if (!groupName || groupName.length > 200) {
-      return reply.code(400).send({ error: "groupName 為必填（max 200）" });
-    }
-    if (
-      !hasGlobalBehaviorManage(request) &&
-      !behaviorScopeAllowed(request, `group:${groupName}`)
-    ) {
-      return reply.code(403).send({ error: "缺少此 group 的管理權限" });
-    }
-    const body = request.body as { userIds?: unknown };
-    if (!Array.isArray(body?.userIds)) {
-      return reply.code(400).send({ error: "userIds 為必填陣列" });
-    }
-    if (body.userIds.length > 1000) {
-      return reply.code(400).send({ error: "userIds 過長 (max 1000)" });
-    }
-    const userIds: string[] = [];
-    for (const raw of body.userIds) {
-      if (typeof raw !== "string") {
-        return reply.code(400).send({ error: "userIds 必須是字串陣列" });
-      }
-      const id = raw.trim();
-      if (!id) continue;
-      if (!/^\d{5,25}$/.test(id)) {
-        return reply
-          .code(400)
-          .send({ error: `無效的 user id：${id.slice(0, 30)}` });
-      }
-      userIds.push(id);
-    }
-    await replaceGroupMembers(groupName, userIds);
-    const members = await findGroupMembers(groupName);
-    botEventLog.record(
-      "info",
-      "bot",
-      `behavior-group: '${groupName}' 成員更新為 ${members.length} 人`,
-      { groupName, count: members.length, actor: request.authUserId ?? null },
-    );
-    return reply.send({ groupName, members });
-  });
+  // 沒有訊息觸發引用的 group → not_found：先把觸發的對象設成這個群組。
+  server.put(
+    "/api/behavior-groups/:groupName/members",
+    {
+      schema: {
+        params: groupParams,
+        body: {
+          type: "object",
+          properties: {
+            userIds: { type: "array", maxItems: MAX_GROUP_MEMBERS, items: snowflake },
+          },
+          required: ["userIds"],
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request, reply) => {
+      const groupName = groupNameOf(request.params);
+      const { userIds } = request.body as { userIds: string[] };
+      await withBehaviorWriteLock(() =>
+        behaviorTransaction(async (transaction) => {
+          if (!(await groupInUse(groupName, transaction))) {
+            throw new BehaviorApiError(
+              "not_found",
+              `no message trigger uses group '${groupName}'; set a trigger's audience to it first`,
+              "groupName",
+            );
+          }
+          await replaceGroupMembers(groupName, userIds, transaction);
+        }),
+      );
+      const members = await findGroupMembers(groupName);
+      await auditBehaviorWrite(request, "behavior.group_members.replace", `group:${groupName}`, {
+        userIds: members,
+      });
+      botEventLog.record(
+        "info",
+        "bot",
+        `behavior-group: '${groupName}' 成員更新為 ${members.length} 人`,
+        { groupName, count: members.length, actor: request.authUserId ?? null },
+      );
+      return reply.send({ groupName, members });
+    },
+  );
 }

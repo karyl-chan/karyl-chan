@@ -27,7 +27,6 @@ import {
   startBotEventLogPruner,
 } from "../modules/bot-events/bot-event-log.js";
 import { ensureSystemBehaviors } from "../modules/behavior/system-seed.service.js";
-import { ensureFixedScopeTabs } from "../modules/behavior/scope-tab-seed.service.js";
 import { runMigrations } from "../db-migrations.js";
 import { initJwtSigningAuthority } from "../modules/web-core/jwt.service.js";
 import { pluginRegistry } from "../modules/plugin-system/plugin-registry.service.js";
@@ -69,11 +68,9 @@ export async function runStartup(ctx: RuntimeContext): Promise<void> {
     // before any route is served. Routes (login exchange, plugin
     // register/heartbeat) call jwtService.{sign,verify,publicKeyPem}.
     await initJwtSigningAuthority();
-    // System behavior seed（admin-login）：idempotent
-    // 補建 source='system' rows，必須在 reconcileAll（bot ready handler
-    // 內）之前完成，否則 CommandReconciler 的 desired set 不含 /login，
-    // Discord 不會註冊。
-    await ensureFixedScopeTabs();
+    // System behavior seed（登入）：idempotent，只在缺少時補建預設的
+    // 與 bot 私訊 `!login`。必須在 reconcileAll（bot ready handler 內）
+    // 之前完成，登入若改用指令觸發，desired set 才會含它。
     await ensureSystemBehaviors().catch((err: unknown) => {
       log.error({ err }, "ensureSystemBehaviors failed");
     });
@@ -146,6 +143,8 @@ export async function runStartup(ctx: RuntimeContext): Promise<void> {
       bot,
       dmInbox: dmInboxService,
       reconciler: ctx.commandReconciler,
+      commandNamespace: ctx.commandNamespace,
+      webhookForwarder: ctx.webhookForwarder,
     });
     const isHttps = !!(config.web.sslCertPath && config.web.sslKeyPath);
     botEventLog.record("info", "web", `Web server started on :${webPort}`, {

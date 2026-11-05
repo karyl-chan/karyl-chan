@@ -315,8 +315,6 @@ export async function registerAdminManagementRoutes(
   // Dynamic catalog: the RBAC capabilities each currently-enabled plugin
   // declared in its manifest. The role-permission modal renders one tab
   // per plugin from this. Token form: `plugin:<pluginKey>:<capKey>`.
-  // Mirrors the behavior-scope-tabs pattern (a runtime catalog feeding a
-  // capability tab) — see GET /api/behavior-tabs.
   server.get("/api/admin/plugin-capabilities", async (request, reply) => {
     if (!requireAdmin(request, reply)) return;
     const plugins = await findAllPlugins();

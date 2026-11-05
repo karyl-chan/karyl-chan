@@ -286,7 +286,6 @@
         "capabilities": "權限詞條",
         "note": "備註",
         "unavailable": "無法取得個人資料。",
-        "hint": "再次私訊機器人「login」可重新整理登入狀態。",
         "settings": {
             "title": "偏好設定",
             "animatedEmoji": {
@@ -304,8 +303,16 @@
         "exchanging": "正在交換登入權杖…",
         "success": "已登入,正在轉導…",
         "noTokenLead": "如要登入,請傳私訊給機器人:",
+        "noTokenLeadCommand": "如要登入，請使用機器人的這個指令：",
+        "noTokenLeadUnknown": "如要登入，請照管理員設定的方式向機器人取得登入連結。",
         "noTokenHint": "機器人會回覆一次性登入連結,請在此瀏覽器開啟。",
-        "errorHint": "請再次傳 {login} 給機器人以取得新連結。"
+        "errorHint": "請再次傳 {login} 給機器人以取得新連結。",
+        "errorHintCommand": "請再次使用 {login} 以取得新連結。",
+        "errorHintUnknown": "請再次向機器人取得新連結。",
+        "match": {
+            "endswith": "私訊機器人任何以這段文字結尾的訊息。",
+            "regex": "私訊機器人任何符合這個正規表示式的訊息。"
+        }
     },
     "dashboard": {
         "title": "儀表板",
@@ -894,8 +901,6 @@
                 "globalHint": "套用至 bot 所有伺服器與所有功能介面。",
                 "perGuild": "個別伺服器",
                 "perGuildHint": "將相同範圍限定到單一伺服器,與全域權限為相加關係,不會覆蓋。",
-                "perBehaviorTab": "個別行為分頁",
-                "perBehaviorTabHint": "授權該角色管理特定行為分頁下的行為(不可增刪分頁本身,需 behavior.manage 才能調整分頁清單)。",
                 "perPlugin": "外掛",
                 "perPluginHint": "各已啟用外掛為自身需求宣告的權限(例如 WebUI 存取)。外掛被刪除或重新註冊後不再宣告時會自動移除。"
             },
@@ -905,12 +910,6 @@
             "perGuildSummary": "已授予 {count} 個個別伺服器權限",
             "pendingChanges": "已修改 {count} 項",
             "confirmChanges": "確認變更",
-            "searchBehaviorTabs": "搜尋行為分頁…",
-            "noBehaviorTabs": "沒有符合條件的行為分頁。",
-            "perBehaviorTabSummary": "已授予 {count} 個行為分頁權限",
-            "legacyBehaviorHeader": "舊版行為對象授權(遷移前)",
-            "legacyBehaviorDesc": "舊版 token — 建議撤銷並改用上方的分頁授權。",
-            "legacyBehaviorSummary": "{count} 個舊版行為授權",
             "searchPlugins": "搜尋外掛權限…",
             "noPluginCapabilities": "沒有已啟用的外掛宣告權限。",
             "noPluginCapabilitiesFiltered": "沒有符合條件的外掛權限。",
@@ -1142,17 +1141,6 @@
                     "configured": "Bot 選擇",
                     "noReplica": "Bot 本次啟動後，尚無存活 replica 回報傳輸狀態。"
                 },
-                "behaviors": {
-                    "intro": "以下是此 Plugin 宣告的 behaviors。可在此頁啟用或停用各個 behavior；停用後 reconciler 不會將其 slash 指令登記至 Discord。",
-                    "empty": "此 Plugin 未宣告任何 Behavior",
-                    "toggleOn": "啟用此 behavior",
-                    "toggleOff": "停用此 behavior",
-                    "toggleSuccess": "已更新 behavior 狀態",
-                    "toggleError": "更新失敗，請重試",
-                    "supportsContinuous": "支援連續對話",
-                    "axesReadonly": "三軸由 manifest 鎖定",
-                    "slashOptions": "{count} 個選項"
-                },
                 "commands": {
                     "intro": "以下為此 Plugin 宣告的自訂 slash 指令。三軸由 Plugin manifest 寫死，admin 只能啟用或停用。",
                     "empty": "此 Plugin 未宣告任何自訂指令",
@@ -1197,163 +1185,442 @@
         "noGuildStickers": "沒有可用的伺服器貼圖。"
     },
     "behaviors": {
-        "page": {
-            "pickTarget": "請從左側選擇一個目標對象。"
-        },
         "sidebar": {
             "title": "行為",
-            "addTabTooltip": "新增範圍分頁",
-            "globalAll": "全範圍",
-            "globalAllHint": "所有平台與情境皆適用",
-            "allDms": "所有私訊",
-            "allDmsHint": "所有私訊使用者皆適用",
-            "allBotDms": "所有與 Bot 的私訊",
-            "allBotDmsHint": "僅 Bot 私訊頻道",
-            "allGuilds": "全 Guild",
-            "allGuildsHint": "所有 Guild 皆適用",
-            "behaviorCount": "{count} 個行為",
-            "guildSection": "Guild",
-            "dmSection": "Bot 私訊",
-            "noGuildTabs": "尚無 Guild 專屬分頁",
-            "noDmTabs": "尚無使用者專屬分頁"
-        },
-        "addPlugin": {
-            "title": "新增 Plugin 行為",
-            "defaultTitle": "{plugin}: {behavior}",
-            "noEligible": "沒有可用的 plugin。請先在外掛頁啟用至少一個提供 dm_behavior 的 plugin。",
-            "pickPlugin": "選擇 plugin",
-            "pickPluginPlaceholder": "—",
-            "pickBehavior": "選擇行為",
-            "create": "建立"
+            "app": "App 指令",
+            "appHint": "跨多處可用或開放使用者安裝的指令",
+            "botDm": "與 bot 的私訊",
+            "botDmHint": "bot 私訊裡的訊息觸發與指令",
+            "guildSection": "伺服器",
+            "guildAll": "全部伺服器",
+            "guildAllHint": "bot 所在的每個伺服器",
+            "behaviorCount": "{count} 個行為"
         },
         "workspace": {
-            "kindGlobalAll": "全範圍",
-            "kindAllDms": "所有私訊",
-            "kindAllBotDms": "Bot 私訊",
-            "kindAllGuilds": "全 Guild",
-            "kindGuild": "指定 Guild",
-            "kindChannel": "指定頻道",
-            "kindUser": "個別使用者",
-            "kindGroup": "使用者組",
-            "addBehavior": "新增行為",
-            "deleteTabTooltip": "刪除此分頁",
-            "deleteTabTitle": "刪除分頁",
-            "deleteTabConfirm": "確定要刪除分頁「{label}」?其下所有行為將一併移除。",
-            "empty": "目前沒有設定行為。"
+            "kind": {
+                "app": "App 指令",
+                "bot_dm": "bot 私訊",
+                "guild_all": "全部伺服器",
+                "guild": "指定伺服器",
+                "channel": "指定頻道"
+            },
+            "loadError": "無法載入行為：{error}",
+            "empty": "這裡還沒有行為。",
+            "commands": "指令",
+            "messageTriggers": "訊息觸發",
+            "note": {
+                "guild": "要限制這個伺服器裡哪些身分組或頻道能用指令，請到 Discord 的「伺服器設定 → 整合」。",
+                "channel": "Discord 無法把指令限定在單一頻道，所以這裡只有訊息比對。"
+            },
+            "reorderHandle": "拖曳排序「{title}」",
+            "reorderHint": "拖曳排序，或按 Alt + ↑／↓",
+            "reorderStale": "這個位置的行為剛被其他人變更，已重新載入；請再排一次。"
         },
         "card": {
-            "title": "標題",
-            "description": "說明",
-            "triggerType": "觸發類型",
-            "triggerStartsWith": "開頭符合",
-            "triggerEndsWith": "結尾符合",
-            "triggerRegex": "正則表達式",
-            "triggerPattern": "訊息 Pattern",
-            "triggerValue": "觸發內容",
-            "messagePatternKind": "Pattern 類型",
-            "messagePatternValue": "Pattern 值",
-            "slashCommandName": "Slash 指令名稱",
-            "slashCommandDescription": "Slash 指令說明",
-            "targetId": "目標對象",
-            "triggerSection": "觸發設定",
-            "integrationTypes": "可安裝範圍",
-            "integrationTypesLocked": "（由範圍分頁決定）",
-            "integrationBoth": "伺服器 + 使用者皆可安裝",
-            "integrationGuildOnly": "僅伺服器可安裝",
-            "integrationUserOnly": "僅使用者可安裝",
-            "webhookUrl": "Webhook URL",
-            "webhookUrlRequired": "請輸入 Webhook URL。",
-            "webhookSecret": "Webhook Secret",
-            "webhookSecretHint": "（可選，設定後啟用驗證）",
-            "webhookSecretPlaceholder": "留空 = 不設定",
-            "webhookAuthMode": "驗證模式",
-            "stopOnMatch": "命中後阻止後續判定",
-            "tagStop": "命中後阻止後續判定",
-            "tagStopShort": "停止後續",
-            "tagPlugin": "由 Plugin 提供",
-            "tagPluginShort": "Plugin",
-            "tagSystem": "系統內建",
+            "systemRowLocked": "系統行為，固定排在最前面",
+            "systemNotice": "系統行為：不能新增、刪除或停用，只能改觸發方式。",
+            "pattern": {
+                "startswith": "開頭為 {value}",
+                "endswith": "結尾為 {value}",
+                "regex": "正規表達式 {value}"
+            },
+            "triggerMessage": "訊息",
+            "triggerCommand": "指令",
+            "subcommandCount": "{count} 個子指令",
+            "tagSystem": "系統行為",
             "tagSystemShort": "系統",
-            "systemRowLocked": "此為系統行為,不可拖曳排序",
-            "pluginRowLocked": "此 behavior 由 Plugin 管理,不可拖曳排序",
-            "triggerSlashCommand": "Slash 指令",
-            "pluginPick": "選擇 Plugin",
-            "pluginNoneAvailable": "目前無可用 Plugin",
-            "pluginBehaviorKey": "選擇 behavior",
-            "pluginRequired": "請選擇 Plugin",
-            "pluginBehaviorKeyRequired": "請選擇 behavior",
-            "toggleEnabled": "已啟用（點擊停用）",
-            "toggleDisabled": "已停用（點擊啟用）",
-            "toggleProtected": "系統行為保護中，不可停用",
-            "previewStartsWith": "開頭：{value}",
-            "previewEndsWith": "結尾：{value}",
-            "previewRegex": "regex：{value}",
-            "previewSlashCommand": "/{value}",
-            "titleRequired": "請輸入標題。",
-            "triggerValueRequired": "請輸入觸發內容。",
-            "regexInvalid": "正則表達式格式錯誤。",
-            "deleteConfirm": "確定要刪除行為「{title}」?",
-            "dragHint": "拖曳排序",
-            "moreActions": "更多操作",
-            "sourceCustom": "自訂",
-            "sourcePlugin": "Plugin",
-            "sourceSystem": "系統",
-            "sourceNoticPlugin": "此 behavior 由 Plugin「{name}」提供，部分欄位不可修改",
-            "sourceNoticPluginLink": "查看 Plugin 詳情",
-            "sourceNoticSystem": "系統內建 behavior，可修改觸發類型與內容（其餘欄位鎖定）",
-            "saveTrigger": "儲存觸發",
-            "stopOnMatchHint": "命中後，這則訊息不再比對後續 pattern。",
-            "ignoreBots": "忽略 bot 訊息",
-            "ignoreBotsHint": "bot／webhook 發的訊息不觸發此 pattern。本 bot 自身的訊息無論如何都會被忽略。",
-            "options": "指令參數",
-            "optionName": "名稱",
-            "optionDescription": "說明",
-            "optionRequired": "必填",
-            "optionAdd": "新增參數",
-            "optionInvalid": "參數「{name}」無效：名稱須為 1-32 字的 [a-z0-9_-]，且說明必填。",
-            "testFire": "測試 webhook",
-            "testRunning": "測試中…",
-            "testOk": "Webhook 正常——回應：{content}",
-            "testFail": "Webhook 失敗：{error}",
-            "resync": "重新同步 Discord 指令",
-            "resyncDone": "指令已重新同步。",
+            "tagStop": "命中後停止後續比對",
+            "tagStopShort": "停止",
             "unhealthy": "連續失敗",
+            "toggleProtected": "系統行為不可停用",
+            "enabled": "已啟用",
+            "disabled": "已停用",
+            "audienceUser": "使用者 {user}",
+            "audienceGroup": "群組 {group}",
+            "registrationGlobal": "全域",
+            "registrationGuild": "伺服器 {guild}",
+            "contexts": "可用情境",
+            "context": {
+                "Guild": "伺服器",
+                "BotDM": "bot 私訊",
+                "PrivateChannel": "其他私訊"
+            },
+            "integrationTypes": "安裝方式",
+            "integration": {
+                "guild_install": "伺服器安裝",
+                "user_install": "使用者安裝"
+            },
+            "defaultMemberPermissions": "預設成員權限",
+            "permissionsNone": "不限制",
+            "options": "參數",
+            "action": "動作",
+            "actionBuiltin": "內建（admin 登入連結）",
+            "actionMissing": "尚未設定動作",
+            "webhookUrlUnreadable": "（網址無法解密）",
+            "auth": {
+                "none": "不簽章",
+                "token": "token",
+                "hmac": "HMAC"
+            },
+            "secretSet": "已設定密鑰",
+            "secretUnset": "未設定密鑰",
+            "stats": "觸發紀錄",
             "statsLine": "上次觸發 {when} · 成功 {ok} / 失敗 {fail}",
-            "statsLastError": "最近錯誤：{error}"
+            "statsLastError": "最近錯誤：{error}",
+            "unsaved": "未儲存",
+            "more": "更多操作",
+            "test": "測試 webhook",
+            "testing": "正在送出測試…",
+            "testOk": "測試成功，服務回覆：",
+            "testFailed": "測試失敗：{error}",
+            "testSavedOnly": "測試的是已儲存的設定，未儲存的修改不會用到。",
+            "delete": "刪除",
+            "deleteTitle": "刪除這個行為？",
+            "deleteMessage": "「{title}」會被刪除，無法復原。",
+            "titleLabel": "標題",
+            "descriptionLabel": "說明",
+            "descriptionHint": "只給管理員看，不會送到 Discord。",
+            "conflict": "這個行為已經被其他人修改，現在儲存會被拒絕。你的修改還在。",
+            "conflictKeep": "保留我的修改，套用到最新版本",
+            "conflictDiscard": "捨棄我的修改，載入最新版本",
+            "staleRebased": "剛才的儲存沒有成功：其他人在你編輯時改過這個行為（不是你正在編輯的欄位）。已載入最新版本，你的修改還在，請再按一次儲存。"
         },
-        "addTab": {
-            "title": "新增範圍分頁",
-            "typeLabel": "分頁類型",
-            "type_specific_guild": "指定 Guild",
-            "type_specific_channel": "指定頻道",
-            "type_specific_user": "指定使用者",
-            "type_specific_group": "使用者組",
-            "labelField": "顯示名稱（選填）",
-            "labelPlaceholder": "留空則使用 ID 顯示",
-            "groupNameLabel": "組名稱",
-            "groupNamePlaceholder": "例：VIP",
-            "submit": "建立分頁"
+        "validation": {
+            "required": "必填",
+            "tooShort": "至少 {min} 個字",
+            "tooLong": "最多 {max} 個字",
+            "tooMany": "最多 {max} 項",
+            "format": "格式不正確",
+            "invalid": "值無效",
+            "tooFew": "至少選 {min} 項"
         },
-        "addModal": {
-            "title": "新增 Behavior",
-            "subtitle": "建立由管理員定義的 behavior：選擇觸發方式，再決定要轉發到哪裡。",
-            "create": "建立",
-            "triggerSlash": "Slash 指令",
-            "triggerPattern": "訊息 Pattern",
-            "nameLabel": "Behavior 名稱",
-            "namePlaceholder": "例：問答助手",
-            "forwardLabel": "轉發設定",
-            "forwardWebhook": "Webhook",
-            "forwardPlugin": "Plugin"
+        "unsaved": {
+            "title": "放棄未儲存的修改？",
+            "message": "有行為的修改還沒儲存，離開後會遺失。",
+            "leave": "放棄並離開"
         },
-        "groupMembers": {
-            "title": "群組成員",
-            "count": "{count} 位成員",
-            "empty": "尚無成員——加入成員前，這個分頁上的 behaviors 不會對任何人觸發。",
-            "placeholder": "Discord 使用者 ID",
+        "location": {
+            "label": "位置",
+            "bot_dm": "與 bot 的私訊",
+            "guild_all": "全部伺服器",
+            "guild": "指定伺服器",
+            "channel": "指定頻道",
+            "guildPicker": "伺服器",
+            "channelPicker": "頻道",
+            "guildPlaceholder": "選擇伺服器",
+            "channelPlaceholder": "選擇頻道",
+            "idHint": "Discord ID（17–20 位數字）"
+        },
+        "trigger": {
+            "title": "觸發",
+            "moved": "儲存後，這列會移到「{section}」。",
+            "patternKind": "比對方式",
+            "patternValue": "比對內容",
+            "patternPlaceholder": "例：!weather",
+            "kind": {
+                "startswith": "開頭符合",
+                "endswith": "結尾符合",
+                "regex": "正規表示式"
+            },
+            "try": "試試看",
+            "tryPlaceholder": "輸入一則訊息，看會不會觸發",
+            "preview": {
+                "match": "會觸發",
+                "no_match": "不會觸發",
+                "invalid": "正規表示式寫法有誤",
+                "matchWithGroups": "會觸發，擷取 {groups}",
+                "group": "第 {n} 組「{value}」",
+                "groupSeparator": "、"
+            },
+            "ignoreBots": "略過其他 bot 與 webhook 的訊息",
+            "stopOnMatch": "比對到之後停止，不再檢查後面的行為",
+            "movedPublic": "回覆會貼在頻道裡，所有人都看得到。"
+        },
+        "audience": {
+            "title": "對象",
+            "label": "誰私訊時觸發",
+            "all": "所有人",
+            "user": "指定使用者",
+            "group": "群組",
+            "groupPlaceholder": "選擇群組",
+            "newGroup": "＋ 新增群組…",
+            "newGroupName": "新群組名稱",
+            "newGroupHint": "儲存後就能設定這個群組的成員。"
+        },
+        "group": {
+            "membersTitle": "群組「{group}」的成員",
+            "count": "{count} 人",
+            "shared": "這份名單由 {count} 個行為共用，修改會套用到全部。",
+            "empty": "還沒有成員。",
+            "remove": "移除 {user}",
+            "addPlaceholder": "Discord 使用者 ID",
             "add": "加入",
-            "remove": "移除",
-            "invalidId": "無效的 Discord 使用者 ID。"
+            "saveFirst": "儲存後就能設定這個群組的成員。",
+            "dropOnSave": "儲存後沒有其他行為使用群組「{group}」，它的 {count} 位成員名單會一起被清除。",
+            "dropOnDelete": "它是群組「{group}」唯一的使用者，這個群組的 {count} 位成員名單也會一起被清除。"
+        },
+        "action": {
+            "title": "轉發設定",
+            "source": "動作來源",
+            "sourceWebhook": "Webhook",
+            "sourcePluginLater": "Plugin 動作會在第二階段開放。",
+            "url": "Webhook URL",
+            "urlHint": "公開網址需用 https；區網位址需在 bot 的區網白名單上。",
+            "authLabel": "驗證模式",
+            "auth": {
+                "hmac": "HMAC（建議）",
+                "token": "Token",
+                "none": "不驗證"
+            },
+            "authNoteDrop": "儲存後會移除密鑰，webhook 不再簽章。",
+            "authNoteIssue": "儲存後 bot 會產生密鑰，只顯示一次。",
+            "replyVisibility": {
+                "label": "回覆給誰看",
+                "command": {
+                    "private": "只有執行的人",
+                    "public": "頻道裡所有人"
+                },
+                "guild": {
+                    "private": "私訊給觸發的人",
+                    "public": "頻道裡所有人"
+                },
+                "defaultMark": "（預設）",
+                "hint": "服務的回應也可以自己指定（ephemeral）；這裡是預設值。",
+                "notApplicable": "不適用：與 bot 的私訊裡只有對方看得到"
+            }
+        },
+        "secret": {
+            "label": "Webhook 密鑰",
+            "set": "已設定",
+            "unset": "未設定",
+            "rotate": "產生新密鑰",
+            "rotateTitle": "產生新的 webhook 密鑰？",
+            "rotateMessage": "新密鑰立刻生效並只顯示一次；舊密鑰在 24 小時內仍然有效，請在這段時間內把新密鑰設定到你的服務。",
+            "grace": "舊密鑰在 {time} 前仍然有效。",
+            "shownOnce": "這是新的密鑰，只會顯示這一次，請現在複製保存。",
+            "copy": "複製",
+            "copied": "已複製",
+            "saved": "我已保存"
+        },
+        "errors": {
+            "withDetail": "{reason}（{detail}）",
+            "validation_failed": "輸入不正確",
+            "name_conflict": "名稱已被使用",
+            "system_immutable": "系統行為不能這樣修改",
+            "registration_failed": "Discord 註冊失敗",
+            "not_found": "找不到這個項目",
+            "invalid_tree": "指令結構不正確"
+        },
+        "add": {
+            "open": "新增行為",
+            "title": "新增行為",
+            "intro": "在「{section}」建立行為：選擇觸發方式，再決定要轉發到哪裡。",
+            "name": "行為名稱",
+            "namePlaceholder": "例：天氣查詢",
+            "kind": "觸發類型",
+            "kinds": {
+                "command": "指令",
+                "message": "訊息比對"
+            },
+            "reason": {
+                "messageInApp": "App 指令區只能建立指令：bot 收不到使用者之間的私訊，也收不到它沒加入的伺服器裡的訊息。",
+                "commandInChannel": "Discord 無法把指令限定在單一頻道。請到上層的伺服器新增，再到 Discord 的「伺服器設定 → 整合」限制頻道。"
+            },
+            "create": "建立",
+            "created": "已建立「{title}」。",
+            "done": "完成",
+            "commandNamePlaceholder": "例：status",
+            "commandPreset": "可見性（依分區預設，建立後可在卡片調整）"
+        },
+        "command": {
+            "resync": "重新同步到 Discord",
+            "name": "Slash 指令名稱",
+            "nameHint": "1–32 個小寫英數、- 與 _，不含 /。",
+            "description": "Slash 指令說明",
+            "descriptionHint": "Discord 指令選單會顯示（1–100 字）。",
+            "reservedName": "/login 保留給系統登入。",
+            "saveAndSync": "儲存並同步到 Discord",
+            "visibility": "可見性",
+            "registration": {
+                "label": "註冊目標",
+                "global": "全域",
+                "guild": "指定伺服器"
+            },
+            "permissions": {
+                "label": "預設成員權限（只在伺服器生效）",
+                "everyone": "所有人",
+                "manageGuild": "管理伺服器",
+                "administrator": "管理員",
+                "custom": "自訂（{value}）"
+            },
+            "guildFixed": "伺服器指令只能在該伺服器使用、由伺服器安裝，這是 Discord 的規定。",
+            "sectionHere": "歸在「{section}」。",
+            "sectionMoves": "儲存後，這個指令會移到「{section}」。",
+            "sectionPending": "選好伺服器後，就會顯示這個指令歸在哪一區。",
+            "visibleRuns": "看得到就能執行。要限制伺服器裡的身分組或頻道，請到 Discord 的「伺服器設定 → 整合」。",
+            "rule": {
+                "guildNeedsGuildId": "請選擇伺服器。",
+                "guildContextsOnlyGuild": "伺服器指令只能在該伺服器使用。",
+                "guildInstallOnly": "伺服器指令只能由伺服器安裝。",
+                "globalHasNoGuild": "全域指令不指定伺服器。",
+                "privateChannelNeedsUserInstall": "「其他私訊」需要開啟使用者安裝；只有伺服器安裝時，Discord 不會在那裡顯示這個指令。"
+            },
+            "delete": "刪除指令",
+            "deleteTitle": "刪除這個指令？",
+            "deleteMessage": "/{command} 和它所有的子指令都會刪除，並從 Discord 移除，無法復原。",
+            "deleted": "已刪除 /{command}。",
+            "optionRule": {
+                "tooMany": "最多 25 個參數。",
+                "duplicateName": "已經有參數用了這個名稱。",
+                "requiredAfterOptional": "Discord 會先列必填參數：請把這個參數移到選填參數前面。"
+            }
+        },
+        "registration": {
+            "registered": "已同步到 Discord。",
+            "deferred": "已儲存，但還沒同步到 Discord；bot 連上 Discord 後會自動註冊。",
+            "removed": "已從 Discord 移除。",
+            "failed": "Discord 沒有接受：",
+            "target": {
+                "global": "全域"
+            },
+            "outcome": {
+                "created": "已建立",
+                "patched": "已更新",
+                "unchanged": "已是最新",
+                "skipped": "沒有註冊：bot 不在這個伺服器",
+                "failed": "失敗"
+            }
+        },
+        "option": {
+            "title": "指令參數",
+            "none": "沒有參數。",
+            "name": "參數名稱",
+            "description": "參數說明",
+            "required": "必填",
+            "add": "新增參數",
+            "remove": "移除參數 {name}",
+            "moveUp": "把參數 {name} 往上移",
+            "moveDown": "把參數 {name} 往下移",
+            "type": {
+                "label": "參數型別",
+                "string": "字串",
+                "integer": "整數",
+                "number": "數字",
+                "boolean": "是／否",
+                "user": "使用者",
+                "channel": "頻道",
+                "role": "身分組",
+                "mentionable": "使用者或身分組",
+                "attachment": "附件"
+            }
+        },
+        "leaf": {
+            "rootTitle": "指令內容",
+            "listTitle": "子指令",
+            "count": "{count} / {max}",
+            "chars": "指令文字總長 {count} / {max}",
+            "subcommand": "子指令名稱（/{command} …）",
+            "leafDescription": "子指令說明",
+            "leafDescriptionHint": "Discord 指令選單會顯示；留空就用標題。",
+            "titleHint": "子指令說明留空時，也當作它的說明。",
+            "toggle": "啟用或停用 {path}",
+            "more": "{path} 的更多操作",
+            "save": "儲存子指令",
+            "saveRoot": "儲存",
+            "delete": "刪除子指令",
+            "deleteTitle": "刪除這個子指令？",
+            "deleteMessage": "{path} 會被刪除，並從 Discord 移除，無法復原。",
+            "lastTitle": "要刪除整個指令嗎？",
+            "lastMessage": "指令至少要有一個子指令，所以不能只刪最後一個。要改成刪除整個 /{command} 嗎？",
+            "add": "加入子指令",
+            "addTitle": "/{command} 的新子指令",
+            "create": "加入並同步到 Discord",
+            "convertHint": "/{command} 是單一指令：加入子指令時，會先替它現在的動作取一個子指令名稱。"
+        },
+        "convert": {
+            "title": "替 /{command} 加入子指令",
+            "intro": "Discord 規定：指令有子指令之後，/{command} 本身就不能再直接執行。所以要先替它現在的動作取一個子指令名稱，把它搬到下一層。",
+            "name": "現有動作的新名稱",
+            "now": "現在",
+            "after": "轉換後",
+            "sameAction": "（動作不變）",
+            "nextLeaf": "接著設定的新子指令",
+            "note": "同步後，使用者原本輸入的 /{command} 會變成要再選子指令。指令的可見性設定不變。",
+            "submit": "轉換並新增子指令"
+        },
+        "system": {
+            "triggerKind": "觸發類型",
+            "kindMessage": "訊息 Pattern（與 bot 的私訊）",
+            "kindCommand": "Slash 指令",
+            "messageNote": "登入的訊息比對只能用在與 bot 的私訊：伺服器頻道裡的回覆所有人都看得到，登入連結會外流。只能用開頭符合或結尾符合（不能用正規表示式）；訊息前後的空白會被 Discord 去掉，所以 pattern 不能以空白開頭或結尾。",
+            "commandName": "Slash 指令名稱",
+            "commandDescription": "Slash 指令說明",
+            "commandNote": "登入一律註冊為全域指令，不設預設成員權限，而且一定保留「伺服器安裝」與「bot 私訊」，確保你隨時找得到它；不需要參數，回覆一律只有執行的人看得到。",
+            "switchToCommandHint": "改變觸發方式會先把 {command} 註冊到 Discord，成功後才停用 {old}。",
+            "switchToMessageHint": "改變觸發方式會先啟用 {pattern}，再從 Discord 移除 {old}。",
+            "save": "儲存觸發方式",
+            "whereMessage": "訊息 Pattern · 與 bot 的私訊",
+            "whereCommand": "Slash 指令 · {section}",
+            "steps": {
+                "register": "把 {command} 註冊到 Discord",
+                "registerSub": "照你設定的可見性註冊",
+                "confirm": "確認註冊成功",
+                "confirmSub": "Discord 回應成功，指令已存在",
+                "disable": "停用 {old}",
+                "disableSub": "只有前兩步都成功才會執行",
+                "enable": "啟用 {pattern}",
+                "enableSub": "與 bot 的私訊，儲存後立即生效",
+                "remove": "從 Discord 移除 {command}",
+                "removeSub": "移除失敗時留給下一次同步，登入不受影響",
+                "notRun": "未執行"
+            },
+            "switch": {
+                "title": "改變登入的觸發方式",
+                "intro": "登入是唯一能進後台的方式，所以切換會照下面的順序進行，任何一步失敗都會保留 {old}：",
+                "start": "開始切換",
+                "failed": "{old} 維持啟用，沒有任何變更。",
+                "done": "切換完成。登入現在是 {trigger}，這列在「{section}」的最上方。",
+                "sampleNote": "已用你的範例私訊「{sample}」確認 {pattern} 會觸發。"
+            },
+            "sample": "範例私訊（必填）",
+            "sampleHint": "寫一則你登入時會傳給 bot 的私訊。儲存前會用它確認 pattern 真的會觸發，避免打錯字把自己鎖在門外；範例不會被儲存。",
+            "sampleRequired": "請填一則範例私訊，用來確認 pattern 會觸發。",
+            "sampleNoMatch": "這則範例私訊不會觸發這個 pattern；照這樣存檔，你會無法登入。",
+            "ownerOnly": "只有 bot 擁有者能修改登入的觸發方式。",
+            "mustKeep": "登入指令一定要保留這一項，否則你可能看不到它。",
+            "rule": {
+                "needsGuildInstall": "登入指令一定要包含「伺服器安裝」：只開放使用者安裝時，沒有自行安裝 app 的你會看不到它。",
+                "needsBotDm": "登入指令一定要能在「bot 私訊」使用：其他地方的話，沒有和 bot 同在伺服器時就用不到。"
+            }
+        },
+        "testReply": {
+            "title": "回覆預覽",
+            "empty": "服務沒有回覆任何內容，不會送出訊息。",
+            "embeds": "{count} 個 embed：{titles}",
+            "untitled": "（無標題）",
+            "button": "連結按鈕「{label}」→ {url}",
+            "audience": {
+                "invoker": "只有執行的人看得到",
+                "channel": "頻道裡所有人看得到",
+                "dm": "回在與 bot 的私訊裡",
+                "author_dm": "改私訊作者，不貼在頻道"
+            },
+            "note": {
+                "content_truncated": "內容有 {length} 字，超過 2000 字，已截斷。",
+                "embeds_dropped": "{count} 個 embed 被略過（格式不對、超過 10 個或總長超過 6000 字）。",
+                "unknown_fields": "略過不認得的欄位：{fields}",
+                "invalid_field": "欄位 {field} 的型別不對，已略過。",
+                "components_dropped": "{count} 個元件被略過（只接受 https 連結按鈕，最多 5 列各 5 個）。",
+                "flags_dropped": "略過不允許的 flags（{flags}）；只接受 SuppressEmbeds 與 SuppressNotifications。"
+            },
+            "status": "HTTP {status}",
+            "refusedHint": "服務拒絕了這個測試請求。只驗真實簽章的服務本來就會拒絕測試，這表示 bot 連得到它；要讓它回應測試，請依測試簽章（x-karyl-test）驗證。",
+            "signatureHint": "回應的簽章不符。測試請求的回應要用 test: 前綴、並綁定請求的 nonce 簽章。",
+            "signedAsTest": "測試請求帶「測試」簽章、不帶真實使用者身分。",
+            "verified": {
+                "hmac": "回應簽章正確（HMAC）。",
+                "token": "回應簽章正確（token）。"
+            }
         }
     },
     "config": {
@@ -1392,6 +1659,7 @@
         "behavior": {
             "enabled": "行為模組是否啟用",
             "webhookTimeout": "Webhook 請求逾時（毫秒）",
+            "webhookPrivateAllowlist": "Webhook 區網允許清單（主機 / CIDR；清單內可用 http）",
             "maxRetries": "Webhook 最大重試次數"
         },
         "admin": {

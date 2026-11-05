@@ -5,24 +5,23 @@
  * 所有型別在此集中宣告，四個 service 共用。
  */
 
+import type { HostPolicyCode } from "../../utils/host-policy.js";
+import type {
+  DiscordContext,
+  DiscordIntegrationType,
+} from "../../utils/command-axes.js";
 import type {
   ApplicationCommandData,
   RESTPostAPIWebhookWithTokenJSONBody,
 } from "discord.js";
+import type { CommandTarget, ConcreteTarget } from "./command-target.js";
+import type { BehaviorReply, ReplyNote } from "./behavior-reply.js";
 
 // ── 三軸核心型別（C-runtime §2.1）────────────────────────────────────────────
 
-/**
- * 對應 Discord InteractionContextType 的字串值。
- * M0-FROZEN §1.1 鎖定列舉。
- */
-export type DiscordContext = "Guild" | "BotDM" | "PrivateChannel";
-
-/**
- * 對應 Discord ApplicationIntegrationType 的字串值。
- * M0-FROZEN §1.1 鎖定列舉。
- */
-export type DiscordIntegrationType = "guild_install" | "user_install";
+// DiscordContext / DiscordIntegrationType 定義在 utils/command-axes.ts（與其
+// 解析函式同處，讓 behavior 不必在 runtime 依賴 command-system）。
+export type { DiscordContext, DiscordIntegrationType };
 
 /**
  * 指令的 Discord 作用域。
@@ -32,7 +31,7 @@ export type CommandScope = "global" | "guild";
 
 /**
  * 三軸規格：scope + integrationTypes + contexts。
- * behaviors 表（軌二）與 plugin_commands 表（軌三）共用。
+ * behavior_commands（軌二）與 plugin_commands（軌三）共用。
  *
  * DB 儲存格式（M0-FROZEN §1.4）：
  *   integrationTypes / contexts 為 lexicographically-sorted comma-joined string，
@@ -48,11 +47,12 @@ export interface ThreeAxisSpec {
 
 /**
  * reconciler 傳給 Discord API 的完整登記規格。
- * - scope='global'：呼叫 `application.commands.create(data)`
- * - scope='guild'：per each guild 呼叫 `guild.commands.create(data)`
+ * - target='global'：呼叫 `application.commands.create(data)`
+ * - target='guild:<id>'：只在該 guild 呼叫 `guild.commands.create(data)`
+ * - target='all_guilds'：per each guild 呼叫 `guild.commands.create(data)`
  */
 export interface DiscordRegistrationSpec {
-  scope: CommandScope;
+  target: CommandTarget;
   data: ApplicationCommandData;
 }
 
@@ -73,12 +73,26 @@ export class RejectionError extends Error {
 
 // ── ReconcileReport / ReconcileItemResult（C-runtime §2.2）──────────────────
 
+/** 一個指令在一個具體目標（全域或某個伺服器）上的處理結果。 */
+export type TargetOutcome =
+  | { target: ConcreteTarget; status: "created" | "patched" | "unchanged" }
+  | {
+      target: ConcreteTarget;
+      status: "failed";
+      attempted: "create" | "patch";
+      error: string;
+    }
+  /** `guild:<id>` 但 bot 不在（或此 shard 看不到）那個伺服器 */
+  | { target: ConcreteTarget; status: "skipped"; reason: "guild_unavailable" };
+
 export interface ReconcileItemResult {
   ok: boolean;
   source: "behavior" | "plugin_command";
   sourceId: number;
   action?: "create" | "patch" | "delete" | "noop";
   error?: string;
+  /** 逐目標的結果（有實際套用到 Discord 時才有） */
+  targets?: TargetOutcome[];
 }
 
 export interface ReconcileReport {
@@ -134,15 +148,27 @@ export interface SanitizedEmbed {
 
 export interface ForwardResult {
   ok: boolean;
-  /** 已 trim 的 content，可直接 relay 給用戶 */
-  relayContent: string;
-  /** BH-2.2A：webhook 回應的 embeds（已白名單清洗 + 截斷），可直接 relay */
-  relayEmbeds?: SanitizedEmbed[];
+  /**
+   * 解析並清洗過的回覆（#140 回覆模型），交給 ReplyRenderer；失敗或 receiver
+   * 沒回任何東西時為 `{}`。
+   */
+  reply: BehaviorReply;
+  /** 清洗時丟掉或改掉的東西（admin 測試結果顯示，live 路徑記 log） */
+  notes: ReplyNote[];
   /** HTTP 狀態（失敗時） */
   status?: number;
-  /** 錯誤描述（失敗時） */
+  /** 錯誤描述（失敗時；只進 log / 統計 / admin，不給終端使用者） */
   error?: string;
+  /**
+   * 失敗的機器碼：host policy 拒絕（例如 private_not_allowlisted），或
+   * `response_signature`（回應簽章缺少、過期或不符）
+   */
+  errorCode?: ForwardErrorCode;
+  /** 回應簽章驗過時用的是哪種密鑰（admin 測試結果顯示）；沒驗就不帶 */
+  verified?: "hmac" | "token";
 }
+
+export type ForwardErrorCode = HostPolicyCode | "response_signature";
 
 // ── WebhookForwarder 輸入 payload 型別別名────────────────────────────────────
 

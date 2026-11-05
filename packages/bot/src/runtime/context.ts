@@ -2,9 +2,10 @@ import type { Client } from "discord.js";
 import type { SessionStore } from "../adapters/session-store.js";
 import type { startWebServer } from "../modules/web-core/server.js";
 import type { CommandReconciler } from "../modules/command-system/reconcile.service.js";
+import type { CommandNamespace } from "../modules/command-system/command-namespace.js";
 import type { InteractionDispatcher } from "../modules/command-system/interaction-dispatcher.service.js";
 import type { WebhookForwarder } from "../modules/command-system/webhook-forwarder.service.js";
-import type { MessagePatternMatcher } from "../modules/command-system/message-pattern-matcher.service.js";
+import type { MessageTriggerMatcher } from "../modules/command-system/message-trigger-matcher.service.js";
 
 export type WebServerHandle = Awaited<ReturnType<typeof startWebServer>>;
 
@@ -25,7 +26,9 @@ export interface RuntimeContext {
   readonly webhookForwarder: WebhookForwarder;
   readonly interactionDispatcher: InteractionDispatcher;
   readonly commandReconciler: CommandReconciler;
-  readonly messageMatcher: MessagePatternMatcher;
+  /** The one Discord command namespace: plugin registration and behavior commands check it. */
+  readonly commandNamespace: CommandNamespace;
+  readonly messageMatcher: MessageTriggerMatcher;
 
   /**
    * Set true once gracefulShutdown starts so the process-level error

@@ -9,7 +9,16 @@ import {
 import type { BotStatus, HealthStatus } from './types';
 
 export class ApiError extends Error {
-    constructor(public readonly status: number, message: string) {
+    constructor(
+        public readonly status: number,
+        message: string,
+        /** Machine-readable reason, from `{ error: { code } }` bodies (behavior API). */
+        public readonly code: string | null = null,
+        /** The request field the error is about, when the server names one. */
+        public readonly field: string | null = null,
+        /** Structured detail some refusals carry (behavior API: `registration_failed` targets). */
+        public readonly details: unknown = null
+    ) {
         super(message);
         this.name = 'ApiError';
     }
@@ -78,7 +87,8 @@ export async function authedFetch(path: string, init: RequestInit = {}): Promise
 /**
  * Promote a Fastify response into a typed JSON body — or throw an
  * `ApiError` carrying the richest available message. Surfaces the
- * server's `body.error` string when it ships one (most routes do),
+ * server's `body.error` string when it ships one (most routes do), or
+ * `body.error.{message,code,field}` for structured errors (behavior API),
  * falls back to the status line, and tolerates non-JSON bodies (proxy
  * error pages). This is the canonical version; per-module copies in
  * api/*.ts previously diverged in subtle ways (some lost body.error,
@@ -87,15 +97,25 @@ export async function authedFetch(path: string, init: RequestInit = {}): Promise
 export async function jsonOrThrow<T>(response: Response): Promise<T> {
     if (!response.ok) {
         let message = `${response.status}${response.statusText ? ' ' + response.statusText : ''}`;
+        let code: string | null = null;
+        let field: string | null = null;
+        let details: unknown = null;
         try {
             const body = await response.json();
-            if (body && typeof body.error === 'string' && body.error.length > 0) {
-                message = body.error;
+            const error = body?.error;
+            if (typeof error === 'string' && error.length > 0) {
+                message = error;
+            } else if (error && typeof error === 'object') {
+                // { error: { code, message, field?, details? } } — the behavior API's shape
+                if (typeof error.message === 'string' && error.message.length > 0) message = error.message;
+                if (typeof error.code === 'string') code = error.code;
+                if (typeof error.field === 'string') field = error.field;
+                if (error.details !== undefined) details = error.details;
             }
         } catch {
             // Non-JSON body (e.g. proxy error page). Keep the status line.
         }
-        throw new ApiError(response.status, message);
+        throw new ApiError(response.status, message, code, field, details);
     }
     return response.json() as Promise<T>;
 }
@@ -127,6 +147,22 @@ export async function exchangeOneTimeToken(token: string): Promise<IssuedTokens>
         throw new ApiError(response.status, message);
     }
     return (await response.json()) as IssuedTokens;
+}
+
+/**
+ * How to ask the bot for a login link: the System Behavior's current
+ * trigger (#146). Public — the login page reads it before anyone is
+ * signed in. `null`: the bot has no login trigger to name.
+ */
+export type LoginTriggerHint =
+    | { kind: 'message'; match: 'startswith' | 'endswith' | 'regex'; text: string }
+    | { kind: 'command'; text: string };
+
+export async function fetchLoginTrigger(): Promise<LoginTriggerHint | null> {
+    const response = await fetch('/api/auth/login-trigger');
+    if (!response.ok) throw new ApiError(response.status, `HTTP ${response.status}`);
+    const body = (await response.json()) as { trigger: LoginTriggerHint | null };
+    return body.trigger;
 }
 
 export async function logout(): Promise<void> {

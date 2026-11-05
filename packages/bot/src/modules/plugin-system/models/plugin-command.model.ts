@@ -1,5 +1,8 @@
 import { DataTypes, Op } from "sequelize";
 import { sequelize } from "../../../db.js";
+import { botEventLog } from "../../bot-events/bot-event-log.js";
+import type { CommandTarget } from "../../command-system/command-target.js";
+import type { ManifestPluginCommand } from "../plugin-registry.service.js";
 
 export const PluginCommand = sequelize.define(
   "PluginCommand",
@@ -69,7 +72,9 @@ export interface PluginCommandRow {
   adminEnabled: boolean;
 }
 
-function rowOf(model: InstanceType<typeof PluginCommand>): PluginCommandRow {
+export function rowOfPluginCommand(
+  model: InstanceType<typeof PluginCommand>,
+): PluginCommandRow {
   return {
     id: model.getDataValue("id") as number,
     pluginId: model.getDataValue("pluginId") as number,
@@ -89,59 +94,83 @@ export const findPluginCommandsByPlugin = async (
   pluginId: number,
 ): Promise<PluginCommandRow[]> => {
   const rows = await PluginCommand.findAll({ where: { pluginId } });
-  return rows.map(rowOf);
+  return rows.map(rowOfPluginCommand);
 };
 
-/**
- * Reverse lookup used by the interaction dispatcher. Returns the
- * plugin command for the given (name, guildId) — tries guild-scoped
- * first, falls back to global. Discord delivers the raw guildId on
- * the interaction; commands registered globally are also visible
- * inside guilds, so we have to check both.
- */
-export const findPluginCommandByName = async (
-  name: string,
-  guildId: string | null,
-): Promise<PluginCommandRow | null> => {
-  if (guildId) {
-    const guildScoped = await PluginCommand.findOne({
-      where: { name, guildId },
-    });
-    if (guildScoped) return rowOf(guildScoped);
+// ── 註冊目標 ─────────────────────────────────────────────────────────────────
+// CommandTarget 是 command-system 的型別；這裡只做 type import，不形成
+// plugin-system → command-system 的 runtime 依賴。
+
+/** 軌三 manifest 的 scope → 註冊目標：guild 是「每個伺服器」（reconciler 逐伺服器註冊）。 */
+export function pluginCommandScopeTarget(
+  scope: string | undefined,
+): CommandTarget {
+  return scope === "guild" ? "all_guilds" : "global";
+}
+
+/** 軌三列的 manifestJson；無法解析或缺名稱時回 null。 */
+export function parsePluginCommandManifest(
+  manifestJson: string,
+): ManifestPluginCommand | null {
+  try {
+    const parsed = JSON.parse(manifestJson) as ManifestPluginCommand | null;
+    return parsed && parsed.name ? parsed : null;
+  } catch {
+    return null;
   }
-  const global = await PluginCommand.findOne({
-    where: { name, guildId: { [Op.is]: null } },
-  });
-  return global ? rowOf(global) : null;
-};
+}
 
 /**
- * Hard collision check used by the registry to refuse a new plugin
- * registration if it would step on an existing plugin's command.
- * Looks across ALL plugins for the same (name, guildId) — including
- * guild-vs-global ambiguity (a global command and a guild command
- * with the same name in the same guild collide because Discord shows
- * them both to the user).
+ * 這一列實際註冊在哪：軌一 guild feature 列 → guild:<guildId>；軌三列 →
+ * 依 manifest scope（解析失敗保守視為 global）。
  */
-export const findCommandCollisions = async (
-  excludePluginId: number,
-  candidate: { name: string; guildId: string | null },
-): Promise<PluginCommandRow[]> => {
-  const where: Record<string, unknown> = {
-    name: candidate.name,
-    pluginId: { [Op.ne]: excludePluginId },
-  };
-  // For a global candidate (guildId=null) collide with ANY existing
-  // row of the same name (per-guild or global). For a guild-scoped
-  // candidate, collide with the same guild OR with a global row.
-  const rows = await PluginCommand.findAll({ where });
-  return rows
-    .filter((m) => {
-      const g = (m.getDataValue("guildId") as string | null) ?? null;
-      if (candidate.guildId === null) return true;
-      return g === null || g === candidate.guildId;
-    })
-    .map(rowOf);
+export function pluginCommandRowTarget(row: PluginCommandRow): CommandTarget {
+  if (row.featureKey !== null && row.guildId) return `guild:${row.guildId}`;
+  return pluginCommandScopeTarget(
+    parsePluginCommandManifest(row.manifestJson)?.scope,
+  );
+}
+
+/**
+ * Reverse lookup used by the interaction dispatcher: the plugin command a
+ * Discord invocation belongs to. `commandGuildId` is where the invoked
+ * command is registered (null = a global command), not where it was used.
+ * Only a row whose registration target covers it may claim the
+ * invocation — a global command is claimed only by a global track-3 row;
+ * a guild command only by that guild's feature row or a scope=guild
+ * track-3 row. (Same rule as command-target.ts targetMatchesInvocation.)
+ * Otherwise a same-named row registered elsewhere (e.g. a global plugin
+ * /foo vs a behavior's guild /foo) would steal the interaction.
+ */
+export const findPluginCommandForInvocation = async (
+  name: string,
+  commandGuildId: string | null,
+): Promise<PluginCommandRow | null> => {
+  const rows = (await PluginCommand.findAll({ where: { name } })).map(
+    rowOfPluginCommand,
+  );
+  const covers = (target: CommandTarget): boolean =>
+    commandGuildId === null
+      ? target === "global"
+      : target === "all_guilds" || target === `guild:${commandGuildId}`;
+  const matching = rows.filter((r) => covers(pluginCommandRowTarget(r)));
+  // 指定伺服器的列優先於 all_guilds（同名同伺服器時 Discord 只會留一個）。
+  // 註冊時的名稱檢查應該讓這種情況不會發生；真的發生就記下來。
+  const chosen =
+    matching.find((r) => r.guildId !== null) ?? matching[0] ?? null;
+  if (matching.length > 1 && chosen) {
+    botEventLog.record(
+      "warn",
+      "bot",
+      `plugin-commands: /${name} 有 ${matching.length} 個 plugin 指令列都涵蓋這次呼叫（commandGuildId=${commandGuildId ?? "global"}），選用 plugin ${chosen.pluginId} 的列 ${chosen.id}`,
+      {
+        cmd: name,
+        commandGuildId,
+        candidates: matching.map((r) => ({ id: r.id, pluginId: r.pluginId })),
+      },
+    );
+  }
+  return chosen;
 };
 
 export interface UpsertPluginCommandInput {
@@ -169,7 +198,7 @@ export const upsertPluginCommand = async (
       featureKey: input.featureKey ?? null,
       manifestJson: input.manifestJson,
     });
-    return rowOf(existing);
+    return rowOfPluginCommand(existing);
   }
   const created = await PluginCommand.create({
     pluginId: input.pluginId,
@@ -179,7 +208,7 @@ export const upsertPluginCommand = async (
     featureKey: input.featureKey ?? null,
     manifestJson: input.manifestJson,
   });
-  return rowOf(created);
+  return rowOfPluginCommand(created);
 };
 
 export const findPluginCommandsByFeature = async (
@@ -189,7 +218,7 @@ export const findPluginCommandsByFeature = async (
   const rows = await PluginCommand.findAll({
     where: { pluginId, featureKey },
   });
-  return rows.map(rowOf);
+  return rows.map(rowOfPluginCommand);
 };
 
 export const deletePluginCommandRow = async (rowId: number): Promise<void> => {

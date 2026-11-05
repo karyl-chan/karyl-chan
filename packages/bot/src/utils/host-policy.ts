@@ -1,11 +1,49 @@
 import { lookup } from "dns/promises";
 import { isIP } from "net";
 import { moduleLogger } from "../logger.js";
+import type { PinnedAddress } from "./pinned-dispatcher.js";
+import {
+  addressBytes,
+  classifyAddress,
+  classifyBytes,
+  KNOWN_METADATA_ADDRESSES,
+  transitionEmbeddedIPv4,
+  type AddressClass,
+} from "./ip-address.js";
+import {
+  allowlistMatches,
+  cidrBounds,
+  cidrContains,
+  normalizeHostname,
+  type AllowlistEntry,
+} from "./webhook-allowlist.js";
 
 const log = moduleLogger("host-policy");
 
+/**
+ * Machine-readable refusal reason. `blocked` is the generic code of the
+ * plugin / RCON / public-media policies; the webhook policy
+ * (`resolveWebhookTarget`) uses the specific ones so the admin UI can
+ * say why and what to change.
+ */
+export type HostPolicyCode =
+  | "blocked"
+  | "invalid_url"
+  | "invalid_scheme"
+  | "invalid_host"
+  | "invalid_port"
+  | "dns_failed"
+  | "blocked_metadata"
+  | "blocked_loopback"
+  | "blocked_reserved"
+  | "private_not_allowlisted"
+  | "https_required";
+
 export class HostPolicyError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    public readonly code: HostPolicyCode = "blocked",
+  ) {
     super(message);
     this.name = "HostPolicyError";
   }
@@ -18,130 +56,15 @@ const BLOCKED_HOSTNAMES = new Set([
   "metadata.azure.com",
 ]);
 
-function isBlockedIPv4(ip: string): boolean {
-  const octets = ip.split(".").map(Number);
-  if (
-    octets.length !== 4 ||
-    octets.some((o) => !Number.isInteger(o) || o < 0 || o > 255)
-  ) {
-    return false;
-  }
-  const [a, b, c, d] = octets;
-  // Link-local 169.254.0.0/16 — AWS/GCP/Azure/DO/IBM metadata all live here
-  if (a === 169 && b === 254) return true;
-  // Azure WireServer
-  if (a === 168 && b === 63 && c === 129 && d === 16) return true;
-  // Alibaba Cloud
-  if (a === 100 && b === 100 && c === 100 && d === 200) return true;
-  // Oracle Cloud
-  if (a === 192 && b === 0 && c === 0 && d === 192) return true;
-  return false;
-}
-
-/** Returns true for RFC1918 private ranges: 10/8, 172.16/12, 192.168/16. */
-function isPrivateIPv4(ip: string): boolean {
-  const octets = ip.split(".").map(Number);
-  if (
-    octets.length !== 4 ||
-    octets.some((o) => !Number.isInteger(o) || o < 0 || o > 255)
-  ) {
-    return false;
-  }
-  const [a, b] = octets;
-  if (a === 10) return true;
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 192 && b === 168) return true;
-  return false;
-}
-
 /**
- * Returns true for RFC 6598 shared address space / carrier-grade NAT
- * (100.64.0.0/10). This is NOT public internet — ISPs and cloud providers
- * use it for internal NAT (and Tailscale etc.), so the public-only webhook
- * policy must treat it like RFC1918.
+ * Classes no policy ever lets through: link-local (169.254/16, fe80::/10
+ * — where most cloud metadata lives) and the known metadata endpoints
+ * outside it.
  */
-function isSharedAddressSpaceIPv4(ip: string): boolean {
-  const octets = ip.split(".").map(Number);
-  if (
-    octets.length !== 4 ||
-    octets.some((o) => !Number.isInteger(o) || o < 0 || o > 255)
-  ) {
-    return false;
-  }
-  const [a, b] = octets;
-  return a === 100 && b >= 64 && b <= 127;
-}
-
-/** Returns true for loopback: 127.0.0.0/8. */
-function isLoopbackIPv4(ip: string): boolean {
-  const octets = ip.split(".").map(Number);
-  if (
-    octets.length !== 4 ||
-    octets.some((o) => !Number.isInteger(o) || o < 0 || o > 255)
-  ) {
-    return false;
-  }
-  return octets[0] === 127;
-}
-
-/** Returns true for 0.0.0.0 (unspecified). */
-function isUnspecifiedIPv4(ip: string): boolean {
-  return ip === "0.0.0.0";
-}
-
-/**
- * If `ip` is an IPv4-mapped IPv6 address (`::ffff:a.b.c.d` or
- * `::ffff:HI:LO` hex form), return the embedded IPv4 in dotted form;
- * otherwise null. Without this, an attacker can submit
- * `https://evil.example/` whose DNS resolves to `::ffff:127.0.0.1`,
- * which Node will happily connect to as IPv4 loopback while our IPv6
- * blocklist sees an unrecognised v6 address.
- */
-function ipv4MappedToIPv4(ip: string): string | null {
-  const lower = ip.toLowerCase();
-  const dotted = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(lower);
-  if (dotted) {
-    const octets = dotted[1].split(".").map(Number);
-    if (octets.every((o) => Number.isInteger(o) && o >= 0 && o <= 255)) {
-      return dotted[1];
-    }
-    return null;
-  }
-  const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(lower);
-  if (hex) {
-    const hi = parseInt(hex[1], 16);
-    const lo = parseInt(hex[2], 16);
-    return `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
-  }
-  return null;
-}
-
-/** Returns true for IPv6 unspecified `::` and its fully-expanded form. */
-function isUnspecifiedIPv6(ip: string): boolean {
-  if (ip === "::") return true;
-  // Fully expanded all-zeros: 0:0:0:0:0:0:0:0 (with leading-zero variants)
-  if (/^(0+:){7}0+$/.test(ip)) return true;
-  return false;
-}
-
-/** Returns true for IPv6 loopback `::1` and its expanded forms. */
-function isLoopbackIPv6(ip: string): boolean {
-  if (ip === "::1") return true;
-  // Fully expanded: 0:0:0:0:0:0:0:1 (with leading-zero variants)
-  if (/^(0+:){7}0*1$/i.test(ip)) return true;
-  return false;
-}
-
-/** Returns true for IPv6 addresses that should be blocked by external policy. */
-function isBlockedIPv6(ip: string): boolean {
-  if (isLoopbackIPv6(ip)) return true;
-  if (isUnspecifiedIPv6(ip)) return true;
-  // Link-local fe80::/10
-  if (/^fe[89ab][0-9a-f]:/i.test(ip)) return true;
-  // Unique-local fc00::/7 (fc:: and fd::)
-  if (/^f[cd][0-9a-f]{2}:/i.test(ip)) return true;
-  return false;
-}
+const NEVER_REACHABLE: ReadonlySet<AddressClass> = new Set([
+  "linkLocal",
+  "metadata",
+]);
 
 /**
  * URL.hostname returns IPv6 literals wrapped in `[...]`; strip them so
@@ -165,154 +88,180 @@ function isValidPort(port: number): boolean {
 }
 
 /**
- * Shared DNS resolution helper. Resolves hostname to addresses and calls
- * `checkAddress(address, family)` for each result. If any call throws
- * HostPolicyError it propagates; non-HostPolicyError is wrapped as DNS failure.
- * No-ops if `host` is already a literal IP (isIP !== 0).
+ * Classify `ip`; a non-literal (should not happen — DNS answers and
+ * isIP-checked hosts only) is treated as public, mirroring the old
+ * per-range checks that let unrecognised strings fall through.
  */
-async function resolveAndCheck(
+function classOf(ip: string): AddressClass {
+  return classifyAddress(ip) ?? "public";
+}
+
+/**
+ * For a transition-class address (NAT64 / 6to4), the class of the IPv4
+ * it embeds; null when the embedding cannot be decoded.
+ */
+function embeddedClass(ip: string): AddressClass | null {
+  const v4 = transitionEmbeddedIPv4(ip);
+  return v4 ? classOf(v4) : null;
+}
+
+/**
+ * How a policy turns a refusal into an error. The webhook policy keeps
+ * the specific `code`; the boolean policies (RCON / plugin / public-media)
+ * have always thrown the generic `blocked` code.
+ */
+type Refuse = (code: HostPolicyCode, message: string) => HostPolicyError;
+const refuseCoded: Refuse = (code, message) => new HostPolicyError(message, code);
+const refuseGeneric: Refuse = (_code, message) => new HostPolicyError(message);
+
+/**
+ * Normalise + validate a host and port and refuse the metadata
+ * hostnames (worded per policy by `blockedHostMessage`). Returns the
+ * bracket-stripped host.
+ */
+function vetHost(
+  rawHost: string,
+  port: number,
+  refuse: Refuse,
+  blockedHostMessage: (host: string) => string,
+): string {
+  const host = stripIPv6Brackets(rawHost);
+  if (!isValidHostnameFormat(host)) {
+    throw refuse("invalid_host", "無效的主機名稱");
+  }
+  if (!isValidPort(port)) {
+    throw refuse("invalid_port", "無效的端口號碼");
+  }
+  if (BLOCKED_HOSTNAMES.has(normalizeHostname(host))) {
+    throw refuse("blocked_metadata", blockedHostMessage(host));
+  }
+  return host;
+}
+
+/**
+ * Every address a vetted host stands for: the literal itself, or every
+ * DNS answer (resolved once). A failed lookup — or one with no answers,
+ * which would otherwise pass every per-address check vacuously — is
+ * refused as `dns_failed` with `dnsFailedMessage`.
+ */
+async function hostAddresses(
   host: string,
-  checkAddress: (address: string, family: number) => void,
-): Promise<void> {
-  if (isIP(host) !== 0) return;
+  refuse: Refuse,
+  dnsFailedMessage: string,
+): Promise<string[]> {
+  if (isIP(host) !== 0) return [host];
+  let answers: Array<{ address: string }>;
   try {
-    const resolved = await lookup(host, { all: true });
-    for (const { address, family } of resolved) {
-      checkAddress(address, family);
-    }
+    answers = await lookup(host, { all: true });
   } catch (error) {
-    if (error instanceof HostPolicyError) throw error;
     log.error({ err: error, host }, "DNS lookup failed");
-    throw new HostPolicyError("無法解析主機名稱");
+    throw refuse("dns_failed", dnsFailedMessage);
+  }
+  if (answers.length === 0) throw refuse("dns_failed", dnsFailedMessage);
+  return answers.map(({ address }) => address);
+}
+
+/**
+ * Shared skeleton of the boolean policies: vet the host, then refuse if
+ * any address it stands for `isDenied`.
+ *
+ * Does not defend against DNS rebinding between this check and the
+ * caller's own connect — `resolveWebhookTarget` returns the checked
+ * addresses so its caller can pin them.
+ */
+async function checkHost(
+  rawHost: string,
+  port: number,
+  isDenied: (address: string) => boolean,
+  denyMessage: string,
+): Promise<void> {
+  const host = vetHost(rawHost, port, refuseGeneric, () => denyMessage);
+  const addresses = await hostAddresses(host, refuseGeneric, "無法解析主機名稱");
+  for (const address of addresses) {
+    if (isDenied(address)) throw new HostPolicyError(denyMessage);
   }
 }
 
 /**
  * assertAllowedTarget — RCON / internal use.
  *
- * Blocks cloud metadata endpoints only (link-local 169.254/16, Azure
- * WireServer, Alibaba, Oracle). Does NOT block RFC1918 or loopback —
- * docker-internal services legitimately live in those ranges.
+ * Blocks cloud metadata endpoints only (link-local 169.254/16 and
+ * fe80::/10, Azure WireServer, Alibaba, Oracle, AWS IPv6 IMDS — also
+ * when smuggled through an IPv4-mapped / NAT64 / 6to4 spelling). Does
+ * NOT block RFC1918 or loopback — docker-internal services legitimately
+ * live in those ranges.
  */
 export async function assertAllowedTarget(
   host: string,
   port: number,
 ): Promise<void> {
-  host = stripIPv6Brackets(host);
-  if (!isValidHostnameFormat(host)) {
-    throw new HostPolicyError("無效的主機名稱");
-  }
-  if (!isValidPort(port)) {
-    throw new HostPolicyError("無效的端口號碼");
-  }
-
-  if (BLOCKED_HOSTNAMES.has(host.toLowerCase().replace(/\.$/, ""))) {
-    throw new HostPolicyError("主機目標不被允許");
-  }
-
-  if (isIP(host) === 4 && isBlockedIPv4(host)) {
-    throw new HostPolicyError("主機目標不被允許");
-  }
-  if (isIP(host) === 6) {
-    const mapped = ipv4MappedToIPv4(host);
-    if (mapped && isBlockedIPv4(mapped)) {
-      throw new HostPolicyError("主機目標不被允許");
-    }
-  }
-
-  // Catch hostname -> metadata-IP tricks. Does not defend against DNS rebinding
-  // between this check and the actual TCP connect; accepted trade-off for scope.
-  await resolveAndCheck(host, (address, family) => {
-    if (family === 4 && isBlockedIPv4(address)) {
-      throw new HostPolicyError("主機目標不被允許");
-    }
-    if (family === 6) {
-      const mapped = ipv4MappedToIPv4(address);
-      if (mapped && isBlockedIPv4(mapped)) {
-        throw new HostPolicyError("主機目標不被允許");
+  await checkHost(
+    host,
+    port,
+    (address) => {
+      const cls = classOf(address);
+      if (NEVER_REACHABLE.has(cls)) return true;
+      if (cls === "transition") {
+        const inner = embeddedClass(address);
+        return inner !== null && NEVER_REACHABLE.has(inner);
       }
-    }
-  });
+      return false;
+    },
+    "主機目標不被允許",
+  );
 }
 
 /**
- * assertExternalTarget — Webhook URLs (admin-configured, bot calls outbound).
- *
- * Enforces the strictest policy: blocks cloud metadata, RFC1918 private
- * ranges, loopback, unspecified, and the IPv6 equivalents. Only public
- * internet addresses are accepted.
- *
- * Escape hatch: set env WEBHOOK_ALLOW_PRIVATE=true to skip the
- * RFC1918 check (metadata is still blocked). Intended for ops debugging
- * only — never enable in production.
+ * True when the legacy WEBHOOK_ALLOW_PRIVATE dev hatch is on. Read from
+ * process.env per call so tests can flip it per-case without
+ * re-importing the frozen `config` module; operators set it once at
+ * deploy time, so the boot-frozen value and the runtime read are
+ * observationally equivalent in prod.
  */
-export async function assertExternalTarget(
+function legacyAllowPrivate(): boolean {
+  return process.env.WEBHOOK_ALLOW_PRIVATE === "true";
+}
+
+/**
+ * assertPublicMediaTarget — strict public-internet-only policy for
+ * arbitrary user / plugin-supplied media URLs (voice playback).
+ *
+ * Only `public` addresses pass: cloud metadata, link-local, loopback,
+ * unspecified, RFC1918 / shared / ULA, non-routable ranges (0/8,
+ * 198.18/15, 224/4, 240/4, fec0::/10, multicast, ::/96) and the NAT64 /
+ * 6to4 transition prefixes are all refused.
+ *
+ * Historical quirk kept as-is: the legacy WEBHOOK_ALLOW_PRIVATE=true dev
+ * hatch also lets `private` addresses through here (everything else is
+ * still blocked). Never enable it in production.
+ */
+export async function assertPublicMediaTarget(
   host: string,
   port: number,
 ): Promise<void> {
-  host = stripIPv6Brackets(host);
-  if (!isValidHostnameFormat(host)) {
-    throw new HostPolicyError("無效的主機名稱");
-  }
-  if (!isValidPort(port)) {
-    throw new HostPolicyError("無效的端口號碼");
-  }
-
-  // Read directly from process.env so tests can flip the escape
-  // hatch per-case without re-importing the frozen `config` module.
-  // Bot operators set this once at deploy time; the boot-frozen value
-  // and the runtime read are observationally equivalent in prod.
-  const allowPrivate = process.env.WEBHOOK_ALLOW_PRIVATE === "true";
-  const denyExternal = (): never => {
-    throw new HostPolicyError("Webhook 目標不被允許");
-  };
-  const checkIPv4 = (ip: string) => {
-    if (isBlockedIPv4(ip)) denyExternal();
-    if (!allowPrivate && isPrivateIPv4(ip)) denyExternal();
-    if (!allowPrivate && isSharedAddressSpaceIPv4(ip)) denyExternal();
-    if (isLoopbackIPv4(ip)) denyExternal();
-    if (isUnspecifiedIPv4(ip)) denyExternal();
-  };
-
-  if (BLOCKED_HOSTNAMES.has(host.toLowerCase().replace(/\.$/, ""))) {
-    denyExternal();
-  }
-
-  if (isIP(host) === 4) {
-    checkIPv4(host);
-    return;
-  }
-
-  if (isIP(host) === 6) {
-    const mapped = ipv4MappedToIPv4(host);
-    if (mapped) {
-      checkIPv4(mapped);
-      return;
-    }
-    if (isBlockedIPv6(host)) denyExternal();
-    return;
-  }
-
-  // Hostname — resolve and check all addresses
-  await resolveAndCheck(host, (address, family) => {
-    if (family === 4) {
-      checkIPv4(address);
-    } else if (family === 6) {
-      const mapped = ipv4MappedToIPv4(address);
-      if (mapped) {
-        checkIPv4(mapped);
-      } else if (isBlockedIPv6(address)) {
-        denyExternal();
-      }
-    }
-  });
+  const allowPrivate = legacyAllowPrivate();
+  await checkHost(
+    host,
+    port,
+    (address) => {
+      const cls = classOf(address);
+      if (cls === "public") return false;
+      if (cls === "private") return !allowPrivate;
+      return true;
+    },
+    "媒體 URL 目標不被允許",
+  );
 }
 
 /**
  * assertPluginTarget — Plugin manifest URLs (docker-compose internal services).
  *
- * Blocks cloud metadata endpoints (same as assertAllowedTarget). Allows
- * RFC1918 because docker bridge networks legitimately use 172.16-31.x.x.
+ * Blocks cloud metadata / link-local (same as assertAllowedTarget),
+ * unspecified, and the clearly non-routable ranges (0/8, 198.18/15,
+ * 224/4, 240/4, fec0::/10, multicast, ::/96). Allows RFC1918 / ULA
+ * because docker bridge networks legitimately use 172.16-31.x.x.
+ * NAT64 / 6to4 addresses are judged by the IPv4 they embed (an
+ * undecodable embedding is refused).
  *
  * In production (NODE_ENV=production), additionally blocks loopback
  * (127.x.x.x / ::1) to prevent a manifest from self-referencing the
@@ -322,58 +271,215 @@ export async function assertPluginTarget(
   host: string,
   port: number,
 ): Promise<void> {
-  host = stripIPv6Brackets(host);
-  if (!isValidHostnameFormat(host)) {
-    throw new HostPolicyError("無效的主機名稱");
-  }
-  if (!isValidPort(port)) {
-    throw new HostPolicyError("無效的端口號碼");
-  }
-
-  // Same per-call read rationale as `allowPrivate` above — tests
+  // Same per-call read rationale as `legacyAllowPrivate` — tests
   // toggle NODE_ENV per-case to assert the prod vs dev branch.
   const isProd = process.env.NODE_ENV === "production";
-  const denyPlugin = (): never => {
-    throw new HostPolicyError("Plugin 目標不被允許");
+  const deniedClass = (cls: AddressClass): boolean => {
+    if (cls === "public" || cls === "private") return false;
+    if (cls === "loopback") return isProd;
+    return true; // linkLocal, metadata, unspecified, reserved
   };
-  const checkIPv4 = (ip: string) => {
-    if (isBlockedIPv4(ip)) denyPlugin();
-    if (isUnspecifiedIPv4(ip)) denyPlugin();
-    if (isProd && isLoopbackIPv4(ip)) denyPlugin();
-  };
-
-  if (BLOCKED_HOSTNAMES.has(host.toLowerCase().replace(/\.$/, ""))) {
-    denyPlugin();
-  }
-
-  if (isIP(host) === 4) {
-    checkIPv4(host);
-    return;
-  }
-
-  if (isIP(host) === 6) {
-    const mapped = ipv4MappedToIPv4(host);
-    if (mapped) {
-      checkIPv4(mapped);
-      return;
-    }
-    if (isProd && (isLoopbackIPv6(host) || isUnspecifiedIPv6(host))) {
-      denyPlugin();
-    }
-    return;
-  }
-
-  // Hostname — resolve and check all addresses
-  await resolveAndCheck(host, (address, family) => {
-    if (family === 4) {
-      checkIPv4(address);
-    } else if (family === 6) {
-      const mapped = ipv4MappedToIPv4(address);
-      if (mapped) {
-        checkIPv4(mapped);
-      } else if (isProd && (isLoopbackIPv6(address) || isUnspecifiedIPv6(address))) {
-        denyPlugin();
+  await checkHost(
+    host,
+    port,
+    (address) => {
+      const cls = classOf(address);
+      if (cls === "transition") {
+        const inner = embeddedClass(address);
+        return inner === null || deniedClass(inner);
       }
+      return deniedClass(cls);
+    },
+    "Plugin 目標不被允許",
+  );
+}
+
+// ── behavior webhook policy ──────────────────────────────────────────────────
+
+/** Where the operator edits the allowlist — quoted in every refusal. */
+const ALLOWLIST_SETTING =
+  "環境變數 WEBHOOK_PRIVATE_ALLOWLIST（目前值見 系統設定 → 行為模組；修改後需重啟）";
+
+/** A webhook target that passed the policy, with the addresses it was checked at. */
+export interface WebhookTarget {
+  url: URL;
+  /**
+   * Every DNS answer that passed, in resolver order (never empty).
+   * Connect only to these (DNS-rebinding guard) — see pinned-dispatcher.
+   */
+  addresses: PinnedAddress[];
+}
+
+/**
+ * Boot-time nudge: the legacy hatch opens every private address to every
+ * behavior webhook. Still honoured (the e2e harness and the local dev
+ * launcher use it) but production should list targets explicitly.
+ */
+export function warnIfLegacyWebhookAllowPrivate(): void {
+  if (legacyAllowPrivate() && process.env.NODE_ENV === "production") {
+    log.warn(
+      "WEBHOOK_ALLOW_PRIVATE=true is deprecated: it lets behavior webhooks reach every private address. List the LAN targets in WEBHOOK_PRIVATE_ALLOWLIST instead.",
+    );
+  }
+}
+
+/**
+ * Allowlist entries that cannot do what the operator probably meant:
+ * a metadata / loopback hostname (never applies), a CIDR / IP reaching
+ * beyond private space (only its private part applies), or a private
+ * range covering a metadata address (that address stays refused — the
+ * warning names it). One readable warning per such entry, naming it.
+ */
+export function ineffectiveAllowlistEntries(
+  entries: readonly AllowlistEntry[],
+): string[] {
+  const warnings: string[] = [];
+  for (const e of entries) {
+    const label = `WEBHOOK_PRIVATE_ALLOWLIST entry "${e.source}"`;
+    if (e.kind === "host") {
+      if (
+        BLOCKED_HOSTNAMES.has(e.host) ||
+        e.host === "localhost" ||
+        e.host.endsWith(".localhost")
+      ) {
+        warnings.push(`${label} is a metadata / loopback hostname and never applies`);
+      }
+      continue;
     }
-  });
+    const { first, last } = cidrBounds(e);
+    if (classifyBytes(first) !== "private" || classifyBytes(last) !== "private") {
+      warnings.push(
+        `${label} reaches beyond private address space; loopback / metadata / reserved / public addresses in it stay refused — only its private addresses are allowlisted`,
+      );
+      continue;
+    }
+    const metadata = KNOWN_METADATA_ADDRESSES.filter((m) => {
+      const b = addressBytes(m);
+      return b !== null && cidrContains(e, b);
+    });
+    if (metadata.length > 0) {
+      warnings.push(
+        `${label} covers the cloud metadata address ${metadata.join(", ")}, which stays refused; the rest of it is allowlisted`,
+      );
+    }
+  }
+  return warnings;
+}
+
+/** Boot-time: log `ineffectiveAllowlistEntries` so a misconfiguration is visible. */
+export function warnAboutIneffectiveAllowlistEntries(
+  entries: readonly AllowlistEntry[],
+): void {
+  for (const warning of ineffectiveAllowlistEntries(entries)) log.warn(warning);
+}
+
+function describeTarget(host: string, address: string): string {
+  return host === address ? address : `${host}（${address}）`;
+}
+
+/**
+ * Policy verdict for one resolved address of a webhook target. Returns
+ * the refusal, or `{ public }` telling the caller whether this address
+ * needs https.
+ */
+function judgeWebhookAddress(
+  host: string,
+  address: string,
+  allowlist: readonly AllowlistEntry[],
+): HostPolicyError | { public: boolean } {
+  const target = describeTarget(host, address);
+  switch (classOf(address)) {
+    case "public":
+      return { public: true };
+    case "private":
+      if (legacyAllowPrivate() || allowlistMatches(allowlist, host, address)) {
+        return { public: false };
+      }
+      return new HostPolicyError(
+        `目標 ${target} 是區網位址，不在允許清單；如需呼叫區網服務，請把主機或網段加入 ${ALLOWLIST_SETTING}`,
+        "private_not_allowlisted",
+      );
+    case "loopback":
+      return new HostPolicyError(
+        `目標 ${target} 是本機 loopback 位址，一律禁止（無法加入允許清單）`,
+        "blocked_loopback",
+      );
+    case "linkLocal":
+    case "metadata":
+      return new HostPolicyError(
+        `目標 ${target} 是雲端 metadata / link-local 位址，一律禁止（無法加入允許清單）`,
+        "blocked_metadata",
+      );
+    case "unspecified":
+    case "reserved":
+    case "transition":
+      return new HostPolicyError(
+        `目標 ${target} 是保留、不可路由或 IPv6 轉換位址段，一律禁止`,
+        "blocked_reserved",
+      );
+  }
+}
+
+/**
+ * resolveWebhookTarget — behavior webhook URLs (admin-configured; the bot
+ * POSTs to them). Validates the URL, resolves the host ONCE, judges every
+ * answer, and returns the addresses to connect to.
+ *
+ *   - public addresses pass, but only over https;
+ *   - private addresses (RFC1918 / shared 100.64/10 / ULA) pass — over
+ *     http too — only when the hostname or the address is on the
+ *     operator's WEBHOOK_PRIVATE_ALLOWLIST (or the legacy
+ *     WEBHOOK_ALLOW_PRIVATE hatch is on);
+ *   - loopback, cloud metadata / link-local, unspecified, reserved and
+ *     NAT64 / 6to4 addresses never pass, allowlisted or not.
+ *
+ * Every refusal is a HostPolicyError with a specific `code` and a
+ * message that names the target and, where it helps, the setting.
+ */
+export async function resolveWebhookTarget(
+  rawUrl: string | URL,
+  allowlist: readonly AllowlistEntry[],
+): Promise<WebhookTarget> {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    throw new HostPolicyError("無效的 URL 格式", "invalid_url");
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new HostPolicyError("Webhook URL 必須使用 http 或 https", "invalid_scheme");
+  }
+  const port = url.port ? Number(url.port) : url.protocol === "https:" ? 443 : 80;
+  const host = vetHost(
+    url.hostname,
+    port,
+    refuseCoded,
+    (h) => `目標 ${h} 是雲端 metadata 端點，一律禁止（無法加入允許清單）`,
+  );
+  const addresses = await hostAddresses(
+    host,
+    refuseCoded,
+    `無法解析主機名稱 ${host}`,
+  );
+
+  let needsHttps = false;
+  for (const address of addresses) {
+    const verdict = judgeWebhookAddress(host, address, allowlist);
+    if (verdict instanceof HostPolicyError) throw verdict;
+    if (verdict.public) needsHttps = true;
+  }
+  if (needsHttps && url.protocol !== "https:") {
+    throw new HostPolicyError(
+      `目標 ${host} 是公網位址，webhook 必須使用 https（只有 ${ALLOWLIST_SETTING} 內的區網目標可以用 http）`,
+      "https_required",
+    );
+  }
+
+  return {
+    url,
+    addresses: addresses.map((address) => ({
+      address,
+      family: isIP(address) === 6 ? 6 : 4,
+    })),
+  };
 }

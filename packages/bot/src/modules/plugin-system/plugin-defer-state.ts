@@ -180,10 +180,22 @@ export function planPluginRespond(
   interactionToken: string,
   requestedEphemeral: unknown,
 ): PluginRespondPlan {
-  const deferState = readPluginDeferState(interactionToken) ?? {
-    kind: "reply" as const,
-    ephemeral: true,
-  };
+  return planRespond(
+    readPluginDeferState(interactionToken) ?? { kind: "reply", ephemeral: true },
+    requestedEphemeral,
+  );
+}
+
+/**
+ * The transition table itself, for a defer state the caller already
+ * holds. A behavior's webhook action defers its command the same way a
+ * plugin command does and answers through the same table (#140), without
+ * keeping its own token in the map.
+ */
+export function planRespond(
+  deferState: DeferState,
+  requestedEphemeral: unknown,
+): PluginRespondPlan {
   if (deferState.kind === "update") return { action: "patch-original" };
   const wantsEphemeral =
     requestedEphemeral === undefined ? null : requestedEphemeral !== false;

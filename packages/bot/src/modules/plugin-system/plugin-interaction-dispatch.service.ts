@@ -4,7 +4,7 @@ import {
   type AutocompleteInteraction,
 } from "discord.js";
 import {
-  findPluginCommandByName,
+  findPluginCommandForInvocation,
   type PluginCommandRow,
 } from "./models/plugin-command.model.js";
 import { findPluginById, type PluginRow } from "./models/plugin.model.js";
@@ -299,9 +299,12 @@ export async function dispatchInteractionToPlugin(
   // Only command + autocomplete for now; component/modal routing
   // (custom_id prefix) is a follow-up.
   if (interaction.isChatInputCommand() || interaction.isAutocomplete()) {
-    const cmd: PluginCommandRow | null = await findPluginCommandByName(
+    // 以註冊目標比對：commandGuildId = 指令註冊在哪個伺服器（全域指令為
+    // null）。只有目標涵蓋它的列能認領，否則同名但註冊在別處的 plugin
+    // 指令會認領不屬於它的呼叫（例如 behavior 的伺服器指令 /foo）。
+    const cmd: PluginCommandRow | null = await findPluginCommandForInvocation(
       interaction.commandName,
-      interaction.guildId,
+      interaction.commandGuildId ?? null,
     );
     if (!cmd) return false;
     const plugin = await findPluginById(cmd.pluginId);

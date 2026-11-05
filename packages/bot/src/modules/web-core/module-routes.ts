@@ -6,6 +6,8 @@ import { requireAnyCapability } from "./route-guards.js";
 import { avatarUrlFor } from "./message-mapper.js";
 import type { DmInboxStore } from "../dm-inbox/dm-inbox.service.js";
 import type { CommandReconciler } from "../command-system/reconcile.service.js";
+import type { CommandNamespace } from "../command-system/command-namespace.js";
+import type { WebhookForwarder } from "../command-system/webhook-forwarder.service.js";
 
 import { registerDmRoutes } from "../dm-inbox/dm-routes.js";
 import { registerDiscordRoutes } from "./discord-routes.js";
@@ -18,7 +20,7 @@ import { registerAdminLoginStatusRoutes } from "../admin/admin-login-status-rout
 import { registerAdminSystemSettingsRoutes } from "../admin/admin-system-settings-routes.js";
 import { registerBotEventRoutes } from "../bot-events/bot-event-routes.js";
 import { registerBehaviorRoutes } from "../behavior/behavior-routes.js";
-import { registerScopeTabRoutes } from "../behavior/scope-tab-routes.js";
+import { registerLoginTriggerHintRoute } from "../behavior/login-trigger-hint-route.js";
 import { registerPluginRoutes } from "../plugin-system/plugin-routes.js";
 import { registerBotFeatureRoutes } from "../feature-toggle/bot-feature-routes.js";
 import { registerPluginRpcRoutes } from "../plugin-system/plugin-rpc-routes.js";
@@ -36,6 +38,10 @@ import { registerShardForwardRoutes } from "../plugin-system/shard-forward-route
 export interface ModuleRouteDeps {
   bot?: Client;
   reconciler?: CommandReconciler;
+  /** Shared Discord command namespace; behavior command writes need it. */
+  commandNamespace?: CommandNamespace;
+  /** The runtime's webhook forwarder; behavior test-fire needs it. */
+  webhookForwarder?: WebhookForwarder;
   dmInbox?: DmInboxStore;
   /** Injected DM rate limiter for tests; production uses the singleton. */
   dmLimiter?: { isRateLimited(key: string): boolean };
@@ -82,14 +88,19 @@ export async function registerModuleRoutes(
   server: FastifyInstance,
   deps: ModuleRouteDeps,
 ): Promise<void> {
-  const { bot, reconciler, dmInbox, dmLimiter } = deps;
+  const { bot, reconciler, commandNamespace, webhookForwarder, dmInbox, dmLimiter } = deps;
 
   await registerAdminManagementRoutes(server, { bot });
   await registerAdminLoginStatusRoutes(server);
   await registerAdminSystemSettingsRoutes(server);
   await registerBotEventRoutes(server);
-  await registerBehaviorRoutes(server, { bot, reconciler });
-  await registerScopeTabRoutes(server);
+  await registerBehaviorRoutes(server, {
+    reconciler,
+    namespace: commandNamespace,
+    forwarder: webhookForwarder,
+  });
+  // public (under /api/auth/, before sign-in): the login page's hint (#146)
+  registerLoginTriggerHintRoute(server);
   await registerPluginRoutes(server, { bot, reconciler });
   await registerPluginRpcRoutes(server, { bot, dmLimiter });
   await registerVoiceRpcRoutes(server, { bot });

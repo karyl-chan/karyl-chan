@@ -1,7 +1,7 @@
 /**
  * BH-2.2A — webhook responses may carry { content?, embeds? }.
  *
- * Embeds come from an untrusted external service: sanitizeEmbeds copies
+ * Embeds come from an untrusted external service: the reply model copies
  * only whitelisted fields, enforces types, truncates to Discord limits,
  * caps the count, and drops non-http(s) urls. The matcher relays them to
  * the DM/guild channel alongside (or instead of) plain content.
@@ -19,13 +19,18 @@ vi.mock("../src/modules/bot-events/bot-event-log.js", () => ({
 
 import { ChannelType } from "discord.js";
 import { sequelize } from "../src/db.js";
-import { Behavior } from "../src/modules/behavior/models/behavior.model.js";
-import { sanitizeEmbeds } from "../src/modules/command-system/webhook-forwarder.service.js";
-import { MessagePatternMatcher } from "../src/modules/command-system/message-pattern-matcher.service.js";
-import type { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
-import { encryptSecret } from "../src/utils/crypto.js";
+import { parseBehaviorReply } from "../src/modules/command-system/behavior-reply.js";
 
-describe("sanitizeEmbeds (BH-2.2A)", () => {
+/** The embeds a response's `embeds` field leaves in the parsed reply. */
+function sanitizeEmbeds(raw: unknown) {
+  const parsed = parseBehaviorReply({ embeds: raw });
+  return parsed.ok ? (parsed.reply.embeds ?? []) : [];
+}
+import { MessageTriggerMatcher } from "../src/modules/command-system/message-trigger-matcher.service.js";
+import type { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
+import { clearBehaviors, seedMessageTrigger } from "./behavior-fixtures.js";
+
+describe("response embeds (BH-2.2A)", () => {
   it("keeps whitelisted fields and drops junk", () => {
     const out = sanitizeEmbeds([
       {
@@ -88,40 +93,21 @@ describe("matcher relays embeds (BH-2.2A)", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    await Behavior.destroy({ where: {} });
+    await clearBehaviors();
   });
 
   it("sends an embeds-only response (no content)", async () => {
-    await Behavior.create({
-      id: 1,
-      title: "embeds",
-      enabled: true,
-      sortOrder: 0,
-      stopOnMatch: false,
-      ignoreBots: true,
-      forwardType: "one_time",
-      source: "custom",
-      triggerType: "message_pattern",
-      messagePatternKind: "startswith",
-      messagePatternValue: "!card",
-      scope: "global",
-      integrationTypes: "guild_install,user_install",
-      contexts: "BotDM",
-      audienceKind: "all",
-      webhookUrl: encryptSecret("https://example.test/hook"),
-      scopeTabId: 1,
-    } as Record<string, unknown>);
+    await seedMessageTrigger({ title: "embeds", patternValue: "!card" });
 
     const embeds = [{ title: "Card", description: "body" }];
     const forwarder = {
       forward: vi.fn(async () => ({
         ok: true,
-        ended: false,
-        relayContent: "",
-        relayEmbeds: embeds,
+        reply: { embeds },
+        notes: [],
       })),
     };
-    const matcher = new MessagePatternMatcher(
+    const matcher = new MessageTriggerMatcher(
       forwarder as unknown as WebhookForwarder,
     );
     const send = vi.fn(async () => {});

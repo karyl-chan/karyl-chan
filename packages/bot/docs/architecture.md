@@ -36,7 +36,7 @@ src/
 └── modules/                    # business modules (11)
     ├── plugin-system/          # external RPC plugin lifecycle
     ├── behavior/               # behaviors — "Discord trigger → action" rules
-    ├── command-system/         # slash command reconcile + interaction dispatch + DM pattern
+    ├── command-system/         # command reconcile + interaction dispatch + message triggers
     ├── builtin-features/       # in-process Discord features (5 subdirectories)
     │   ├── picture-only/
     │   ├── rcon-forward/
@@ -102,30 +102,104 @@ voice (voice RPC backend).
 
 ### `modules/behavior/` — behaviors
 
-**What it does.** A behavior is a "Discord trigger → action" rule.
-Triggers are `slash_command` or `message_pattern`; sources are `custom`
-(webhook forward) or `system` (built-in handler). All behaviors share
-one `behaviors` table, attached to a scope tab. See
-[`features/behaviors.md`](features/behaviors.md).
+**What it does.** A Behavior is one trigger bound to one action
+(ADR 0003). Triggers are a Command Leaf (a command or one of its
+subcommands) or a Message Trigger (bot DMs, or guilds: all / one guild /
+one channel); actions are a webhook, or the built-in login action that
+only the System Behavior uses. Three tables: `behavior_commands` (a
+Command and its visibility settings), `behavior_definitions` (one
+Behavior: its trigger, action source and `systemKey`) and
+`behavior_webhook_actions` (encrypted URL / secret, auth mode, and the
+previous secret during a rotation's 24 h grace period). The admin UI
+groups behaviors by a derived Behavior Section; nothing about sections
+is stored.
 
 **Key files.**
-- `behavior-routes.ts` — `/api/behaviors/*` CRUD + resync.
-- `scope-tab-routes.ts` — `/api/behavior-tabs/*` CRUD.
-- `behavior-helpers.ts` — shared helpers (profile, decrypted view,
-  permission).
-- `behavior-trigger.ts` — pure `matchesTrigger` / `describeTrigger`.
-- `system-seed.service.ts` — idempotent seed of the three system
-  behaviors (login / manual / break).
-- `scope-tab-seed.service.ts` — idempotent seed of the four fixed scope
-  tabs.
-- `models/` — behavior, behavior-scope-tab, behavior-audience-member,
-  behavior-session.
+- `behavior-catalog.ts` — `loadBehaviorCatalog()` reads commands with
+  their leaves, message triggers, webhook actions and group members in
+  one go; `getBehaviorCatalog()` is the in-memory snapshot the runtime
+  reads per message / interaction, invalidated by any write to those
+  tables (model hooks; after commit inside a transaction) with a 30 s
+  TTL backstop for writes from other processes.
+- `behavior-section.ts` — `behaviorSection()`, the one rule that derives
+  a trigger's Behavior Section. Pure.
+- `behavior-list-view.ts` — the `GET /api/behaviors` shape
+  (`{ system, commands, messageTriggers }`, secrets only as `secretSet`;
+  every row carries `updatedAt`, the version an edit's `ifUpdatedAt`
+  is checked against).
+- `behavior-routes.ts` — mounts every behavior route in one Fastify
+  scope (gate before validation, strict schemas, uniform errors);
+  serves `GET /api/behaviors`, test-fire, group members, and
+  `GET /api/behaviors/schema` — the write routes' own JSON schemas, which
+  the admin UI checks its forms against instead of keeping a copy (#108).
+- `behavior-api-error.ts` — the refusal contract
+  `{ error: { code, message, field? } }` (`validation_failed`,
+  `name_conflict`, `system_immutable`, `registration_failed`,
+  `not_found`, `invalid_tree`) and the scope's own ajv (no
+  `removeAdditional`, no coercion), so `additionalProperties: false`
+  refuses instead of dropping. `behavior-schemas.ts` holds the shared
+  field schemas.
+- `behavior-write-routes.ts` — Message Trigger create / edit / delete,
+  and the leaf branch of `PATCH` / `DELETE /api/behaviors/:id`;
+  `message-trigger-rules.ts` is the pure trigger rule set.
+- `behavior-command-routes.ts` — `/api/behavior-commands`: commands,
+  added leaves, convert-to-subcommands, resync; `command-leaf-writes.ts`
+  edits and removes leaves; `command-writes.ts` holds what both share
+  (leaf shapes, row loads, the namespace check, the view);
+  `command-tree-rules.ts` is Discord's rule set for a command and its
+  leaves (pure). The admin UI mirrors it and the command branch of
+  `behavior-section.ts` in `frontend/…/behaviors/command-rules.ts` for
+  live form feedback; `tests/behavior-command-rules-mirror.test.ts`
+  pins the two together.
+- `command-registration-sync.ts` — commit → `registerOne` → release the
+  old name; a refusal restores the rows from `command-snapshot.ts` and
+  answers `registration_failed` (the consistency story is in the file
+  header). `rewriteCommand()` is that whole sequence for one write to an
+  existing command.
+- `message-trigger-reorder.ts` — `PUT /api/behaviors/reorder`, one
+  location at a time, keeping the global matching order.
+- `webhook-action-input.ts` / `webhook-secret-rotate.ts` — webhook
+  intake (bot-generated, write-only secret) and rotation.
+- `behavior-write-lock.ts` — in-process write serialisation and the
+  write transaction (Postgres: advisory lock).
+- `behavior-audit.ts` — every write → `admin_audit_log`, never a
+  secret or a webhook URL (a URL fingerprint instead).
+- `behavior-helpers.ts` — the `behavior.manage` gate and the webhook
+  target / regex checks.
+- `behavior-trigger.ts` — pure `matchesTrigger`.
+- `system-seed.service.ts` — adds the System Behavior (login, DM
+  `!login`) when it is missing.
+- `system-login-trigger.ts` / `system-login-trigger-route.ts` —
+  `PUT /api/behaviors/system/login/trigger`, the System Behavior's one
+  write: switching its trigger between a bot DM message trigger and a
+  global command (the rules are in the first file, the sequence in the
+  second). The new trigger takes effect first: a command is registered
+  on Discord before it is stored (inside `withRegistrationLock`, taken
+  back if the store fails); leaving a command stores the message trigger
+  first and then deletes the command. Owner only (`requireOwner` in
+  `web-core/route-guards.ts`, as is resyncing the login's command);
+  every attempt that reaches the switch is audited with its outcome.
+- `login-trigger-hint-route.ts` — `GET /api/auth/login-trigger`, public
+  and rate-limited per client: the login's current trigger (kind + the
+  text a user sends or types) for the admin login page, which needs it
+  before anyone is signed in. Mounted outside the behavior scope.
+- `models/` — behavior-command, behavior-definition,
+  behavior-webhook-action, behavior-stats, behavior-group-member (an
+  Audience Group's list: settable only for a group a message trigger
+  uses, dropped when the last such trigger leaves it).
 
-**External surface.** HTTP `/api/behaviors/*`, `/api/behavior-tabs/*`;
-`ensureSystemBehaviors` and `ensureFixedScopeTabs` (called by `main.ts`
-at startup).
+**External surface.** HTTP `/api/behaviors/*`,
+`/api/behavior-commands/*`, `/api/behavior-groups/*`, and the public
+`/api/auth/login-trigger`;
+`ensureSystemBehaviors` (startup); `getBehaviorCatalog` (read by
+command-system).
 
-**Depends on.** web-core; admin (audit + capability).
+**Depends on.** web-core; admin (audit + capability); bot-events;
+command-system types only — the `CommandReconciler`, `CommandNamespace`
+and `WebhookForwarder` are injected by the route wiring (`runtime.ts` →
+web server → module routes), so the command-system → behavior edge
+(command-system reads the catalog) is the only runtime one between the
+two modules.
 
 > Behavior **dispatch** (trigger → action) lives in `command-system`,
 > not here. This module is only the rule store and CRUD.
@@ -134,33 +208,69 @@ at startup).
 
 ### `modules/command-system/` — command sync + interaction dispatch
 
-**What it does.** Reconciles `behaviors` (track 2) and `plugin_commands`
-(track 3) into Discord application commands at runtime, dispatches all
-interactions, and matches DM patterns. This is the bot's command
-backbone.
+**What it does.** Reconciles behavior commands (track 2) and
+`plugin_commands` (track 3) into Discord application commands at
+runtime, dispatches all interactions, and matches message triggers.
+This is the bot's command backbone.
 
 **Key files.**
 - `reconcile.service.ts` — `CommandReconciler`: compute the desired
   set, diff against Discord's current state, create / patch / delete.
   `reconciler_owned_commands` records which commands the reconciler
-  owns so it cannot mistakenly delete track-1 in-process commands.
+  owns so it cannot mistakenly delete track-1 in-process commands; the
+  stale sweep is keyed by name + registration target. `registerOne(key)`
+  registers a single desired command inside the reconcile lock and
+  returns a typed per-target result. `withRegistrationLock(fn)` holds the
+  lock across a whole section and hands `fn` lock-free single-command
+  operations — registering a behavior command as given (not as stored)
+  and releasing a registration — for a write that must reach Discord
+  before the DB (the system login's trigger switch).
+- `desired-command-source.ts` — `DesiredCommandSource` adapters that feed
+  the desired set: one for behaviors, one for track-3 `plugin_commands`.
+- `command-target.ts` — registration targets (`global`, `guild:<id>`,
+  `all_guilds`), their expansion over the guild cache, and the name
+  conflict rule. Pure.
+- `command-registration.ts` — `deriveRegistrationCall` (command
+  definition + leaves → Discord data, incl. the subcommand tree and
+  `defaultMemberPermissions`) and `commandNeedsPatch`. Pure.
+- `command-namespace.ts` — `CommandNamespace.check(name, target,
+  exclude)`: whether a command name is free in a target across built-in
+  commands, `plugin_commands` and every behavior command (disabled
+  included). Injected into plugin registration by `runtime.ts`.
 - `interaction-dispatcher.service.ts` — `InteractionDispatcher`:
   unified `interactionCreate` entry; in order, tries behaviors slash,
   plugin command, plugin component, then in-process command.
-- `message-pattern-matcher.service.ts` — `MessagePatternMatcher`:
-  `messageCreate` listener that handles `message_pattern` triggers in
-  bot DMs and guild channels.
+- `message-trigger-matcher.service.ts` — `MessageTriggerMatcher`:
+  `messageCreate` listener that matches Message Triggers in bot DMs and
+  guild channels.
 - `webhook-forwarder.service.ts` — `WebhookForwarder`: webhook POST +
-  HMAC signing and verification.
+  HMAC signing and verification; parses the response into a reply.
+- `behavior-reply.ts` — the Behavior Reply model (#140):
+  `parseBehaviorReply` turns an untrusted webhook response into
+  `{ content?, embeds?, components?, ephemeral?, flags? }` (the plugin
+  `interactions.respond` shape) and notes what it dropped. Pure.
+- `reply-renderer.ts` — `renderReply(reply, target)`: the one place a
+  Behavior Reply reaches Discord, for a command (interaction) or a message
+  trigger (message). A deferred command answers through the plugin defer
+  table (`planRespond` in plugin-system).
+- `webhook-action.ts` — `runWebhookAction`: a webhook action for either
+  trigger — forward, render, count the outcome, and on failure log the
+  detail and give the user only the generic line (never in a guild
+  channel).
+- `builtin-login-action.ts` — the System Behavior's built-in action: mints
+  the login link (admin) and answers with a Behavior Reply (embed + link
+  button, `ephemeral: true`).
 - `models/reconciler-owned-command.model.ts` — reconciler's command
   ownership ledger.
 
 **External surface.** `CommandReconciler`, `InteractionDispatcher`,
-`MessagePatternMatcher`, `WebhookForwarder` (all instantiated and wired
+`MessageTriggerMatcher`, `WebhookForwarder` (all instantiated and wired
 by `main.ts`).
 
-**Depends on.** behavior (reads `behaviors`); plugin-system (reads
-`plugin_commands`, dispatches plugin interactions); admin; web-core.
+**Depends on.** behavior (reads the behavior catalog, records behavior
+stats); plugin-system (reads `plugin_commands`, dispatches plugin
+interactions); admin (mints the login link); bot-events (logs failures);
+web-core.
 
 ---
 
@@ -269,7 +379,10 @@ tokens, and the audit log (with hash chain).
 - `models/` — admin-audit-log, admin-role, admin-role-capability,
   authorized-user.
 
-**External surface.** HTTP `/api/admin/*`, `/api/auth/*`;
+**External surface.** HTTP `/api/admin/*`, `/api/auth/*` (except
+`/api/auth/login-trigger`, which the behavior module serves: it reads the
+System Behavior, and sits under `/api/auth/` only to be public and
+throttled like the other auth endpoints);
 `requireCapability` family; `recordAudit`.
 
 **Depends on.** web-core; bot-events.
@@ -359,6 +472,9 @@ plus cross-cutting meta routes.
   `models/refresh-token.model.ts` — token storage.
 - `route-guards.ts` — `requireAnyCapability` / `requireGuildCapability`
   and similar middleware.
+- `client-throttle.ts` — the per-client throttle of the public
+  `/api/auth/*` endpoints (`clientKey`, `refuseIfThrottled`) and their
+  paths; the caller passes its log (`bot-events/auth-throttle-log.ts`).
 - `validators.ts` — `isSnowflake`, `isBoundedString`, and so on (pure
   functions).
 - `message-mapper.ts` + `message-types.ts` — Discord message → API DTO.
@@ -384,11 +500,22 @@ any module → web-core / utils / db.ts / config / logger     OK
 admin → bot-events                                           OK   (admin actions write log)
 behavior → admin                                             OK   (audit + capability)
 command-system → behavior / plugin-system                    OK   (reads rules, dispatches)
+command-system → admin                                       OK   (the system login's built-in action mints the link)
+plugin-system ⇢ command-system (import type only)             OK   (CommandTarget / CommandNamespace types)
+behavior ⇢ command-system (import type only)                  OK   (CommandReconciler / CommandNamespace / WebhookForwarder; injected)
 plugin-system → feature-toggle / voice                       OK
 builtin-features → feature-toggle / bot-events / voice        OK
 builtin-features ↔ guild-management                           OK   (facade; builtin imports type only)
 dm-inbox → admin / guild-management / bot-events              OK
 ```
+
+`plugin-system` never imports `command-system` at runtime — that would
+close a runtime cycle with the edge above. Where plugin registration
+needs a command-system service it gets it injected: `runtime.ts` builds
+the `CommandNamespace` and hands it over with
+`setPluginCommandNamespace()`; plugin-system only holds the type. The
+behavior routes get the same `CommandNamespace`, the `CommandReconciler`
+and the `WebhookForwarder` through the web server's route deps.
 
 ### Forbidden
 
@@ -498,8 +625,13 @@ boot, on fresh and existing DBs alike). A migration is only needed when
 1. Add server.<method>(...) in the module's routes file.
 2. Gate with web-core's requireCapability(...) or
    requireGuildCapability(...).
-3. Validate with web-core/validators.ts helpers (isSnowflake,
-   isBoundedString, ...).
+3. Validate the request: either web-core/validators.ts helpers
+   (isSnowflake, isBoundedString, ...) in the handler, or a Fastify JSON
+   schema on the route when the module's routes run in a scope with a
+   strict validator — the behavior module does this (behavior-routes.ts:
+   one scope, own ajv without coercion or removeAdditional, refusals as
+   { error: { code, message, field? } }). A new route in such a module
+   follows the module's way; one module never mixes both.
 4. For admin operations, await recordAudit(...) (from
    admin/admin-audit.service).
 5. Call into the module's services / models.
@@ -534,7 +666,12 @@ boot, on fresh and existing DBs alike). A migration is only needed when
    for the **fresh-install** schema — `sequelize.sync()` creates the
    table from it. Later changes to an **existing** table (new column,
    altered index/type) need an Umzug migration (`src/migrations/NNN-*.ts`),
-   because `sync()` only creates missing tables and never ALTERs.
+   because `sync()` never ALTERs a column. It does, however, add a
+   model's *missing indexes* to an existing table — before migrations
+   run — so an index on a column a migration has yet to add crashes the
+   boot. Tables whose indexes depend on migrations (the behavior tables,
+   migration 011) create their indexes in the migration instead of the
+   model, on fresh and upgraded DBs alike.
 6. Don't export the raw sequelize; route all access through model
    methods or services.
 ```
@@ -594,7 +731,11 @@ When refactoring, hold the following invariants:
 7. **Do not drop the `.js` extension from imports** — ESM + NodeNext
    requires it; runtime will break.
 8. **Schema changes go in the model** — the model is the single source
-   of truth.
+   of truth. One exception: indexes on tables whose shape migrations
+   still change are created by a migration, not the model, because
+   `sync()` adds a model's missing indexes to an existing table before
+   any migration runs (the behavior tables' indexes live in migration
+   011).
 
 ---
 

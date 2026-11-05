@@ -1,6 +1,6 @@
 import { DataTypes, Op } from "sequelize";
 import { sequelize } from "../../../db.js";
-import { Behavior } from "./behavior.model.js";
+import { BehaviorDefinition } from "./behavior-definition.model.js";
 
 /**
  * BH-6.1 — per-behavior forward 統計。admin UI 用來回答「這條 behavior
@@ -13,7 +13,7 @@ export const BehaviorStat = sequelize.define(
     behaviorId: {
       type: DataTypes.INTEGER,
       primaryKey: true,
-      references: { model: Behavior, key: "id" },
+      references: { model: BehaviorDefinition, key: "id" },
       onDelete: "CASCADE",
       onUpdate: "CASCADE",
     },

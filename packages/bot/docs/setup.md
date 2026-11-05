@@ -36,13 +36,14 @@ The main variables:
 |----------|----------|-------------|
 | `BOT_TOKEN` | yes | Discord bot token. |
 | `ENCRYPTION_KEY` | yes (production) | 32-byte hex string used to encrypt RCON passwords, webhook secrets, and so on. Generate with `openssl rand -hex 32`. |
-| `BOT_OWNER_IDS` | yes (production) | Comma-separated Discord user IDs of bot owners. Each listed user can invoke `/login` in DM with the bot to obtain an admin login link without needing an `authorized_users` row. Unset (and `BOT_OWNER_ID` also unset) → `/api/*` runs without authentication (local dev only). |
+| `BOT_OWNER_IDS` | yes (production) | Comma-separated Discord user IDs of bot owners. Each listed user can use the login trigger (by default DM the bot `!login`) to obtain an admin login link without needing an `authorized_users` row. Unset (and `BOT_OWNER_ID` also unset) → `/api/*` runs without authentication (local dev only). |
 | `BOT_OWNER_ID` | no | Legacy single-owner alias. Used only when `BOT_OWNER_IDS` is unset; prefer the plural form for new deployments. |
 | `WEB_PORT` | no | HTTP port the admin API listens on. Default `3000`. |
 | `WEB_BASE_URL` | no | Public base URL. Admin login links and the plugin proxy use this as their base. |
 | `NODE_ENV` | no | Default `development`. |
 | `SQLITE_DB_PATH` | no | SQLite file path. Default `<bot>/data/database.sqlite`. |
 | `CERTS_DIR` and `TRUSTED_PROXY` | no | HTTPS certificate path and reverse-proxy trust settings. |
+| `WEBHOOK_PRIVATE_ALLOWLIST` | no | Comma-separated hostnames / IPs / CIDRs that behavior webhooks may call on the private network (e.g. `nas.latte.lan,192.168.2.0/24`). See [Webhook targets](features/behaviors.md#webhook-targets). |
 
 `.env.example` also exposes many optional tuning knobs (JWT TTLs, plugin
 timeouts, RCON, rate limits). They all have sensible defaults; the
@@ -92,8 +93,9 @@ features) is in the [plugin operator guide](operator-guide.md).
    healthcheck looks at).
 3. Typing `/` in a guild shows the bot's slash commands.
 4. If RCON is configured, `/rcon-forward-channel watch` opens the modal.
-5. A user listed in `BOT_OWNER_IDS` invokes the `/login` slash command
-   in DM with the bot and receives an admin login link.
+5. A user listed in `BOT_OWNER_IDS` DMs the bot `!login` (the default
+   login trigger; the admin login page shows the current one) and
+   receives an admin login link.
 
 ## Upgrades
 

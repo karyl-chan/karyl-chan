@@ -71,8 +71,10 @@ channel's Discord send-message permissions.
 
 `src/utils/host-policy.ts` blocks these targets:
 
-- Cloud metadata endpoints (`169.254.0.0/16`, `168.63.129.16`,
-  `100.100.100.200`, `192.0.0.192`).
+- Cloud metadata / link-local endpoints (`169.254.0.0/16`, `fe80::/10`,
+  `168.63.129.16`, `100.100.100.200`, `192.0.0.192`, `fd00:ec2::254`),
+  including when spelled as IPv4-mapped, NAT64 (`64:ff9b::/96`) or 6to4
+  (`2002::/16`) IPv6.
 - Metadata hostnames (`metadata.google.internal`, and so on).
 - Hostnames that are not IPv4 literals are resolved first; a DNS answer
   in a blocked range is also rejected.
