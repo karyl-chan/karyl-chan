@@ -9,6 +9,8 @@
  *   - whoever can invoke the command may run it — no runtime audience /
  *     placement check; the action decides (login checks authorisation)
  *   - builtin action (the system login) → its handler; webhook → forwarder
+ *   - a leaf that cannot run its action (no webhook action, or Discord
+ *     refuses the deferral) is still claimed and never forwarded
  */
 import { vi, describe, it, expect, beforeAll, beforeEach, type Mock } from "vitest";
 
@@ -50,6 +52,7 @@ import { BehaviorStat } from "../src/modules/behavior/models/behavior-stats.mode
 import { InteractionDispatcher } from "../src/modules/command-system/interaction-dispatcher.service.js";
 import { dispatchInteractionToPlugin } from "../src/modules/plugin-system/plugin-interaction-dispatch.service.js";
 import { mintLoginLink } from "../src/modules/admin/admin-login.service.js";
+import { botEventLog } from "../src/modules/bot-events/bot-event-log.js";
 import type { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
 import {
   clearBehaviors,
@@ -268,6 +271,49 @@ describe("root leaf", () => {
     );
     expect(outcome.claimed).toBe(false);
     expect(forwarder.forward).not.toHaveBeenCalled();
+  });
+});
+
+describe("a leaf that cannot run its action", () => {
+  it("without a webhook action: claimed, the invoker gets the generic failure, a warning is logged", async () => {
+    const commandId = await seedCommand({ name: "ping" });
+    const leaf = await seedLeaf(commandId, {}, null);
+    const forwarder = makeForwarder();
+    const { interaction, reply, raw } = fakeSlash({ commandName: "ping" });
+
+    const outcome = await dispatcherWith(forwarder).dispatch(interaction);
+
+    expect(outcome).toEqual({ claimed: true, claimedBy: "behavior_custom" });
+    expect(forwarder.forward).not.toHaveBeenCalled();
+    expect(raw.deferReply).not.toHaveBeenCalled();
+    const shown = (reply as Mock).mock.calls[0][0] as { content: string; flags: number };
+    expect(shown.content).toBe("⚠ This couldn't be completed right now. Please try again later.");
+    expect(shown.flags & MessageFlags.Ephemeral).toBe(MessageFlags.Ephemeral);
+    const warnings = vi
+      .mocked(botEventLog.record)
+      .mock.calls.filter(([level, , msg]) => level === "warn" && String(msg).includes(`behavior ${leaf} `));
+    expect(warnings).toHaveLength(1);
+  });
+
+  it("when Discord refuses the deferral: claimed, not forwarded", async () => {
+    const commandId = await seedCommand({ name: "ping" });
+    const leaf = await seedLeaf(commandId);
+    const forwarder = makeForwarder();
+    const { interaction, reply, raw } = fakeSlash({ commandName: "ping" });
+    (raw.deferReply as Mock).mockRejectedValueOnce(new Error("Unknown interaction"));
+
+    const outcome = await dispatcherWith(forwarder).dispatch(interaction);
+
+    expect(outcome).toEqual({ claimed: true, claimedBy: "behavior_custom" });
+    expect(raw.deferReply).toHaveBeenCalledTimes(1);
+    expect(forwarder.forward).not.toHaveBeenCalled();
+    // Current behavior, pinned: the interaction is gone, so nothing is said
+    // and nothing is counted. #120 decides whether this should record a
+    // stat or an event — update these assertions there.
+    expect(reply).not.toHaveBeenCalled();
+    expect(raw.editReply).not.toHaveBeenCalled();
+    expect(raw.followUp).not.toHaveBeenCalled();
+    expect(await BehaviorStat.findByPk(leaf)).toBeNull();
   });
 });
 
