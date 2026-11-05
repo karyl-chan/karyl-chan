@@ -68,6 +68,13 @@ export function unreachableReceiver(error: Error) {
   return vi.spyOn(globalThis, "fetch").mockRejectedValue(error);
 }
 
+/** A receiver that answers 200 with an empty, unsigned body. */
+export function emptyReceiver() {
+  return vi
+    .spyOn(globalThis, "fetch")
+    .mockImplementation(async () => new Response("", { status: 200 }));
+}
+
 /** The headers and body of the n-th request the forwarder sent. */
 export function sentRequest(
   fetchSpy: ReturnType<typeof fakeReceiver>,
