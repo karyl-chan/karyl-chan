@@ -87,8 +87,9 @@ export class MessageTriggerMatcher {
   /**
    * Per-conversation in-process mutex, keyed by (user, channel): one user's
    * messages in one channel (or in their DM with the bot, which is its own
-   * channel) are matched and forwarded in the order they arrived. Other
-   * channels and other users never wait for it (#118).
+   * channel) have their webhook triggers run in the order they arrived.
+   * Other channels and other users never wait for it, and neither does a
+   * message that fires no webhook trigger (#118).
    */
   private readonly conversationLocks = new Map<string, Promise<unknown>>();
 
@@ -164,53 +165,50 @@ export class MessageTriggerMatcher {
     }
 
     const userId = djsMessage.author.id;
-    const key = `${userId}:${djsMessage.channel.id}`;
-    return this.withConversationLock(key, () =>
-      this.onMessageLocked(djsMessage, userId, isDm),
+    // 比對在鎖外：沒命中的訊息不排隊，系統登入也不等 webhook（#118）。
+    // 拿到快照之後到排進佇列之間不能有 await：等同一份快照的訊息依到達
+    // 順序恢復執行，也就依到達順序入列。例外只有快照重載途中剛好被寫入
+    // 弄失效——後到的訊息自己重載，先載完的話會排到前面。
+    const { messageTriggers, groupMembers } = await getBehaviorCatalog();
+    const { webhooks, builtin } = triggersToRun(
+      messageTriggers,
+      djsMessage,
+      userId,
+      isDm,
+      groupMembers,
     );
+
+    const key = `${userId}:${djsMessage.channel.id}`;
+    const [forwarded, login] = await Promise.all([
+      webhooks.length > 0
+        ? this.withConversationLock(key, () =>
+            this.runWebhookTriggers(webhooks, djsMessage, userId),
+          )
+        : null,
+      builtin
+        ? this.handleMatchedSystemBehavior(builtin, djsMessage, userId)
+        : null,
+    ]);
+    // 依走訪順序合併：webhook 觸發都排在收尾的系統登入之前
+    if (forwarded && login) return mergeOutcomes(forwarded, login);
+    return forwarded ?? login ?? { handled: false };
   }
 
-  private async onMessageLocked(
+  /** 依序執行一則訊息命中的 webhook 觸發（在對話鎖內）。 */
+  private async runWebhookTriggers(
+    triggers: readonly CatalogBehavior[],
     djsMessage: DjsMessage,
     userId: string,
-    isDm: boolean,
   ): Promise<MessageMatchOutcome> {
-    const content = djsMessage.content ?? "";
-    const { messageTriggers, groupMembers } = await getBehaviorCatalog();
-
-    // 依 sortOrder 走訪（BH-0.3 multi-match）。停止規則：
-    //   系統登入 → 必停（登入連結是收尾動作）
-    //   其他     → stopOnMatch=true 停；false 繼續比對下一條
     let aggregate: MessageMatchOutcome | null = null;
-    for (const trigger of messageTriggers) {
-      if (!trigger.enabled) continue;
-      if (!trigger.patternKind || trigger.patternValue === null) continue;
-      if (!appliesTo(trigger, djsMessage, userId, isDm, groupMembers)) continue;
-      if (!matchesTrigger(trigger.patternKind, trigger.patternValue, content)) {
-        continue;
-      }
-
-      if (trigger.actionSource === "builtin") {
-        const outcome = await this.handleMatchedSystemBehavior(
-          trigger,
-          djsMessage,
-          userId,
-        );
-        return aggregate ? mergeOutcomes(aggregate, outcome) : outcome;
-      }
-
+    for (const trigger of triggers) {
       const outcome = await this.handleMatchedBehavior(
         trigger,
         djsMessage,
         userId,
       );
       aggregate = aggregate ? mergeOutcomes(aggregate, outcome) : outcome;
-
-      if (trigger.stopOnMatch) {
-        return aggregate;
-      }
     }
-
     return aggregate ?? { handled: false };
   }
 
@@ -323,6 +321,43 @@ export class MessageTriggerMatcher {
       },
     };
   }
+}
+
+// ── 這則訊息要執行哪些觸發 ──────────────────────────────────────────────
+
+interface TriggersToRun {
+  /** 依 sortOrder 命中的 webhook 觸發 */
+  webhooks: CatalogBehavior[];
+  /** 命中的內建動作（系統登入）；它一定收尾 */
+  builtin: CatalogBehavior | null;
+}
+
+/**
+ * 依 sortOrder 走訪（BH-0.3 multi-match），以訊息到達時的快照為準。停止規則：
+ *   系統登入 → 必停（登入連結是收尾動作）
+ *   其他     → stopOnMatch=true 停；false 繼續比對下一條
+ */
+function triggersToRun(
+  triggers: readonly CatalogBehavior[],
+  djsMessage: DjsMessage,
+  userId: string,
+  isDm: boolean,
+  groupMembers: ReadonlyMap<string, ReadonlySet<string>>,
+): TriggersToRun {
+  const content = djsMessage.content ?? "";
+  const webhooks: CatalogBehavior[] = [];
+  for (const trigger of triggers) {
+    if (!trigger.enabled) continue;
+    if (!trigger.patternKind || trigger.patternValue === null) continue;
+    if (!appliesTo(trigger, djsMessage, userId, isDm, groupMembers)) continue;
+    if (!matchesTrigger(trigger.patternKind, trigger.patternValue, content)) {
+      continue;
+    }
+    if (trigger.actionSource === "builtin") return { webhooks, builtin: trigger };
+    webhooks.push(trigger);
+    if (trigger.stopOnMatch) break;
+  }
+  return { webhooks, builtin: null };
 }
 
 // ── 觸發是否適用於這則訊息（在哪 + 對誰）────────────────────────────────

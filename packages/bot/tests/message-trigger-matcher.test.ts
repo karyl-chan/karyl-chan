@@ -494,6 +494,11 @@ function forwardedContents(forwarder: { forward: Mock }): string[] {
  */
 const settle = () => new Promise<void>((r) => setImmediate(r));
 
+/** p's value once pending steps have run, or "still waiting" */
+function settledNow<T>(p: Promise<T>): Promise<T | "still waiting"> {
+  return Promise.race([p, settle().then(() => "still waiting" as const)]);
+}
+
 describe("one conversation at a time", () => {
   it("a user's messages in one channel are forwarded in order, each after the last one finished", async () => {
     await seedMessageTrigger({ surface: "guild" });
@@ -542,5 +547,51 @@ describe("one conversation at a time", () => {
 
     forwarder.open();
     await Promise.all([stuck, other]);
+  });
+
+  it("a message that matches nothing does not wait behind a slow one", async () => {
+    await seedMessageTrigger({ surface: "guild" });
+    await getBehaviorCatalog();
+    const forwarder = heldForwarder();
+    const m = matcherWith(forwarder);
+
+    const stuck = m.onMessage(guildMsg({ userId: "U-N", content: "!go" }).message);
+    const chatter = m.onMessage(guildMsg({ userId: "U-N", content: "just talking" }).message);
+    expect(await settledNow(chatter)).toEqual({ handled: false });
+
+    forwarder.open();
+    await stuck;
+  });
+
+  it("`!login` in a DM answers at once while a server webhook of the same user is slow", async () => {
+    await seedSystemLogin();
+    await seedMessageTrigger({ surface: "guild" });
+    await getBehaviorCatalog();
+    const forwarder = heldForwarder();
+    const m = matcherWith(forwarder);
+
+    const stuck = m.onMessage(guildMsg({ userId: "U-OWNER", content: "!go" }).message);
+    const { message, send } = dmMsg("U-OWNER", "!login");
+    expect(await settledNow(m.onMessage(message))).toMatchObject({ handled: true });
+    expect(send).toHaveBeenCalledTimes(1);
+
+    forwarder.open();
+    await stuck;
+  });
+
+  it("`!login` answers at once even behind a slow webhook in the same DM", async () => {
+    await seedSystemLogin();
+    await seedMessageTrigger();
+    await getBehaviorCatalog();
+    const forwarder = heldForwarder();
+    const m = matcherWith(forwarder);
+
+    const stuck = m.onMessage(dmMsg("U-OWNER", "!go").message);
+    const { message, send } = dmMsg("U-OWNER", "!login");
+    expect(await settledNow(m.onMessage(message))).toMatchObject({ handled: true });
+    expect(send).toHaveBeenCalledTimes(1);
+
+    forwarder.open();
+    await stuck;
   });
 });
