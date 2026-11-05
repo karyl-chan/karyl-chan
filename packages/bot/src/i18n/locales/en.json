@@ -14,7 +14,8 @@
     "internal-error": "⚠ Internal error: {{msg}}"
   },
   "behavior": {
-    "action-failed": "⚠ This couldn't be completed right now. Please try again later."
+    "action-failed": "⚠ This couldn't be completed right now. Please try again later.",
+    "rate-limited": "⚠ You're using this too often. Please wait a few seconds and try again."
   },
   "system": {
     "unknown-system-command": "⚙ Unknown system command."

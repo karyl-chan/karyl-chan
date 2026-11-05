@@ -11,6 +11,8 @@
  *   - a trigger without a webhook action is skipped with a warning; the
  *     walk goes on
  *   - triggers come from an in-memory snapshot that a write invalidates
+ *   - webhook triggers are rate-limited: 5 per 10 s per guild channel, and
+ *     5 per 10 s per user in bot DMs; the system login never is (#119)
  *   - one conversation (a user in one channel, or in their DM with the bot)
  *     runs its webhook triggers one message at a time, in order; other
  *     conversations never wait for it
@@ -47,10 +49,8 @@ import { BehaviorStat } from "../src/modules/behavior/models/behavior-stats.mode
 import { getBehaviorCatalog } from "../src/modules/behavior/behavior-catalog.js";
 import { mintLoginLink } from "../src/modules/admin/admin-login.service.js";
 import { botEventLog } from "../src/modules/bot-events/bot-event-log.js";
-import {
-  MessageTriggerMatcher,
-  __resetGuildForwardWindowsForTests,
-} from "../src/modules/command-system/message-trigger-matcher.service.js";
+import { MessageTriggerMatcher } from "../src/modules/command-system/message-trigger-matcher.service.js";
+import { __resetBehaviorRateLimitsForTests } from "../src/modules/command-system/behavior-rate-limits.js";
 import type { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
 import { runWebhookAction } from "../src/modules/command-system/webhook-action.js";
 import {
@@ -67,7 +67,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  __resetGuildForwardWindowsForTests();
+  __resetBehaviorRateLimitsForTests();
   await clearBehaviors();
 });
 
@@ -337,6 +337,45 @@ describe("guild triggers", () => {
     expect(forwarder.forward).toHaveBeenCalledTimes(5);
     await m.onMessage(guildMsg({ userId: "U9", content: "!go", channelId: "C2" }).message);
     expect(forwarder.forward).toHaveBeenCalledTimes(6);
+  });
+});
+
+// #119：私訊以使用者為單位限流；超量靜默丟棄、記一次、不計統計
+describe("bot DM rate limit", () => {
+  const rateLimitWarnings = (userId: string) =>
+    vi.mocked(botEventLog.record).mock.calls.filter(([level, , message, meta]) => {
+      const at = meta as { userId?: string } | undefined;
+      return level === "warn" && at?.userId === userId && /rate limit/.test(message);
+    });
+
+  it("forwards a user's first 5 hits in 10 s, drops the rest silently, logs once", async () => {
+    const id = await seedMessageTrigger();
+    const forwarder = makeForwarder("pong");
+    const m = matcherWith(forwarder);
+    const replies: Mock[] = [];
+    for (let i = 0; i < 7; i++) {
+      const { message, send } = dmMsg("U-DM-RL", "!go");
+      replies.push(send as Mock);
+      await m.onMessage(message);
+    }
+    expect(forwarder.forward).toHaveBeenCalledTimes(5);
+    expect(replies.slice(5).every((send) => send.mock.calls.length === 0)).toBe(true);
+    expect(rateLimitWarnings("U-DM-RL")).toHaveLength(1);
+    // a dropped hit is not counted
+    expect((await BehaviorStat.findByPk(id))?.get("successCount")).toBe(5);
+    // another user has their own budget
+    await m.onMessage(dmMsg("U-DM-RL-2", "!go").message);
+    expect(forwarder.forward).toHaveBeenCalledTimes(6);
+  });
+
+  it("never holds back the system login", async () => {
+    const login = await seedSystemLogin();
+    await seedMessageTrigger();
+    const m = matcherWith(makeForwarder());
+    for (let i = 0; i < 6; i++) await m.onMessage(dmMsg("U-DM-RL-3", "!go").message);
+    const outcome = await m.onMessage(dmMsg("U-DM-RL-3", "!login").message);
+    expect(outcome).toEqual({ handled: true, behaviorId: login });
+    expect(mintLoginLink).toHaveBeenCalledTimes(1);
   });
 });
 
