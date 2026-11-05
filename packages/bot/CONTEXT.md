@@ -118,6 +118,10 @@ _Avoid_: relay、轉發內容（舊稱，只有 content / embeds）
 **Reply Visibility（回覆給誰看）**:
 指令葉節點與伺服器訊息觸發儲存的回覆預設：`private`（指令只有執行的人；伺服器訊息私訊作者）、`public`（貼在頻道），null 沿用觸發本身的預設。回應的 `ephemeral` 可覆蓋；與 bot 的私訊與 System Behavior 不適用。
 
+**Delivery（投遞）**:
+一次 webhook 動作的呼叫與它的結果：成功或失敗、HTTP 狀態、延遲、錯誤碼、簽章驗證。每個 behavior 留最近 20 筆、最多 7 天（delivery log，投遞紀錄）；不存 URL、密鑰、內容或使用者 id。測試 webhook 不算投遞；指令的 defer 被 Discord 拒絕時 webhook 沒被呼叫，仍記成一次失敗的投遞（`defer_failed`）。
+_Avoid_: 事件（那是 bot event log）、forward（只是投遞的一部分）
+
 **Reply Renderer**:
 把 Behavior Reply 送到 Discord 的唯一入口，目標是一個互動（指令觸發）或一則訊息（訊息觸發）。
 

@@ -48,6 +48,33 @@ export function fakeReceiver(opts: FakeReceiverOptions) {
   });
 }
 
+/**
+ * A receiver that never answers: the request hangs until the forwarder's
+ * signal aborts it, then rejects with the abort reason (as `fetch` does).
+ */
+export function hangingReceiver() {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(
+    (_input, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        const signal = init!.signal!;
+        if (signal.aborted) return reject(signal.reason);
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      }),
+  );
+}
+
+/** A receiver that can't be reached: `fetch` rejects with `error` before any response. */
+export function unreachableReceiver(error: Error) {
+  return vi.spyOn(globalThis, "fetch").mockRejectedValue(error);
+}
+
+/** A receiver that answers 200 with an empty, unsigned body. */
+export function emptyReceiver() {
+  return vi
+    .spyOn(globalThis, "fetch")
+    .mockImplementation(async () => new Response("", { status: 200 }));
+}
+
 /** The headers and body of the n-th request the forwarder sent. */
 export function sentRequest(
   fetchSpy: ReturnType<typeof fakeReceiver>,

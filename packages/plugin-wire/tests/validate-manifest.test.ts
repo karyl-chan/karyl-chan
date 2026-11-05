@@ -392,6 +392,30 @@ test("guild-feature command names are unique across the whole manifest", () => {
   );
 });
 
+test("a guild-feature command may not reuse a plugin_commands name", () => {
+  // Both register where the other does (scope=global covers every
+  // guild; scope=guild covers each one), so Discord would keep only one.
+  for (const scope of ["global", "guild"]) {
+    assert.equal(
+      fail({
+        ...base(),
+        plugin_commands: [cmd({ name: "foo", scope })],
+        guild_features: [
+          { key: "x", name: "X", commands: [{ name: "foo", description: "d" }] },
+        ],
+      }),
+      "guild_features[x].commands: command.name 'foo' is also declared in plugin_commands",
+    );
+  }
+  pass({
+    ...base(),
+    plugin_commands: [cmd({ name: "foo" })],
+    guild_features: [
+      { key: "x", name: "X", commands: [{ name: "bar", description: "d" }] },
+    ],
+  });
+});
+
 // ─── config_schema (delegates to the config validator) ─────────────────
 
 test("plugin-level config_schema is validated at register time", () => {

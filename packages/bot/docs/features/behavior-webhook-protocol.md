@@ -6,15 +6,17 @@ how to check that a request really comes from the bot, and how to answer.
 How an admin sets a behavior up is in [behaviors.md](behaviors.md).
 
 The machine-readable version of this contract — key lists, limits,
-header names and golden HMAC vectors — is
-`CONTRACT_FIXTURES.behaviorWebhook` in `@karyl-chan/plugin-wire`
-([`packages/plugin-wire/src/contract-fixtures.ts`](../../../plugin-wire/src/contract-fixtures.ts)).
+header names and golden HMAC vectors — is `BEHAVIOR_WEBHOOK_FIXTURES`,
+exported by `@karyl-chan/plugin-sdk/behavior-receiver` so you can test a
+receiver against it (in this repository it is
+`CONTRACT_FIXTURES.behaviorWebhook` in
+[`packages/plugin-wire/src/contract-fixtures.ts`](../../../plugin-wire/src/contract-fixtures.ts)).
 The bot's tests replay it. The bot's test suite also checks this page
 against it: the header names, the payload keys and the reply limits
 written here must match the fixtures, and the
 [reference receiver](#reference-receiver) is run against the golden
 vectors and against the bot's own webhook client. The prose and the
-wiring example are not tested.
+wiring examples are not tested.
 
 ## Contents
 
@@ -33,6 +35,9 @@ wiring example are not tested.
 
 - Each time a behavior fires, the bot sends **one `POST`** with a JSON body
   to the URL the admin saved. It waits at most **10 seconds** for the answer.
+  It sends at most 5 per 10 seconds per server channel, per bot DM user
+  and per command user; over that it sends nothing
+  ([behaviors.md](behaviors.md#matching-order)).
 - The answer's body is the **reply**: what the bot shows the user. An empty
   body means "say nothing".
 - With authentication on, every request is signed (`hmac`) or carries a
@@ -63,6 +68,11 @@ The top level has the shape of a Discord webhook body, so a receiver that
 already handles Discord webhooks can read it. `_meta` carries the rest.
 What `_meta` holds depends on the trigger.
 
+The bot may add fields to the request, at the top level or in `_meta`,
+without calling it a breaking change. Ignore the fields you don't know: a
+receiver that refuses unknown fields (a schema with
+`additionalProperties: false`, say) breaks on such an addition.
+
 ### From a message trigger
 
 A message trigger fires on a message in a DM with the bot, or in a guild
@@ -72,14 +82,14 @@ guild, as in `guild_id`.)
 | Field | Value |
 |-------|-------|
 | `content` | The message text, exactly as Discord delivered it. |
-| `username` | The author's Discord username. |
+| `username` | The author's Discord username, never their global name. This differs from a command. To tell users apart use `_meta.user.id`; to show a name use `_meta.user.global_name ?? _meta.user.username`. |
 | `avatar_url` | The author's avatar URL. |
 | `_meta.user` | `{ id, username, global_name, discriminator, avatar }`. Use `user.id` to tell users apart: names change. |
 | `_meta.message_id` | The message id. |
 | `_meta.channel_id` | The channel id (the DM channel in a DM with the bot). |
 | `_meta.guild_id` | The guild id, or `null` in a DM with the bot. |
 | `_meta.behavior_id` | The behavior that fired. |
-| `_meta.attachments` | `[{ url, filename, content_type, size }]`, empty when the message has none. |
+| `_meta.attachments` | `[{ id, url, filename, content_type, size }]`, empty when the message has none. `id` is the Discord attachment id; `url` is Discord's CDN link, signed and valid for a limited time, so download the file soon. |
 | `_meta.captures` | A regex trigger's capture groups, group 1 first. A named group counts by its position, and an optional group that took no part is `null`. `天氣 台北` against `^天氣\s+(.+)` sends `["台北"]`. Always `[]` for `startswith` / `endswith`. |
 
 One message can fire more than one behavior, unless a behavior stops the
@@ -94,7 +104,7 @@ A command fires when a user runs one of the behavior's Discord commands.
 | Field | Value |
 |-------|-------|
 | `content` | The invoked path, `/name` or `/name sub`. |
-| `username` | The user's display name (their global name, or their username when they have none). This differs from a message trigger, which sends the username. |
+| `username` | The user's display name (their global name, or their username when they have none). This differs from a message trigger, which sends the username. To tell users apart use `_meta.user.id`; to show a name use `_meta.user.global_name ?? _meta.user.username`, the same on both triggers. |
 | `avatar_url` | The user's avatar URL. |
 | `_meta.interaction_id` | The interaction id. |
 | `_meta.application_id` | The bot's application id. |
@@ -105,12 +115,14 @@ A command fires when a user runs one of the behavior's Discord commands.
 | `_meta.channel_id` | The channel the command was used in. |
 | `_meta.user` | `{ id, username, global_name, discriminator, avatar }`. |
 | `_meta.locale` | The user's Discord locale, or `null`. |
-| `_meta.options` | The invoked command's or subcommand's options, `[{ name, type, value }]`. `type` is Discord's numeric option type. An `attachment` option's `value` is the attachment id. |
+| `_meta.options` | The invoked command's or subcommand's options, `[{ name, type, value }]`. `type` is Discord's numeric option type. An `attachment` option's (type 11) `value` is the attachment id: its file is the `_meta.attachments` entry with that `id`. |
 | `_meta.behavior_id` | The behavior (command leaf) that fired. |
+| `_meta.attachments` | The files of the invoked command's or subcommand's `attachment` options, in option order: `[{ id, url, filename, content_type, size }]`, the same shape as a message trigger's. Empty when it has none. |
 
 The interaction token is **not** sent: the bot answers the interaction
-itself, with your reply. A command's payload has no `message_id` and no
-`attachments` (see #152).
+itself, with your reply. A command's payload has no `message_id`, not
+even a `null` one: an interaction has no message. To tell one invocation
+from another, use `_meta.interaction_id`.
 
 Discord stops a command from being used where its settings don't allow it.
 Past that, the bot does no check of its own on who runs a command, so a
@@ -129,6 +141,7 @@ values:
 | `_meta.test` | `true` |
 | `_meta.behavior_id` | The behavior under test. |
 | `_meta.user` | The placeholder `{ id: "0", username: "karyl-test", global_name: null, discriminator: "0", avatar: null }`, never the admin who pressed the button. |
+| `_meta.attachments` | `[]`. |
 | `_meta.captures` | `[]` (a message trigger's test). |
 | `_meta.sub_command_name` / `sub_command_group` | The leaf's own path (a command's test). |
 
@@ -164,12 +177,13 @@ is turned on or the secret is rotated, and puts it into the receiver.
 
 To verify a request:
 
-1. Refuse it when `X-Karyl-Timestamp` is more than **300 seconds** away
-   from your clock.
+1. Refuse it when `X-Karyl-Timestamp` is not a whole number, or is more
+   than **300 seconds** away from your clock.
 2. Compute the signature and compare it with `X-Karyl-Signature` in
    constant time (`crypto.timingSafeEqual`).
 3. Only once the signature matches, refuse a nonce you have already seen
-   in the last 300 seconds (a replay), and remember this one.
+   (a replay), and remember this one until its timestamp is more than 300
+   seconds old.
 
 ### `token` mode
 
@@ -358,18 +372,46 @@ Then:
   | Message in a DM with the bot | The DM. |
   | Message in a guild channel | A DM to the author. If that DM fails too, nothing is said. A guild channel never sees a failure. |
 
-- The detail goes to the bot event log and to the behavior's statistics,
-  which the admin UI shows. For a non-2xx answer, the detail is the first
-  500 characters of your response body, so don't put secrets in error
-  bodies.
+- The detail goes to the bot event log, to the behavior's statistics and
+  to its delivery log (status, latency and error code per call), which
+  the admin UI shows. For a non-2xx answer, the detail is the first 500
+  characters of your response body (300 in the delivery log), so don't
+  put secrets in error bodies.
 - There is no retry.
 
 ## Reference receiver
 
-A complete receiver for Node.js 18 or later, with no dependencies. It
-verifies both modes and the test scheme, accepts the `-Previous` headers
-during a rotation, refuses replays, and signs every response over the
-request's nonce.
+On Node.js 22 or later, the simplest receiver is the SDK's:
+`npm i @karyl-chan/plugin-sdk`, then
+
+```js
+import http from 'node:http';
+import { createReceiver } from '@karyl-chan/plugin-sdk/behavior-receiver';
+
+const handler = createReceiver({
+  mode: 'hmac',
+  secret: process.env.KARYL_WEBHOOK_SECRET,
+  path: '/hooks/weather', // the path of the URL saved on the bot
+  answer: async (payload, { test }) => {
+    if (test) return { content: 'Test received.', ephemeral: true };
+    const [city] = payload._meta.captures ?? [];
+    return { content: `Weather for ${city ?? 'your city'}: …` };
+  },
+});
+
+http.createServer(handler).listen(8080);
+```
+
+It does what the code below does, and adds a shared nonce store,
+several secrets of your own, and typed payloads; see the
+[SDK README](../../../plugin-sdk/README.md#behavior-webhook-receivers).
+The bot's tests run it through the same scenarios as the code below.
+
+Not on Node, or without dependencies? Below is a complete receiver for
+Node.js 18 or later, with none. It is short enough to port. It verifies
+both modes and the test scheme, accepts the `-Previous` headers during a
+rotation, refuses replays, and signs every response over the request's
+nonce.
 
 The bot's test suite runs this exact code block against the golden
 vectors and against the bot's own webhook client
@@ -422,7 +464,8 @@ export function verifyRequest({ mode, secret, path, headers, body, seen, now = M
 
   const ts = headers['x-karyl-timestamp'];
   if (!ts || !nonce) return { ok: false, reason: 'missing signature headers' };
-  if (Math.abs(now - Number(ts)) > WINDOW_SECONDS) return { ok: false, reason: 'stale timestamp' };
+  // Number('soon') is NaN, and NaN > 300 is false: check the digits first.
+  if (!/^\d+$/.test(ts) || Math.abs(now - Number(ts)) > WINDOW_SECONDS) return { ok: false, reason: 'stale timestamp' };
   const expected = hmacHex(secret, signedString({ test, method: 'POST', path, ts, nonce, body }));
   // During a rotation the new secret signs x-karyl-signature and the old one
   // x-karyl-signature-previous: accepting either lets you switch secrets at
@@ -430,10 +473,11 @@ export function verifyRequest({ mode, secret, path, headers, body, seen, now = M
   if (!same(headers['x-karyl-signature'], expected) && !same(headers['x-karyl-signature-previous'], expected)) {
     return { ok: false, reason: 'signature mismatch' };
   }
-  // The replay check comes after the signature check.
-  for (const [n, expiry] of seen) if (expiry <= now) seen.delete(n);
+  // The replay check comes after the signature check. A nonce is kept while
+  // its request's timestamp is fresh, which can be past now + WINDOW_SECONDS.
+  for (const [n, expiry] of seen) if (expiry < now) seen.delete(n);
   if (seen.has(nonce)) return { ok: false, reason: 'replayed nonce' };
-  seen.set(nonce, now + WINDOW_SECONDS);
+  seen.set(nonce, Number(ts) + WINDOW_SECONDS);
   return { ok: true, test, nonce };
 }
 
@@ -521,9 +565,13 @@ changes the protocol. Update a receiver **before** the bot is upgraded:
 - **Behavior ids changed.** Migration 011 copied every behavior to new
   tables with new ids, so `_meta.behavior_id` is different after the
   upgrade.
+- New: rate limits in bot DMs and on commands (5 per 10 s per user),
+  beside the per-channel one in servers (#119).
 - New: the reply model above (link buttons, `ephemeral`, `flags`, the
   limits), `_meta.captures` on message triggers, and
   `_meta.sub_command_name` / `_meta.sub_command_group` on commands.
 - New: secret rotation with the `-Previous` headers (#99).
+- New: `id` on each `_meta.attachments` entry, and `_meta.attachments` on
+  commands, with the files of the `attachment` options (#152).
 - Removed: conversation sessions and the `[BEHAVIOR:END]` marker. A reply
   never starts or ends a session.

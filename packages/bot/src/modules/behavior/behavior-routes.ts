@@ -5,6 +5,7 @@
  *   GET  /api/behaviors                          — { system, commands, messageTriggers }
  *   GET  /api/behaviors/schema                   — the write schemas, for the admin UI's form checks
  *   POST /api/behaviors/:id/test                 — 對 behavior 的 webhook 動作試發
+ *   GET  /api/behaviors/:id/deliveries           — behavior 最近的投遞紀錄（#120）
  *   POST / PATCH / DELETE /api/behaviors[/:id]   — 訊息觸發的寫入（behavior-write-routes.ts）
  *   PUT  /api/behaviors/reorder                  — 一個位置內的訊息觸發排序（message-trigger-reorder.ts）
  *   POST /api/behaviors/:id/webhook-secret/rotate — 輪換 webhook 密鑰（webhook-secret-rotate.ts）
@@ -33,6 +34,8 @@ import {
   rowOfBehaviorWebhookAction,
 } from "./models/behavior-webhook-action.model.js";
 import { findStatsBulk } from "./models/behavior-stats.model.js";
+import { findRecentDeliveries } from "./behavior-deliveries.js";
+import { loadBehaviorRow } from "./behavior-write-guards.js";
 import {
   findGroupMembers,
   groupInUse,
@@ -130,6 +133,19 @@ function registerReadAndTestRoutes(
     });
   });
 
+  // ── 投遞紀錄（#120）─────────────────────────────────────────────────────────
+  // 最近 20 筆，最新的在前。系統登入沒有 webhook 動作，所以永遠是空的。
+  // 只是讀取，不放進 /api/behaviors/schema。
+
+  server.get(
+    "/api/behaviors/:id/deliveries",
+    { schema: { params: idParams } },
+    async (request, reply) => {
+      const { id } = await loadBehaviorRow(parseRowId(request.params));
+      return reply.send({ deliveries: await findRecentDeliveries(id) });
+    },
+  );
+
   // ── BH-6.2：test-fire ───────────────────────────────────────────────────────
   // 對 behavior 的 webhook 動作發一發測試 payload（_meta.test=true），把結果
   // 直接回給 admin —— 「裝好了有沒有通」從猜變成按一下。不改任何狀態、
@@ -170,7 +186,8 @@ function registerReadAndTestRoutes(
           user: TEST_FIRE_USER,
           // the keys a real trigger sends, so a receiver routes a test the
           // way it routes the real thing (a test matched no message, so no
-          // groups; a leaf's own path)
+          // groups and no files; a leaf's own path)
+          attachments: [],
           ...(behavior.triggerKind === "message"
             ? { captures: [] }
             : {

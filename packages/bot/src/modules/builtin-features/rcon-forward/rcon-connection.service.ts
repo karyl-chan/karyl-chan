@@ -1,5 +1,4 @@
 import { TextChannel } from "discord.js";
-import Rcon from "rcon";
 import { config } from "../../../config.js";
 import {
   DEFAULT_COLOR,
@@ -7,16 +6,17 @@ import {
   SUCCEEDED_COLOR,
 } from "../../../utils/constant.js";
 import {
-  assertAllowedTarget,
   HostPolicyError,
+  resolveAllowedTarget,
 } from "../../../utils/host-policy.js";
 import { botEventLog } from "../../bot-events/bot-event-log.js";
 import { moduleLogger } from "../../../logger.js";
+import { PinnedRcon } from "./pinned-rcon.js";
 
 const log = moduleLogger("rcon-connection");
 
 export interface RconConnection {
-  conn: Rcon;
+  conn: PinnedRcon;
   channels: Set<TextChannel>;
   authenticated: boolean;
   queuedCommands: QueuedCommand[];
@@ -84,6 +84,9 @@ export class RconConnectionService {
       lockResolver.resolve = resolve;
       lockResolver.reject = reject;
     });
+    // Waiters see a failure through their own await; without this, a
+    // failed connect nobody waited on is an unhandled rejection.
+    connectionLockPromise.catch(() => {});
     this.connectionLocks.set(connectionName, connectionLockPromise);
 
     try {
@@ -98,7 +101,8 @@ export class RconConnectionService {
         throw new RconLimitError(host, MAX_CONNECTIONS);
       }
 
-      await assertAllowedTarget(host, port);
+      // Resolved and vetted once; the client connects only to these.
+      const addresses = await resolveAllowedTarget(host, port);
 
       if (this.connectionMap[connectionName]) {
         try {
@@ -109,7 +113,7 @@ export class RconConnectionService {
         delete this.connectionMap[connectionName];
       }
 
-      const rconInstance = new Rcon(host, port, password);
+      const rconInstance = new PinnedRcon(host, port, password, addresses);
 
       this.connectionMap[connectionName] = {
         conn: rconInstance,
@@ -375,6 +379,13 @@ export class RconConnectionService {
 
       try {
         await new Promise((resolve) => setTimeout(resolve, delay));
+        // Every attempt re-resolves and re-vets the host: a container
+        // that restarted has a new IP, and an answer that now points
+        // somewhere refused fails this attempt.
+        if (this.connectionMap[connectionName] !== connection) return;
+        const addresses = await resolveAllowedTarget(host, port);
+        if (this.connectionMap[connectionName] !== connection) return;
+        connection.conn.repin(addresses);
         this.setupEventListeners(connectionName, host, port, password);
         await connection.conn.connect();
       } catch (error) {
@@ -382,6 +393,8 @@ export class RconConnectionService {
           { err: error, connectionName, attempt: connection.reconnectAttempts },
           "重新連接嘗試失敗",
         );
+        // Removed or re-created while the attempt waited: not ours to retry or end.
+        if (this.connectionMap[connectionName] !== connection) return;
 
         if (connection.reconnectAttempts >= MAX_RETRY_ATTEMPTS) {
           // 如果達到最大重試次數，清理連接並通知用戶
@@ -415,6 +428,9 @@ export class RconConnectionService {
             },
           );
           await this.handleConnectionEnd(connectionName);
+        } else {
+          // No socket was opened, so no socket error drives the next attempt.
+          await this.handleConnectionError(connectionName, host, port, password);
         }
       }
     } else {

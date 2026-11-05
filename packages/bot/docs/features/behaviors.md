@@ -125,6 +125,14 @@ registers the new name first and only then removes the old one.
 **Resync** registers a command again exactly as stored, for example after
 someone deleted it on Discord.
 
+### Rate limit
+
+One user runs command webhook actions at most 5 times per 10 seconds,
+across every command. Past that, the invocation is answered privately
+with "You're using this too often" (in the user's language), not
+forwarded and not counted; the drop is noted once per window in the bot
+event log. The system login is never limited.
+
 ## Message triggers
 
 A message trigger matches messages the bot receives. It has a
@@ -142,7 +150,7 @@ trigger for other DMs.
 
 | Setting | Rule |
 |---------|------|
-| Pattern | `startswith`, `endswith` or `regex`, 1–500 characters. A regex is a JavaScript regular expression without flags (so it is case-sensitive) and must compile. `startswith` and `endswith` compare exactly, case included. |
+| Pattern | `startswith`, `endswith` or `regex`, 1–500 characters. A regex is a JavaScript regular expression without flags (so it is case-sensitive), run on V8's linear-time engine: it must compile there, so backreferences, lookahead and large repeat counts are refused (see [regex triggers](#regex-triggers)). `startswith` and `endswith` compare exactly, case included. |
 | Audience | DMs with the bot only: **everyone**, **one user** (a user id), or an **audience group**. In servers a trigger always applies to everyone. |
 | Skip other bots (`ignoreBots`) | Servers only, on by default: skip messages from other bots and webhooks. The bot's own messages are always skipped, and in DMs messages from bots always are. |
 | Stop after a match (`stopOnMatch`) | Off by default. See [matching order](#matching-order). |
@@ -151,6 +159,45 @@ An **audience group** is a name with a member list. Triggers that use the
 same name share one list. A group exists only while a trigger uses it:
 its list can be set only then, and it is deleted with the last trigger
 that uses it (the admin UI warns before that happens).
+
+### Regex triggers
+
+A regex is written by an admin but runs on messages anyone sends, so a
+pattern that backtracks (`(a+)+$`) plus one crafted message could stall
+the whole bot, the login included. The bot therefore runs regexes on
+V8's non-backtracking engine (the `l` flag, turned on at startup), where
+matching takes time linear in the message, whatever the pattern.
+
+That engine cannot run every regex. Saving one it cannot run is refused
+(`validation_failed` on `patternValue`, with the reason). On the bot's
+Docker image (Node 22, V8 12.4):
+
+| Syntax | Example | Linear engine |
+|--------|---------|---------------|
+| Groups, named groups, optional groups, classes, `\b`, lazy quantifiers | `^天氣\s+(.+)`, `^!(\w+)\s+(?<arg>\S+)` | yes |
+| Nested repeats | `(a+)+$` | yes, in linear time |
+| Lookbehind | `(?<=a)b`, `(?<!a)b` | yes |
+| Small repeat counts | `x{1,10}`, `\d{1,3}`, `[a-z]{16}` | yes |
+| Backreferences | `(a)\1`, `(?<n>a)\k<n>` | no |
+| Lookahead | `(?=a)a`, `(?!a)b` | no |
+| Repeat counts above about 16 | `x{1,1000}`, `[a-z]{2,64}` | no: use `+` or `*` |
+
+Another V8 accepts a different set (Node 20 refuses lookbehind). The bot
+asks the engine rather than assuming, so on any Node a pattern is
+refused on save exactly when it would not run. A stored regex that stops
+compiling (after a Node upgrade, or saved before this check) never
+matches; the bot event log names each one at startup, and again when a
+message reaches it.
+
+If V8 ever drops the engine, the bot runs degraded and says so in the bot
+event log at startup: matching uses the normal engine, and both saving
+and matching refuse a repeat inside a repeat (`safe-regex2`). A stored
+pattern with a nested repeat is therefore disabled (it never matches),
+and the startup check lists each one.
+
+The admin UI's **Try it** box runs the browser's own engine, which has no
+linear mode: a pattern the bot refuses still previews there, and saving
+shows the bot's reason on the pattern.
 
 ### Matching order
 
@@ -169,11 +216,20 @@ For one message, several triggers can fire, one after another:
 
 Other limits:
 
-- In servers, each channel fires at most 5 webhook requests per 10
-  seconds. Further matches in that window are dropped and noted once in
-  the bot event log. DMs are not limited.
-- One user's messages are handled one at a time, in order. A slow webhook
-  therefore delays that user's next message, but not other users.
+- Webhook actions are rate-limited to 5 requests per 10 seconds: in
+  servers per channel, in DMs with the bot per user, and for commands per
+  user ([rate limit](#rate-limit)). A message over the limit is dropped
+  without a reply. A drop is not counted in the behavior's stats and is
+  noted once per window in the bot event log. The system login is never
+  limited.
+- One user's messages in one channel (or in their DM with the bot) are
+  handled one at a time, in order. A slow webhook therefore delays only
+  that user's next message there, not their messages elsewhere and not
+  other users. A message that fires no webhook trigger never waits, and
+  the system login never queues.
+- At most 3 messages wait behind the one being handled. A further message
+  is dropped without a reply and without counting it, and the drop is
+  noted once in the bot event log.
 
 ## Behavior Sections
 
@@ -284,6 +340,32 @@ verified. A test does not count in the statistics.
 and failures, its consecutive failures, and its last error. The admin UI
 shows them and flags a behavior that keeps failing.
 
+**Delivery log:** each delivery of a webhook action also leaves one row
+(`behavior_deliveries`): when it fired, the trigger kind (`command` or
+`message`), ok or failed, the receiver's HTTP status, the time from the
+forward to the rendered reply, an error code, the first 300 characters
+of the error, and which key verified the response signature. A failure
+gets one of these codes:
+
+| Code | Meaning |
+|------|---------|
+| A [target rule](#webhook-targets) code, or `response_signature` | The forwarder refused the target, or the response signature was missing, stale or wrong. |
+| `http_error` | A non-2xx answer (a redirect too). |
+| `invalid_reply` | A 2xx whose body the bot could not use (too large, not JSON, not a reply object). |
+| `request_failed` | No answer: unreachable, timed out, or an action the bot could not decrypt. |
+| `render_failed` | Discord refused the reply. |
+| `dm_failed` | A private reply to a server message's author could not be sent as a DM. |
+| `defer_failed` | Discord refused a command's deferral (the interaction had expired): the webhook was never called, and the user sees "interaction failed". It counts as a failure in the statistics too, and is warned about once per leaf in the event log. |
+
+A row never holds the webhook URL, a secret, the payload, the message or
+the reply, a user id or a message id. Each behavior keeps its last 20
+deliveries, none older than 7 days: writing a delivery is a single
+insert, and a background pruner removes the rest every 10 minutes. A
+test does not write a delivery. Writing one is best-effort: if it fails,
+the action and its reply go on. In the admin UI, a message trigger card
+and an open command leaf list the recent deliveries under
+「最近投遞」, loaded when the list is opened.
+
 ### Webhook targets
 
 The webhook URL is checked by `resolveWebhookTarget`
@@ -353,7 +435,7 @@ with the bot, nor to the system login, whose reply is always private.
 
 When an action fails, the user gets only a generic "couldn't be completed"
 line (a server channel never sees it), and the detail goes to the event
-log and the behavior's statistics
+log, the behavior's statistics and its delivery log
 ([protocol: failures](behavior-webhook-protocol.md#failures)).
 
 ## Admin UI
@@ -392,6 +474,7 @@ silently dropped.
 | `DELETE /api/behaviors/:id` | Delete a message trigger or a command leaf. |
 | `PUT /api/behaviors/reorder` | `{ location, ids }`: the full new order of one location's message triggers (`bot_dm`, `guild:all`, `guild:<id>`, `channel:<guildId>:<channelId>`). |
 | `POST /api/behaviors/:id/test` | Test-fire the saved webhook action. |
+| `GET /api/behaviors/:id/deliveries` | `{ deliveries }`: the behavior's last 20 [deliveries](#webhook-actions), newest first (`404 not_found` for an unknown id; always empty for the system login). |
 | `POST /api/behaviors/:id/webhook-secret/rotate` | New secret, shown once; the old one stays valid for 24 hours. |
 | `POST /api/behavior-commands` | Create a command with its leaves. |
 | `PATCH /api/behavior-commands/:id` | Edit a command's name, description or visibility. |
@@ -434,6 +517,7 @@ silently dropped.
 | `behavior_webhook_actions` | A behavior's webhook: URL and secret (encrypted), auth mode, the previous secret and its expiry during a rotation. |
 | `behavior_group_members` | Audience group members, by group name. |
 | `behavior_stats` | Per-behavior statistics. |
+| `behavior_deliveries` | The delivery log: one row per webhook delivery, the last 20 per behavior for at most 7 days. |
 
 The runtime reads all of this from an in-memory snapshot, rebuilt after
 every write (and at most 30 seconds old for writes from another process).
@@ -453,7 +537,8 @@ Schema changes and the 2.0 upgrade are in
 | `src/modules/behavior/message-trigger-reorder.ts` | Reorder. |
 | `src/modules/behavior/webhook-action-input.ts`, `webhook-secret-rotate.ts` | Webhook intake and rotation. |
 | `src/modules/behavior/system-seed.service.ts`, `system-login-trigger.ts`, `system-login-trigger-route.ts`, `login-trigger-hint-route.ts` | The system login. |
-| `src/modules/behavior/behavior-trigger.ts` | Pattern matching. |
+| `src/modules/behavior/behavior-trigger.ts`, `regex-trigger-boot-check.ts`, `src/utils/linear-regex.ts` | Pattern matching; the linear-time regex engine and its startup check. |
+| `src/modules/command-system/behavior-rate-limits.ts` | Rate limits. |
 | `src/modules/command-system/interaction-dispatcher.service.ts` | Runs command triggers. |
 | `src/modules/command-system/message-trigger-matcher.service.ts` | Runs message triggers. |
 | `src/modules/command-system/webhook-action.ts`, `webhook-forwarder.service.ts` | Calls the webhook, signs and verifies. |

@@ -10,6 +10,10 @@
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
     },
+    "./behavior-receiver": {
+      "import": "./dist/behavior-receiver.js",
+      "types": "./dist/behavior-receiver.d.ts"
+    },
     "./web": {
       "import": "./src/web/index.ts",
       "types": "./src/web/index.ts"

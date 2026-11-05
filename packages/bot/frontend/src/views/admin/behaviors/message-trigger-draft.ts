@@ -188,7 +188,10 @@ export function toPatchBody(saved: MessageTriggerView, draft: MessageTriggerDraf
 /**
  * Whether a message would fire the pattern — the same test the bot makes
  * (behavior-trigger.ts `matchesTrigger`); 'invalid' for a regex that does
- * not compile.
+ * not compile. The bot runs a regex on V8's linear-time engine, which a
+ * browser does not have (#119): a regex it cannot run there (a
+ * backreference, a lookahead) previews normally here, and the save is
+ * refused with the bot's reason on the pattern field.
  */
 export function previewMatch(kind: BehaviorPatternKind, pattern: string, text: string): 'match' | 'no_match' | 'invalid' {
     if (kind === 'startswith') return text.startsWith(pattern) ? 'match' : 'no_match';
@@ -204,7 +207,7 @@ export function previewMatch(kind: BehaviorPatternKind, pattern: string, text: s
 
 /**
  * The capture groups a match sends to the service as `_meta.captures`
- * (the bot's `triggerCaptures`): a regex match's groups, group 1 first,
+ * (the bot's `matchTrigger`): a regex match's groups, group 1 first,
  * null for an optional group that took no part; [] otherwise.
  */
 export function previewCaptures(kind: BehaviorPatternKind, pattern: string, text: string): Array<string | null> {

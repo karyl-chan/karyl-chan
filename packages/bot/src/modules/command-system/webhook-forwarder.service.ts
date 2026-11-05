@@ -17,7 +17,7 @@
  *     要 receiver 先同時接受 -Previous header（docs/features/behavior-webhook-protocol.md）。
  *   - URL 解密後才用
  *   - 解析 response 成回覆模型（behavior-reply.ts，#140）
- *   - 回 ForwardResult { ok, reply, notes, status?, error? }
+ *   - 回 ForwardResult { ok, reply, notes, status?, error?, errorCode?, verified? }
  */
 
 import type { RESTPostAPIWebhookWithTokenJSONBody } from "discord.js";
@@ -184,9 +184,12 @@ export class WebhookForwarder {
    * @param allowlist  WEBHOOK_PRIVATE_ALLOWLIST entries the target policy
    *                   applies; defaults to the boot-parsed config value
    *                   (tests inject their own).
+   * @param timeoutMs  how long one POST may take before it is aborted
+   *                   (headers and body together); tests inject a short one.
    */
   constructor(
     private readonly allowlist: readonly AllowlistEntry[] = webhookAllowlist,
+    private readonly timeoutMs: number = 10_000,
   ) {}
 
   /**
@@ -337,7 +340,7 @@ export class WebhookForwarder {
           // re-validating — an SSRF into cloud metadata (169.254.169.254) or
           // internal hosts whose response we'd then relay back into Discord.
           redirect: "manual",
-          signal: AbortSignal.timeout(10_000),
+          signal: AbortSignal.timeout(this.timeoutMs),
           // `dispatcher` is Node's (undici) fetch extension — absent from
           // the DOM RequestInit type the project compiles against.
         } as RequestInit);
@@ -430,8 +433,13 @@ export class WebhookForwarder {
 
     // 解析 response body（#140 回覆模型）。空 body = 動作選擇不回覆；
     // 非 JSON 或不是物件 = receiver 壞掉，算失敗（不再默默變成空回覆）。
-    const okWith = (reply: ForwardResult["reply"], notes: ForwardResult["notes"]): ForwardResult =>
-      verified ? { ok: true, reply, notes, verified } : { ok: true, reply, notes };
+    const okWith = (reply: ForwardResult["reply"], notes: ForwardResult["notes"]): ForwardResult => ({
+      ok: true,
+      reply,
+      notes,
+      status: res.status,
+      ...(verified ? { verified } : {}),
+    });
     if (rawText.length === 0) return okWith({}, []);
     let decoded: unknown;
     try {

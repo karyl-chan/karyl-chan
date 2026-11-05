@@ -1,5 +1,6 @@
 import { DataTypes, Op } from "sequelize";
 import { sequelize } from "../../../db.js";
+import { shouldRecord } from "../../bot-events/bot-event-dedup.js";
 import { botEventLog } from "../../bot-events/bot-event-log.js";
 import type { CommandTarget } from "../../command-system/command-target.js";
 import type { ManifestPluginCommand } from "../plugin-registry.service.js";
@@ -155,23 +156,65 @@ export const findPluginCommandForInvocation = async (
       : target === "all_guilds" || target === `guild:${commandGuildId}`;
   const matching = rows.filter((r) => covers(pluginCommandRowTarget(r)));
   // 指定伺服器的列優先於 all_guilds（同名同伺服器時 Discord 只會留一個）。
-  // 註冊時的名稱檢查應該讓這種情況不會發生；真的發生就記下來。
+  // 註冊時的名稱檢查與 manifest 協定應該讓這種情況不會發生；真的發生（舊
+  // 資料）就記下來。每次呼叫都會走到這裡，所以依名稱 + 呼叫位置去重。
   const chosen =
     matching.find((r) => r.guildId !== null) ?? matching[0] ?? null;
-  if (matching.length > 1 && chosen) {
+  const site = commandGuildId ?? "global";
+  if (
+    matching.length > 1 &&
+    chosen &&
+    shouldRecord(`plugin-command-overlap:${name}:${site}`)
+  ) {
+    // 依列 id 列出，讓同一組衝突每次記下的文字都一樣（查詢結果順序不固定）。
+    const candidates = [...matching].sort((a, b) => a.id - b.id);
     botEventLog.record(
       "warn",
       "bot",
-      `plugin-commands: /${name} 有 ${matching.length} 個 plugin 指令列都涵蓋這次呼叫（commandGuildId=${commandGuildId ?? "global"}），選用 plugin ${chosen.pluginId} 的列 ${chosen.id}`,
+      describeOverlap(name, site, candidates, chosen),
       {
         cmd: name,
         commandGuildId,
-        candidates: matching.map((r) => ({ id: r.id, pluginId: r.pluginId })),
+        candidates: candidates.map((r) => ({
+          id: r.id,
+          pluginId: r.pluginId,
+          kind: rowKind(r),
+          featureKey: r.featureKey,
+        })),
       },
     );
   }
   return chosen;
 };
+
+/** 列的種類：guild feature 指令，或軌三 `plugin_commands[]` 指令。 */
+function rowKind(row: PluginCommandRow): "feature" | "plugin_command" {
+  return row.featureKey !== null ? "feature" : "plugin_command";
+}
+
+/** warn 文字：每個候選列的 plugin、列 id、種類；不預設是兩個 plugin 撞名。 */
+function describeOverlap(
+  name: string,
+  site: string,
+  candidates: PluginCommandRow[],
+  chosen: PluginCommandRow,
+): string {
+  const pluginIds = new Set(candidates.map((r) => r.pluginId));
+  const origin =
+    pluginIds.size === 1
+      ? `都是同一個 plugin ${chosen.pluginId} 同時宣告的`
+      : `來自 ${pluginIds.size} 個 plugin`;
+  const rows = candidates
+    .map((r) => {
+      const kind =
+        rowKind(r) === "feature"
+          ? `feature 指令 ${r.featureKey}`
+          : `軌三 scope=${parsePluginCommandManifest(r.manifestJson)?.scope ?? "?"}`;
+      return `列 ${r.id}（plugin ${r.pluginId}，${kind}）`;
+    })
+    .join("、");
+  return `plugin-commands: /${name}（commandGuildId=${site}）有 ${candidates.length} 列涵蓋同一次呼叫，${origin}：${rows}；選用列 ${chosen.id}`;
+}
 
 export interface UpsertPluginCommandInput {
   pluginId: number;

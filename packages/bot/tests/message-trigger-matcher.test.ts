@@ -8,7 +8,14 @@
  *     fire anything
  *   - triggers are walked in sortOrder; stopOnMatch stops the walk; the
  *     system login answers with its built-in action and always stops
+ *   - a trigger without a webhook action is skipped with a warning; the
+ *     walk goes on
  *   - triggers come from an in-memory snapshot that a write invalidates
+ *   - webhook triggers are rate-limited: 5 per 10 s per guild channel, and
+ *     5 per 10 s per user in bot DMs; the system login never is (#119)
+ *   - one conversation (a user in one channel, or in their DM with the bot)
+ *     runs its webhook triggers one message at a time, in order; other
+ *     conversations never wait for it
  */
 import { vi, describe, it, expect, beforeAll, beforeEach, type Mock } from "vitest";
 
@@ -20,6 +27,11 @@ vi.hoisted(() => {
 vi.mock("../src/modules/bot-events/bot-event-log.js", () => ({
   botEventLog: { record: vi.fn() },
 }));
+// the real action, made rejectable per test (a rejection inside the queue)
+vi.mock("../src/modules/command-system/webhook-action.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/modules/command-system/webhook-action.js")>();
+  return { ...actual, runWebhookAction: vi.fn(actual.runWebhookAction) };
+});
 vi.mock("../src/modules/admin/admin-login.service.js", () => ({
   mintLoginLink: vi.fn(async () => ({
     ok: true,
@@ -34,12 +46,13 @@ import { sequelize } from "../src/db.js";
 import { BehaviorDefinition } from "../src/modules/behavior/models/behavior-definition.model.js";
 import { BehaviorGroupMember } from "../src/modules/behavior/models/behavior-group-member.model.js";
 import { BehaviorStat } from "../src/modules/behavior/models/behavior-stats.model.js";
+import { getBehaviorCatalog } from "../src/modules/behavior/behavior-catalog.js";
 import { mintLoginLink } from "../src/modules/admin/admin-login.service.js";
-import {
-  MessageTriggerMatcher,
-  __resetGuildForwardWindowsForTests,
-} from "../src/modules/command-system/message-trigger-matcher.service.js";
+import { botEventLog } from "../src/modules/bot-events/bot-event-log.js";
+import { MessageTriggerMatcher } from "../src/modules/command-system/message-trigger-matcher.service.js";
+import { __resetBehaviorRateLimitsForTests } from "../src/modules/command-system/behavior-rate-limits.js";
 import type { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
+import { runWebhookAction } from "../src/modules/command-system/webhook-action.js";
 import {
   clearBehaviors,
   seedMessageTrigger,
@@ -54,7 +67,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  __resetGuildForwardWindowsForTests();
+  __resetBehaviorRateLimitsForTests();
   await clearBehaviors();
 });
 
@@ -104,10 +117,13 @@ function guildMsg(opts: {
 
 function dmMsg(userId: string, content: string) {
   const send = vi.fn(async () => {});
+  const reply = vi.fn(async () => {});
+  const authorSend = vi.fn(async () => {});
   const message = {
     id: "MSG-1",
     content,
     guildId: null,
+    reply,
     author: {
       id: userId,
       bot: false,
@@ -116,6 +132,7 @@ function dmMsg(userId: string, content: string) {
       discriminator: "0",
       avatar: null,
       displayAvatarURL: () => "https://cdn.example/a.png",
+      send: authorSend,
     },
     attachments: new Map([
       ["a1", { url: "https://cdn.example/f.png", name: "f.png", contentType: "image/png", size: 10 }],
@@ -123,7 +140,7 @@ function dmMsg(userId: string, content: string) {
     client: { user: { id: BOT_ID } },
     channel: { id: `DM-${userId}`, type: ChannelType.DM, send },
   } as never;
-  return { message, send };
+  return { message, send, reply, authorSend };
 }
 
 describe("bot DM triggers", () => {
@@ -323,6 +340,45 @@ describe("guild triggers", () => {
   });
 });
 
+// #119：私訊以使用者為單位限流；超量靜默丟棄、記一次、不計統計
+describe("bot DM rate limit", () => {
+  const rateLimitWarnings = (userId: string) =>
+    vi.mocked(botEventLog.record).mock.calls.filter(([level, , message, meta]) => {
+      const at = meta as { userId?: string } | undefined;
+      return level === "warn" && at?.userId === userId && /rate limit/.test(message);
+    });
+
+  it("forwards a user's first 5 hits in 10 s, drops the rest silently, logs once", async () => {
+    const id = await seedMessageTrigger();
+    const forwarder = makeForwarder("pong");
+    const m = matcherWith(forwarder);
+    const replies: Mock[] = [];
+    for (let i = 0; i < 7; i++) {
+      const { message, send } = dmMsg("U-DM-RL", "!go");
+      replies.push(send as Mock);
+      await m.onMessage(message);
+    }
+    expect(forwarder.forward).toHaveBeenCalledTimes(5);
+    expect(replies.slice(5).every((send) => send.mock.calls.length === 0)).toBe(true);
+    expect(rateLimitWarnings("U-DM-RL")).toHaveLength(1);
+    // a dropped hit is not counted
+    expect((await BehaviorStat.findByPk(id))?.get("successCount")).toBe(5);
+    // another user has their own budget
+    await m.onMessage(dmMsg("U-DM-RL-2", "!go").message);
+    expect(forwarder.forward).toHaveBeenCalledTimes(6);
+  });
+
+  it("never holds back the system login", async () => {
+    const login = await seedSystemLogin();
+    await seedMessageTrigger();
+    const m = matcherWith(makeForwarder());
+    for (let i = 0; i < 6; i++) await m.onMessage(dmMsg("U-DM-RL-3", "!go").message);
+    const outcome = await m.onMessage(dmMsg("U-DM-RL-3", "!login").message);
+    expect(outcome).toEqual({ handled: true, behaviorId: login });
+    expect(mintLoginLink).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("matching order", () => {
   it("every match fires unless one stops the walk", async () => {
     const first = await seedMessageTrigger({ sortOrder: 0 });
@@ -344,6 +400,39 @@ describe("matching order", () => {
     const forwarder = makeForwarder();
     await matcherWith(forwarder).onMessage(dmMsg("U1", "!go").message);
     expect(forwardedIds(forwarder)).toEqual([second]);
+  });
+});
+
+describe("a trigger without a webhook action", () => {
+  it("is not handled, says nothing, and logs a warning", async () => {
+    const id = await seedMessageTrigger({}, null);
+    const forwarder = makeForwarder();
+    const { message, send, reply, authorSend } = dmMsg("U1", "!go");
+
+    const outcome = await matcherWith(forwarder).onMessage(message);
+
+    expect(outcome).toEqual({ handled: false });
+    expect(forwarder.forward).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    expect(reply).not.toHaveBeenCalled();
+    expect(authorSend).not.toHaveBeenCalled();
+    const warnings = vi
+      .mocked(botEventLog.record)
+      .mock.calls.filter(([level, , msg]) => level === "warn" && String(msg).includes(`behavior ${id} `));
+    expect(warnings).toHaveLength(1);
+  });
+
+  it("does not stop later triggers from matching", async () => {
+    // stopOnMatch off: the skip neither throws nor claims the message, so
+    // the walk reaches the next trigger and the outcome is that trigger's
+    await seedMessageTrigger({ sortOrder: 0, stopOnMatch: false }, null);
+    const second = await seedMessageTrigger({ sortOrder: 1 });
+    const forwarder = makeForwarder();
+
+    const outcome = await matcherWith(forwarder).onMessage(dmMsg("U1", "!go").message);
+
+    expect(forwardedIds(forwarder)).toEqual([second]);
+    expect(outcome).toMatchObject({ handled: true, behaviorId: second });
   });
 });
 
@@ -407,5 +496,214 @@ describe("the trigger snapshot", () => {
     await m.onMessage(dmMsg("U2", "!nothing").message);
     expect(spy).not.toHaveBeenCalled();
     spy.mockRestore();
+  });
+});
+
+// ── one conversation at a time ──────────────────────────────────────────────
+
+const FORWARD_OK = { ok: true, reply: {}, notes: [] };
+
+/**
+ * A slow receiver under the test's control: every request waits until the
+ * test releases it; after open() requests answer at once.
+ */
+function heldForwarder() {
+  const waiting: Array<() => void> = [];
+  let opened = false;
+  const forward = vi.fn(() =>
+    opened
+      ? Promise.resolve(FORWARD_OK)
+      : new Promise((resolve) => waiting.push(() => resolve(FORWARD_OK))),
+  );
+  return {
+    forward,
+    /** answer the i-th request (0-based, in call order) */
+    release: (i: number) => waiting[i](),
+    open: () => {
+      opened = true;
+      waiting.forEach((answer) => answer());
+    },
+  };
+}
+
+/** the content of each forwarded message, in call order */
+function forwardedContents(forwarder: { forward: Mock }): string[] {
+  return forwarder.forward.mock.calls.map(
+    (c) => (c[1] as { content: string }).content,
+  );
+}
+
+/**
+ * Lets every pending promise step run. With the trigger snapshot loaded,
+ * a message reaches its forward (or the queue) without any I/O.
+ */
+const settle = () => new Promise<void>((r) => setImmediate(r));
+
+/** p's value once pending steps have run, or "still waiting" */
+function settledNow<T>(p: Promise<T>): Promise<T | "still waiting"> {
+  return Promise.race([p, settle().then(() => "still waiting" as const)]);
+}
+
+describe("one conversation at a time", () => {
+  it("a user's messages in one channel are forwarded in order, each after the last one finished", async () => {
+    await seedMessageTrigger({ surface: "guild" });
+    await getBehaviorCatalog();
+    const forwarder = heldForwarder();
+    const m = matcherWith(forwarder);
+
+    const first = m.onMessage(guildMsg({ userId: "U-ORD", content: "!go 1" }).message);
+    const second = m.onMessage(guildMsg({ userId: "U-ORD", content: "!go 2" }).message);
+    await settle();
+    expect(forwardedContents(forwarder)).toEqual(["!go 1"]);
+
+    forwarder.release(0);
+    await first;
+    await settle();
+    expect(forwardedContents(forwarder)).toEqual(["!go 1", "!go 2"]);
+    forwarder.open();
+    await second;
+  });
+
+  it("a user's message in another channel does not wait for a slow one", async () => {
+    await seedMessageTrigger({ surface: "guild" });
+    await getBehaviorCatalog();
+    const forwarder = heldForwarder();
+    const m = matcherWith(forwarder);
+
+    const stuck = m.onMessage(guildMsg({ userId: "U-X", content: "!go in X", channelId: "CX" }).message);
+    const elsewhere = m.onMessage(guildMsg({ userId: "U-X", content: "!go in Y", channelId: "CY" }).message);
+    await settle();
+    expect(forwardedContents(forwarder)).toEqual(["!go in X", "!go in Y"]);
+
+    forwarder.open();
+    await Promise.all([stuck, elsewhere]);
+  });
+
+  it("another user in the same channel does not wait for a slow one", async () => {
+    await seedMessageTrigger({ surface: "guild" });
+    await getBehaviorCatalog();
+    const forwarder = heldForwarder();
+    const m = matcherWith(forwarder);
+
+    const stuck = m.onMessage(guildMsg({ userId: "U-A", content: "!go from A" }).message);
+    const other = m.onMessage(guildMsg({ userId: "U-B", content: "!go from B" }).message);
+    await settle();
+    expect(forwardedContents(forwarder)).toEqual(["!go from A", "!go from B"]);
+
+    forwarder.open();
+    await Promise.all([stuck, other]);
+  });
+
+  it("a message that matches nothing does not wait behind a slow one", async () => {
+    await seedMessageTrigger({ surface: "guild" });
+    await getBehaviorCatalog();
+    const forwarder = heldForwarder();
+    const m = matcherWith(forwarder);
+
+    const stuck = m.onMessage(guildMsg({ userId: "U-N", content: "!go" }).message);
+    const chatter = m.onMessage(guildMsg({ userId: "U-N", content: "just talking" }).message);
+    expect(await settledNow(chatter)).toEqual({ handled: false });
+
+    forwarder.open();
+    await stuck;
+  });
+
+  it("`!login` in a DM answers at once while a server webhook of the same user is slow", async () => {
+    await seedSystemLogin();
+    await seedMessageTrigger({ surface: "guild" });
+    await getBehaviorCatalog();
+    const forwarder = heldForwarder();
+    const m = matcherWith(forwarder);
+
+    const stuck = m.onMessage(guildMsg({ userId: "U-OWNER", content: "!go" }).message);
+    const { message, send } = dmMsg("U-OWNER", "!login");
+    expect(await settledNow(m.onMessage(message))).toMatchObject({ handled: true });
+    expect(send).toHaveBeenCalledTimes(1);
+
+    forwarder.open();
+    await stuck;
+  });
+
+  it("`!login` answers at once even behind a slow webhook in the same DM", async () => {
+    await seedSystemLogin();
+    await seedMessageTrigger();
+    await getBehaviorCatalog();
+    const forwarder = heldForwarder();
+    const m = matcherWith(forwarder);
+
+    const stuck = m.onMessage(dmMsg("U-OWNER", "!go").message);
+    const { message, send } = dmMsg("U-OWNER", "!login");
+    expect(await settledNow(m.onMessage(message))).toMatchObject({ handled: true });
+    expect(send).toHaveBeenCalledTimes(1);
+
+    forwarder.open();
+    await stuck;
+  });
+
+  it("a conversation holds one running and three waiting messages; more are dropped and logged once", async () => {
+    const id = await seedMessageTrigger({ surface: "guild" });
+    await getBehaviorCatalog();
+    const forwarder = heldForwarder();
+    const m = matcherWith(forwarder);
+    const send = (n: number) =>
+      m.onMessage(guildMsg({ userId: "U-Q", channelId: "CQ", content: `!go ${n}` }).message);
+    const queueFullWarnings = () =>
+      vi
+        .mocked(botEventLog.record)
+        .mock.calls.filter(([level, , , meta]) => {
+          const at = meta as { userId?: string; channelId?: string } | undefined;
+          return level === "warn" && at?.userId === "U-Q" && at.channelId === "CQ";
+        });
+
+    const accepted = [send(1), send(2), send(3), send(4)];
+    expect(await settledNow(send(5))).toEqual({ handled: false });
+    expect(forwardedContents(forwarder)).toEqual(["!go 1"]);
+    expect(queueFullWarnings()).toHaveLength(1);
+
+    expect(await settledNow(send(6))).toEqual({ handled: false });
+    expect(queueFullWarnings()).toHaveLength(1);
+
+    forwarder.open();
+    await Promise.all(accepted);
+    expect(forwardedContents(forwarder)).toEqual(["!go 1", "!go 2", "!go 3", "!go 4"]);
+    // a dropped message is not counted
+    expect((await BehaviorStat.findByPk(id))?.get("successCount")).toBe(4);
+  });
+
+  it("a finished conversation leaves nothing behind", async () => {
+    await seedMessageTrigger({ surface: "guild" });
+    await getBehaviorCatalog();
+    const forwarder = heldForwarder();
+    const m = matcherWith(forwarder);
+
+    const running = [
+      m.onMessage(guildMsg({ userId: "U-GC", channelId: "C-GC1", content: "!go" }).message),
+      m.onMessage(guildMsg({ userId: "U-GC", channelId: "C-GC1", content: "!go" }).message),
+      m.onMessage(guildMsg({ userId: "U-GC", channelId: "C-GC2", content: "!go" }).message),
+    ];
+    await settle();
+    expect(m.__conversationCountForTests()).toBe(2);
+
+    forwarder.open();
+    await Promise.all(running);
+    expect(m.__conversationCountForTests()).toBe(0);
+  });
+
+  it("a message whose webhook action rejects still frees the conversation for the next one", async () => {
+    await seedMessageTrigger({ surface: "guild" });
+    await getBehaviorCatalog();
+    const forwarder = heldForwarder();
+    const m = matcherWith(forwarder);
+    vi.mocked(runWebhookAction).mockRejectedValueOnce(new Error("action blew up"));
+
+    const failing = m.onMessage(guildMsg({ userId: "U-REJ", channelId: "C-REJ", content: "!go 1" }).message);
+    const next = m.onMessage(guildMsg({ userId: "U-REJ", channelId: "C-REJ", content: "!go 2" }).message);
+    await expect(failing).rejects.toThrow("action blew up");
+    await settle();
+    expect(forwardedContents(forwarder)).toEqual(["!go 2"]);
+
+    forwarder.open();
+    expect(await next).toMatchObject({ handled: true });
+    expect(m.__conversationCountForTests()).toBe(0);
   });
 });

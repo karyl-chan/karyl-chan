@@ -44,6 +44,40 @@ All `/voice` replies are ephemeral (visible only to the caller).
 - Connection and playback state live in memory; the bot must be re-joined
   after a restart.
 
+## Media URL host policy
+
+On the plugin RPC path (`src/modules/voice/voice-rpc.ts`) the bot
+checks the URL's host with the host policy (`src/utils/host-policy.ts`)
+before playback:
+
+- A URL on the calling plugin's own origin (for example the radio
+  plugin serving a library track) gets the plugin-target policy,
+  `assertPluginTarget`.
+- Any other URL gets the strict public-only policy,
+  `assertPublicMediaTarget`. Loopback, private, link-local, cloud
+  metadata and reserved addresses are refused.
+
+The `/voice play` slash command checks only that the URL is `http` or
+`https`; it does not run the host policy.
+
+The check is not pinned to the addresses it vetted, and that is a
+known residual risk (#144):
+
+- ffmpeg fetches the URL itself, possibly in the separate voice
+  container, and resolves the host again. A DNS answer that changes
+  between check and fetch (DNS rebinding) is not caught.
+- Handing ffmpeg the IP instead of the hostname would break https SNI
+  and certificate checks, so pinning the check alone cannot close this.
+- Larger than that window: ffmpeg follows HTTP redirects, and an HLS
+  playlist can name segments on any host. Neither reaches the host
+  policy.
+
+Closing these needs a different fetch path: the bot fetches the media
+over a pinned connection, vets every redirect hop, and pipes the stream
+to ffmpeg. That is tracked in #158. Until then, ffmpeg is limited to
+the HTTP protocol stack (`-protocol_whitelist`), so a crafted playlist
+cannot reach `file:` or `concat:` inputs.
+
 ## Required bot permissions
 
 - `View Channels`

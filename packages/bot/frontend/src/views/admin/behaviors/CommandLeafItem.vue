@@ -9,6 +9,7 @@ import {
     type CommandView,
     type RegistrationReport,
 } from '../../../api/behavior';
+import BehaviorDeliveries from './BehaviorDeliveries.vue';
 import CommandLeafFields from './CommandLeafFields.vue';
 import WebhookTestResult from './WebhookTestResult.vue';
 import { NO_ERRORS, errorsFromRefusal, hasErrors, isStale, type FormErrors } from './behavior-errors';
@@ -23,7 +24,8 @@ import { useDraftForm } from './use-draft-form';
  * itself, always open) or a subcommand row that opens to edit it. Each
  * leaf saves on its own — PATCH /api/behaviors/:id with ifUpdatedAt — and
  * a change Discord sees re-registers the command; the card shows what
- * Discord answered (`wrote` / `refused`).
+ * Discord answered (`wrote` / `refused`). An open leaf also lists its
+ * recent deliveries.
  */
 const props = defineProps<{
     command: CommandView;
@@ -168,6 +170,8 @@ async function testFire() {
                     @patch="applyPatch"
                     @rotated="emit('reload')"
                 />
+
+                <BehaviorDeliveries :behavior-id="leaf.id" />
 
                 <div v-if="conflict" class="conflict" role="alert" data-test="leaf-conflict">
                     <span>{{ t('behaviors.card.conflict') }}</span>

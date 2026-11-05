@@ -58,6 +58,7 @@ docker compose start bot
 | `RconForwardChannels` | RCON forward settings (with encrypted password). |
 | `behavior_commands`, `behavior_definitions`, `behavior_webhook_actions` | Behaviors: commands, triggers + action sources, webhook actions (encrypted). |
 | `behavior_stats`, `behavior_group_members` | Per-behavior forward stats; audience group lists. |
+| `behavior_deliveries` | Per-behavior delivery log: the last 20 webhook deliveries, at most 7 days, pruned every 10 minutes. Made by `sync()`; no migration. |
 | `plugins` and `plugin_commands` | Plugin registry and commands. |
 | `admin_roles` and `admin_role_capabilities` | Admin roles and capability tokens. |
 
@@ -189,6 +190,11 @@ Migration 011 in detail:
   webhook secrets (`secretSet` instead). See the
   [write API](features/behaviors.md#write-api).
 - Only a bot owner can change the login's trigger.
+- Regex message triggers run on V8's linear-time engine (#119): a regex
+  with a backreference, a lookahead or a repeat count above about 16 is
+  refused on save, and a stored one no longer matches; the bot event log
+  names each at startup
+  ([regex triggers](features/behaviors.md#regex-triggers)).
 
 **After upgrading:**
 
@@ -238,7 +244,10 @@ Privileged intents are not enabled in the Discord developer portal. See
 - Verify the RCON server is listening on the right port with the right
   password.
 - If the host is a cloud metadata endpoint, the host policy rejects it
-  by design.
+  by design. A hostname is resolved and checked again on every
+  reconnect, so a DNS answer that later changes to such an address
+  fails the reconnect too (the container log has `重新連接嘗試失敗`
+  with the `HostPolicyError`).
 
 ### Encryption / decryption errors
 

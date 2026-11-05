@@ -9,6 +9,11 @@
  *   - whoever can invoke the command may run it — no runtime audience /
  *     placement check; the action decides (login checks authorisation)
  *   - builtin action (the system login) → its handler; webhook → forwarder
+ *   - a leaf that cannot run its action (no webhook action, or Discord
+ *     refuses the deferral) is still claimed and never forwarded; a
+ *     refused deferral is a failed delivery (#120)
+ *   - webhook leaves are rate-limited per user, 5 per 10 s; over it the
+ *     invoker is told privately; the system login never is (#119)
  */
 import { vi, describe, it, expect, beforeAll, beforeEach, type Mock } from "vitest";
 
@@ -47,9 +52,12 @@ vi.mock("../src/modules/admin/admin-login.service.js", () => ({
 import { ApplicationCommandOptionType, MessageFlags, type Interaction } from "discord.js";
 import { sequelize } from "../src/db.js";
 import { BehaviorStat } from "../src/modules/behavior/models/behavior-stats.model.js";
+import { findRecentDeliveries } from "../src/modules/behavior/behavior-deliveries.js";
 import { InteractionDispatcher } from "../src/modules/command-system/interaction-dispatcher.service.js";
+import { __resetBehaviorRateLimitsForTests } from "../src/modules/command-system/behavior-rate-limits.js";
 import { dispatchInteractionToPlugin } from "../src/modules/plugin-system/plugin-interaction-dispatch.service.js";
 import { mintLoginLink } from "../src/modules/admin/admin-login.service.js";
+import { botEventLog } from "../src/modules/bot-events/bot-event-log.js";
 import type { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
 import {
   clearBehaviors,
@@ -63,6 +71,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  __resetBehaviorRateLimitsForTests();
   await clearBehaviors();
 });
 
@@ -82,6 +91,8 @@ function fakeSlash(opts: {
   /** 指令註冊在哪個伺服器（全域指令為 null）—— Discord 的 commandGuildId */
   commandGuildId?: string | null;
   values?: Array<{ name: string; type: number; value: unknown }>;
+  /** the interaction's resolved attachments, by id */
+  files?: Array<{ id: string; url: string; name: string; contentType: string | null; size: number }>;
 }) {
   const reply = vi.fn(async () => {});
   const values = opts.values ?? [];
@@ -118,6 +129,7 @@ function fakeSlash(opts: {
     },
     options: {
       data,
+      resolved: opts.files ? { attachments: new Map(opts.files.map((f) => [f.id, f])) } : null,
       getSubcommand: () => opts.subcommand ?? null,
       getSubcommandGroup: () => null,
     },
@@ -144,6 +156,7 @@ type Payload = {
     command_name: string;
     options: Array<{ name: string; value: unknown }>;
     interaction_token?: string;
+    attachments: Array<Record<string, unknown>>;
     sub_command_name: string | null;
     sub_command_group: string | null;
   };
@@ -174,6 +187,7 @@ describe("root leaf", () => {
     expect(payload._meta.sub_command_group).toBeNull();
     expect(payload._meta.options).toEqual([{ name: "q", type: 3, value: "hello" }]);
     expect(payload._meta).not.toHaveProperty("interaction_token");
+    expect(payload._meta.attachments).toEqual([]);
     expect((await BehaviorStat.findByPk(leaf))?.get("successCount")).toBe(1);
   });
 
@@ -271,6 +285,124 @@ describe("root leaf", () => {
   });
 });
 
+describe("a leaf that cannot run its action", () => {
+  it("without a webhook action: claimed, the invoker gets the generic failure, a warning is logged", async () => {
+    const commandId = await seedCommand({ name: "ping" });
+    const leaf = await seedLeaf(commandId, {}, null);
+    const forwarder = makeForwarder();
+    const { interaction, reply, raw } = fakeSlash({ commandName: "ping" });
+
+    const outcome = await dispatcherWith(forwarder).dispatch(interaction);
+
+    expect(outcome).toEqual({ claimed: true, claimedBy: "behavior_custom" });
+    expect(forwarder.forward).not.toHaveBeenCalled();
+    expect(raw.deferReply).not.toHaveBeenCalled();
+    const shown = (reply as Mock).mock.calls[0][0] as { content: string; flags: number };
+    expect(shown.content).toBe("⚠ This couldn't be completed right now. Please try again later.");
+    expect(shown.flags & MessageFlags.Ephemeral).toBe(MessageFlags.Ephemeral);
+    const warnings = vi
+      .mocked(botEventLog.record)
+      .mock.calls.filter(([level, , msg]) => level === "warn" && String(msg).includes(`behavior ${leaf} `));
+    expect(warnings).toHaveLength(1);
+  });
+
+  it("when Discord refuses the deferral: claimed, not forwarded, recorded as a failed delivery", async () => {
+    const commandId = await seedCommand({ name: "ping" });
+    const leaf = await seedLeaf(commandId);
+    const forwarder = makeForwarder();
+    const dispatcher = dispatcherWith(forwarder);
+    const refused = () => {
+      const slash = fakeSlash({ commandName: "ping" });
+      (slash.raw.deferReply as Mock).mockRejectedValueOnce(new Error("Unknown interaction"));
+      return slash;
+    };
+
+    const first = refused();
+    const outcome = await dispatcher.dispatch(first.interaction);
+
+    expect(outcome).toEqual({ claimed: true, claimedBy: "behavior_custom" });
+    expect(first.raw.deferReply).toHaveBeenCalledTimes(1);
+    expect(forwarder.forward).not.toHaveBeenCalled();
+    // the interaction is gone: nothing can be said to the invoker
+    expect(first.reply).not.toHaveBeenCalled();
+    expect(first.raw.editReply).not.toHaveBeenCalled();
+    expect(first.raw.followUp).not.toHaveBeenCalled();
+    // #120: before, this failure left no trace at all (#124 pinned that);
+    // the webhook was never called, yet the user saw "interaction failed".
+    // Now it counts as a failed delivery, in the stats and the log.
+    const stat = await BehaviorStat.findByPk(leaf);
+    expect(stat?.getDataValue("failureCount")).toBe(1);
+    const [delivery] = await findRecentDeliveries(leaf);
+    expect(delivery).toMatchObject({
+      via: "command",
+      ok: false,
+      httpStatus: null,
+      durationMs: null,
+      errorCode: "defer_failed",
+      error: "Discord refused the deferral: Unknown interaction",
+    });
+
+    // a second refusal is counted again, but warned about only once
+    await dispatcher.dispatch(refused().interaction);
+    expect((await BehaviorStat.findByPk(leaf))?.getDataValue("failureCount")).toBe(2);
+    expect(await findRecentDeliveries(leaf)).toHaveLength(2);
+    const warnings = vi
+      .mocked(botEventLog.record)
+      .mock.calls.filter(([level, , msg]) => level === "warn" && String(msg).includes(`behavior ${leaf} `));
+    expect(warnings).toHaveLength(1);
+  });
+});
+
+describe("rate limit (#119)", () => {
+  it("the 6th invocation in 10 s is told privately and neither deferred nor forwarded", async () => {
+    const commandId = await seedCommand({ name: "ping" });
+    const leaf = await seedLeaf(commandId);
+    const forwarder = makeForwarder();
+    const dispatcher = dispatcherWith(forwarder);
+    for (let i = 0; i < 5; i++) {
+      await dispatcher.dispatch(fakeSlash({ commandName: "ping", userId: "U-SL-RL" }).interaction);
+    }
+    const { interaction, reply, raw } = fakeSlash({ commandName: "ping", userId: "U-SL-RL" });
+
+    const outcome = await dispatcher.dispatch(interaction);
+
+    expect(outcome).toEqual({ claimed: true, claimedBy: "behavior_custom" });
+    expect(raw.deferReply).not.toHaveBeenCalled();
+    expect(forwarder.forward).toHaveBeenCalledTimes(5);
+    const sent = (reply as Mock).mock.calls[0][0] as { content: string; flags: number };
+    expect(sent.content).toMatch(/too often/);
+    expect(sent.flags & MessageFlags.Ephemeral).toBe(MessageFlags.Ephemeral);
+    // logged once, not counted
+    const warnings = vi.mocked(botEventLog.record).mock.calls.filter(([level, , message, meta]) =>
+      level === "warn" && /rate limit/.test(message) && (meta as { userId?: string })?.userId === "U-SL-RL",
+    );
+    expect(warnings).toHaveLength(1);
+    expect((await BehaviorStat.findByPk(leaf))?.get("successCount")).toBe(5);
+    // someone else still gets through
+    await dispatcher.dispatch(fakeSlash({ commandName: "ping", userId: "U-SL-RL-2" }).interaction);
+    expect(forwarder.forward).toHaveBeenCalledTimes(6);
+  });
+
+  it("never holds back the system login", async () => {
+    const pingId = await seedCommand({ name: "ping" });
+    await seedLeaf(pingId);
+    const loginId = await seedCommand({
+      name: "login",
+      isSystem: true,
+      contexts: "BotDM",
+      integrationTypes: "guild_install,user_install",
+    });
+    await seedLeaf(loginId, { systemKey: "admin-login", actionSource: "builtin" });
+    const dispatcher = dispatcherWith(makeForwarder());
+    for (let i = 0; i < 6; i++) {
+      await dispatcher.dispatch(fakeSlash({ commandName: "ping", userId: "U-SL-RL-3" }).interaction);
+    }
+    const outcome = await dispatcher.dispatch(fakeSlash({ commandName: "login", userId: "U-SL-RL-3" }).interaction);
+    expect(outcome).toEqual({ claimed: true, claimedBy: "behavior_system" });
+    expect(mintLoginLink).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("subcommands", () => {
   it("routes the invoked subcommand to its own leaf", async () => {
     const commandId = await seedCommand({ name: "nas" });
@@ -293,6 +425,32 @@ describe("subcommands", () => {
     // the invoked path, structured like the plugin command payload (#140)
     expect(payload._meta.sub_command_name).toBe("wake");
     expect(payload._meta.sub_command_group).toBeNull();
+  });
+
+  it("sends the invoked subcommand's attachment options' files, in option order", async () => {
+    const commandId = await seedCommand({ name: "nas" });
+    await seedLeaf(commandId, { subcommand: "upload", title: "upload" });
+    const forwarder = makeForwarder();
+    const { interaction } = fakeSlash({
+      commandName: "nas",
+      subcommand: "upload",
+      values: [
+        { name: "second", type: ApplicationCommandOptionType.Attachment, value: "A2" },
+        { name: "note", type: ApplicationCommandOptionType.String, value: "hi" },
+        { name: "first", type: ApplicationCommandOptionType.Attachment, value: "A1" },
+      ],
+      files: [
+        { id: "A1", url: "https://cdn.discordapp.com/a/A1/one.txt", name: "one.txt", contentType: null, size: 1 },
+        { id: "A2", url: "https://cdn.discordapp.com/a/A2/two.png", name: "two.png", contentType: "image/png", size: 2 },
+      ],
+    });
+
+    await dispatcherWith(forwarder).dispatch(interaction);
+
+    expect(payloadOf(forwarder)._meta.attachments).toEqual([
+      { id: "A2", url: "https://cdn.discordapp.com/a/A2/two.png", filename: "two.png", content_type: "image/png", size: 2 },
+      { id: "A1", url: "https://cdn.discordapp.com/a/A1/one.txt", filename: "one.txt", content_type: null, size: 1 },
+    ]);
   });
 });
 

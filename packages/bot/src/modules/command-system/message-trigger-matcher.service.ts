@@ -22,52 +22,31 @@ import {
   getBehaviorCatalog,
   type CatalogBehavior,
 } from "../behavior/behavior-catalog.js";
-import { matchesTrigger, triggerCaptures } from "../behavior/behavior-trigger.js";
+import { matchTrigger, type TriggerMatch } from "../behavior/behavior-trigger.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
+import { shouldRecord } from "../bot-events/bot-event-dedup.js";
 import type { MessageMatchOutcome } from "./types.js";
 import type { WebhookForwarder } from "./webhook-forwarder.service.js";
 import { runLoginAction } from "./builtin-login-action.js";
 import { runWebhookAction } from "./webhook-action.js";
+import { takeBehaviorRun } from "./behavior-rate-limits.js";
+import { toWebhookAttachment } from "./webhook-attachment.js";
 
 // BH-0.3 multi-match：一則訊息可以連發多條 behavior，
 // outcome 取聯集；behaviorId 報第一條命中的（log 用途）。
-// BH-3：guild 頻道 forward 的 per-channel rate limit（防高頻頻道把 webhook
-// 刷爆 / webhook 回貼造成的迴圈放大）。sliding window，超量靜默丟棄並記
-// botEventLog（每 channel 每 window 至多記一次）。DM 不限流。
-const GUILD_FORWARD_LIMIT = 5;
-const GUILD_FORWARD_WINDOW_MS = 10_000;
-const guildForwardWindows = new Map<string, number[]>();
-const guildForwardWarned = new Map<string, number>();
+// 速率限制（#119）：behavior-rate-limits.ts。伺服器頻道每頻道、私訊每使用者
+// 5 次 / 10 秒；超量靜默丟棄、記一次、不計統計。系統登入不受限。
 
-function guildForwardAllowed(channelId: string): boolean {
-  const now = Date.now();
-  const stamps = (guildForwardWindows.get(channelId) ?? []).filter(
-    (ts) => now - ts < GUILD_FORWARD_WINDOW_MS,
-  );
-  if (stamps.length >= GUILD_FORWARD_LIMIT) {
-    guildForwardWindows.set(channelId, stamps);
-    const lastWarn = guildForwardWarned.get(channelId) ?? 0;
-    if (now - lastWarn >= GUILD_FORWARD_WINDOW_MS) {
-      guildForwardWarned.set(channelId, now);
-      botEventLog.record(
-        "warn",
-        "bot",
-        `message-trigger-matcher: guild channel ${channelId} 觸發超過 ${GUILD_FORWARD_LIMIT}/${GUILD_FORWARD_WINDOW_MS / 1000}s，rate limit 丟棄`,
-        { channelId },
-      );
-    }
-    return false;
-  }
-  stamps.push(now);
-  guildForwardWindows.set(channelId, stamps);
-  if (stamps.length === 1) guildForwardWarned.delete(channelId);
-  return true;
-}
+// #118：每個對話（使用者 × 頻道）最多一則執行中加這麼多則等待；再來的
+// 訊息靜默丟棄，並記一筆 botEventLog（去重）。最壞等待約
+// (1 + MAX_QUEUED_PER_KEY) × webhook 逾時 × 每則命中的觸發數。
+const MAX_QUEUED_PER_KEY = 3;
 
-/** 測試用：清空 rate limit 視窗。 */
-export function __resetGuildForwardWindowsForTests(): void {
-  guildForwardWindows.clear();
-  guildForwardWarned.clear();
+interface ConversationQueue {
+  /** settles when the conversation's last accepted message is done; never rejects */
+  tail: Promise<void>;
+  /** running + waiting messages */
+  size: number;
 }
 
 function mergeOutcomes(
@@ -85,31 +64,47 @@ function mergeOutcomes(
 
 export class MessageTriggerMatcher {
   /**
-   * Per-user in-process mutex: a user's messages are matched and
-   * forwarded in the order they arrived, sequential per user and
-   * parallel across users.
+   * Per-conversation in-process queue, keyed by (user, channel): one user's
+   * messages in one channel (or in their DM with the bot, which is its own
+   * channel) have their webhook triggers run in the order they arrived.
+   * Other channels and other users never wait for it, and neither does a
+   * message that fires no webhook trigger (#118). An entry lives only
+   * while the conversation has a message running.
    */
-  private readonly userLocks = new Map<string, Promise<unknown>>();
+  private readonly conversations = new Map<string, ConversationQueue>();
 
   constructor(private readonly forwarder: WebhookForwarder) {}
 
-  private async withUserLock<T>(
-    userId: string,
+  /** 測試用：目前有訊息在跑的對話數。 */
+  __conversationCountForTests(): number {
+    return this.conversations.size;
+  }
+
+  /**
+   * Runs fn after the conversation's earlier messages. Null when the
+   * conversation already holds 1 + MAX_QUEUED_PER_KEY messages: fn is
+   * dropped and never runs. Takes the slot synchronously, so callers
+   * queue in call order.
+   */
+  private inConversation<T>(
+    key: string,
     fn: () => Promise<T>,
-  ): Promise<T> {
-    const prev = this.userLocks.get(userId) ?? Promise.resolve();
-    const next = prev.then(fn, fn);
-    // Store as `unknown` so generic T doesn't widen the map's value type.
-    this.userLocks.set(userId, next);
-    try {
-      return await next;
-    } finally {
-      // Only clear when we're still the tail — concurrent callers chain on
-      // top of `next` and will install their own promise.
-      if (this.userLocks.get(userId) === next) {
-        this.userLocks.delete(userId);
-      }
-    }
+  ): Promise<T> | null {
+    const queue = this.conversations.get(key) ?? {
+      tail: Promise.resolve(),
+      size: 0,
+    };
+    if (queue.size >= 1 + MAX_QUEUED_PER_KEY) return null;
+    queue.size++;
+    this.conversations.set(key, queue);
+    const run = queue.tail.then(fn).finally(() => {
+      if (--queue.size === 0) this.conversations.delete(key);
+    });
+    queue.tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   }
 
   /**
@@ -163,52 +158,62 @@ export class MessageTriggerMatcher {
     }
 
     const userId = djsMessage.author.id;
-    return this.withUserLock(userId, () =>
-      this.onMessageLocked(djsMessage, userId, isDm),
+    // 比對在鎖外：沒命中的訊息不排隊，系統登入也不等 webhook（#118）。
+    // 拿到快照之後到排進佇列之間不能有 await：等同一份快照的訊息依到達
+    // 順序恢復執行，也就依到達順序入列。例外只有快照重載途中剛好被寫入
+    // 弄失效——後到的訊息自己重載，先載完的話會排到前面。
+    const { messageTriggers, groupMembers } = await getBehaviorCatalog();
+    const { webhooks, builtin } = triggersToRun(
+      messageTriggers,
+      djsMessage,
+      userId,
+      isDm,
+      groupMembers,
     );
+
+    const channelId = djsMessage.channel.id;
+    let queued: Promise<MessageMatchOutcome> | null = null;
+    if (webhooks.length > 0) {
+      queued = this.inConversation(`${userId}:${channelId}`, () =>
+        this.runWebhookTriggers(webhooks, djsMessage, userId),
+      );
+      // 排隊已滿：不回覆使用者、不計統計，只記一次（#118）
+      if (!queued && shouldRecord(`behavior-queue-full:${userId}:${channelId}`)) {
+        botEventLog.record(
+          "warn",
+          "bot",
+          `message-trigger-matcher: user ${userId} 在 channel ${channelId} 已有 ${1 + MAX_QUEUED_PER_KEY} 則訊息排隊，丟棄新訊息`,
+          { userId, channelId },
+        );
+      }
+    }
+    const [forwarded, login] = await Promise.all([
+      queued,
+      builtin
+        ? this.handleMatchedSystemBehavior(builtin, djsMessage, userId)
+        : null,
+    ]);
+    // 依走訪順序合併：webhook 觸發都排在收尾的系統登入之前
+    if (forwarded && login) return mergeOutcomes(forwarded, login);
+    return forwarded ?? login ?? { handled: false };
   }
 
-  private async onMessageLocked(
+  /** 依序執行一則訊息命中的 webhook 觸發（在對話鎖內）。 */
+  private async runWebhookTriggers(
+    triggers: readonly MatchedTrigger[],
     djsMessage: DjsMessage,
     userId: string,
-    isDm: boolean,
   ): Promise<MessageMatchOutcome> {
-    const content = djsMessage.content ?? "";
-    const { messageTriggers, groupMembers } = await getBehaviorCatalog();
-
-    // 依 sortOrder 走訪（BH-0.3 multi-match）。停止規則：
-    //   系統登入 → 必停（登入連結是收尾動作）
-    //   其他     → stopOnMatch=true 停；false 繼續比對下一條
     let aggregate: MessageMatchOutcome | null = null;
-    for (const trigger of messageTriggers) {
-      if (!trigger.enabled) continue;
-      if (!trigger.patternKind || trigger.patternValue === null) continue;
-      if (!appliesTo(trigger, djsMessage, userId, isDm, groupMembers)) continue;
-      if (!matchesTrigger(trigger.patternKind, trigger.patternValue, content)) {
-        continue;
-      }
-
-      if (trigger.actionSource === "builtin") {
-        const outcome = await this.handleMatchedSystemBehavior(
-          trigger,
-          djsMessage,
-          userId,
-        );
-        return aggregate ? mergeOutcomes(aggregate, outcome) : outcome;
-      }
-
+    for (const { trigger, match } of triggers) {
       const outcome = await this.handleMatchedBehavior(
         trigger,
+        match,
         djsMessage,
         userId,
       );
       aggregate = aggregate ? mergeOutcomes(aggregate, outcome) : outcome;
-
-      if (trigger.stopOnMatch) {
-        return aggregate;
-      }
     }
-
     return aggregate ?? { handled: false };
   }
 
@@ -216,14 +221,16 @@ export class MessageTriggerMatcher {
 
   private async handleMatchedBehavior(
     behavior: CatalogBehavior,
+    match: TriggerMatch,
     djsMessage: DjsMessage,
     userId: string,
   ): Promise<MessageMatchOutcome> {
-    const channelId = djsMessage.channel.id;
-    // BH-3：guild 頻道 forward 受 per-channel rate limit
-    if (djsMessage.guildId && !guildForwardAllowed(channelId)) {
-      return { handled: false };
-    }
+    const allowed = takeBehaviorRun(
+      djsMessage.guildId
+        ? { kind: "guild_channel", channelId: djsMessage.channel.id }
+        : { kind: "dm_user", userId },
+    );
+    if (!allowed) return { handled: false };
     if (!behavior.webhook) {
       botEventLog.record(
         "warn",
@@ -240,7 +247,7 @@ export class MessageTriggerMatcher {
       forwarder: this.forwarder,
       behaviorId: behavior.id,
       webhook: behavior.webhook,
-      payload: this.buildPayload(djsMessage, behavior),
+      payload: this.buildPayload(djsMessage, behavior, match),
       target: { kind: "message", message: djsMessage },
       visibility: behavior.replyVisibility,
     });
@@ -286,14 +293,10 @@ export class MessageTriggerMatcher {
   private buildPayload(
     djsMessage: DjsMessage,
     behavior: CatalogBehavior,
+    match: TriggerMatch,
   ): Record<string, unknown> {
     const attachments = djsMessage.attachments
-      ? [...djsMessage.attachments.values()].map((a) => ({
-          url: a.url,
-          filename: a.name ?? null,
-          content_type: a.contentType ?? null,
-          size: a.size ?? null,
-        }))
+      ? [...djsMessage.attachments.values()].map(toWebhookAttachment)
       : [];
     return {
       content: djsMessage.content ?? "",
@@ -313,14 +316,53 @@ export class MessageTriggerMatcher {
         behavior_id: behavior.id,
         attachments,
         // regex 觸發的擷取群組（第 1 組起；沒參與的選用群組為 null），
-        // 其他比對方式為 []（#140）
-        captures:
-          behavior.patternKind && behavior.patternValue !== null
-            ? triggerCaptures(behavior.patternKind, behavior.patternValue, djsMessage.content ?? "")
-            : [],
+        // 其他比對方式為 []（#140）；取自比對時的那一次 exec（#119）
+        captures: match.captures,
       },
     };
   }
+}
+
+// ── 這則訊息要執行哪些觸發 ──────────────────────────────────────────────
+
+/** 命中的觸發與它的比對結果（擷取群組）。 */
+interface MatchedTrigger {
+  trigger: CatalogBehavior;
+  match: TriggerMatch;
+}
+
+interface TriggersToRun {
+  /** 依 sortOrder 命中的 webhook 觸發 */
+  webhooks: MatchedTrigger[];
+  /** 命中的內建動作（系統登入）；它一定收尾 */
+  builtin: CatalogBehavior | null;
+}
+
+/**
+ * 依 sortOrder 走訪（BH-0.3 multi-match），以訊息到達時的快照為準。停止規則：
+ *   系統登入 → 必停（登入連結是收尾動作）
+ *   其他     → stopOnMatch=true 停；false 繼續比對下一條
+ */
+function triggersToRun(
+  triggers: readonly CatalogBehavior[],
+  djsMessage: DjsMessage,
+  userId: string,
+  isDm: boolean,
+  groupMembers: ReadonlyMap<string, ReadonlySet<string>>,
+): TriggersToRun {
+  const content = djsMessage.content ?? "";
+  const webhooks: MatchedTrigger[] = [];
+  for (const trigger of triggers) {
+    if (!trigger.enabled) continue;
+    if (!trigger.patternKind || trigger.patternValue === null) continue;
+    if (!appliesTo(trigger, djsMessage, userId, isDm, groupMembers)) continue;
+    const match = matchTrigger(trigger.patternKind, trigger.patternValue, content);
+    if (!match) continue;
+    if (trigger.actionSource === "builtin") return { webhooks, builtin: trigger };
+    webhooks.push({ trigger, match });
+    if (trigger.stopOnMatch) break;
+  }
+  return { webhooks, builtin: null };
 }
 
 // ── 觸發是否適用於這則訊息（在哪 + 對誰）────────────────────────────────

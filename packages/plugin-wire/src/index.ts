@@ -65,9 +65,12 @@ export type {
 } from "./validate-config.js";
 
 // Contract fixtures — the literals every contract test on either side
-// of the wire replays. Test-only data that lives with the contract it
-// describes, so no consumer reads a file across a package boundary.
-// (Never referenced by SDK `src`, so the SDK's tsup bundle drops it.)
+// of the wire replays. Data that lives with the contract it describes,
+// so no consumer reads a file across a package boundary. The SDK's main
+// entry never references it, so that bundle drops it; its
+// `behavior-receiver` entry reads `CONTRACT_FIXTURES.behaviorWebhook` for
+// the protocol's constants and publishes it to receiver authors, so tsup
+// vendors the fixtures into that bundle.
 export { CONTRACT_FIXTURES } from "./contract-fixtures.js";
 export type {
   ContractFixtures,
