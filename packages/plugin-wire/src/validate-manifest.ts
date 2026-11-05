@@ -154,7 +154,7 @@ export function validateManifestProtocol(input: unknown): ManifestValidation {
   // ── plugin_commands[] 驗證（V-05 ~ V-08、V-C1 / V-C2 / V-C3）─────────
   const pluginCommands =
     (m.plugin_commands as ManifestPluginCommand[] | undefined) ?? [];
-  const seenCommandNames = new Set<string>();
+  const seenPluginCommandNames = new Set<string>();
   for (let i = 0; i < pluginCommands.length; i++) {
     const cmd = pluginCommands[i];
     if (!cmd || typeof cmd !== "object") {
@@ -179,12 +179,12 @@ export function validateManifestProtocol(input: unknown): ManifestValidation {
           `(Discord constraint: ^[a-z0-9][a-z0-9-]{0,31}$)`,
       );
     }
-    if (seenCommandNames.has(cmd.name)) {
+    if (seenPluginCommandNames.has(cmd.name)) {
       return reject(
         `plugin_commands[${i}].name "${cmd.name}" is declared more than once`,
       );
     }
-    seenCommandNames.add(cmd.name);
+    seenPluginCommandNames.add(cmd.name);
 
     // V-06：scope
     if (cmd.scope !== "guild" && cmd.scope !== "global") {
@@ -258,7 +258,10 @@ export function validateManifestProtocol(input: unknown): ManifestValidation {
 
   // ── guild_features[] 驗證（沿用 v1 邏輯）──────────────────────────────
   // guild_features 的 commands[] 格式沿用 ManifestCommand（v1 相容）。
-  // 命令名在整份 manifest 內唯一，所以 seen set 跨 feature 累積。
+  // 命令名在整份 manifest 內唯一，所以 seen set 跨 feature 累積，也不能
+  // 和 plugin_commands 同名：軌三 scope=global 涵蓋每個伺服器、scope=guild
+  // 逐伺服器註冊，都與 feature 指令的 guild:<id> 重疊，Discord 同一個註冊
+  // 目標只會留一個同名指令。
   const guildFeatures =
     (m.guild_features as ManifestGuildFeature[] | undefined) ?? [];
   const seenFeatureCommandNames = new Set<string>();
@@ -272,6 +275,11 @@ export function validateManifestProtocol(input: unknown): ManifestValidation {
     if (!COMMAND_NAME_RE.test(c.name)) {
       return reject(
         `${origin}: command.name '${c.name}' invalid (Discord constraint: ^[a-z0-9][a-z0-9-]{0,31}$)`,
+      );
+    }
+    if (seenPluginCommandNames.has(c.name)) {
+      return reject(
+        `${origin}: command.name '${c.name}' is also declared in plugin_commands`,
       );
     }
     if (seenFeatureCommandNames.has(c.name)) {
