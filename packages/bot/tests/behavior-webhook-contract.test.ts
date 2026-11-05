@@ -225,6 +225,57 @@ describe("behavior webhook contract (BH-2.3)", () => {
     expect(att.url).toBe("https://cdn.discordapp.com/attachments/1/A9/f.png");
   });
 
+  // `username` differs between the triggers on purpose (#152): changing it
+  // would change no key, so a receiver would quietly get other values
+  it("a message trigger's username is the author's username, not the global name", async () => {
+    await clearBehaviors();
+    await seedMessageTrigger({ title: "contract-username", patternValue: "!c" });
+    const f = captureForwarder();
+    await new MessageTriggerMatcher(f as unknown as WebhookForwarder).onMessage({
+      id: "M2",
+      content: "!c",
+      guildId: null,
+      author: {
+        id: "U1",
+        bot: false,
+        username: "alice_01",
+        globalName: "Alice",
+        discriminator: "0",
+        avatar: null,
+        displayAvatarURL: () => "https://cdn.example/a.png",
+      },
+      client: { user: { id: "BOT" } },
+      channel: { id: "DM-U1", type: ChannelType.DM, send: vi.fn(async () => {}) },
+    } as never);
+    const payload = (f.forward.mock.calls[0] as unknown[])[1] as { username: unknown };
+    expect(payload.username).toBe("alice_01");
+  });
+
+  it("a command's username is the global name, or the username without one", async () => {
+    await clearBehaviors();
+    await seedLeaf(await seedCommand({ name: "contract", description: "d" }), {
+      title: "contract-username",
+    });
+    const f = captureForwarder();
+    const d = new InteractionDispatcher(f as unknown as WebhookForwarder);
+    await d.dispatch(fakeSlash({ user: { id: "U-N1", username: "alice_01", globalName: "Alice" } }));
+    await d.dispatch(fakeSlash({ user: { id: "U-N2", username: "bob_02", globalName: null } }));
+    const usernames = f.forward.mock.calls.map((c) => ((c as unknown[])[1] as { username: unknown }).username);
+    expect(usernames).toEqual(["Alice", "bob_02"]);
+  });
+
+  it("a command sends no message_id: an interaction has no message", async () => {
+    await clearBehaviors();
+    await seedLeaf(await seedCommand({ name: "contract", description: "d" }), {
+      title: "contract-no-message",
+    });
+    const f = captureForwarder();
+    await new InteractionDispatcher(f as unknown as WebhookForwarder).dispatch(fakeSlash());
+    const meta = ((f.forward.mock.calls[0] as unknown[])[1] as { _meta: Record<string, unknown> })._meta;
+    expect(meta).not.toHaveProperty("message_id");
+    expect(meta.interaction_id).toBe("ix");
+  });
+
   it("the response fields are the reply model's", () => {
     const parsed = parseBehaviorReply({
       content: "c",
