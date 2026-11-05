@@ -24,7 +24,11 @@ import { QueryTypes } from "sequelize";
 import { sequelize } from "../src/db.js";
 import { BehaviorDefinition } from "../src/modules/behavior/models/behavior-definition.model.js";
 import { findStatsBulk } from "../src/modules/behavior/models/behavior-stats.model.js";
-import { findRecentDeliveries } from "../src/modules/behavior/behavior-deliveries.js";
+import {
+  findRecentDeliveries,
+  pruneDeliveries,
+  recordDelivery,
+} from "../src/modules/behavior/behavior-deliveries.js";
 import { BehaviorDelivery } from "../src/modules/behavior/models/behavior-delivery.model.js";
 import { runWebhookAction } from "../src/modules/command-system/webhook-action.js";
 import type { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
@@ -264,5 +268,51 @@ describe("a delivery that cannot be written", () => {
     expect((await findStatsBulk([id])).get(id)!.successCount).toBe(1);
     expect(await findRecentDeliveries(id)).toEqual([]);
     create.mockRestore();
+  });
+});
+
+describe("the pruner", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const NOW = new Date("2026-11-05T12:00:00Z");
+
+  async function seedDeliveries(behaviorId: number, count: number, firedAt: (i: number) => Date) {
+    for (let i = 0; i < count; i++) {
+      await recordDelivery({
+        behaviorId,
+        firedAt: firedAt(i),
+        via: "message",
+        ok: true,
+        httpStatus: 200 + i,
+        durationMs: i,
+        errorCode: null,
+        error: null,
+        verified: null,
+      });
+    }
+  }
+
+  it("keeps the newest 20 of each behavior", async () => {
+    const busy = await seedMessageTrigger();
+    const quiet = await seedMessageTrigger({ patternValue: "!quiet" });
+    await seedDeliveries(busy, 25, (i) => new Date(NOW.getTime() - (25 - i) * 1000));
+    await seedDeliveries(quiet, 3, () => NOW);
+
+    await pruneDeliveries(NOW);
+
+    const kept = await findRecentDeliveries(busy, 100);
+    expect(kept).toHaveLength(20);
+    // the 5 oldest (statuses 200..204) went
+    expect(kept.map((d) => d.httpStatus)).toEqual(Array.from({ length: 20 }, (_, i) => 224 - i));
+    expect(await findRecentDeliveries(quiet, 100)).toHaveLength(3);
+  });
+
+  it("drops deliveries older than 7 days", async () => {
+    const id = await seedMessageTrigger();
+    await seedDeliveries(id, 2, (i) => new Date(NOW.getTime() - (i === 0 ? 8 * DAY : DAY)));
+
+    await pruneDeliveries(NOW);
+
+    const kept = await findRecentDeliveries(id, 100);
+    expect(kept.map((d) => d.httpStatus)).toEqual([201]);
   });
 });
