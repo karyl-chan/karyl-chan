@@ -170,12 +170,17 @@ function toPinnedAddresses(addresses: readonly string[]): PinnedAddress[] {
 }
 
 /**
- * Shared skeleton of the boolean policies: vet the host, then refuse if
- * any address it stands for `isDenied`.
+ * Shared skeleton of the boolean policies: vet the host, refuse if any
+ * address it stands for `isDenied`, and return the vetted addresses.
  *
- * Does not defend against DNS rebinding between this check and the
- * caller's own connect — `resolveWebhookTarget` returns the checked
- * addresses so its caller can pin them.
+ * Pinning — connecting only to those addresses, so DNS rebinding between
+ * this check and the connect cannot redirect it — is the caller's job:
+ *   - pinned: RCON (`resolveAllowedTarget`) and behavior webhooks
+ *     (`resolveWebhookTarget`, its own skeleton);
+ *   - deliberately not pinned (#144): plugin targets and voice media,
+ *     whose connect re-resolves the host. See `assertPluginTarget` and
+ *     `assertPublicMediaTarget` for why and the residual risk; the
+ *     voice redirect / HLS hole is #158.
  */
 async function checkHost(
   rawHost: string,
@@ -256,6 +261,15 @@ function legacyAllowPrivate(): boolean {
  * Historical quirk kept as-is: the legacy WEBHOOK_ALLOW_PRIVATE=true dev
  * hatch also lets `private` addresses through here (everything else is
  * still blocked). Never enable it in production.
+ *
+ * Residual risk (#144, #158): ffmpeg fetches the URL itself — possibly
+ * in the separate voice container — and resolves the host again, so the
+ * check cannot be pinned; swapping the hostname for the IP would break
+ * https SNI and certificate checks. Worse than that window, ffmpeg
+ * follows HTTP redirects and an HLS playlist can name segments on any
+ * host, and none of those reach this check. Closing it means fetching
+ * the media through the bot (pinned, redirects vetted hop by hop) —
+ * tracked in #158.
  */
 export async function assertPublicMediaTarget(
   host: string,
@@ -288,6 +302,17 @@ export async function assertPublicMediaTarget(
  * In production (NODE_ENV=production), additionally blocks loopback
  * (127.x.x.x / ::1) to prevent a manifest from self-referencing the
  * host process. In development loopback is allowed for local plugin testing.
+ *
+ * Not pinned, on purpose (#144): a plugin registers its own URL with a
+ * per-plugin setup secret, and the host resolves through Docker's
+ * internal DNS. Changing the answer between check and connect needs
+ * control of that DNS, and an attacker who has it can impersonate the
+ * plugin outright. Dispatch also runs on a keep-alive undici Pool:
+ * rebinding reaches only new connections, and pinning would mean
+ * rebuilding the Pool whenever the IP changes, which every container
+ * restart does. If it is ever wanted, a Pool with `connect.lookup` (see
+ * pinned-dispatcher) rebuilt when the vetted set changes is an additive
+ * change.
  */
 export async function assertPluginTarget(
   host: string,
