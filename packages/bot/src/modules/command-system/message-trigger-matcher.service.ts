@@ -22,7 +22,7 @@ import {
   getBehaviorCatalog,
   type CatalogBehavior,
 } from "../behavior/behavior-catalog.js";
-import { matchesTrigger, triggerCaptures } from "../behavior/behavior-trigger.js";
+import { matchTrigger, type TriggerMatch } from "../behavior/behavior-trigger.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { shouldRecord } from "../bot-events/bot-event-dedup.js";
 import type { MessageMatchOutcome } from "./types.js";
@@ -234,14 +234,15 @@ export class MessageTriggerMatcher {
 
   /** 依序執行一則訊息命中的 webhook 觸發（在對話鎖內）。 */
   private async runWebhookTriggers(
-    triggers: readonly CatalogBehavior[],
+    triggers: readonly MatchedTrigger[],
     djsMessage: DjsMessage,
     userId: string,
   ): Promise<MessageMatchOutcome> {
     let aggregate: MessageMatchOutcome | null = null;
-    for (const trigger of triggers) {
+    for (const { trigger, match } of triggers) {
       const outcome = await this.handleMatchedBehavior(
         trigger,
+        match,
         djsMessage,
         userId,
       );
@@ -254,6 +255,7 @@ export class MessageTriggerMatcher {
 
   private async handleMatchedBehavior(
     behavior: CatalogBehavior,
+    match: TriggerMatch,
     djsMessage: DjsMessage,
     userId: string,
   ): Promise<MessageMatchOutcome> {
@@ -278,7 +280,7 @@ export class MessageTriggerMatcher {
       forwarder: this.forwarder,
       behaviorId: behavior.id,
       webhook: behavior.webhook,
-      payload: this.buildPayload(djsMessage, behavior),
+      payload: this.buildPayload(djsMessage, behavior, match),
       target: { kind: "message", message: djsMessage },
       visibility: behavior.replyVisibility,
     });
@@ -324,6 +326,7 @@ export class MessageTriggerMatcher {
   private buildPayload(
     djsMessage: DjsMessage,
     behavior: CatalogBehavior,
+    match: TriggerMatch,
   ): Record<string, unknown> {
     const attachments = djsMessage.attachments
       ? [...djsMessage.attachments.values()].map((a) => ({
@@ -351,11 +354,8 @@ export class MessageTriggerMatcher {
         behavior_id: behavior.id,
         attachments,
         // regex 觸發的擷取群組（第 1 組起；沒參與的選用群組為 null），
-        // 其他比對方式為 []（#140）
-        captures:
-          behavior.patternKind && behavior.patternValue !== null
-            ? triggerCaptures(behavior.patternKind, behavior.patternValue, djsMessage.content ?? "")
-            : [],
+        // 其他比對方式為 []（#140）；取自比對時的那一次 exec（#119）
+        captures: match.captures,
       },
     };
   }
@@ -363,9 +363,15 @@ export class MessageTriggerMatcher {
 
 // ── 這則訊息要執行哪些觸發 ──────────────────────────────────────────────
 
+/** 命中的觸發與它的比對結果（擷取群組）。 */
+interface MatchedTrigger {
+  trigger: CatalogBehavior;
+  match: TriggerMatch;
+}
+
 interface TriggersToRun {
   /** 依 sortOrder 命中的 webhook 觸發 */
-  webhooks: CatalogBehavior[];
+  webhooks: MatchedTrigger[];
   /** 命中的內建動作（系統登入）；它一定收尾 */
   builtin: CatalogBehavior | null;
 }
@@ -383,16 +389,15 @@ function triggersToRun(
   groupMembers: ReadonlyMap<string, ReadonlySet<string>>,
 ): TriggersToRun {
   const content = djsMessage.content ?? "";
-  const webhooks: CatalogBehavior[] = [];
+  const webhooks: MatchedTrigger[] = [];
   for (const trigger of triggers) {
     if (!trigger.enabled) continue;
     if (!trigger.patternKind || trigger.patternValue === null) continue;
     if (!appliesTo(trigger, djsMessage, userId, isDm, groupMembers)) continue;
-    if (!matchesTrigger(trigger.patternKind, trigger.patternValue, content)) {
-      continue;
-    }
+    const match = matchTrigger(trigger.patternKind, trigger.patternValue, content);
+    if (!match) continue;
     if (trigger.actionSource === "builtin") return { webhooks, builtin: trigger };
-    webhooks.push(trigger);
+    webhooks.push({ trigger, match });
     if (trigger.stopOnMatch) break;
   }
   return { webhooks, builtin: null };
