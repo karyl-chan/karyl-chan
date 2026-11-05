@@ -8,7 +8,10 @@
  *     `// receiver.mjs` code block is cut out of the Markdown and imported
  *     — against the golden vectors, and against the bot's real
  *     WebhookForwarder over a real socket (the host policy is stubbed to
- *     vouch for 127.0.0.1, which it otherwise refuses).
+ *     vouch for 127.0.0.1, which it otherwise refuses);
+ *   - the SDK's `@karyl-chan/plugin-sdk/behavior-receiver`, which the page
+ *     recommends for Node, goes through the same forwarder scenarios, so
+ *     the two receivers cannot come to behave differently.
  *
  * The prose and the wiring example are not checked.
  */
@@ -39,6 +42,7 @@ vi.mock("../src/utils/host-policy.js", () => ({
 }));
 
 import { CONTRACT_FIXTURES, type HmacGoldenVector } from "@karyl-chan/plugin-wire";
+import { createReceiver as sdkCreateReceiver } from "@karyl-chan/plugin-sdk/behavior-receiver";
 import { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
 import { encryptSecret } from "../src/utils/crypto.js";
 import type { BehaviorWebhookActionRow } from "../src/modules/behavior/models/behavior-webhook-action.model.js";
@@ -296,7 +300,23 @@ describe("the published reference receiver, against the golden vectors", () => {
 
 // ── against the bot's own forwarder ─────────────────────────────────────────
 
-describe("the published reference receiver, against the bot's WebhookForwarder", () => {
+/** What a forwarder scenario needs of a receiver: build its node:http handler. */
+type ReceiverFactory = (options: {
+  mode: "hmac" | "token";
+  secret: string;
+  path: string;
+  answer: (payload: { username: string }, ctx: { test: boolean }) => { content: string };
+}) => (req: IncomingMessage, res: ServerResponse) => Promise<void>;
+
+const receivers: [string, ReceiverFactory][] = [
+  [
+    "the published reference receiver",
+    (options) => receiver.createReceiver(options as Parameters<Receiver["createReceiver"]>[0]),
+  ],
+  ["the SDK's behavior-receiver", sdkCreateReceiver],
+];
+
+describe.each(receivers)("%s, against the bot's WebhookForwarder", (_name, createReceiver) => {
   let server: Server | null = null;
 
   afterEach(async () => {
@@ -306,12 +326,12 @@ describe("the published reference receiver, against the bot's WebhookForwarder",
 
   async function serve(mode: "hmac" | "token", secret: string): Promise<string> {
     server = createServer(
-      receiver.createReceiver({
+      createReceiver({
         mode,
         secret,
         path: "/hook",
         answer: (payload, { test }) =>
-          test ? { content: "test ok" } : { content: `hello ${String(payload.username)}` },
+          test ? { content: "test ok" } : { content: `hello ${payload.username}` },
       }),
     );
     await new Promise<void>((r) => server!.listen(0, "127.0.0.1", r));
