@@ -85,29 +85,30 @@ function mergeOutcomes(
 
 export class MessageTriggerMatcher {
   /**
-   * Per-user in-process mutex: a user's messages are matched and
-   * forwarded in the order they arrived, sequential per user and
-   * parallel across users.
+   * Per-conversation in-process mutex, keyed by (user, channel): one user's
+   * messages in one channel (or in their DM with the bot, which is its own
+   * channel) are matched and forwarded in the order they arrived. Other
+   * channels and other users never wait for it (#118).
    */
-  private readonly userLocks = new Map<string, Promise<unknown>>();
+  private readonly conversationLocks = new Map<string, Promise<unknown>>();
 
   constructor(private readonly forwarder: WebhookForwarder) {}
 
-  private async withUserLock<T>(
-    userId: string,
+  private async withConversationLock<T>(
+    key: string,
     fn: () => Promise<T>,
   ): Promise<T> {
-    const prev = this.userLocks.get(userId) ?? Promise.resolve();
+    const prev = this.conversationLocks.get(key) ?? Promise.resolve();
     const next = prev.then(fn, fn);
     // Store as `unknown` so generic T doesn't widen the map's value type.
-    this.userLocks.set(userId, next);
+    this.conversationLocks.set(key, next);
     try {
       return await next;
     } finally {
       // Only clear when we're still the tail — concurrent callers chain on
       // top of `next` and will install their own promise.
-      if (this.userLocks.get(userId) === next) {
-        this.userLocks.delete(userId);
+      if (this.conversationLocks.get(key) === next) {
+        this.conversationLocks.delete(key);
       }
     }
   }
@@ -163,7 +164,8 @@ export class MessageTriggerMatcher {
     }
 
     const userId = djsMessage.author.id;
-    return this.withUserLock(userId, () =>
+    const key = `${userId}:${djsMessage.channel.id}`;
+    return this.withConversationLock(key, () =>
       this.onMessageLocked(djsMessage, userId, isDm),
     );
   }

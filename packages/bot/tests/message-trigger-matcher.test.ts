@@ -11,6 +11,9 @@
  *   - a trigger without a webhook action is skipped with a warning; the
  *     walk goes on
  *   - triggers come from an in-memory snapshot that a write invalidates
+ *   - one conversation (a user in one channel, or in their DM with the bot)
+ *     runs its webhook triggers one message at a time, in order; other
+ *     conversations never wait for it
  */
 import { vi, describe, it, expect, beforeAll, beforeEach, type Mock } from "vitest";
 
@@ -36,6 +39,7 @@ import { sequelize } from "../src/db.js";
 import { BehaviorDefinition } from "../src/modules/behavior/models/behavior-definition.model.js";
 import { BehaviorGroupMember } from "../src/modules/behavior/models/behavior-group-member.model.js";
 import { BehaviorStat } from "../src/modules/behavior/models/behavior-stats.model.js";
+import { getBehaviorCatalog } from "../src/modules/behavior/behavior-catalog.js";
 import { mintLoginLink } from "../src/modules/admin/admin-login.service.js";
 import { botEventLog } from "../src/modules/bot-events/bot-event-log.js";
 import {
@@ -447,5 +451,96 @@ describe("the trigger snapshot", () => {
     await m.onMessage(dmMsg("U2", "!nothing").message);
     expect(spy).not.toHaveBeenCalled();
     spy.mockRestore();
+  });
+});
+
+// ── one conversation at a time ──────────────────────────────────────────────
+
+const FORWARD_OK = { ok: true, reply: {}, notes: [] };
+
+/**
+ * A slow receiver under the test's control: every request waits until the
+ * test releases it; after open() requests answer at once.
+ */
+function heldForwarder() {
+  const waiting: Array<() => void> = [];
+  let opened = false;
+  const forward = vi.fn(() =>
+    opened
+      ? Promise.resolve(FORWARD_OK)
+      : new Promise((resolve) => waiting.push(() => resolve(FORWARD_OK))),
+  );
+  return {
+    forward,
+    /** answer the i-th request (0-based, in call order) */
+    release: (i: number) => waiting[i](),
+    open: () => {
+      opened = true;
+      waiting.forEach((answer) => answer());
+    },
+  };
+}
+
+/** the content of each forwarded message, in call order */
+function forwardedContents(forwarder: { forward: Mock }): string[] {
+  return forwarder.forward.mock.calls.map(
+    (c) => (c[1] as { content: string }).content,
+  );
+}
+
+/**
+ * Lets every pending promise step run. With the trigger snapshot loaded,
+ * a message reaches its forward (or the queue) without any I/O.
+ */
+const settle = () => new Promise<void>((r) => setImmediate(r));
+
+describe("one conversation at a time", () => {
+  it("a user's messages in one channel are forwarded in order, each after the last one finished", async () => {
+    await seedMessageTrigger({ surface: "guild" });
+    await getBehaviorCatalog();
+    const forwarder = heldForwarder();
+    const m = matcherWith(forwarder);
+
+    const first = m.onMessage(guildMsg({ userId: "U-ORD", content: "!go 1" }).message);
+    const second = m.onMessage(guildMsg({ userId: "U-ORD", content: "!go 2" }).message);
+    await settle();
+    expect(forwardedContents(forwarder)).toEqual(["!go 1"]);
+
+    forwarder.release(0);
+    await first;
+    await settle();
+    expect(forwardedContents(forwarder)).toEqual(["!go 1", "!go 2"]);
+    forwarder.open();
+    await second;
+  });
+
+  it("a user's message in another channel does not wait for a slow one", async () => {
+    await seedMessageTrigger({ surface: "guild" });
+    await getBehaviorCatalog();
+    const forwarder = heldForwarder();
+    const m = matcherWith(forwarder);
+
+    const stuck = m.onMessage(guildMsg({ userId: "U-X", content: "!go in X", channelId: "CX" }).message);
+    const elsewhere = m.onMessage(guildMsg({ userId: "U-X", content: "!go in Y", channelId: "CY" }).message);
+    await settle();
+    expect(forwardedContents(forwarder)).toEqual(["!go in X", "!go in Y"]);
+
+    forwarder.open();
+    await Promise.all([stuck, elsewhere]);
+  });
+
+  it("another user in the same channel does not wait for a slow one", async () => {
+    await seedMessageTrigger({ surface: "guild" });
+    await getBehaviorCatalog();
+    const forwarder = heldForwarder();
+    const m = matcherWith(forwarder);
+
+    const stuck = m.onMessage(guildMsg({ userId: "U-A", content: "!go from A" }).message);
+    const other = m.onMessage(guildMsg({ userId: "U-B", content: "!go from B" }).message);
+    await settle();
+    expect(forwardedContents(forwarder)).toEqual(["!go from A", "!go from B"]);
+
+    forwarder.open();
+    await Promise.all([stuck, other]);
   });
 });
