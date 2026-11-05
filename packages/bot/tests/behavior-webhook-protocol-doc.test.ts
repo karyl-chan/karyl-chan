@@ -15,6 +15,7 @@
  *
  * The prose and the wiring example are not checked.
  */
+import { createHmac } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import {
   createServer,
@@ -273,6 +274,29 @@ describe("the published reference receiver, against the golden vectors", () => {
 
     expect(verify(v, hmacHeaders(v), new Map(), Number(v.ts) + 301).ok).toBe(false);
     expect(verify({ ...v, body: `${v.body} ` }, hmacHeaders(v)).ok).toBe(false);
+  });
+
+  it("refuses a timestamp that is not a number, signed or not", () => {
+    // signed over the text "soon": only the timestamp check can refuse it
+    const v = requestGolden[0]!;
+    const ts = "soon";
+    const signature = createHmac("sha256", v.secret)
+      .update(`POST:${v.path}:${ts}:${v.nonce}:${v.body}`)
+      .digest("hex");
+    const headers = hmacHeaders(v, { "x-karyl-timestamp": ts, "x-karyl-signature": signature });
+    expect(verify(v, headers).ok).toBe(false);
+  });
+
+  it("refuses a replay for as long as the request's own timestamp stays fresh", () => {
+    // the sender's clock runs 200 s ahead of ours: still inside the window
+    const v = requestGolden[0]!;
+    const seen = new Map<string, number>();
+    expect(verify(v, hmacHeaders(v), seen, Number(v.ts) - 200).ok).toBe(true);
+    // 450 s later by our clock, the timestamp is 250 s old, so still fresh
+    expect(verify(v, hmacHeaders(v), seen, Number(v.ts) + 250)).toEqual({
+      ok: false,
+      reason: "replayed nonce",
+    });
   });
 
   it("signs a response over the request's nonce, as the response vectors do", () => {

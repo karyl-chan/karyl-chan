@@ -6,15 +6,17 @@ how to check that a request really comes from the bot, and how to answer.
 How an admin sets a behavior up is in [behaviors.md](behaviors.md).
 
 The machine-readable version of this contract — key lists, limits,
-header names and golden HMAC vectors — is
-`CONTRACT_FIXTURES.behaviorWebhook` in `@karyl-chan/plugin-wire`
-([`packages/plugin-wire/src/contract-fixtures.ts`](../../../plugin-wire/src/contract-fixtures.ts)).
+header names and golden HMAC vectors — is `BEHAVIOR_WEBHOOK_FIXTURES`,
+exported by `@karyl-chan/plugin-sdk/behavior-receiver` so you can test a
+receiver against it (in this repository it is
+`CONTRACT_FIXTURES.behaviorWebhook` in
+[`packages/plugin-wire/src/contract-fixtures.ts`](../../../plugin-wire/src/contract-fixtures.ts)).
 The bot's tests replay it. The bot's test suite also checks this page
 against it: the header names, the payload keys and the reply limits
 written here must match the fixtures, and the
 [reference receiver](#reference-receiver) is run against the golden
 vectors and against the bot's own webhook client. The prose and the
-wiring example are not tested.
+wiring examples are not tested.
 
 ## Contents
 
@@ -175,12 +177,13 @@ is turned on or the secret is rotated, and puts it into the receiver.
 
 To verify a request:
 
-1. Refuse it when `X-Karyl-Timestamp` is more than **300 seconds** away
-   from your clock.
+1. Refuse it when `X-Karyl-Timestamp` is not a whole number, or is more
+   than **300 seconds** away from your clock.
 2. Compute the signature and compare it with `X-Karyl-Signature` in
    constant time (`crypto.timingSafeEqual`).
 3. Only once the signature matches, refuse a nonce you have already seen
-   in the last 300 seconds (a replay), and remember this one.
+   (a replay), and remember this one until its timestamp is more than 300
+   seconds old.
 
 ### `token` mode
 
@@ -378,10 +381,37 @@ Then:
 
 ## Reference receiver
 
-A complete receiver for Node.js 18 or later, with no dependencies. It
-verifies both modes and the test scheme, accepts the `-Previous` headers
-during a rotation, refuses replays, and signs every response over the
-request's nonce.
+On Node.js 22 or later, the simplest receiver is the SDK's:
+`npm i @karyl-chan/plugin-sdk`, then
+
+```js
+import http from 'node:http';
+import { createReceiver } from '@karyl-chan/plugin-sdk/behavior-receiver';
+
+const handler = createReceiver({
+  mode: 'hmac',
+  secret: process.env.KARYL_WEBHOOK_SECRET,
+  path: '/hooks/weather', // the path of the URL saved on the bot
+  answer: async (payload, { test }) => {
+    if (test) return { content: 'Test received.', ephemeral: true };
+    const [city] = payload._meta.captures ?? [];
+    return { content: `Weather for ${city ?? 'your city'}: …` };
+  },
+});
+
+http.createServer(handler).listen(8080);
+```
+
+It does what the code below does, and adds a shared nonce store,
+several secrets of your own, and typed payloads; see the
+[SDK README](../../../plugin-sdk/README.md#behavior-webhook-receivers).
+The bot's tests run it through the same scenarios as the code below.
+
+Not on Node, or without dependencies? Below is a complete receiver for
+Node.js 18 or later, with none. It is short enough to port. It verifies
+both modes and the test scheme, accepts the `-Previous` headers during a
+rotation, refuses replays, and signs every response over the request's
+nonce.
 
 The bot's test suite runs this exact code block against the golden
 vectors and against the bot's own webhook client
@@ -434,7 +464,8 @@ export function verifyRequest({ mode, secret, path, headers, body, seen, now = M
 
   const ts = headers['x-karyl-timestamp'];
   if (!ts || !nonce) return { ok: false, reason: 'missing signature headers' };
-  if (Math.abs(now - Number(ts)) > WINDOW_SECONDS) return { ok: false, reason: 'stale timestamp' };
+  // Number('soon') is NaN, and NaN > 300 is false: check the digits first.
+  if (!/^\d+$/.test(ts) || Math.abs(now - Number(ts)) > WINDOW_SECONDS) return { ok: false, reason: 'stale timestamp' };
   const expected = hmacHex(secret, signedString({ test, method: 'POST', path, ts, nonce, body }));
   // During a rotation the new secret signs x-karyl-signature and the old one
   // x-karyl-signature-previous: accepting either lets you switch secrets at
@@ -442,10 +473,11 @@ export function verifyRequest({ mode, secret, path, headers, body, seen, now = M
   if (!same(headers['x-karyl-signature'], expected) && !same(headers['x-karyl-signature-previous'], expected)) {
     return { ok: false, reason: 'signature mismatch' };
   }
-  // The replay check comes after the signature check.
-  for (const [n, expiry] of seen) if (expiry <= now) seen.delete(n);
+  // The replay check comes after the signature check. A nonce is kept while
+  // its request's timestamp is fresh, which can be past now + WINDOW_SECONDS.
+  for (const [n, expiry] of seen) if (expiry < now) seen.delete(n);
   if (seen.has(nonce)) return { ok: false, reason: 'replayed nonce' };
-  seen.set(nonce, now + WINDOW_SECONDS);
+  seen.set(nonce, Number(ts) + WINDOW_SECONDS);
   return { ok: true, test, nonce };
 }
 
