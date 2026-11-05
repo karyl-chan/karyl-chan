@@ -189,6 +189,11 @@ Migration 011 in detail:
   webhook secrets (`secretSet` instead). See the
   [write API](features/behaviors.md#write-api).
 - Only a bot owner can change the login's trigger.
+- Regex message triggers run on V8's linear-time engine (#119): a regex
+  with a backreference, a lookahead or a repeat count above about 16 is
+  refused on save, and a stored one no longer matches; the bot event log
+  names each at startup
+  ([regex triggers](features/behaviors.md#regex-triggers)).
 
 **After upgrading:**
 

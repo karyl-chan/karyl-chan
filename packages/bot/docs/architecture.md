@@ -166,7 +166,11 @@ is stored.
   secret or a webhook URL (a URL fingerprint instead).
 - `behavior-helpers.ts` — the `behavior.manage` gate and the webhook
   target / regex checks.
-- `behavior-trigger.ts` — pure `matchesTrigger`.
+- `behavior-trigger.ts` — `matchTrigger` / `matchesTrigger`: a match
+  and its captures from one exec; regexes compile on the linear-time
+  engine (`utils/linear-regex.ts`) into a cache of at most 500.
+- `regex-trigger-boot-check.ts` — at startup, logs a degraded regex
+  engine and each stored regex trigger that cannot run.
 - `system-seed.service.ts` — adds the System Behavior (login, DM
   `!login`) when it is missing.
 - `system-login-trigger.ts` / `system-login-trigger-route.ts` —
@@ -245,6 +249,9 @@ This is the bot's command backbone.
   guild channels. Matching runs on the snapshot outside any lock; the
   webhook triggers a message fires then queue per (user, channel), one at
   a time, at most 3 waiting.
+- `behavior-rate-limits.ts` — the webhook actions' budgets (#119): 5 per
+  10 s per guild channel, per bot DM user and per slash user; the system
+  login is exempt.
 - `webhook-forwarder.service.ts` — `WebhookForwarder`: webhook POST +
   HMAC signing and verification; parses the response into a reply.
 - `behavior-reply.ts` — the Behavior Reply model (#140):
