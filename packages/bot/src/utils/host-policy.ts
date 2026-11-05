@@ -161,6 +161,14 @@ async function hostAddresses(
   return answers.map(({ address }) => address);
 }
 
+/** Vetted address literals in the shape the connecting side pins to. */
+function toPinnedAddresses(addresses: readonly string[]): PinnedAddress[] {
+  return addresses.map((address) => ({
+    address,
+    family: isIP(address) === 6 ? 6 : 4,
+  }));
+}
+
 /**
  * Shared skeleton of the boolean policies: vet the host, then refuse if
  * any address it stands for `isDenied`.
@@ -174,28 +182,31 @@ async function checkHost(
   port: number,
   isDenied: (address: string) => boolean,
   denyMessage: string,
-): Promise<void> {
+): Promise<PinnedAddress[]> {
   const host = vetHost(rawHost, port, refuseGeneric, () => denyMessage);
   const addresses = await hostAddresses(host, refuseGeneric, "無法解析主機名稱");
   for (const address of addresses) {
     if (isDenied(address)) throw new HostPolicyError(denyMessage);
   }
+  return toPinnedAddresses(addresses);
 }
 
 /**
- * assertAllowedTarget — RCON / internal use.
+ * resolveAllowedTarget — RCON / internal use. Resolves the host ONCE and
+ * returns every address it was vetted at (never empty, resolver order);
+ * connect only to these (DNS-rebinding guard).
  *
  * Blocks cloud metadata endpoints only (link-local 169.254/16 and
  * fe80::/10, Azure WireServer, Alibaba, Oracle, AWS IPv6 IMDS — also
  * when smuggled through an IPv4-mapped / NAT64 / 6to4 spelling). Does
  * NOT block RFC1918 or loopback — docker-internal services legitimately
- * live in those ranges.
+ * live in those ranges. One blocked answer refuses the whole host.
  */
-export async function assertAllowedTarget(
+export async function resolveAllowedTarget(
   host: string,
   port: number,
-): Promise<void> {
-  await checkHost(
+): Promise<PinnedAddress[]> {
+  return checkHost(
     host,
     port,
     (address) => {
@@ -209,6 +220,17 @@ export async function assertAllowedTarget(
     },
     "主機目標不被允許",
   );
+}
+
+/**
+ * `resolveAllowedTarget` as a yes / no check. Kept because #144 asked to
+ * preserve this original signature; today only tests call it.
+ */
+export async function assertAllowedTarget(
+  host: string,
+  port: number,
+): Promise<void> {
+  await resolveAllowedTarget(host, port);
 }
 
 /**
@@ -475,11 +497,5 @@ export async function resolveWebhookTarget(
     );
   }
 
-  return {
-    url,
-    addresses: addresses.map((address) => ({
-      address,
-      family: isIP(address) === 6 ? 6 : 4,
-    })),
-  };
+  return { url, addresses: toPinnedAddresses(addresses) };
 }
