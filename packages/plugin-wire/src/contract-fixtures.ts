@@ -534,6 +534,9 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
         "locale",
         "options",
         "behavior_id",
+        // the invoked leaf's attachment options' files, in option order;
+        // no message_id: an interaction has no message
+        "attachments",
       ],
       userKeys: ["id", "username", "global_name", "discriminator", "avatar"],
       // `id` maps a command's attachment option (its `value`) to its file

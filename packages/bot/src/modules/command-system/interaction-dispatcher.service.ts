@@ -41,6 +41,7 @@ import { runLoginAction } from "./builtin-login-action.js";
 import { renderFailure } from "./reply-renderer.js";
 import { runWebhookAction } from "./webhook-action.js";
 import { takeBehaviorRun } from "./behavior-rate-limits.js";
+import { toWebhookAttachment } from "./webhook-attachment.js";
 import type { DispatchOutcome } from "./types.js";
 import type { WebhookForwarder } from "./webhook-forwarder.service.js";
 import { tForInteraction } from "../../i18n/index.js";
@@ -69,6 +70,14 @@ function buildWebhookPayload(
     data[0]?.type === ApplicationCommandOptionType.Subcommand
       ? (data[0].options ?? [])
       : data;
+  // attachment 參數的檔案（#152），依參數順序；value 是 attachment id，
+  // 檔案在 interaction 的 resolved 資料裡
+  const resolved = interaction.options.resolved?.attachments;
+  const attachments = invoked
+    .filter((opt) => opt.type === ApplicationCommandOptionType.Attachment)
+    .map((opt) => resolved?.get(String(opt.value)))
+    .filter((a) => a !== undefined)
+    .map(toWebhookAttachment);
   return {
     // Discord webhook 原生欄位：content 帶指令路徑（供 webhook 識別觸發入口；
     // 結構化的路徑在 _meta.sub_command_name / sub_command_group）
@@ -103,6 +112,7 @@ function buildWebhookPayload(
       // BH-2.1：與 pattern 路徑對齊 — 帶 behavior_id 供 webhook 端在多條
       // behavior 指向同一端點時辨識來源
       behavior_id: behaviorId,
+      attachments,
     },
   };
 }

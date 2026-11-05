@@ -1,9 +1,10 @@
 /**
  * command-system/webhook-attachment.ts
  *
- * One entry of a behavior webhook payload's `_meta.attachments`:
- * `{ id, url, filename, content_type, size }` (#152). `id` is the Discord
- * attachment id, the value a command's attachment option carries.
+ * One entry of a behavior webhook payload's `_meta.attachments`, the same
+ * for both triggers: `{ id, url, filename, content_type, size }` (#152).
+ * `id` is the Discord attachment id, the value a command's attachment
+ * option carries, so a receiver can match the option to its file.
  */
 import type { Attachment } from "discord.js";
 

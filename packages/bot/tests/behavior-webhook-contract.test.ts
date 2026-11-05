@@ -33,7 +33,7 @@ vi.mock(
   () => ({ dispatchInProcessInteraction: vi.fn() }),
 );
 
-import { ChannelType } from "discord.js";
+import { ApplicationCommandOptionType, ChannelType } from "discord.js";
 import { sequelize } from "../src/db.js";
 import { MessageTriggerMatcher } from "../src/modules/command-system/message-trigger-matcher.service.js";
 import { InteractionDispatcher } from "../src/modules/command-system/interaction-dispatcher.service.js";
@@ -72,6 +72,47 @@ function captureForwarder(): { forward: Mock } {
   return {
     forward: vi.fn(async () => ({ ok: true, reply: {}, notes: [] })),
   };
+}
+
+/** A chat-input interaction for the "contract" command's root leaf. */
+function fakeSlash(over: {
+  user?: Record<string, unknown>;
+  options?: Record<string, unknown>;
+} = {}) {
+  return {
+    isChatInputCommand: () => true,
+    isAutocomplete: () => false,
+    isButton: () => false,
+    isAnySelectMenu: () => false,
+    isModalSubmit: () => false,
+    id: "ix",
+    token: "tok",
+    applicationId: "app",
+    commandName: "contract",
+    commandGuildId: null,
+    guildId: null,
+    channelId: "C1",
+    locale: "en-US",
+    user: {
+      id: "U1",
+      username: "u",
+      globalName: "U",
+      discriminator: "0",
+      avatar: null,
+      displayAvatarURL: () => "https://cdn.example/a.png",
+      ...over.user,
+    },
+    options: {
+      data: [],
+      getSubcommand: () => null,
+      getSubcommandGroup: () => null,
+      ...over.options,
+    },
+    reply: vi.fn(async () => {}),
+    deferReply: vi.fn(async () => {}),
+    editReply: vi.fn(async () => {}),
+    deleteReply: vi.fn(async () => {}),
+  } as never;
 }
 
 describe("behavior webhook contract (BH-2.3)", () => {
@@ -137,39 +178,7 @@ describe("behavior webhook contract (BH-2.3)", () => {
     });
     const f = captureForwarder();
     const d = new InteractionDispatcher(f as unknown as WebhookForwarder);
-    await d.dispatch({
-      isChatInputCommand: () => true,
-      isAutocomplete: () => false,
-      isButton: () => false,
-      isAnySelectMenu: () => false,
-      isModalSubmit: () => false,
-      id: "ix",
-      token: "tok",
-      applicationId: "app",
-      commandName: "contract",
-      commandGuildId: null,
-      guildId: null,
-      channelId: "C1",
-      locale: "en-US",
-      user: {
-        id: "U1",
-        username: "u",
-        globalName: "U",
-        discriminator: "0",
-        avatar: null,
-        displayAvatarURL: () => "https://cdn.example/a.png",
-        createDM: async () => ({ id: "DM1" }),
-      },
-      options: {
-        data: [],
-        getSubcommand: () => null,
-        getSubcommandGroup: () => null,
-      },
-      reply: vi.fn(async () => {}),
-      deferReply: vi.fn(async () => {}),
-      editReply: vi.fn(async () => {}),
-      deleteReply: vi.fn(async () => {}),
-    } as never);
+    await d.dispatch(fakeSlash());
 
     const payload = (f.forward.mock.calls[0] as unknown[])[1] as Record<
       string,
@@ -182,6 +191,38 @@ describe("behavior webhook contract (BH-2.3)", () => {
     expect(Object.keys(meta.user as object).sort()).toEqual(
       [...C.request.userKeys].sort(),
     );
+  });
+
+  it("a slash attachment option's file matches the attachment fixture, tied by id", async () => {
+    await clearBehaviors();
+    await seedLeaf(await seedCommand({ name: "contract", description: "d" }), {
+      title: "contract-slash-file",
+    });
+    const f = captureForwarder();
+    const d = new InteractionDispatcher(f as unknown as WebhookForwarder);
+    const file = {
+      id: "A9",
+      url: "https://cdn.discordapp.com/attachments/1/A9/f.png",
+      name: "f.png",
+      contentType: "image/png",
+      size: 9,
+    };
+    await d.dispatch(
+      fakeSlash({
+        options: {
+          data: [{ name: "file", type: ApplicationCommandOptionType.Attachment, value: "A9" }],
+          resolved: { attachments: new Map([["A9", file]]) },
+        },
+      }),
+    );
+
+    const meta = ((f.forward.mock.calls[0] as unknown[])[1] as { _meta: Record<string, unknown> })
+      ._meta;
+    const options = meta.options as Array<{ value: unknown }>;
+    const att = (meta.attachments as Record<string, unknown>[])[0];
+    expect(Object.keys(att).sort()).toEqual([...C.request.attachmentKeys].sort());
+    expect(att.id).toBe(options[0].value);
+    expect(att.url).toBe("https://cdn.discordapp.com/attachments/1/A9/f.png");
   });
 
   it("the response fields are the reply model's", () => {

@@ -83,13 +83,20 @@ function publishedMarkdown(): string {
   return readFileSync(DOC, "utf8").replace(/\r\n/g, "\n");
 }
 
-/** One `## heading` section of the protocol document. */
-function docSection(heading: string): string {
+/**
+ * One section of the protocol document: a `## heading` (level 2) or a
+ * `### heading` (level 3), up to the next heading of the same or a higher
+ * level.
+ */
+function docSection(heading: string, level: 2 | 3 = 2): string {
   const markdown = publishedMarkdown();
-  const start = markdown.indexOf(`\n## ${heading}\n`);
-  if (start < 0) throw new Error(`no "## ${heading}" in ${DOC}`);
-  const end = markdown.indexOf("\n## ", start + 1);
-  return markdown.slice(start, end < 0 ? undefined : end);
+  const marker = `\n${"#".repeat(level)} ${heading}\n`;
+  const start = markdown.indexOf(marker);
+  if (start < 0) throw new Error(`no "${marker.trim()}" in ${DOC}`);
+  const next = new RegExp(`\\n#{2,${level}} `, "g");
+  next.lastIndex = start + marker.length;
+  const end = next.exec(markdown)?.index;
+  return markdown.slice(start, end);
 }
 
 /** The `// receiver.mjs` code block of the protocol document, verbatim. */
@@ -148,6 +155,18 @@ describe("the protocol document, against the contract fixtures", () => {
     }
     expect(section).toContain(`{ ${contract.request.userKeys.join(", ")} }`);
     expect(section).toContain(`[{ ${contract.request.attachmentKeys.join(", ")} }]`);
+  });
+
+  it("lists each trigger's keys in that trigger's own table", () => {
+    const tables = [
+      ["From a message trigger", contract.request.patternMetaKeys],
+      ["From a command", contract.request.slashMetaKeys],
+    ] as const;
+    for (const [heading, keys] of tables) {
+      const table = docSection(heading, 3);
+      for (const key of keys) expect(table, `${heading}: ${key}`).toContain(`| \`_meta.${key}\` |`);
+      expect(table, heading).toContain(`[{ ${contract.request.attachmentKeys.join(", ")} }]`);
+    }
   });
 
   it("states the reply fields and limits the fixtures define", () => {

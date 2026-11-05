@@ -89,6 +89,8 @@ function fakeSlash(opts: {
   /** 指令註冊在哪個伺服器（全域指令為 null）—— Discord 的 commandGuildId */
   commandGuildId?: string | null;
   values?: Array<{ name: string; type: number; value: unknown }>;
+  /** the interaction's resolved attachments, by id */
+  files?: Array<{ id: string; url: string; name: string; contentType: string | null; size: number }>;
 }) {
   const reply = vi.fn(async () => {});
   const values = opts.values ?? [];
@@ -125,6 +127,7 @@ function fakeSlash(opts: {
     },
     options: {
       data,
+      resolved: opts.files ? { attachments: new Map(opts.files.map((f) => [f.id, f])) } : null,
       getSubcommand: () => opts.subcommand ?? null,
       getSubcommandGroup: () => null,
     },
@@ -151,6 +154,7 @@ type Payload = {
     command_name: string;
     options: Array<{ name: string; value: unknown }>;
     interaction_token?: string;
+    attachments: Array<Record<string, unknown>>;
     sub_command_name: string | null;
     sub_command_group: string | null;
   };
@@ -181,6 +185,7 @@ describe("root leaf", () => {
     expect(payload._meta.sub_command_group).toBeNull();
     expect(payload._meta.options).toEqual([{ name: "q", type: 3, value: "hello" }]);
     expect(payload._meta).not.toHaveProperty("interaction_token");
+    expect(payload._meta.attachments).toEqual([]);
     expect((await BehaviorStat.findByPk(leaf))?.get("successCount")).toBe(1);
   });
 
@@ -393,6 +398,32 @@ describe("subcommands", () => {
     // the invoked path, structured like the plugin command payload (#140)
     expect(payload._meta.sub_command_name).toBe("wake");
     expect(payload._meta.sub_command_group).toBeNull();
+  });
+
+  it("sends the invoked subcommand's attachment options' files, in option order", async () => {
+    const commandId = await seedCommand({ name: "nas" });
+    await seedLeaf(commandId, { subcommand: "upload", title: "upload" });
+    const forwarder = makeForwarder();
+    const { interaction } = fakeSlash({
+      commandName: "nas",
+      subcommand: "upload",
+      values: [
+        { name: "second", type: ApplicationCommandOptionType.Attachment, value: "A2" },
+        { name: "note", type: ApplicationCommandOptionType.String, value: "hi" },
+        { name: "first", type: ApplicationCommandOptionType.Attachment, value: "A1" },
+      ],
+      files: [
+        { id: "A1", url: "https://cdn.discordapp.com/a/A1/one.txt", name: "one.txt", contentType: null, size: 1 },
+        { id: "A2", url: "https://cdn.discordapp.com/a/A2/two.png", name: "two.png", contentType: "image/png", size: 2 },
+      ],
+    });
+
+    await dispatcherWith(forwarder).dispatch(interaction);
+
+    expect(payloadOf(forwarder)._meta.attachments).toEqual([
+      { id: "A2", url: "https://cdn.discordapp.com/a/A2/two.png", filename: "two.png", content_type: "image/png", size: 2 },
+      { id: "A1", url: "https://cdn.discordapp.com/a/A1/one.txt", filename: "one.txt", content_type: null, size: 1 },
+    ]);
   });
 });
 

@@ -187,14 +187,18 @@ describe("POST /api/behaviors/:id/test", () => {
     forward.mockClear();
     await server.inject({ method: "POST", url: `/api/behaviors/${ids.dm}/test` });
     const calls = forward.mock.calls as unknown as Array<[unknown, { _meta: Record<string, unknown> }]>;
-    expect(calls[0][1]._meta.captures).toEqual([]);
+    expect(calls[0][1]._meta).toMatchObject({ captures: [], attachments: [] });
   });
 
   it("a command leaf's test carries its subcommand path", async () => {
     forward.mockClear();
     await server.inject({ method: "POST", url: `/api/behaviors/${ids.nasWake}/test` });
     const calls = forward.mock.calls as unknown as Array<[unknown, { _meta: Record<string, unknown> }]>;
-    expect(calls[0][1]._meta).toMatchObject({ sub_command_name: "wake", sub_command_group: null });
+    expect(calls[0][1]._meta).toMatchObject({
+      sub_command_name: "wake",
+      sub_command_group: null,
+      attachments: [],
+    });
   });
 
   it("refuses the system behavior and unknown ids", async () => {

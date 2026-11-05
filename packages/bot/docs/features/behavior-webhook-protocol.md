@@ -113,12 +113,12 @@ A command fires when a user runs one of the behavior's Discord commands.
 | `_meta.channel_id` | The channel the command was used in. |
 | `_meta.user` | `{ id, username, global_name, discriminator, avatar }`. |
 | `_meta.locale` | The user's Discord locale, or `null`. |
-| `_meta.options` | The invoked command's or subcommand's options, `[{ name, type, value }]`. `type` is Discord's numeric option type. An `attachment` option's `value` is the attachment id. |
+| `_meta.options` | The invoked command's or subcommand's options, `[{ name, type, value }]`. `type` is Discord's numeric option type. An `attachment` option's (type 11) `value` is the attachment id: its file is the `_meta.attachments` entry with that `id`. |
 | `_meta.behavior_id` | The behavior (command leaf) that fired. |
+| `_meta.attachments` | The files of the invoked command's or subcommand's `attachment` options, in option order: `[{ id, url, filename, content_type, size }]`, the same shape as a message trigger's. Empty when it has none. |
 
 The interaction token is **not** sent: the bot answers the interaction
-itself, with your reply. A command's payload has no `message_id` and no
-`attachments` (see #152).
+itself, with your reply. A command's payload has no `message_id`.
 
 Discord stops a command from being used where its settings don't allow it.
 Past that, the bot does no check of its own on who runs a command, so a
@@ -137,6 +137,7 @@ values:
 | `_meta.test` | `true` |
 | `_meta.behavior_id` | The behavior under test. |
 | `_meta.user` | The placeholder `{ id: "0", username: "karyl-test", global_name: null, discriminator: "0", avatar: null }`, never the admin who pressed the button. |
+| `_meta.attachments` | `[]`. |
 | `_meta.captures` | `[]` (a message trigger's test). |
 | `_meta.sub_command_name` / `sub_command_group` | The leaf's own path (a command's test). |
 
@@ -535,6 +536,7 @@ changes the protocol. Update a receiver **before** the bot is upgraded:
   limits), `_meta.captures` on message triggers, and
   `_meta.sub_command_name` / `_meta.sub_command_group` on commands.
 - New: secret rotation with the `-Previous` headers (#99).
-- New: `id` on each `_meta.attachments` entry (#152).
+- New: `id` on each `_meta.attachments` entry, and `_meta.attachments` on
+  commands, with the files of the `attachment` options (#152).
 - Removed: conversation sessions and the `[BEHAVIOR:END]` marker. A reply
   never starts or ends a session.
