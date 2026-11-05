@@ -307,6 +307,35 @@ exactly once. Put that secret into the plugin's `.env` and start it;
 the plugin self-registers, and the admin enables it from
 `/admin/plugins`.
 
+### Plugin URL host policy
+
+The bot checks the plugin's URL with `assertPluginTarget`
+(`src/utils/host-policy.ts`) at registration, before each dispatch, on
+health checks, in the WebUI reverse proxy, when it fetches an
+attachment, and for a voice URL on the plugin's own origin. Allowed:
+private (Docker bridge `172.16.0.0/12`, other RFC1918, ULA) and public
+addresses, plus loopback outside production. Refused: loopback in
+production, cloud metadata / link-local, unspecified and reserved
+ranges.
+
+The check is not pinned to the addresses it vetted: the connect
+resolves the host again. This is a deliberate decision (#144), not an
+oversight:
+
+- The URL comes from the plugin itself, which needs its per-plugin
+  setup secret to register. The host resolves through Docker's internal
+  DNS. Changing the answer between check and connect (DNS rebinding)
+  needs control of that DNS, and an attacker with that control can
+  impersonate the plugin outright.
+- Dispatch uses a keep-alive undici `Pool` per plugin. Rebinding only
+  reaches a new connection, and pinning would mean rebuilding the
+  `Pool` whenever the IP changes, which every container restart does.
+
+The residual risk is a rebinding window for an attacker who already
+controls the Docker network's DNS. If that ever needs closing, a `Pool`
+with a pinned `connect.lookup` (`src/utils/pinned-dispatcher.ts`),
+rebuilt when the vetted address set changes, is an additive change.
+
 ## Related files
 
 - **Bot side.** `src/modules/plugin-system/`

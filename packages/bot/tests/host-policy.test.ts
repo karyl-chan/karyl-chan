@@ -5,7 +5,7 @@ vi.mock('dns/promises', () => ({
 }));
 
 const { lookup } = await import('dns/promises');
-const { assertAllowedTarget, HostPolicyError } = await import('../src/utils/host-policy.js');
+const { assertAllowedTarget, resolveAllowedTarget, HostPolicyError } = await import('../src/utils/host-policy.js');
 
 const mockedLookup = vi.mocked(lookup);
 
@@ -137,6 +137,43 @@ describe('assertAllowedTarget', () => {
             await assertAllowedTarget('mc.example.com', 25575);
             expect(mockedLookup).toHaveBeenCalledOnce();
         });
+    });
+
+    describe('resolveAllowedTarget', () => {
+        it('returns every DNS answer of a hostname, in resolver order', async () => {
+            mockedLookup.mockResolvedValue([
+                { address: '10.0.0.5', family: 4 },
+                { address: 'fd00::5', family: 6 }
+            ] as unknown as Awaited<ReturnType<typeof lookup>>);
+            await expect(resolveAllowedTarget('mc', 25575)).resolves.toEqual([
+                { address: '10.0.0.5', family: 4 },
+                { address: 'fd00::5', family: 6 }
+            ]);
+            expect(mockedLookup).toHaveBeenCalledOnce();
+        });
+
+        it('returns an IP literal as itself, without a lookup', async () => {
+            await expect(resolveAllowedTarget('192.168.1.10', 25575)).resolves.toEqual([
+                { address: '192.168.1.10', family: 4 }
+            ]);
+            await expect(resolveAllowedTarget('[::1]', 25575)).resolves.toEqual([
+                { address: '::1', family: 6 }
+            ]);
+            expect(mockedLookup).not.toHaveBeenCalled();
+        });
+
+        it.each(['169.254.169.254', 'fe80::1'])(
+            'refuses the whole target when any answer is metadata / link-local (%s)',
+            async (blocked) => {
+                mockedLookup.mockResolvedValue([
+                    { address: '10.0.0.5', family: 4 },
+                    { address: blocked, family: blocked.includes(':') ? 6 : 4 }
+                ] as unknown as Awaited<ReturnType<typeof lookup>>);
+                await expect(resolveAllowedTarget('rebind.example.com', 25575)).rejects.toBeInstanceOf(
+                    HostPolicyError
+                );
+            }
+        );
     });
 
     describe('HostPolicyError', () => {

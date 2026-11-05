@@ -76,12 +76,25 @@ channel's Discord send-message permissions.
   including when spelled as IPv4-mapped, NAT64 (`64:ff9b::/96`) or 6to4
   (`2002::/16`) IPv6.
 - Metadata hostnames (`metadata.google.internal`, and so on).
-- Hostnames that are not IPv4 literals are resolved first; a DNS answer
-  in a blocked range is also rejected.
+- Hostnames that are not IP literals are resolved first; if any DNS
+  answer is in a blocked range, the whole host is rejected.
 
 Private ranges (`10.x`, `172.16.x`, `192.168.x`, `localhost`, Docker
 container names) are allowed. Those are the legitimate "manage my own
-infrastructure" targets.
+infrastructure" targets. There is no allowlist for RCON, and none is
+needed: every non-blocked address is allowed.
+
+The host is resolved once per connect (`resolveAllowedTarget`), and
+the connection goes only to the addresses that passed the check
+(`rcon-forward/pinned-rcon.ts`: the socket's `lookup` answers with the
+vetted addresses instead of asking DNS, the same pinning behavior
+webhooks use). A DNS answer that changes between check and connect (DNS
+rebinding) therefore cannot redirect it. Every vetted address is
+offered, so when the first is unreachable (for example `localhost`
+answering `::1` first while the server listens on `127.0.0.1` only)
+the connect still falls back to the next one. RCON is plain TCP, with no
+TLS, SNI or Host header. Embeds, logs and the bot event log show the
+configured hostname.
 
 ### De-identified errors
 
@@ -103,6 +116,12 @@ so 2s → 4s → 8s) for up to three attempts. After three failures the connecti
 closes and the channel is notified. Connections idle for 30 minutes are
 cleaned up.
 
+Every attempt resolves and checks the host again, then reconnects to
+the fresh answers only, so a container that restarted with a new IP is
+reached at the new IP. If DNS fails, or the host policy now refuses the
+host (an answer has become a metadata / link-local address), that
+attempt fails without connecting and the next attempt follows.
+
 ## Required bot permissions
 
 - `View Channels`
@@ -122,8 +141,9 @@ cleaned up.
 | `src/modules/builtin-features/rcon-forward/rcon-forward-channel.commands.ts` | Slash commands + modal |
 | `src/modules/builtin-features/rcon-forward/rcon-forward-channel.events.ts` | `messageCreate` trigger + idle cleanup |
 | `src/modules/builtin-features/rcon-forward/rcon-connection.service.ts` | RCON connection pool, reconnect logic, event dispatch |
+| `src/modules/builtin-features/rcon-forward/pinned-rcon.ts` | RCON client pinned to the vetted addresses |
 | `src/modules/builtin-features/rcon-forward/rcon-queue.service.ts` | Per-channel rate limiting and queueing |
 | `src/utils/crypto.ts` | Password encryption / decryption |
-| `src/utils/host-policy.ts` | Metadata-endpoint blocking + DNS check |
+| `src/utils/host-policy.ts` | Metadata-endpoint blocking + DNS check; returns the vetted addresses |
 | `src/utils/rate-limiter.ts` | Per-channel rate limiter |
 | `src/modules/builtin-features/rcon-forward/rcon-forward-channel.model.ts` | Sequelize model |
