@@ -184,9 +184,12 @@ export class WebhookForwarder {
    * @param allowlist  WEBHOOK_PRIVATE_ALLOWLIST entries the target policy
    *                   applies; defaults to the boot-parsed config value
    *                   (tests inject their own).
+   * @param timeoutMs  how long one POST may take before it is aborted
+   *                   (headers and body together); tests inject a short one.
    */
   constructor(
     private readonly allowlist: readonly AllowlistEntry[] = webhookAllowlist,
+    private readonly timeoutMs: number = 10_000,
   ) {}
 
   /**
@@ -337,7 +340,7 @@ export class WebhookForwarder {
           // re-validating — an SSRF into cloud metadata (169.254.169.254) or
           // internal hosts whose response we'd then relay back into Discord.
           redirect: "manual",
-          signal: AbortSignal.timeout(10_000),
+          signal: AbortSignal.timeout(this.timeoutMs),
           // `dispatcher` is Node's (undici) fetch extension — absent from
           // the DOM RequestInit type the project compiles against.
         } as RequestInit);
