@@ -5,4 +5,5 @@ The bot↔SDK wire contract (manifest types, canonical events, scope vocabulary,
 ## Consequences
 
 - The SDK's `./web` and `./web/vue` exports ship raw `src` TS, which bundling cannot cover — `src/web` must never import `plugin-wire` (guarded by a contract test).
+- The behavior webhook fixtures (`CONTRACT_FIXTURES.behaviorWebhook`) reach receiver authors through the SDK's `./behavior-receiver` subpath, which vendors them into its own bundle as `BEHAVIOR_WEBHOOK_FIXTURES`. Their shape is therefore SDK public API: changing it is an SDK semver event. release-please assigns commits to components by path and plugin-wire is not one, so such a change ships as an SDK release only through the `feat`/`fix` commit that also touches `packages/plugin-sdk` (its `behavior-receiver` type and fixture tests always need updating with it).
 - The wire contract has no version number of its own; compat statements are made in SDK-version coordinates (see the Compat Floor and Event Ceiling terms in `packages/plugin-wire/CONTEXT.md`).

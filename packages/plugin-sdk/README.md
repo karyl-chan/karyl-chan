@@ -35,6 +35,10 @@ The SDK encapsulates the boilerplate every plugin needs:
   `ctx.kv.*` / `ctx.auth.*`) over the bot's `/api/plugin/*` routes,
   with built-in `503` / `429` / network-error retry.
 
+Not a plugin? `@karyl-chan/plugin-sdk/behavior-receiver` is for the
+receiving end of a behavior's webhook action. See
+[Behavior webhook receivers](#behavior-webhook-receivers).
+
 ---
 
 ## Quick start
@@ -620,6 +624,65 @@ roughly 30 seconds.
 
 ---
 
+## Behavior webhook receivers
+
+A behavior's webhook action POSTs to a URL the admin saves, and shows the
+response body as the reply. The protocol, with a dependency-free receiver
+for any runtime, is
+[`behavior-webhook-protocol.md`](../bot/docs/features/behavior-webhook-protocol.md).
+On Node, `@karyl-chan/plugin-sdk/behavior-receiver` does the protocol's
+part for you:
+
+```ts
+import http from "node:http";
+import { createReceiver } from "@karyl-chan/plugin-sdk/behavior-receiver";
+
+const handler = createReceiver({
+  mode: "hmac", // as set on the behavior: "none", "token" or "hmac"
+  secret: process.env.KARYL_WEBHOOK_SECRET!,
+  path: "/hooks/weather", // the path of the URL saved on the bot
+  answer: async (payload, { test }) => {
+    if (test) return { content: "Test received.", ephemeral: true };
+    return { content: `Hello ${payload.username}` };
+  },
+});
+
+http.createServer(handler).listen(8080);
+```
+
+`createReceiver` refuses an unverified request with 401, parses the
+payload, and signs your reply over the request's nonce. A body that is
+not JSON gets 400, one over `maxBodyBytes` (default 1 MiB) 413, and a
+throwing `answer` 500.
+
+The pieces it is built from, for another HTTP framework:
+
+| Export | What it does |
+| ------ | ------------ |
+| `verifyRequest({ mode, secret \| secrets, path, headers, body, nonceStore, now? })` | Checks the token or signature for the mode, the test-fire scheme, a rotation's `-Previous` headers, the 300-second window, and in hmac mode a replayed nonce. Resolves to `{ ok: true, test, nonce, secret }` or `{ ok: false, reason }`. Pass the raw body, before parsing it. |
+| `signResponse({ secret, path, nonce, test, body, now? })` | The response headers: a timestamp and a signature over the request's nonce (`test:`-prefixed for a test-fire). Pass the `secret`, `nonce` and `test` that `verifyRequest` returned. |
+| `createNonceStore({ maxEntries?, now? })` | An in-memory `NonceStore`: each nonce is kept while its timestamp is fresh, and when `maxEntries` (default 10 000) is reached the oldest goes first. |
+| `BEHAVIOR_WEBHOOK_FIXTURES` | The machine-readable contract: header names, payload keys, reply limits and golden HMAC vectors. The bot's own tests replay the same vectors. Test your receiver against `signing.requestGolden`, `testGolden`, `responseGolden` and `testResponseGolden`. |
+
+The payload and reply are typed as `BehaviorWebhookPayload`
+(`MessageTriggerMeta`, `CommandTriggerMeta`, `TestFireMeta`) and
+`BehaviorReply`.
+
+- **More than one process.** A `NonceStore` is any object with
+  `has(nonce)` and `set(nonce, expiresAt)`, either of which may return a
+  promise. With a store that several processes share, let `set` return
+  `false` when the nonce was already there (an atomic insert such as
+  Redis `SET NX EX`): two copies of one request can both pass `has`, and
+  only one wins `set`.
+- **Rotating your own secret.** Pass `secrets: [newSecret, oldSecret]`
+  instead of `secret`. The response is signed with the one that verified.
+- **What it loads.** The subpath is its own bundle that loads only Node
+  built-ins, never fastify or the SDK's main entry. Installing the
+  package still installs fastify (a dependency) and asks for the
+  `discord-api-types` peer.
+
+---
+
 ## Protocol alignment
 
 - **HMAC.** Signed payload is `<METHOD>:<path>:<ts>:<nonce>:<body>`; binding the
@@ -652,7 +715,9 @@ built and installed into the maintained
 before release, so their source compatibility is part of the release gate.
 
 The public 1.0 API is exactly the package export map: the root export,
-`@karyl-chan/plugin-sdk/web`, and `@karyl-chan/plugin-sdk/web/vue`.
+`@karyl-chan/plugin-sdk/web`, `@karyl-chan/plugin-sdk/web/vue`, and
+`@karyl-chan/plugin-sdk/behavior-receiver` (the shape of
+`BEHAVIOR_WEBHOOK_FIXTURES` included).
 Unexported files and deep imports are internal. No public 1.0 export is
 marked experimental or deprecated. In particular, `ctx.botRpc(path, body)`
 remains a supported low-level escape hatch; it is not deprecated when a
