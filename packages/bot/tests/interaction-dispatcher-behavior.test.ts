@@ -10,7 +10,8 @@
  *     placement check; the action decides (login checks authorisation)
  *   - builtin action (the system login) → its handler; webhook → forwarder
  *   - a leaf that cannot run its action (no webhook action, or Discord
- *     refuses the deferral) is still claimed and never forwarded
+ *     refuses the deferral) is still claimed and never forwarded; a
+ *     refused deferral is a failed delivery (#120)
  *   - webhook leaves are rate-limited per user, 5 per 10 s; over it the
  *     invoker is told privately; the system login never is (#119)
  */
@@ -51,6 +52,7 @@ vi.mock("../src/modules/admin/admin-login.service.js", () => ({
 import { ApplicationCommandOptionType, MessageFlags, type Interaction } from "discord.js";
 import { sequelize } from "../src/db.js";
 import { BehaviorStat } from "../src/modules/behavior/models/behavior-stats.model.js";
+import { findRecentDeliveries } from "../src/modules/behavior/behavior-deliveries.js";
 import { InteractionDispatcher } from "../src/modules/command-system/interaction-dispatcher.service.js";
 import { __resetBehaviorRateLimitsForTests } from "../src/modules/command-system/behavior-rate-limits.js";
 import { dispatchInteractionToPlugin } from "../src/modules/plugin-system/plugin-interaction-dispatch.service.js";
@@ -304,25 +306,50 @@ describe("a leaf that cannot run its action", () => {
     expect(warnings).toHaveLength(1);
   });
 
-  it("when Discord refuses the deferral: claimed, not forwarded", async () => {
+  it("when Discord refuses the deferral: claimed, not forwarded, recorded as a failed delivery", async () => {
     const commandId = await seedCommand({ name: "ping" });
     const leaf = await seedLeaf(commandId);
     const forwarder = makeForwarder();
-    const { interaction, reply, raw } = fakeSlash({ commandName: "ping" });
-    (raw.deferReply as Mock).mockRejectedValueOnce(new Error("Unknown interaction"));
+    const dispatcher = dispatcherWith(forwarder);
+    const refused = () => {
+      const slash = fakeSlash({ commandName: "ping" });
+      (slash.raw.deferReply as Mock).mockRejectedValueOnce(new Error("Unknown interaction"));
+      return slash;
+    };
 
-    const outcome = await dispatcherWith(forwarder).dispatch(interaction);
+    const first = refused();
+    const outcome = await dispatcher.dispatch(first.interaction);
 
     expect(outcome).toEqual({ claimed: true, claimedBy: "behavior_custom" });
-    expect(raw.deferReply).toHaveBeenCalledTimes(1);
+    expect(first.raw.deferReply).toHaveBeenCalledTimes(1);
     expect(forwarder.forward).not.toHaveBeenCalled();
-    // Current behavior, pinned: the interaction is gone, so nothing is said
-    // and nothing is counted. #120 decides whether this should record a
-    // stat or an event — update these assertions there.
-    expect(reply).not.toHaveBeenCalled();
-    expect(raw.editReply).not.toHaveBeenCalled();
-    expect(raw.followUp).not.toHaveBeenCalled();
-    expect(await BehaviorStat.findByPk(leaf)).toBeNull();
+    // the interaction is gone: nothing can be said to the invoker
+    expect(first.reply).not.toHaveBeenCalled();
+    expect(first.raw.editReply).not.toHaveBeenCalled();
+    expect(first.raw.followUp).not.toHaveBeenCalled();
+    // #120: before, this failure left no trace at all (#124 pinned that);
+    // the webhook was never called, yet the user saw "interaction failed".
+    // Now it counts as a failed delivery, in the stats and the log.
+    const stat = await BehaviorStat.findByPk(leaf);
+    expect(stat?.getDataValue("failureCount")).toBe(1);
+    const [delivery] = await findRecentDeliveries(leaf);
+    expect(delivery).toMatchObject({
+      via: "command",
+      ok: false,
+      httpStatus: null,
+      durationMs: null,
+      errorCode: "defer_failed",
+      error: "Discord refused the deferral: Unknown interaction",
+    });
+
+    // a second refusal is counted again, but warned about only once
+    await dispatcher.dispatch(refused().interaction);
+    expect((await BehaviorStat.findByPk(leaf))?.getDataValue("failureCount")).toBe(2);
+    expect(await findRecentDeliveries(leaf)).toHaveLength(2);
+    const warnings = vi
+      .mocked(botEventLog.record)
+      .mock.calls.filter(([level, , msg]) => level === "warn" && String(msg).includes(`behavior ${leaf} `));
+    expect(warnings).toHaveLength(1);
   });
 });
 

@@ -32,7 +32,10 @@ import {
   behaviorCommandTarget,
   targetMatchesInvocation,
 } from "./command-target.js";
+import { recordForwardOutcome } from "../behavior/models/behavior-stats.model.js";
+import { recordDelivery } from "../behavior/behavior-deliveries.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
+import { shouldRecord } from "../bot-events/bot-event-dedup.js";
 import { dispatchInteractionToPlugin } from "../plugin-system/plugin-interaction-dispatch.service.js";
 import { dispatchComponentToPlugin } from "../plugin-system/plugin-component-dispatch.service.js";
 import { dispatchModalToPlugin } from "../plugin-system/plugin-modal-dispatch.service.js";
@@ -311,6 +314,36 @@ export class InteractionDispatcher {
     return { claimed: true, claimedBy: "behavior_system" };
   }
 
+  /**
+   * Discord refused the deferral (the interaction expired or is unknown):
+   * the webhook is never called, but the user sees "interaction failed",
+   * and nothing can be said to them any more. Counted as a failed delivery
+   * (#120) so the admin sees it; warned about once per leaf per window.
+   */
+  private async recordDeferFailure(behaviorId: number, firedAt: Date, err: unknown): Promise<void> {
+    const error = `Discord refused the deferral: ${err instanceof Error ? err.message : String(err)}`;
+    await recordForwardOutcome(behaviorId, false, error);
+    await recordDelivery({
+      behaviorId,
+      firedAt,
+      via: "command",
+      ok: false,
+      httpStatus: null,
+      durationMs: null,
+      errorCode: "defer_failed",
+      error,
+      verified: null,
+    });
+    if (shouldRecord(`behavior-defer-failed:${behaviorId}`)) {
+      botEventLog.record(
+        "warn",
+        "bot",
+        `interaction-dispatcher: behavior ${behaviorId} failed: ${error}`,
+        { behaviorId, via: "interaction" },
+      );
+    }
+  }
+
   // ── webhook 動作 ────────────────────────────────────────────────────────
 
   /**
@@ -349,13 +382,15 @@ export class InteractionDispatcher {
     }
 
     // Defer reply（slash command 需要在 3s 內 ack）
+    const firedAt = new Date();
     try {
       // a leaf stored 'public' defers in the open, so a public reply fills
       // the placeholder in place; otherwise only the invoker sees it
       await interaction.deferReply(
         leaf.replyVisibility === "public" ? {} : { flags: MessageFlags.Ephemeral },
       );
-    } catch {
+    } catch (err) {
+      await this.recordDeferFailure(leaf.id, firedAt, err);
       return { claimed: true, claimedBy: "behavior_custom" };
     }
 
