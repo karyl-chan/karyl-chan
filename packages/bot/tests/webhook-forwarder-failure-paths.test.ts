@@ -30,7 +30,7 @@ vi.mock("../src/modules/bot-events/bot-event-log.js", () => ({
 import type { BehaviorWebhookActionRow } from "../src/modules/behavior/models/behavior-webhook-action.model.js";
 import { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
 import { encryptSecret } from "../src/utils/crypto.js";
-import { hangingReceiver } from "./webhook-receiver-fake.js";
+import { hangingReceiver, unreachableReceiver } from "./webhook-receiver-fake.js";
 
 const SECRET = "shared-secret";
 
@@ -63,5 +63,17 @@ describe("a receiver that does not answer", () => {
       error: expect.stringMatching(/^network error: .*(abort|timeout)/i),
     });
     expect(Date.now() - started).toBeLessThan(1000);
+  });
+});
+
+describe("a receiver that cannot be reached", () => {
+  it("fails the forward as a network error", async () => {
+    unreachableReceiver(new TypeError("fetch failed"));
+    expect(await new WebhookForwarder().forward(action(null), {})).toEqual({
+      ok: false,
+      reply: {},
+      notes: [],
+      error: "network error: fetch failed",
+    });
   });
 });
