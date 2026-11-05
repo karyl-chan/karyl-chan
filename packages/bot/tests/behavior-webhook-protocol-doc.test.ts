@@ -8,10 +8,14 @@
  *     `// receiver.mjs` code block is cut out of the Markdown and imported
  *     — against the golden vectors, and against the bot's real
  *     WebhookForwarder over a real socket (the host policy is stubbed to
- *     vouch for 127.0.0.1, which it otherwise refuses).
+ *     vouch for 127.0.0.1, which it otherwise refuses);
+ *   - the SDK's `@karyl-chan/plugin-sdk/behavior-receiver`, which the page
+ *     recommends for Node, goes through the same forwarder scenarios, so
+ *     the two receivers cannot come to behave differently.
  *
  * The prose and the wiring example are not checked.
  */
+import { createHmac } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import {
   createServer,
@@ -39,11 +43,8 @@ vi.mock("../src/utils/host-policy.js", () => ({
 }));
 
 import { CONTRACT_FIXTURES, type HmacGoldenVector } from "@karyl-chan/plugin-wire";
-import {
-  PREVIOUS_SIGNATURE_HEADER,
-  PREVIOUS_TOKEN_HEADER,
-  WebhookForwarder,
-} from "../src/modules/command-system/webhook-forwarder.service.js";
+import { createReceiver as sdkCreateReceiver } from "@karyl-chan/plugin-sdk/behavior-receiver";
+import { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
 import { encryptSecret } from "../src/utils/crypto.js";
 import type { BehaviorWebhookActionRow } from "../src/modules/behavior/models/behavior-webhook-action.model.js";
 
@@ -141,8 +142,8 @@ describe("the protocol document, against the contract fixtures", () => {
       signing.testHeader,
       signing.testTokenHeader,
       signing.testPreviousTokenHeader,
-      PREVIOUS_TOKEN_HEADER,
-      PREVIOUS_SIGNATURE_HEADER,
+      signing.previousTokenHeader,
+      signing.previousSignatureHeader,
     ]);
     expect([...named].sort()).toEqual([...sent].sort());
   });
@@ -185,7 +186,10 @@ describe("the protocol document, against the contract fixtures", () => {
 
 // ── golden vectors ──────────────────────────────────────────────────────────
 // a behavior webhook is always a POST; the shared scheme's GET vector is a plugin RPC's
-const requestGolden = CONTRACT_FIXTURES.hmac.golden.filter((v) => v.method === "POST");
+const requestGolden = [
+  ...signing.requestGolden,
+  ...CONTRACT_FIXTURES.hmac.golden.filter((v) => v.method === "POST"),
+];
 
 function hmacHeaders(v: HmacGoldenVector, extra: Headers = {}): Headers {
   return {
@@ -240,7 +244,7 @@ describe("the published reference receiver, against the golden vectors", () => {
     const v = requestGolden[0]!;
     const headers = hmacHeaders(v, {
       "x-karyl-signature": "0".repeat(64),
-      "x-karyl-signature-previous": v.expectedHex,
+      [signing.previousSignatureHeader]: v.expectedHex,
     });
     expect(verify(v, headers).ok).toBe(true);
   });
@@ -272,6 +276,29 @@ describe("the published reference receiver, against the golden vectors", () => {
     expect(verify({ ...v, body: `${v.body} ` }, hmacHeaders(v)).ok).toBe(false);
   });
 
+  it("refuses a timestamp that is not a number, signed or not", () => {
+    // signed over the text "soon": only the timestamp check can refuse it
+    const v = requestGolden[0]!;
+    const ts = "soon";
+    const signature = createHmac("sha256", v.secret)
+      .update(`POST:${v.path}:${ts}:${v.nonce}:${v.body}`)
+      .digest("hex");
+    const headers = hmacHeaders(v, { "x-karyl-timestamp": ts, "x-karyl-signature": signature });
+    expect(verify(v, headers).ok).toBe(false);
+  });
+
+  it("refuses a replay for as long as the request's own timestamp stays fresh", () => {
+    // the sender's clock runs 200 s ahead of ours: still inside the window
+    const v = requestGolden[0]!;
+    const seen = new Map<string, number>();
+    expect(verify(v, hmacHeaders(v), seen, Number(v.ts) - 200).ok).toBe(true);
+    // 450 s later by our clock, the timestamp is 250 s old, so still fresh
+    expect(verify(v, hmacHeaders(v), seen, Number(v.ts) + 250)).toEqual({
+      ok: false,
+      reason: "replayed nonce",
+    });
+  });
+
   it("signs a response over the request's nonce, as the response vectors do", () => {
     for (const [vectors, test] of [
       [signing.responseGolden, false],
@@ -297,7 +324,23 @@ describe("the published reference receiver, against the golden vectors", () => {
 
 // ── against the bot's own forwarder ─────────────────────────────────────────
 
-describe("the published reference receiver, against the bot's WebhookForwarder", () => {
+/** What a forwarder scenario needs of a receiver: build its node:http handler. */
+type ReceiverFactory = (options: {
+  mode: "hmac" | "token";
+  secret: string;
+  path: string;
+  answer: (payload: { username: string }, ctx: { test: boolean }) => { content: string };
+}) => (req: IncomingMessage, res: ServerResponse) => Promise<void>;
+
+const receivers: [string, ReceiverFactory][] = [
+  [
+    "the published reference receiver",
+    (options) => receiver.createReceiver(options as Parameters<Receiver["createReceiver"]>[0]),
+  ],
+  ["the SDK's behavior-receiver", sdkCreateReceiver],
+];
+
+describe.each(receivers)("%s, against the bot's WebhookForwarder", (_name, createReceiver) => {
   let server: Server | null = null;
 
   afterEach(async () => {
@@ -307,12 +350,12 @@ describe("the published reference receiver, against the bot's WebhookForwarder",
 
   async function serve(mode: "hmac" | "token", secret: string): Promise<string> {
     server = createServer(
-      receiver.createReceiver({
+      createReceiver({
         mode,
         secret,
         path: "/hook",
         answer: (payload, { test }) =>
-          test ? { content: "test ok" } : { content: `hello ${String(payload.username)}` },
+          test ? { content: "test ok" } : { content: `hello ${payload.username}` },
       }),
     );
     await new Promise<void>((r) => server!.listen(0, "127.0.0.1", r));

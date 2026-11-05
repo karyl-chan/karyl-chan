@@ -20,13 +20,20 @@ import { defineConfig } from "tsup";
  * `discord-api-types` peerDependency, Node built-ins) stays external —
  * tsup externalizes `dependencies` + `peerDependencies` by default.
  *
- * Only the `.` entry is built here. The `./web` and `./web/vue` exports
- * ship raw `src` TS (see package.json `exports`) and are intentionally
- * NOT bundled — which is why `src/web` must never import `plugin-wire`
- * (guarded by tests/web-no-plugin-wire.test.ts).
+ * Two entries are built here, each a complete bundle (`splitting: false`):
+ * `.` and `./behavior-receiver`. The latter vendors only the behavior
+ * webhook fixtures and must load nothing but Node built-ins — no fastify,
+ * no main entry (guarded by tests/behavior-receiver-bundle.contract.test.ts).
+ * The `./web` and `./web/vue` exports ship raw `src` TS (see package.json
+ * `exports`) and are intentionally NOT bundled — which is why `src/web`
+ * must never import `plugin-wire` (guarded by
+ * tests/web-no-plugin-wire.contract.test.ts).
  */
 export default defineConfig({
-  entry: ["src/index.ts"],
+  entry: {
+    index: "src/index.ts",
+    "behavior-receiver": "src/behavior-receiver/index.ts",
+  },
   format: ["esm"],
   target: "es2022",
   outDir: "dist",

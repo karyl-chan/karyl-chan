@@ -123,6 +123,22 @@ export interface ContractFixtures {
         readonly hmac: readonly string[];
         readonly token: readonly string[];
       };
+      /** The shared scheme's headers and window (`hmac.*`), named here too. */
+      readonly signatureHeader: string;
+      readonly timestampHeader: string;
+      readonly nonceHeader: string;
+      readonly replayWindowSeconds: number;
+      /** token mode: the shared secret, as is. */
+      readonly tokenHeader: string;
+      /**
+       * During a rotation's grace period (#99) the standard headers carry
+       * the new secret and these the old one: the old token, or the same
+       * signature (same timestamp, nonce and body) made with the old secret.
+       */
+      readonly previousTokenHeader: string;
+      readonly previousSignatureHeader: string;
+      /** A real request vector: the shared scheme over a behavior payload. */
+      readonly requestGolden: readonly HmacGoldenVector[];
       /**
        * A signed response covers the REQUEST's nonce (#102); an
        * X-Karyl-Nonce on the response, if sent, must equal it.
@@ -175,60 +191,66 @@ export interface ContractFixtures {
   };
 }
 
+/**
+ * The shared HMAC scheme. Hoisted so the behavior webhook block can name
+ * the same headers and window without a second copy of the literals.
+ */
+const HMAC: ContractFixtures["hmac"] = {
+  signatureHeader: "x-karyl-signature",
+  timestampHeader: "x-karyl-timestamp",
+  nonceHeader: "x-karyl-nonce",
+  replayWindowSeconds: 300,
+  payloadFormat: "<METHOD>:<path>:<ts>:<nonce>:<body>",
+  golden: [
+    {
+      name: "command-dispatch",
+      secret: "contract-secret-1",
+      method: "POST",
+      path: "/commands/uuid",
+      ts: "1700000000",
+      body: '{"command_name":"uuid"}',
+      expectedHex:
+        "f43255c0ed65ebee20d9019e301daa1d87d470fa8dfdbe285782390ecb80967b",
+      nonce: "cafe0000000000000000000000000000",
+    },
+    {
+      name: "events-dispatch",
+      secret: "contract-secret-1",
+      method: "POST",
+      path: "/events",
+      ts: "1700001234",
+      body: '{"type":"guild.message_create","data":{"id":"1"}}',
+      expectedHex:
+        "6b0f37b8a3b33115492829acfaf2a254ed336def3a4ce8eb77f94e49c5ae5094",
+      nonce: "cafe0000000000000000000000000001",
+    },
+    {
+      name: "lifecycle-dispatch",
+      secret: "another-secret",
+      method: "POST",
+      path: "/_kc/lifecycle",
+      ts: "1699999999",
+      body: '{"type":"plugin.guild.enabled"}',
+      expectedHex:
+        "09b3799ca1d41f14c97ae40701fa0becb90f5264f6f4a4068d3273cd645ca553",
+      nonce: "cafe0000000000000000000000000002",
+    },
+    {
+      name: "empty-body-get",
+      secret: "another-secret",
+      method: "GET",
+      path: "/health",
+      ts: "1699999999",
+      body: "",
+      expectedHex:
+        "429e2465eb3eec41087ad807fdb0068a7e5a02c96b2e9014e4bdd480e8f6dc3f",
+      nonce: "cafe0000000000000000000000000003",
+    },
+  ],
+};
+
 export const CONTRACT_FIXTURES: ContractFixtures = {
-  hmac: {
-    signatureHeader: "x-karyl-signature",
-    timestampHeader: "x-karyl-timestamp",
-    nonceHeader: "x-karyl-nonce",
-    replayWindowSeconds: 300,
-    payloadFormat: "<METHOD>:<path>:<ts>:<nonce>:<body>",
-    golden: [
-      {
-        name: "command-dispatch",
-        secret: "contract-secret-1",
-        method: "POST",
-        path: "/commands/uuid",
-        ts: "1700000000",
-        body: '{"command_name":"uuid"}',
-        expectedHex:
-          "f43255c0ed65ebee20d9019e301daa1d87d470fa8dfdbe285782390ecb80967b",
-        nonce: "cafe0000000000000000000000000000",
-      },
-      {
-        name: "events-dispatch",
-        secret: "contract-secret-1",
-        method: "POST",
-        path: "/events",
-        ts: "1700001234",
-        body: '{"type":"guild.message_create","data":{"id":"1"}}',
-        expectedHex:
-          "6b0f37b8a3b33115492829acfaf2a254ed336def3a4ce8eb77f94e49c5ae5094",
-        nonce: "cafe0000000000000000000000000001",
-      },
-      {
-        name: "lifecycle-dispatch",
-        secret: "another-secret",
-        method: "POST",
-        path: "/_kc/lifecycle",
-        ts: "1699999999",
-        body: '{"type":"plugin.guild.enabled"}',
-        expectedHex:
-          "09b3799ca1d41f14c97ae40701fa0becb90f5264f6f4a4068d3273cd645ca553",
-        nonce: "cafe0000000000000000000000000002",
-      },
-      {
-        name: "empty-body-get",
-        secret: "another-secret",
-        method: "GET",
-        path: "/health",
-        ts: "1699999999",
-        body: "",
-        expectedHex:
-          "429e2465eb3eec41087ad807fdb0068a7e5a02c96b2e9014e4bdd480e8f6dc3f",
-        nonce: "cafe0000000000000000000000000003",
-      },
-    ],
-  },
+  hmac: HMAC,
 
   streams: {
     streamPrefix: "karyl:plugin:",
@@ -460,6 +482,27 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
         hmac: ["x-karyl-timestamp", "x-karyl-nonce", "x-karyl-signature"],
         token: ["x-plugin-webhook-token", "x-karyl-nonce"],
       },
+      signatureHeader: HMAC.signatureHeader,
+      timestampHeader: HMAC.timestampHeader,
+      nonceHeader: HMAC.nonceHeader,
+      replayWindowSeconds: HMAC.replayWindowSeconds,
+      tokenHeader: "x-plugin-webhook-token",
+      previousTokenHeader: "x-plugin-webhook-token-previous",
+      previousSignatureHeader: "x-karyl-signature-previous",
+      requestGolden: [
+        {
+          // HMAC(secret, "<METHOD>:<path>:<ts>:<nonce>:<body>")
+          name: "message-trigger-request",
+          secret: "behavior-secret",
+          method: "POST",
+          path: "/hook",
+          ts: "1700000000",
+          nonce: "cafe0000000000000000000000000012",
+          body: '{"content":"!weather taipei"}',
+          expectedHex:
+            "c60c38f1f90a816a48c8b383e428e540b0dc6371a0bb8266ca3fbc29f74307d9",
+        },
+      ],
       responsePayloadFormat: "<METHOD>:<path>:<ts>:<request nonce>:<body>",
       responseGolden: [
         {
