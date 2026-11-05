@@ -8,6 +8,8 @@
  *     fire anything
  *   - triggers are walked in sortOrder; stopOnMatch stops the walk; the
  *     system login answers with its built-in action and always stops
+ *   - a trigger without a webhook action is skipped with a warning; the
+ *     walk goes on
  *   - triggers come from an in-memory snapshot that a write invalidates
  */
 import { vi, describe, it, expect, beforeAll, beforeEach, type Mock } from "vitest";
@@ -35,6 +37,7 @@ import { BehaviorDefinition } from "../src/modules/behavior/models/behavior-defi
 import { BehaviorGroupMember } from "../src/modules/behavior/models/behavior-group-member.model.js";
 import { BehaviorStat } from "../src/modules/behavior/models/behavior-stats.model.js";
 import { mintLoginLink } from "../src/modules/admin/admin-login.service.js";
+import { botEventLog } from "../src/modules/bot-events/bot-event-log.js";
 import {
   MessageTriggerMatcher,
   __resetGuildForwardWindowsForTests,
@@ -104,10 +107,13 @@ function guildMsg(opts: {
 
 function dmMsg(userId: string, content: string) {
   const send = vi.fn(async () => {});
+  const reply = vi.fn(async () => {});
+  const authorSend = vi.fn(async () => {});
   const message = {
     id: "MSG-1",
     content,
     guildId: null,
+    reply,
     author: {
       id: userId,
       bot: false,
@@ -116,6 +122,7 @@ function dmMsg(userId: string, content: string) {
       discriminator: "0",
       avatar: null,
       displayAvatarURL: () => "https://cdn.example/a.png",
+      send: authorSend,
     },
     attachments: new Map([
       ["a1", { url: "https://cdn.example/f.png", name: "f.png", contentType: "image/png", size: 10 }],
@@ -123,7 +130,7 @@ function dmMsg(userId: string, content: string) {
     client: { user: { id: BOT_ID } },
     channel: { id: `DM-${userId}`, type: ChannelType.DM, send },
   } as never;
-  return { message, send };
+  return { message, send, reply, authorSend };
 }
 
 describe("bot DM triggers", () => {
@@ -344,6 +351,39 @@ describe("matching order", () => {
     const forwarder = makeForwarder();
     await matcherWith(forwarder).onMessage(dmMsg("U1", "!go").message);
     expect(forwardedIds(forwarder)).toEqual([second]);
+  });
+});
+
+describe("a trigger without a webhook action", () => {
+  it("is not handled, says nothing, and logs a warning", async () => {
+    const id = await seedMessageTrigger({}, null);
+    const forwarder = makeForwarder();
+    const { message, send, reply, authorSend } = dmMsg("U1", "!go");
+
+    const outcome = await matcherWith(forwarder).onMessage(message);
+
+    expect(outcome).toEqual({ handled: false });
+    expect(forwarder.forward).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    expect(reply).not.toHaveBeenCalled();
+    expect(authorSend).not.toHaveBeenCalled();
+    const warnings = vi
+      .mocked(botEventLog.record)
+      .mock.calls.filter(([level, , msg]) => level === "warn" && String(msg).includes(`behavior ${id} `));
+    expect(warnings).toHaveLength(1);
+  });
+
+  it("does not stop later triggers from matching", async () => {
+    // stopOnMatch off: the skip neither throws nor claims the message, so
+    // the walk reaches the next trigger and the outcome is that trigger's
+    await seedMessageTrigger({ sortOrder: 0, stopOnMatch: false }, null);
+    const second = await seedMessageTrigger({ sortOrder: 1 });
+    const forwarder = makeForwarder();
+
+    const outcome = await matcherWith(forwarder).onMessage(dmMsg("U1", "!go").message);
+
+    expect(forwardedIds(forwarder)).toEqual([second]);
+    expect(outcome).toMatchObject({ handled: true, behaviorId: second });
   });
 });
 
