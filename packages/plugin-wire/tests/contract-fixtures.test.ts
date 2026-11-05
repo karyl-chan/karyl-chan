@@ -94,3 +94,32 @@ describe("contract fixtures: internal consistency", () => {
     }
   });
 });
+
+describe("contract fixtures: behavior webhook signing", () => {
+  const signing = CONTRACT_FIXTURES.behaviorWebhook.signing;
+
+  it("names the headers each mode's request lists", () => {
+    assert.deepEqual(
+      [...signing.requestHeaders.hmac].sort(),
+      [signing.timestampHeader, signing.nonceHeader, signing.signatureHeader].sort(),
+    );
+    assert.deepEqual(
+      [...signing.requestHeaders.token].sort(),
+      [signing.tokenHeader, signing.nonceHeader].sort(),
+    );
+  });
+
+  it("names the shared scheme's headers and window", () => {
+    const { signatureHeader, timestampHeader, nonceHeader, replayWindowSeconds } =
+      CONTRACT_FIXTURES.hmac;
+    assert.deepEqual(
+      {
+        signatureHeader: signing.signatureHeader,
+        timestampHeader: signing.timestampHeader,
+        nonceHeader: signing.nonceHeader,
+        replayWindowSeconds: signing.replayWindowSeconds,
+      },
+      { signatureHeader, timestampHeader, nonceHeader, replayWindowSeconds },
+    );
+  });
+});
