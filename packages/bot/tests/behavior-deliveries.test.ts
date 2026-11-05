@@ -20,6 +20,7 @@ vi.mock("../src/modules/bot-events/bot-event-log.js", () => ({
 }));
 
 import { ChannelType, type Message } from "discord.js";
+import Fastify, { type FastifyInstance } from "fastify";
 import { QueryTypes } from "sequelize";
 import { sequelize } from "../src/db.js";
 import { BehaviorDefinition } from "../src/modules/behavior/models/behavior-definition.model.js";
@@ -30,10 +31,12 @@ import {
   recordDelivery,
 } from "../src/modules/behavior/behavior-deliveries.js";
 import { BehaviorDelivery } from "../src/modules/behavior/models/behavior-delivery.model.js";
+import type { AdminCapability } from "../src/modules/admin/admin-capabilities.js";
+import { registerBehaviorRoutes } from "../src/modules/behavior/behavior-routes.js";
 import { runWebhookAction } from "../src/modules/command-system/webhook-action.js";
 import type { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
 import type { ForwardResult } from "../src/modules/command-system/types.js";
-import { clearBehaviors, seedMessageTrigger } from "./behavior-fixtures.js";
+import { clearBehaviors, seedMessageTrigger, seedSystemLogin } from "./behavior-fixtures.js";
 
 beforeAll(async () => {
   await sequelize.sync({ force: true });
@@ -314,5 +317,86 @@ describe("the pruner", () => {
 
     const kept = await findRecentDeliveries(id, 100);
     expect(kept.map((d) => d.httpStatus)).toEqual([201]);
+  });
+});
+
+describe("GET /api/behaviors/:id/deliveries", () => {
+  async function serverAs(capabilities: AdminCapability[]): Promise<FastifyInstance> {
+    const fastify = Fastify({ logger: false });
+    fastify.addHook("onRequest", async (request) => {
+      request.authUserId = "admin-test";
+      request.authCapabilities = new Set(capabilities);
+    });
+    await registerBehaviorRoutes(fastify, {});
+    await fastify.ready();
+    return fastify;
+  }
+
+  it("returns the behavior's deliveries, newest first", async () => {
+    const id = await seedMessageTrigger();
+    await fire(id, { ok: false, reply: {}, notes: [], status: 500, error: "boom" });
+    await fire(id, { ok: true, reply: {}, notes: [], status: 204, verified: "token" });
+    const server = await serverAs(["behavior.manage"]);
+
+    const res = await server.inject({ method: "GET", url: `/api/behaviors/${id}/deliveries` });
+
+    expect(res.statusCode).toBe(200);
+    const { deliveries } = res.json() as { deliveries: Array<Record<string, unknown>> };
+    expect(deliveries).toHaveLength(2);
+    expect(deliveries[0]).toMatchObject({ ok: true, httpStatus: 204, verified: "token", via: "message" });
+    expect(deliveries[1]).toMatchObject({ ok: false, httpStatus: 500, errorCode: "http_error", error: "boom" });
+    expect(Object.keys(deliveries[0]).sort()).toEqual(
+      ["durationMs", "error", "errorCode", "firedAt", "httpStatus", "id", "ok", "verified", "via"],
+    );
+    await server.close();
+  });
+
+  it("a test-fire is not a delivery", async () => {
+    const id = await seedMessageTrigger();
+    const forward = vi.fn(async () => ({ ok: true, reply: {}, notes: [], status: 200 }));
+    const fastify = Fastify({ logger: false });
+    fastify.addHook("onRequest", async (request) => {
+      request.authUserId = "admin-test";
+      request.authCapabilities = new Set<AdminCapability>(["admin"]);
+    });
+    await registerBehaviorRoutes(fastify, { forwarder: { forward } as unknown as WebhookForwarder });
+
+    const res = await fastify.inject({ method: "POST", url: `/api/behaviors/${id}/test` });
+
+    expect(res.statusCode).toBe(200);
+    expect(forward).toHaveBeenCalledTimes(1);
+    expect(await findRecentDeliveries(id)).toEqual([]);
+    await fastify.close();
+  });
+
+  it("the system login has no webhook: an empty list", async () => {
+    const id = await seedSystemLogin();
+    const server = await serverAs(["admin"]);
+
+    const res = await server.inject({ method: "GET", url: `/api/behaviors/${id}/deliveries` });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ deliveries: [] });
+    await server.close();
+  });
+
+  it("an unknown behavior is 404 not_found", async () => {
+    const server = await serverAs(["behavior.manage"]);
+
+    const res = await server.inject({ method: "GET", url: "/api/behaviors/999999/deliveries" });
+
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toMatchObject({ error: { code: "not_found" } });
+    await server.close();
+  });
+
+  it("needs behavior.manage", async () => {
+    const id = await seedMessageTrigger();
+    const server = await serverAs([]);
+
+    const res = await server.inject({ method: "GET", url: `/api/behaviors/${id}/deliveries` });
+
+    expect(res.statusCode).toBe(403);
+    await server.close();
   });
 });

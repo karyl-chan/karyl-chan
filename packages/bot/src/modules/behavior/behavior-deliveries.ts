@@ -62,12 +62,11 @@ export interface DeliveryInput {
   verified: "hmac" | "token" | null;
 }
 
-/** A delivery as the admin API returns it. */
-export interface DeliveryRow extends Omit<DeliveryInput, "firedAt" | "errorCode"> {
+/** A delivery as the admin API returns it (its behavior is the one asked for). */
+export interface DeliveryRow extends Omit<DeliveryInput, "behaviorId" | "firedAt"> {
   id: number;
   /** ISO 8601. */
   firedAt: string;
-  errorCode: string | null;
 }
 
 /**
@@ -85,17 +84,16 @@ export async function recordDelivery(input: DeliveryInput): Promise<void> {
   }
 }
 
-function rowOf(model: InstanceType<typeof BehaviorDelivery>): DeliveryRow {
+function deliveryRowOf(model: InstanceType<typeof BehaviorDelivery>): DeliveryRow {
   const get = <T>(key: string) => model.getDataValue(key) as T;
   return {
     id: get<number>("id"),
-    behaviorId: get<number>("behaviorId"),
     firedAt: new Date(get<Date | string>("firedAt")).toISOString(),
     via: get<DeliveryVia>("via"),
     ok: Boolean(get<boolean>("ok")),
     httpStatus: get<number | null>("httpStatus") ?? null,
     durationMs: get<number | null>("durationMs") ?? null,
-    errorCode: get<string | null>("errorCode") ?? null,
+    errorCode: get<DeliveryErrorCode | null>("errorCode") ?? null,
     error: get<string | null>("error") ?? null,
     verified: get<"hmac" | "token" | null>("verified") ?? null,
   };
@@ -111,7 +109,7 @@ export async function findRecentDeliveries(
     order: [["id", "DESC"]],
     limit,
   });
-  return rows.map(rowOf);
+  return rows.map(deliveryRowOf);
 }
 
 /**
