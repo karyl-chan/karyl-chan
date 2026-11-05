@@ -164,7 +164,7 @@ describe("behavior webhook contract (BH-2.3)", () => {
     >;
     expect(Object.keys(payload).sort()).toEqual([...C.request.topLevelKeys].sort());
     const meta = payload._meta as Record<string, unknown>;
-    // interaction_token is deleted for external webhooks before forward
+    // no interaction_token: the bot answers the interaction itself
     expect(Object.keys(meta).sort()).toEqual([...C.request.slashMetaKeys].sort());
     expect(Object.keys(meta.user as object).sort()).toEqual(
       [...C.request.userKeys].sort(),
