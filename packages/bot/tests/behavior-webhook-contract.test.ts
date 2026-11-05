@@ -86,8 +86,14 @@ describe("behavior webhook contract (BH-2.3)", () => {
       guildId: null,
       attachments: new Map([
         [
-          "a",
-          { url: "https://cdn.example/f.png", name: "f.png", contentType: "image/png", size: 9 },
+          "A1",
+          {
+            id: "A1",
+            url: "https://cdn.example/f.png",
+            name: "f.png",
+            contentType: "image/png",
+            size: 9,
+          },
         ],
       ]),
       author: {
@@ -113,8 +119,15 @@ describe("behavior webhook contract (BH-2.3)", () => {
     expect(Object.keys(meta.user as object).sort()).toEqual(
       [...C.request.userKeys].sort(),
     );
-    const att = (meta.attachments as object[])[0];
+    const att = (meta.attachments as Record<string, unknown>[])[0];
     expect(Object.keys(att).sort()).toEqual([...C.request.attachmentKeys].sort());
+    expect(att).toEqual({
+      id: "A1",
+      url: "https://cdn.example/f.png",
+      filename: "f.png",
+      content_type: "image/png",
+      size: 9,
+    });
   });
 
   it("slash payload _meta matches the fixture key set", async () => {

@@ -66,6 +66,11 @@ The top level has the shape of a Discord webhook body, so a receiver that
 already handles Discord webhooks can read it. `_meta` carries the rest.
 What `_meta` holds depends on the trigger.
 
+The bot may add fields to the request, at the top level or in `_meta`,
+without calling it a breaking change. Ignore the fields you don't know: a
+receiver that refuses unknown fields (a schema with
+`additionalProperties: false`, say) breaks on such an addition.
+
 ### From a message trigger
 
 A message trigger fires on a message in a DM with the bot, or in a guild
@@ -82,7 +87,7 @@ guild, as in `guild_id`.)
 | `_meta.channel_id` | The channel id (the DM channel in a DM with the bot). |
 | `_meta.guild_id` | The guild id, or `null` in a DM with the bot. |
 | `_meta.behavior_id` | The behavior that fired. |
-| `_meta.attachments` | `[{ url, filename, content_type, size }]`, empty when the message has none. |
+| `_meta.attachments` | `[{ id, url, filename, content_type, size }]`, empty when the message has none. `id` is the Discord attachment id; `url` is Discord's CDN link, signed and valid for a limited time, so download the file soon. |
 | `_meta.captures` | A regex trigger's capture groups, group 1 first. A named group counts by its position, and an optional group that took no part is `null`. `天氣 台北` against `^天氣\s+(.+)` sends `["台北"]`. Always `[]` for `startswith` / `endswith`. |
 
 One message can fire more than one behavior, unless a behavior stops the
@@ -530,5 +535,6 @@ changes the protocol. Update a receiver **before** the bot is upgraded:
   limits), `_meta.captures` on message triggers, and
   `_meta.sub_command_name` / `_meta.sub_command_group` on commands.
 - New: secret rotation with the `-Previous` headers (#99).
+- New: `id` on each `_meta.attachments` entry (#152).
 - Removed: conversation sessions and the `[BEHAVIOR:END]` marker. A reply
   never starts or ends a session.
