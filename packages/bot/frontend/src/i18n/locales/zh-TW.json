@@ -1621,6 +1621,19 @@
                 "hmac": "回應簽章正確（HMAC）。",
                 "token": "回應簽章正確（token）。"
             }
+        },
+        "deliveries": {
+            "title": "最近投遞",
+            "refresh": "重新整理",
+            "loading": "載入中…",
+            "empty": "還沒有投遞紀錄。",
+            "ok": "成功",
+            "failed": "失敗",
+            "verified": {
+                "hmac": "簽章已驗證（HMAC）",
+                "token": "簽章已驗證（token）"
+            },
+            "retention": "保留最近 20 筆、最多 7 天內的投遞；測試 webhook 不列入。"
         }
     },
     "config": {

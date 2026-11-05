@@ -1621,6 +1621,19 @@
                 "hmac": "Response signature verified (HMAC).",
                 "token": "Response signature verified (token)."
             }
+        },
+        "deliveries": {
+            "title": "Recent deliveries",
+            "refresh": "Refresh",
+            "loading": "Loading…",
+            "empty": "No deliveries yet.",
+            "ok": "OK",
+            "failed": "Failed",
+            "verified": {
+                "hmac": "signature verified (HMAC)",
+                "token": "signature verified (token)"
+            },
+            "retention": "The last 20 deliveries, at most 7 days old. Test webhooks are not listed."
         }
     },
     "config": {
