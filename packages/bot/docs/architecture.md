@@ -242,7 +242,9 @@ This is the bot's command backbone.
   plugin command, plugin component, then in-process command.
 - `message-trigger-matcher.service.ts` — `MessageTriggerMatcher`:
   `messageCreate` listener that matches Message Triggers in bot DMs and
-  guild channels.
+  guild channels. Matching runs on the snapshot outside any lock; the
+  webhook triggers a message fires then queue per (user, channel), one at
+  a time, at most 3 waiting.
 - `webhook-forwarder.service.ts` — `WebhookForwarder`: webhook POST +
   HMAC signing and verification; parses the response into a reply.
 - `behavior-reply.ts` — the Behavior Reply model (#140):

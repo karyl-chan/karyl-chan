@@ -172,8 +172,14 @@ Other limits:
 - In servers, each channel fires at most 5 webhook requests per 10
   seconds. Further matches in that window are dropped and noted once in
   the bot event log. DMs are not limited.
-- One user's messages are handled one at a time, in order. A slow webhook
-  therefore delays that user's next message, but not other users.
+- One user's messages in one channel (or in their DM with the bot) are
+  handled one at a time, in order. A slow webhook therefore delays only
+  that user's next message there, not their messages elsewhere and not
+  other users. A message that fires no webhook trigger never waits, and
+  the system login never queues.
+- At most 3 messages wait behind the one being handled. A further message
+  is dropped without a reply and without counting it, and the drop is
+  noted once in the bot event log.
 
 ## Behavior Sections
 
