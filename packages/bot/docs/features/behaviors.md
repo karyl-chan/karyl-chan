@@ -340,6 +340,32 @@ verified. A test does not count in the statistics.
 and failures, its consecutive failures, and its last error. The admin UI
 shows them and flags a behavior that keeps failing.
 
+**Delivery log:** each delivery of a webhook action also leaves one row
+(`behavior_deliveries`): when it fired, the trigger kind (`command` or
+`message`), ok or failed, the receiver's HTTP status, the time from the
+forward to the rendered reply, an error code, the first 300 characters
+of the error, and which key verified the response signature. A failure
+gets one of these codes:
+
+| Code | Meaning |
+|------|---------|
+| A [target rule](#webhook-targets) code, or `response_signature` | The forwarder refused the target, or the response signature was missing, stale or wrong. |
+| `http_error` | A non-2xx answer (a redirect too). |
+| `invalid_reply` | A 2xx whose body the bot could not use (too large, not JSON, not a reply object). |
+| `request_failed` | No answer: unreachable, timed out, or an action the bot could not decrypt. |
+| `render_failed` | Discord refused the reply. |
+| `dm_failed` | A private reply to a server message's author could not be sent as a DM. |
+| `defer_failed` | Discord refused a command's deferral (the interaction had expired): the webhook was never called, and the user sees "interaction failed". It counts as a failure in the statistics too, and is warned about once per leaf in the event log. |
+
+A row never holds the webhook URL, a secret, the payload, the message or
+the reply, a user id or a message id. Each behavior keeps its last 20
+deliveries, none older than 7 days: writing a delivery is a single
+insert, and a background pruner removes the rest every 10 minutes. A
+test does not write a delivery. Writing one is best-effort: if it fails,
+the action and its reply go on. In the admin UI, a message trigger card
+and an open command leaf list the recent deliveries under
+「最近投遞」, loaded when the list is opened.
+
 ### Webhook targets
 
 The webhook URL is checked by `resolveWebhookTarget`
@@ -409,7 +435,7 @@ with the bot, nor to the system login, whose reply is always private.
 
 When an action fails, the user gets only a generic "couldn't be completed"
 line (a server channel never sees it), and the detail goes to the event
-log and the behavior's statistics
+log, the behavior's statistics and its delivery log
 ([protocol: failures](behavior-webhook-protocol.md#failures)).
 
 ## Admin UI
@@ -448,6 +474,7 @@ silently dropped.
 | `DELETE /api/behaviors/:id` | Delete a message trigger or a command leaf. |
 | `PUT /api/behaviors/reorder` | `{ location, ids }`: the full new order of one location's message triggers (`bot_dm`, `guild:all`, `guild:<id>`, `channel:<guildId>:<channelId>`). |
 | `POST /api/behaviors/:id/test` | Test-fire the saved webhook action. |
+| `GET /api/behaviors/:id/deliveries` | `{ deliveries }`: the behavior's last 20 [deliveries](#webhook-actions), newest first (`404 not_found` for an unknown id; always empty for the system login). |
 | `POST /api/behaviors/:id/webhook-secret/rotate` | New secret, shown once; the old one stays valid for 24 hours. |
 | `POST /api/behavior-commands` | Create a command with its leaves. |
 | `PATCH /api/behavior-commands/:id` | Edit a command's name, description or visibility. |
@@ -490,6 +517,7 @@ silently dropped.
 | `behavior_webhook_actions` | A behavior's webhook: URL and secret (encrypted), auth mode, the previous secret and its expiry during a rotation. |
 | `behavior_group_members` | Audience group members, by group name. |
 | `behavior_stats` | Per-behavior statistics. |
+| `behavior_deliveries` | The delivery log: one row per webhook delivery, the last 20 per behavior for at most 7 days. |
 
 The runtime reads all of this from an in-memory snapshot, rebuilt after
 every write (and at most 30 seconds old for writes from another process).
