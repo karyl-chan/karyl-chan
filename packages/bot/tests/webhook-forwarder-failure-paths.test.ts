@@ -119,8 +119,8 @@ describe("token mode: an unsigned response", () => {
     const first = await forwarder.forward(tokenAction, {});
     const second = await forwarder.forward(tokenAction, {});
 
-    expect(first).toEqual({ ok: true, reply: { content: "pong" }, notes: [] });
-    expect(second).toEqual({ ok: true, reply: { content: "pong" }, notes: [] });
+    expect(first).toEqual({ ok: true, reply: { content: "pong" }, notes: [], status: 200 });
+    expect(second).toEqual({ ok: true, reply: { content: "pong" }, notes: [], status: 200 });
     expect(unsignedWarnings(tokenAction.behaviorId)).toHaveLength(1);
   });
 
@@ -137,7 +137,7 @@ describe("token mode: an unsigned response", () => {
     const tokenAction = action("token");
     const forwarder = new WebhookForwarder();
     emptyReceiver();
-    expect(await forwarder.forward(tokenAction, {})).toEqual({ ok: true, reply: {}, notes: [] });
+    expect(await forwarder.forward(tokenAction, {})).toEqual({ ok: true, reply: {}, notes: [], status: 200 });
     expect(unsignedWarnings(tokenAction.behaviorId)).toHaveLength(0);
 
     // ...and did not use up the behavior's one warning

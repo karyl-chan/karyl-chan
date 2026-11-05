@@ -81,6 +81,7 @@ describe("WebhookForwarder — the response body", () => {
       ok: true,
       reply: {},
       notes: [],
+      status: 200,
     });
   });
 
@@ -97,6 +98,7 @@ describe("WebhookForwarder — the response body", () => {
       ok: true,
       reply: { content: "hi" },
       notes: [{ kind: "unknown_fields", fields: ["attachments"] }],
+      status: 200,
     });
     const logged = vi
       .mocked(botEventLog.record)

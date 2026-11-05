@@ -155,7 +155,7 @@ export interface ForwardResult {
   reply: BehaviorReply;
   /** 清洗時丟掉或改掉的東西（admin 測試結果顯示，live 路徑記 log） */
   notes: ReplyNote[];
-  /** HTTP 狀態（失敗時） */
+  /** receiver 回的 HTTP 狀態；沒有收到回應（網路錯誤、host policy 拒絕…）時不帶 */
   status?: number;
   /** 錯誤描述（失敗時；只進 log / 統計 / admin，不給終端使用者） */
   error?: string;

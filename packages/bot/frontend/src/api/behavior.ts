@@ -320,7 +320,7 @@ export interface TestFireResult {
   /** The reply as the bot would render it; `{}` when failed or empty. */
   reply: BehaviorReplyView;
   notes: ReplyNoteView[];
-  /** The webhook's HTTP status, when it answered with a failure. */
+  /** The webhook's HTTP status; null when no response came back. */
   status: number | null;
   error: string | null;
   /** e.g. a host-policy code, or `response_signature` */

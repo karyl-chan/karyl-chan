@@ -17,7 +17,7 @@
  *     要 receiver 先同時接受 -Previous header（docs/features/behavior-webhook-protocol.md）。
  *   - URL 解密後才用
  *   - 解析 response 成回覆模型（behavior-reply.ts，#140）
- *   - 回 ForwardResult { ok, reply, notes, status?, error? }
+ *   - 回 ForwardResult { ok, reply, notes, status?, error?, errorCode?, verified? }
  */
 
 import type { RESTPostAPIWebhookWithTokenJSONBody } from "discord.js";
@@ -433,8 +433,13 @@ export class WebhookForwarder {
 
     // 解析 response body（#140 回覆模型）。空 body = 動作選擇不回覆；
     // 非 JSON 或不是物件 = receiver 壞掉，算失敗（不再默默變成空回覆）。
-    const okWith = (reply: ForwardResult["reply"], notes: ForwardResult["notes"]): ForwardResult =>
-      verified ? { ok: true, reply, notes, verified } : { ok: true, reply, notes };
+    const okWith = (reply: ForwardResult["reply"], notes: ForwardResult["notes"]): ForwardResult => ({
+      ok: true,
+      reply,
+      notes,
+      status: res.status,
+      ...(verified ? { verified } : {}),
+    });
     if (rawText.length === 0) return okWith({}, []);
     let decoded: unknown;
     try {
