@@ -10,7 +10,7 @@
  *   - audience other than `all` only in bot DMs; its fields match its kind
  *   - `ignoreBots` cannot be turned off in bot DMs — the matcher drops bot
  *     authors there unconditionally (#116)
- *   - a regex pattern must compile
+ *   - a regex pattern must compile, and run in linear time (#119)
  */
 
 import { BehaviorApiError } from "./behavior-api-error.js";
@@ -97,7 +97,8 @@ export function checkMessageTrigger(s: MessageTriggerState): void {
       break;
   }
 
-  if (s.patternKind === "regex" && !isValidRegex(s.patternValue)) {
-    refuse("patternValue", "the regex does not compile");
+  if (s.patternKind === "regex") {
+    const regex = isValidRegex(s.patternValue);
+    if (!regex.ok) refuse("patternValue", regex.reason);
   }
 }

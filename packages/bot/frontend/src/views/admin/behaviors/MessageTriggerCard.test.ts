@@ -176,6 +176,18 @@ describe('MessageTriggerCard — errors', () => {
         expect(wrapper.find('[data-test="general-error"]').exists()).toBe(false);
     });
 
+    it('a regex the browser runs but the bot refuses (#119) shows the reason on the pattern', async () => {
+        api.updateBehavior.mockRejectedValue(
+            new ApiError(400, 'the regex uses a feature that cannot run in linear time', 'validation_failed', 'patternValue')
+        );
+        const wrapper = await mountOpen(savedTrigger({ patternKind: 'regex', patternValue: '^(\\w)\\1' }));
+        await rename(wrapper, 'forecast');
+        await wrapper.find('form.editor').trigger('submit');
+        await flushPromises();
+        const patternField = wrapper.findAll('.app-field').find((f) => f.text().includes('behaviors.trigger.patternValue'))!;
+        expect(patternField.find('.app-field__error').text()).toContain('linear time');
+    });
+
     it('a refusal on a field without an error line is shown, not swallowed', async () => {
         api.updateBehavior.mockRejectedValue(
             new ApiError(400, 'ignoreBots only applies in guilds', 'validation_failed', 'ignoreBots')

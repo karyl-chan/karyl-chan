@@ -7,6 +7,7 @@ import {
   resolveWebhookTarget,
   type HostPolicyCode,
 } from "../../utils/host-policy.js";
+import { checkTriggerRegex, type TriggerRegexRefusal } from "../../utils/linear-regex.js";
 
 export interface BehaviorRoutesOptions {
   /**
@@ -61,11 +62,21 @@ export async function isValidWebhookUrl(
   return { ok: true };
 }
 
-export function isValidRegex(value: string): boolean {
-  try {
-    new RegExp(value);
-    return true;
-  } catch {
-    return false;
-  }
+const REGEX_REFUSALS: Record<TriggerRegexRefusal, string> = {
+  syntax: "the regex does not compile",
+  not_linear:
+    "the regex uses a feature that cannot run in linear time (backreferences, lookahead, large repeat counts); rewrite it without them",
+  unsafe:
+    "the regex may take exponential time on some messages (a repeat inside a repeat, like (a+)+); rewrite it without nesting repeats",
+};
+
+/**
+ * Save-time regex check (#119) — the same compile the matcher runs
+ * (`compileTriggerRegex`: the linear-time engine, or safe-regex2 without
+ * it), so a pattern that would never match is refused on save, with the
+ * reason.
+ */
+export function isValidRegex(value: string): { ok: true } | { ok: false; reason: string } {
+  const refusal = checkTriggerRegex(value);
+  return refusal === null ? { ok: true } : { ok: false, reason: REGEX_REFUSALS[refusal] };
 }

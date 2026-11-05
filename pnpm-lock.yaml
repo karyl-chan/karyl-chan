@@ -116,6 +116,9 @@ importers:
       rcon:
         specifier: 1.1.0
         version: 1.1.0
+      safe-regex2:
+        specifier: ^5.1.1
+        version: 5.1.1
       sequelize:
         specifier: ^6.37.8
         version: 6.37.8(pg-hstore@2.3.4)(pg@8.21.0)(sqlite3@6.0.1)
