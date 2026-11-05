@@ -357,6 +357,49 @@ describe("behavior webhook contract (BH-2.3)", () => {
     }
   });
 
+  it("a rotation sends the old secret under the fixtures' previous headers", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => new Response("", { status: 200 }));
+    const host = await import("../src/utils/host-policy.js");
+    const resolve = vi.spyOn(host, "resolveWebhookTarget").mockImplementation(async (u) => ({
+      url: new URL(u),
+      addresses: [{ address: "203.0.113.10", family: 4 }],
+    }));
+    try {
+      const expected = {
+        hmac: C.signing.previousSignatureHeader,
+        token: C.signing.previousTokenHeader,
+      } as const;
+      for (const mode of ["hmac", "token"] as const) {
+        fetchSpy.mockClear();
+        await new WebhookForwarder().forward(
+          {
+            behaviorId: 1,
+            url: encryptSecret("https://203.0.113.10/hook"),
+            secret: encryptSecret("new"),
+            authMode: mode,
+            previousSecret: encryptSecret("old"),
+            previousSecretExpiresAt: new Date(Date.now() + 60_000),
+          },
+          {},
+        );
+        const sent = (fetchSpy.mock.calls[0]![1] as { headers: Record<string, string> }).headers;
+        expect(sent, mode).toHaveProperty(expected[mode]);
+        if (mode === "token") expect(sent[C.signing.tokenHeader]).toBe("new");
+      }
+    } finally {
+      fetchSpy.mockRestore();
+      resolve.mockRestore();
+    }
+  });
+
+  it("a real request vector is the shared scheme over a behavior payload", () => {
+    for (const g of C.signing.requestGolden) {
+      expect(signBody(g.secret, g.method, g.path, g.ts, g.nonce, g.body)).toBe(g.expectedHex);
+    }
+  });
+
   it("a test-fire is signed under the fixtures' prefix and headers", () => {
     expect(TEST_SIGNATURE_PREFIX).toBe(C.signing.testPrefix);
     expect(TEST_HEADER).toBe(C.signing.testHeader);
