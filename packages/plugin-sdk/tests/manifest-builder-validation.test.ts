@@ -110,4 +110,26 @@ describe("buildManifest: wire protocol validation", () => {
       /V-C1/,
     );
   });
+
+  it("rejects a feature command that reuses a plugin command's name", () => {
+    const foo = {
+      name: "foo",
+      description: "Foo",
+      scope: "guild",
+      integrationTypes: ["guild_install"],
+      contexts: ["Guild"],
+      handler: async () => ({ content: "foo" }),
+    };
+    assert.throws(
+      () =>
+        buildManifest(
+          cfg({
+            pluginCommands: [foo],
+            guildFeatures: [{ key: "x", name: "X", commands: [foo] }],
+          } as Partial<PluginConfig>),
+          URL_,
+        ),
+      /guild_features\[x\]\.commands: command\.name 'foo' is also declared in plugin_commands/,
+    );
+  });
 });
