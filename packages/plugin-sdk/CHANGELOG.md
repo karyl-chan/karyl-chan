@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.1.0](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v1.0.0...plugin-sdk-v1.1.0) (2026-11-06)
+
+
+### Features
+
+* **plugin-sdk:** add the behavior-receiver subpath for webhook receivers ([7fda298](https://github.com/karyl-chan/karyl-chan/commit/7fda29898ab51bbfba9eeac70c104d69200e18eb))
+
+
+### Bug Fixes
+
+* **plugin-wire:** refuse a name shared by a plugin command and a feature command ([75bbd62](https://github.com/karyl-chan/karyl-chan/commit/75bbd62a171b2acefcf3d98f4b6dcf53f8363d26)), closes [#142](https://github.com/karyl-chan/karyl-chan/issues/142)
+
 ## [1.0.0](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v0.16.0...plugin-sdk-v1.0.0) (2026-10-15)
 
 
