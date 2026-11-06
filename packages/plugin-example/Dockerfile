@@ -25,11 +25,10 @@ COPY packages/plugin-example/package.json packages/plugin-example/
 
 
 FROM base AS build
-# Bullseye's live deb.debian.org entries are gone (LTS ended 2026-08);
-# use the image's pinned snapshot.debian.org entries, as the bot does.
+# Bullseye moved to archive.debian.org when its LTS ended (2026-08); point
+# the image's deb.debian.org entries there, as the bot does.
 RUN sed -i \
-    -e 's|^# deb http://snapshot|deb [check-valid-until=no] http://snapshot|' \
-    -e 's|^deb http://deb.debian.org|# deb http://deb.debian.org|' \
+    -e 's|^deb http://deb.debian.org/|deb [check-valid-until=no] http://archive.debian.org/|' \
     /etc/apt/sources.list
 # Build toolchain for better-sqlite3's native compile.
 RUN apt-get update \
