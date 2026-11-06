@@ -13,14 +13,15 @@
 # have no matching prebuilt → node-pre-gyp falls back to source build,
 # which fails on arm64 due to a known bug in opus's bundled NEON
 # intrinsics (celt_inner_prod_neon used without declaration). Bullseye
-# LTS support ended in 2026-08. The official Node image keeps immutable
-# snapshot.debian.org entries beside the now-broken live Bullseye entries;
-# enable those snapshots so package installs remain reproducible. Revisit the
-# base + encoder choice when @discordjs/opus can build on newer glibc/arm64.
+# LTS support ended in 2026-08 and the release moved to archive.debian.org,
+# where it is frozen, so installs stay reproducible. Point the image's live
+# deb.debian.org entries there. The image's commented snapshot.debian.org
+# entries are not an option: snapshot answers 503/504 for individual
+# packages for hours at a time. Revisit the base + encoder choice when
+# @discordjs/opus can build on newer glibc/arm64.
 FROM node:22-bullseye-slim AS bullseye
 RUN sed -i \
-    -e 's|^# deb http://snapshot|deb [check-valid-until=no] http://snapshot|' \
-    -e 's|^deb http://deb.debian.org|# deb http://deb.debian.org|' \
+    -e 's|^deb http://deb.debian.org/|deb [check-valid-until=no] http://archive.debian.org/|' \
     /etc/apt/sources.list
 
 FROM bullseye AS base
