@@ -17,6 +17,7 @@ defined in the bot's [CONTEXT.md](../../CONTEXT.md#behaviors).
 - [Command triggers](#command-triggers)
 - [Message triggers](#message-triggers)
 - [Behavior Sections](#behavior-sections)
+- [Converting a trigger](#converting-a-trigger)
 - [The system login](#the-system-login)
 - [Webhook actions](#webhook-actions)
 - [Who sees the reply](#who-sees-the-reply)
@@ -252,6 +253,54 @@ context; DMs with the bot: `BotDM`; All servers: `Guild`; one server: a
 command registered to that server). Changing a command's settings can
 move it to another section.
 
+## Converting a trigger
+
+A custom behavior can move between a message trigger and a command
+trigger (`POST /api/behaviors/:id/convert-trigger`). It stays the same
+behavior: its id, title, note, on/off switch, webhook (URL, secret, and
+a previous secret still in its rotation grace), statistics and delivery
+log are kept, so a receiver keeps verifying with the same secret. What
+belonged to the old trigger only is dropped.
+
+**Message trigger → command leaf.** The behavior becomes the root leaf
+of a new command, or one more subcommand of an existing command that
+already has subcommands. A command whose only leaf is its root has to be
+[converted to subcommands](#leaves) first: Discord does not let a root
+leaf and subcommands coexist. The new command's name must be free like
+any command's ([names](#names)). The command is **registered on Discord
+first**, and only once Discord accepted it is the behavior changed: if
+Discord refuses, or the bot is not connected, the answer is
+`502 registration_failed` and the message trigger stays exactly as it
+was. A disabled behavior adds nothing Discord shows, so it converts
+without a registration. Lost on the way:
+
+- a channel location: Discord cannot limit a command to one channel, so
+  a channel's trigger becomes a command of that server;
+- the audience of a DM trigger (one user, a group): everyone who can see
+  the command can run it. A group whose only user this was is deleted
+  with its member list;
+- the pattern, **Stop after a match** and the position in the matching
+  order;
+- the webhook payload changes from the message to the command's options
+  and `_meta`.
+
+**Command leaf → message trigger.** The behavior becomes a message
+trigger at the chosen location, last in the matching order. It is
+**stored first**; then the command is registered again without the
+leaf, or, when this was its last leaf, deleted and removed from Discord.
+If Discord refuses that update the conversion still stands (the message
+trigger already works) and the answer's `registration` says `failed`:
+Discord keeps showing the old leaf until the command is
+[resynced](#registration). Lost on the way: the leaf's options, its
+path in the command, and the payload's options. The reply visibility is
+kept, which in a server means: unset (only the user who ran it) becomes
+public in the channel, `private` becomes a DM to the author.
+
+The system login cannot be converted here (`409 system_immutable`); it
+has its own [trigger switch](#changing-the-logins-trigger). Every
+conversion is audited as `behavior.trigger.convert`, with where it came
+from, where it went and the command it joined or left.
+
 ## The system login
 
 The **system login** (the System Behavior) is a fixed behavior that
@@ -275,8 +324,13 @@ out.
 
 Only a **bot owner** can change the login's trigger, not every admin
 (`PUT /api/behaviors/system/login/trigger`). It is either a message
-trigger or a command, never both. Every rule answers one question: after
-this save, can the owner still log in?
+trigger or a command, never both. In the admin UI the kind changes from
+the card's kind tag, like a [conversion](#converting-a-trigger): a
+dialog takes the new trigger's settings, then confirms the switch and
+shows each step; for an admin who is not an owner the other kind is
+disabled, with the reason. A change within the same kind is edited in
+the card. Every rule answers one question: after this save, can the
+owner still log in?
 
 - **As a message trigger:** DMs with the bot only, because a reply in a
   server channel would show the link to everyone. Audience everyone.
@@ -455,6 +509,16 @@ grant: per-section or per-behavior capabilities do not exist.
   edits.
 - Message triggers are reordered by dragging, or with Alt+↑ / Alt+↓, one
   location at a time.
+- The kind tag in a card's title row (「訊息」 / 「指令」) is a menu with
+  both kinds, the current one disabled. Choosing the other kind opens a
+  dialog for the [conversion](#converting-a-trigger): a message trigger
+  picks a new command (its name from the title, the visibility a new
+  command gets in the trigger's section) or a command with subcommands;
+  a command picks the leaf (when it has several), the location (its own
+  section by default) and the pattern. The dialog lists what will be
+  lost or changed, and nothing changes before it is confirmed. The
+  system login's card uses the same tag for its
+  [trigger switch](#changing-the-logins-trigger).
 - Forms are checked against the write API's own schemas
   (`GET /api/behaviors/schema`), so the UI and the API agree.
 
@@ -476,6 +540,7 @@ silently dropped.
 | `POST /api/behaviors/:id/test` | Test-fire the saved webhook action. |
 | `GET /api/behaviors/:id/deliveries` | `{ deliveries }`: the behavior's last 20 [deliveries](#webhook-actions), newest first (`404 not_found` for an unknown id; always empty for the system login). |
 | `POST /api/behaviors/:id/webhook-secret/rotate` | New secret, shown once; the old one stays valid for 24 hours. |
+| `POST /api/behaviors/:id/convert-trigger` | [Convert](#converting-a-trigger) a message trigger to a command leaf or back. `ifUpdatedAt` is required. To a command: `{ to: "command", command: { new: { name, description?, registration, guildId?, integrationTypes, contexts, defaultMemberPermissions? } } \| { existingId, subcommandName }, leafDescription?, replyVisibility? }` (the description defaults to the title). To a message: `{ to: "message", location, patternKind, patternValue, stopOnMatch?, ignoreBots?, audienceKind?, audienceUserId?, audienceGroupName?, replyVisibility? }`, `location` as for the reorder. Answers `{ behavior, command, registration }` or `{ behavior, registration }`. |
 | `POST /api/behavior-commands` | Create a command with its leaves. |
 | `PATCH /api/behavior-commands/:id` | Edit a command's name, description or visibility. |
 | `DELETE /api/behavior-commands/:id` | Delete a command and its leaves. |
@@ -503,7 +568,8 @@ silently dropped.
   (`behavior.create`, `behavior.update`, `behavior.delete`,
   `behavior.reorder`, `behavior.webhook_secret.rotate`,
   `behavior.command.create` / `update` / `delete` / `convert` / `resync`,
-  `behavior.group_members.replace`, `behavior.system.trigger`), never with
+  `behavior.group_members.replace`, `behavior.system.trigger`,
+  `behavior.trigger.convert`), never with
   a secret or a webhook URL (a short URL fingerprint instead).
 - **Secrets** generated by a write come back once, as `secret` (a command
   create returns one per leaf).
@@ -532,9 +598,10 @@ Schema changes and the 2.0 upgrade are in
 | `src/modules/behavior/behavior-catalog.ts` | The in-memory snapshot the runtime reads. |
 | `src/modules/behavior/behavior-section.ts` | The section rule. |
 | `src/modules/behavior/behavior-routes.ts` | Mounts every route; list, schema, test-fire, group members. |
-| `src/modules/behavior/behavior-write-routes.ts`, `message-trigger-rules.ts` | Message trigger writes and their rules. |
+| `src/modules/behavior/behavior-write-routes.ts`, `message-trigger-writes.ts`, `message-trigger-rules.ts` | Message trigger writes and their rules. |
 | `src/modules/behavior/behavior-command-routes.ts`, `command-leaf-writes.ts`, `command-tree-rules.ts`, `command-registration-sync.ts` | Command writes, Discord's rules, registration. |
 | `src/modules/behavior/message-trigger-reorder.ts` | Reorder. |
+| `src/modules/behavior/behavior-trigger-convert.ts`, `command-register-first.ts` | Converting a behavior between a message trigger and a command leaf; the register-first flow it shares with the login's trigger switch. |
 | `src/modules/behavior/webhook-action-input.ts`, `webhook-secret-rotate.ts` | Webhook intake and rotation. |
 | `src/modules/behavior/system-seed.service.ts`, `system-login-trigger.ts`, `system-login-trigger-route.ts`, `login-trigger-hint-route.ts` | The system login. |
 | `src/modules/behavior/behavior-trigger.ts`, `regex-trigger-boot-check.ts`, `src/utils/linear-regex.ts` | Pattern matching; the linear-time regex engine and its startup check. |
