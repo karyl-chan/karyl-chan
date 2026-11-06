@@ -36,7 +36,7 @@ async function mountOpen(
     groupUse: Map<string, number> = new Map(),
 ): Promise<VueWrapper> {
     const wrapper = mount(MessageTriggerCard, {
-        props: { trigger: t, guildNames: new Map(), groupNames: [...groupUse.keys()], groupUse },
+        props: { trigger: t, guildNames: new Map(), groupNames: [...groupUse.keys()], groupUse, commands: [] },
         global: { plugins: [i18n] },
         attachTo: document.body,
     });

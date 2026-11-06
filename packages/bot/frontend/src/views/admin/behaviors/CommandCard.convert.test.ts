@@ -23,7 +23,7 @@ const $ = (selector: string) => document.body.querySelector<HTMLElement>(selecto
 
 async function openConvert(): Promise<VueWrapper> {
     const wrapper = mount(CommandCard, {
-        props: { command: savedCommand(), guildNames: new Map() },
+        props: { command: savedCommand(), guildNames: new Map(), groupNames: [] },
         global: { plugins: [i18n] },
         attachTo: document.body,
     });

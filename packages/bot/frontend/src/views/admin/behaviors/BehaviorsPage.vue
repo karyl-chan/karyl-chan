@@ -119,6 +119,7 @@ async function onSelect(section: BehaviorSection) {
             :guild-names="guildNames"
             :group-names="groupNames"
             :group-use="groupUse"
+            :commands="view?.commands ?? []"
             :expand-key="expandKey"
             :loading="loading"
             :error="error"
@@ -128,6 +129,7 @@ async function onSelect(section: BehaviorSection) {
             @command-updated="applyCommand($event, mayDropDrafts)"
             @system-updated="applySystem($event, mayDropDrafts)"
             @deleted="load"
+            @converted="showCreated($event, mayDropDrafts)"
             @add="adding = true"
             @reorder="onReorder"
         />

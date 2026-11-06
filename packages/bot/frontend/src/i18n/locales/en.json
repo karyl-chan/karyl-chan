@@ -1489,7 +1489,8 @@
                 "unchanged": "already up to date",
                 "skipped": "not registered: the bot is not in this server",
                 "failed": "failed"
-            }
+            },
+            "failedStored": "Saved, but Discord refused to update the command; resync it:"
         },
         "option": {
             "title": "Command options",
@@ -1549,15 +1550,10 @@
             "submit": "Convert and add a subcommand"
         },
         "system": {
-            "triggerKind": "Trigger type",
-            "kindMessage": "Message pattern (DMs with the bot)",
-            "kindCommand": "Slash command",
             "messageNote": "The login's message pattern only works in DMs with the bot: a reply in a server channel is visible to everyone, and would leak the login link. It is starts-with or ends-with only (no regex); Discord trims spaces around a message, so the pattern cannot start or end with whitespace.",
             "commandName": "Slash command name",
             "commandDescription": "Slash command description",
             "commandNote": "The login is always a global command with no default member permissions, and it always keeps server install and bot DMs, so you can always reach it; it takes no options, and its reply is only ever visible to whoever ran it.",
-            "switchToCommandHint": "Changing the trigger registers {command} on Discord first, and only then turns off {old}.",
-            "switchToMessageHint": "Changing the trigger turns on {pattern} first, then removes {old} from Discord.",
             "save": "Save trigger",
             "whereMessage": "Message pattern · DMs with the bot",
             "whereCommand": "Slash command · {section}",
@@ -1580,7 +1576,11 @@
                 "start": "Start the switch",
                 "failed": "{old} stays on; nothing changed.",
                 "done": "Done. The login is now {trigger}, pinned on top of “{section}”.",
-                "sampleNote": "Your sample DM “{sample}” was checked: {pattern} matches it."
+                "sampleNote": "Your sample DM “{sample}” was checked: {pattern} matches it.",
+                "fillCommand": "Set up the command that replaces {old}. Nothing changes until you confirm the next step.",
+                "fillMessage": "Set up the message pattern that replaces {old}. Nothing changes until you confirm the next step.",
+                "next": "Next",
+                "back": "Back"
             },
             "sample": "Sample DM (required)",
             "sampleHint": "A DM you would send the bot to log in. Before saving it is checked against the pattern, so a typo cannot lock you out; the sample is not stored.",
@@ -1634,6 +1634,50 @@
                 "token": "signature verified (token)"
             },
             "retention": "The last 20 deliveries, at most 7 days old. Test webhooks are not listed."
+        },
+        "convertTrigger": {
+            "menuTitle": "Trigger kind",
+            "menuLabel": "Trigger: {kind}. Convert to the other kind",
+            "current": "Current",
+            "lossesTitle": "Lost or changed by the conversion",
+            "kept": "Kept: the behavior itself — its id, title, note, on/off switch, webhook and secret, statistics and recent deliveries.",
+            "becomes": "Becomes",
+            "submit": "Convert",
+            "stale": "This behavior was changed since the page loaded. The list has been reloaded; check it and convert again.",
+            "toCommand": {
+                "title": "Convert “{title}” to a command",
+                "intro": "The message trigger becomes a command leaf: a new command, or one more subcommand of a command that already has subcommands. Discord registers the command first; if it refuses, the message trigger stays as it is.",
+                "target": "Command",
+                "targets": {
+                    "new": "New command",
+                    "existing": "Subcommand of an existing command"
+                },
+                "noExisting": "No command has subcommands yet. A command with only its own action has to be converted to subcommands first (in its card).",
+                "singleNote": "Only commands that already have subcommands are listed. {commands} would first need to be converted to subcommands, in its card.",
+                "existing": "Add to",
+                "subcommand": "Subcommand name",
+                "nameFromTitleEmpty": "The title gave no name. A name is lower-case letters a–z, digits 0–9, _ and -, at most 32."
+            },
+            "toMessage": {
+                "title": "Convert a leaf of /{command} to a message trigger",
+                "intro": "The leaf becomes a message trigger: pick where it matches and its pattern. It is saved first; then the command is registered again without it.",
+                "leaf": "Leaf to convert",
+                "commandGone": "/{command} had no other leaf and was deleted.",
+                "leafPlaceholder": "Pick a leaf"
+            },
+            "loss": {
+                "channel": "The channel restriction: Discord cannot limit a command to one channel, so the command is offered across the server.",
+                "audience": "The audience filter (one user or a group): everyone who can see the command can run it.",
+                "pattern": "The pattern “{pattern}”, “Stop after a match” and its position in the matching order.",
+                "replyPrivate": "Replies: by default only the user who ran the command sees them (they were public in the channel).",
+                "payloadToCommand": "The webhook payload: it carries the command’s options and _meta instead of the message content.",
+                "options": "Its {count} options.",
+                "replyDm": "Replies: in a server they go to the author’s DMs instead of only the user who ran the command.",
+                "replyPublic": "Replies: in a server, replies that only the user who ran the command could see become public in the channel.",
+                "payloadToMessage": "The webhook payload: it carries the message content instead of the options.",
+                "commandRemoved": "This is the last leaf of /{command}: the command is deleted and removed from Discord.",
+                "subcommandRemoved": "/{command} {subcommand} is removed from the command on Discord."
+            }
         }
     },
     "config": {

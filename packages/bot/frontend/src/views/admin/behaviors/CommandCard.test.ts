@@ -30,7 +30,7 @@ afterEach(() => mounted.splice(0).forEach((w) => w.unmount()));
 
 function mountCard(command: CommandView = savedCommand()): VueWrapper {
     const wrapper = mount(CommandCard, {
-        props: { command, guildNames: new Map([[GUILD, 'tutor']]) },
+        props: { command, guildNames: new Map([[GUILD, 'tutor']]), groupNames: [] },
         global: { plugins: [i18n] },
         attachTo: document.body,
     });
@@ -241,6 +241,7 @@ describe('CommandCard — a save that moves the command', () => {
                         command: command.value,
                         expand: section.value === 'app',
                         guildNames: new Map(),
+                        groupNames: [],
                         onUpdated: (c: CommandView) => {
                             command.value = c;
                             section.value = c.section;

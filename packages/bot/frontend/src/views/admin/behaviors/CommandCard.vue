@@ -21,12 +21,15 @@ import {
     updateBehavior,
     updateBehaviorCommand,
     type CommandView,
+    type MessageTriggerView,
     type RegistrationReport,
 } from '../../../api/behavior';
 import CommandRegistrationResult from './CommandRegistrationResult.vue';
 import CommandVisibilityFields from './CommandVisibilityFields.vue';
+import ConvertToMessageDialog from './ConvertToMessageDialog.vue';
 import ConvertToSubcommandDialog from './ConvertToSubcommandDialog.vue';
 import SubcommandList from './SubcommandList.vue';
+import TriggerKindMenu from './TriggerKindMenu.vue';
 import { NO_ERRORS, errorsFromRefusal, hasErrors, isStale, type FormErrors } from './behavior-errors';
 import { checkCommandDraft, commandDraftErrors, commandFieldsWithErrorLine } from './command-check';
 import { commandDraftModel } from './command-draft';
@@ -45,6 +48,9 @@ import { useRegistrationResult } from './use-registration-results';
  * re-registers it on Discord, and the card says what Discord answered
  * (CommandRegistrationResult) — including a refusal, never as success.
  *
+ * Its kind tag converts a leaf to a message trigger (#172,
+ * ConvertToMessageDialog).
+ *
  * The saved command (`base`) and the edit draft are kept apart (#105),
  * as for message triggers. The System Behavior's command is not shown
  * here: SystemLoginCard owns the login, whatever its trigger.
@@ -54,6 +60,8 @@ const props = defineProps<{
     /** Open the card (and bring it into view) — e.g. right after it moved or was created. */
     expand?: boolean;
     guildNames: ReadonlyMap<string, string>;
+    /** Audience Groups some trigger already uses (a leaf converted to a message trigger may take one). */
+    groupNames: readonly string[];
 }>();
 
 const emit = defineEmits<{
@@ -62,6 +70,8 @@ const emit = defineEmits<{
     /** The list is out of date (a stale write was refused, a leaf was removed). */
     (e: 'reload'): void;
     (e: 'deleted', id: number): void;
+    /** A leaf became this message trigger (the command lost it, or is gone). */
+    (e: 'converted', trigger: MessageTriggerView): void;
 }>();
 
 const { t } = useI18n();
@@ -116,6 +126,15 @@ async function onConverted(result: { command: CommandView; registration: Registr
     // "convert and add a subcommand": straight on to the new one
     await nextTick();
     leafList.value?.openAdd();
+}
+
+// ── a leaf becomes a message trigger (#172) ─────────────────────────────────
+
+const toMessage = ref(false);
+
+function onConvertedToMessage(trigger: MessageTriggerView) {
+    toMessage.value = false;
+    emit('converted', trigger);
 }
 
 async function resync() {
@@ -273,9 +292,7 @@ const unhealthy = computed(() =>
                 <AppBadge v-if="dirty" size="sm" tone="warn" icon="material-symbols:edit-outline-rounded">
                     {{ t('behaviors.card.unsaved') }}
                 </AppBadge>
-                <AppBadge size="sm" tone="accent" variant="outline" icon="material-symbols:bolt-outline-rounded">
-                    {{ t('behaviors.card.triggerCommand') }}
-                </AppBadge>
+                <TriggerKindMenu kind="command" @convert="toMessage = true" />
                 <AppBadge v-if="!isRoot" size="sm">
                     {{ t('behaviors.card.subcommandCount', { count: command.leaves.length }) }}
                 </AppBadge>
@@ -382,6 +399,16 @@ const unhealthy = computed(() =>
 
             </Stack>
         </AppItemCard>
+
+        <ConvertToMessageDialog
+            :visible="toMessage"
+            :command="command"
+            :guild-names="guildNames"
+            :group-names="groupNames"
+            @close="toMessage = false"
+            @converted="onConvertedToMessage"
+            @reload="emit('reload')"
+        />
     </div>
 </template>
 

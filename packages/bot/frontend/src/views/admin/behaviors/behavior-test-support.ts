@@ -191,3 +191,39 @@ export function systemLoginCommand(overrides: Partial<CommandView> = {}): Comman
         ...overrides,
     });
 }
+
+/** The trigger conversion schema GET /api/behaviors/schema serves (#172), trimmed likewise. */
+export const CONVERT_TRIGGER_SCHEMA = {
+    type: 'object',
+    properties: {
+        to: { enum: ['command', 'message'] },
+        ifUpdatedAt: { type: 'string', minLength: 1 },
+        command: {
+            anyOf: [
+                {
+                    type: 'object',
+                    properties: {
+                        new: {
+                            type: 'object',
+                            properties: { ...COMMAND_SCHEMA.properties, leaves: undefined },
+                            required: ['name', 'registration', 'integrationTypes', 'contexts'],
+                        },
+                    },
+                    required: ['new'],
+                },
+                {
+                    type: 'object',
+                    properties: {
+                        existingId: { type: 'integer', minimum: 1 },
+                        subcommandName: { type: 'string', pattern: '^[a-z0-9_-]{1,32}$' },
+                    },
+                    required: ['existingId', 'subcommandName'],
+                },
+            ],
+        },
+        location: { type: 'string', pattern: '^(bot_dm|guild:all|guild:\\d{17,20}|channel:\\d{17,20}:\\d{17,20})$' },
+        patternValue: { type: 'string', minLength: 1, maxLength: 500 },
+        audienceUserId: { anyOf: [{ type: 'string', pattern: SNOWFLAKE }, { type: 'null' }] },
+    },
+    required: ['to', 'ifUpdatedAt'],
+};

@@ -3,7 +3,8 @@ import { authedFetch, jsonOrThrow } from "./client";
 // Mirrors packages/bot/src/modules/behavior/behavior-list-view.ts — the
 // shape of GET /api/behaviors (ADR 0003 trigger/action model) — and the
 // write API (#136): behavior-write-routes.ts, behavior-command-routes.ts,
-// message-trigger-reorder.ts, webhook-secret-rotate.ts. The server derives
+// message-trigger-reorder.ts, webhook-secret-rotate.ts,
+// behavior-trigger-convert.ts. The server derives
 // every item's `section`; the UI only groups by it.
 //
 // Refusals arrive as ApiError with `code` (validation_failed,
@@ -454,6 +455,70 @@ export async function switchLoginTrigger(
 }
 
 /**
+ * How a trigger conversion reached Discord: a command write's report, or
+ * — converting to a message only, where the conversion stands — Discord's
+ * refusal of the command the leaf left (it shows the leaf until resynced).
+ */
+export type ConvertRegistrationReport =
+  | RegistrationReport
+  | { status: "failed"; reason: string; targets: RegistrationTargetOutcome[] };
+
+/** The command a message trigger becomes a leaf of: a new one, or one with subcommands. */
+export type ConvertCommandTarget =
+  | { new: Omit<CommandInput, "description"> & { description?: string } }
+  | { existingId: number; subcommandName: string };
+
+/**
+ * POST /api/behaviors/:id/convert-trigger (#172), in either direction. The
+ * behavior keeps its id, webhook, secret, stats and deliveries; the server
+ * requires `ifUpdatedAt`.
+ */
+export interface ConvertToCommandInput {
+  command: ConvertCommandTarget;
+  leafDescription?: string | null;
+  replyVisibility?: ReplyVisibility | null;
+}
+
+export interface ConvertToMessageInput {
+  location: MessageTriggerLocation;
+  patternKind: BehaviorPatternKind;
+  patternValue: string;
+  stopOnMatch?: boolean;
+  ignoreBots?: boolean;
+  audienceKind?: BehaviorAudienceKind;
+  audienceUserId?: string | null;
+  audienceGroupName?: string | null;
+  replyVisibility?: ReplyVisibility | null;
+}
+
+/**
+ * A message trigger becomes a command leaf. Discord registers the command
+ * before anything is stored: a refusal is an ApiError `registration_failed`
+ * (502) and the message trigger is unchanged.
+ */
+export async function convertToCommand(
+  id: number,
+  input: ConvertToCommandInput & { ifUpdatedAt: string },
+): Promise<{ behavior: CommandLeafView; command: CommandView; registration: RegistrationReport }> {
+  return jsonOrThrow(
+    await send("POST", `/api/behaviors/${id}/convert-trigger`, { to: "command", ...input }),
+  );
+}
+
+/**
+ * A command leaf becomes a message trigger. It is stored first;
+ * `registration` is what happened to the command the leaf left.
+ */
+export async function convertToMessage(
+  id: number,
+  input: ConvertToMessageInput & { ifUpdatedAt: string },
+): Promise<{ behavior: MessageTriggerView; registration: ConvertRegistrationReport }> {
+  return jsonOrThrow(
+    await send("POST", `/api/behaviors/${id}/convert-trigger`, { to: "message", ...input }),
+  );
+}
+
+/**
  * The JSON schemas the write routes validate with (GET /api/behaviors/schema).
  * Forms check a draft against them before sending (#108); fetched once.
  */
@@ -465,6 +530,8 @@ export interface BehaviorSchemas {
   commandLeaf: Record<string, unknown>;
   /** PUT /api/behaviors/system/login/trigger. */
   loginTrigger?: Record<string, unknown>;
+  /** POST /api/behaviors/:id/convert-trigger. */
+  convertTrigger?: Record<string, unknown>;
 }
 
 let schemas: Promise<BehaviorSchemas> | null = null;

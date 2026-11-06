@@ -32,7 +32,7 @@ afterEach(() => mounted.splice(0).forEach((w) => w.unmount()));
 
 async function mountOpen(t: MessageTriggerView = savedTrigger()): Promise<VueWrapper> {
     const wrapper = mount(MessageTriggerCard, {
-        props: { trigger: t, guildNames: new Map(), groupNames: [], groupUse: new Map() },
+        props: { trigger: t, guildNames: new Map(), groupNames: [], groupUse: new Map(), commands: [] },
         global: { plugins: [i18n] },
         attachTo: document.body,
     });

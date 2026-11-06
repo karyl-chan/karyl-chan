@@ -2,13 +2,23 @@
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { AppButton, AppModal, Stack } from '@karyl-chan/ui';
-import { switchLoginTrigger, type BehaviorItemView, type RegistrationReport } from '../../../api/behavior';
+import {
+    getBehaviorSchemas,
+    switchLoginTrigger,
+    type BehaviorItemView,
+    type RegistrationReport,
+} from '../../../api/behavior';
 import CommandRegistrationResult from './CommandRegistrationResult.vue';
+import LoginTriggerFields from './LoginTriggerFields.vue';
+import { NO_ERRORS, errorsFromRefusal, isStale, type FormErrors } from './behavior-errors';
 import {
     loginDraftSection,
+    loginTriggerDraftErrors,
     loginTriggerDraftOf,
+    loginTriggerFields,
     loginTriggerPatch,
     loginTriggerText,
+    switchDraftOf,
     type LoginTriggerDraft,
 } from './login-trigger-draft';
 import {
@@ -20,17 +30,19 @@ import {
 import { sectionLabel } from './section-labels';
 
 /**
- * Board 4: switching the login between a message pattern and a command.
- * The login is the only way into the admin UI, so the dialog says the
+ * Board 4: switching the login between a message pattern and a command,
+ * opened from the card's kind tag (#172). First the new trigger's fields
+ * (LoginTriggerFields, the card's own editor), checked as the admin types.
+ * The login is the only way into the admin UI, so the dialog then says the
  * order before anything happens — the new trigger takes effect first, the
  * old one goes only after — and afterwards what each step did, with
  * Discord's own answer (CommandRegistrationResult). A refusal leaves the
- * login as it was, and the dialog says so.
+ * login as it was, and the dialog says so; a refused field sends the admin
+ * back to it.
  */
 const props = defineProps<{
     visible: boolean;
     saved: BehaviorItemView;
-    draft: LoginTriggerDraft;
     guildNames: ReadonlyMap<string, string>;
 }>();
 
@@ -38,14 +50,14 @@ const emit = defineEmits<{
     (e: 'close'): void;
     /** The switch went through: the login as it now is. */
     (e: 'switched', result: { system: BehaviorItemView; registration: RegistrationReport | null }): void;
-    /** Refused for something the form owns (a field, a stale version): the card shows it. */
+    /** Refused as stale (the login changed since the page loaded): the card reloads it. */
     (e: 'refused', err: unknown): void;
 }>();
 
 const { t } = useI18n();
 
-type Phase = 'confirm' | 'running' | 'done' | 'failed';
-const phase = ref<Phase>('confirm');
+type Phase = 'fill' | 'confirm' | 'running' | 'done' | 'failed';
+const phase = ref<Phase>('fill');
 const report = ref<RegistrationReport | null>(null);
 const outcome = ref<RegistrationResult | null>(null);
 
@@ -53,21 +65,43 @@ const outcome = ref<RegistrationResult | null>(null);
 const before = ref('');
 const beforeKind = ref<'message' | 'command'>('message');
 
+/** The new trigger: the other kind than the saved one, filled in here. */
+const otherKind = () => (props.saved.kind === 'message' ? 'command' : 'message');
+const draft = ref<LoginTriggerDraft>(switchDraftOf(props.saved, otherKind()));
+const errors = ref<FormErrors>(NO_ERRORS);
+const schema = ref<Record<string, unknown> | null>(null);
+
 watch(
     () => props.visible,
     (visible) => {
         if (!visible) return;
-        phase.value = 'confirm';
+        phase.value = 'fill';
         report.value = null;
         outcome.value = null;
+        errors.value = NO_ERRORS;
         before.value = loginTriggerText(loginTriggerDraftOf(props.saved));
         beforeKind.value = props.saved.kind;
+        draft.value = switchDraftOf(props.saved, otherKind());
+        getBehaviorSchemas()
+            .then((schemas) => (schema.value = schemas.loginTrigger ?? null))
+            .catch(() => undefined);
     },
     { immediate: true }
 );
-const after = computed(() => loginTriggerText(props.draft));
-const toCommand = computed(() => props.draft.kind === 'command');
-const landsIn = computed(() => sectionLabel(t, loginDraftSection(props.draft), props.guildNames));
+
+function patchDraft(patch: Partial<LoginTriggerDraft>) {
+    draft.value = { ...draft.value, ...patch };
+    errors.value = NO_ERRORS;
+}
+
+/** What the server would refuse in the new trigger, while the admin types (login-trigger-draft.ts). */
+const liveErrors = computed(() => loginTriggerDraftErrors(t, draft.value, schema.value).fields);
+const fieldErrors = computed(() => ({ ...errors.value.fields, ...liveErrors.value }));
+const canGoOn = computed(() => Object.keys(fieldErrors.value).length === 0);
+
+const after = computed(() => loginTriggerText(draft.value));
+const toCommand = computed(() => draft.value.kind === 'command');
+const landsIn = computed(() => sectionLabel(t, loginDraftSection(draft.value), props.guildNames));
 
 function where(kind: 'message' | 'command'): string {
     return kind === 'message'
@@ -111,8 +145,12 @@ const steps = computed<Step[]>(() => {
     });
 });
 
+function next() {
+    if (canGoOn.value) phase.value = 'confirm';
+}
+
 async function start() {
-    const patch = loginTriggerPatch(props.saved, props.draft);
+    const patch = loginTriggerPatch(props.saved, draft.value);
     if (!patch || phase.value !== 'confirm') return;
     phase.value = 'running';
     try {
@@ -122,9 +160,15 @@ async function start() {
         phase.value = 'done';
         emit('switched', result);
     } catch (err) {
-        if (!isRegistrationRefusal(err)) {
-            phase.value = 'confirm';
+        if (isStale(err)) {
+            phase.value = 'fill';
             emit('refused', err);
+            return;
+        }
+        if (!isRegistrationRefusal(err)) {
+            // a field the server refused (a name taken, a pattern): back to it
+            errors.value = errorsFromRefusal(t, err, loginTriggerFields(draft.value));
+            phase.value = 'fill';
             return;
         }
         outcome.value = registrationFailure(t, err, props.guildNames);
@@ -143,7 +187,31 @@ const ended = computed(() => phase.value === 'done' || phase.value === 'failed')
         width="min(560px, 95vw)"
         @close="emit('close')"
     >
-        <Stack gap="4" data-test="switch-dialog">
+        <Stack v-if="phase === 'fill'" gap="4" data-test="switch-dialog">
+            <p class="intro">
+                {{ t(toCommand ? 'behaviors.system.switch.fillCommand' : 'behaviors.system.switch.fillMessage', { old: before }) }}
+            </p>
+            <form data-test="switch-fill" @submit.prevent="next">
+                <Stack gap="3">
+                    <LoginTriggerFields
+                        :draft="draft"
+                        :errors="fieldErrors"
+                        :section="saved.section"
+                        :guild-names="guildNames"
+                        @patch="patchDraft"
+                    />
+                    <p v-if="errors.general" class="failed" role="alert" data-test="switch-general-error">{{ errors.general }}</p>
+                    <footer class="footer">
+                        <AppButton variant="secondary" @click="emit('close')">{{ t('common.cancel') }}</AppButton>
+                        <AppButton type="submit" data-test="switch-next" :disabled="!canGoOn">
+                            {{ t('behaviors.system.switch.next') }}
+                        </AppButton>
+                    </footer>
+                </Stack>
+            </form>
+        </Stack>
+
+        <Stack v-else gap="4" data-test="switch-dialog">
             <div class="compare">
                 <div class="box">
                     <code class="trigger">{{ before }}</code>
@@ -180,6 +248,9 @@ const ended = computed(() => phase.value === 'done' || phase.value === 'failed')
 
             <footer class="footer">
                 <template v-if="!ended">
+                    <AppButton variant="ghost" data-test="switch-back" :disabled="phase === 'running'" @click="phase = 'fill'">
+                        {{ t('behaviors.system.switch.back') }}
+                    </AppButton>
                     <AppButton variant="secondary" :disabled="phase === 'running'" @click="emit('close')">
                         {{ t('common.cancel') }}
                     </AppButton>
