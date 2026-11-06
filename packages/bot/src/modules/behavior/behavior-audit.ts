@@ -26,7 +26,8 @@ export type BehaviorAuditAction =
   | "behavior.command.delete"
   | "behavior.command.resync"
   | "behavior.command.convert"
-  | "behavior.system.trigger";
+  | "behavior.system.trigger"
+  | "behavior.trigger.convert";
 
 /**
  * Record one behavior write. Never throws: it runs after the write is

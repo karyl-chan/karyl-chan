@@ -16,7 +16,9 @@
  *        login's own)
  *     2. register the command on Discord as it will be stored — holding
  *        the reconcile lock for the rest (withRegistrationLock), so no
- *        reconcileAll sweeps it before its row exists
+ *        reconcileAll sweeps it before its row exists. Steps 2–5 are the
+ *        register-first flow command-register-first.ts holds, shared
+ *        with converting a message trigger to a command
  *     3. Discord refused, or the bot is not connected → 502
  *        registration_failed, nothing changed (a refused edit of an
  *        existing command leaves Discord's previous version: create /
@@ -52,7 +54,6 @@
 
 import type { FastifyInstance } from "fastify";
 import type { Transaction } from "sequelize";
-import { sortJoin } from "../../utils/sort-join.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { requireOwner } from "../web-core/route-guards.js";
 import { BehaviorApiError } from "./behavior-api-error.js";
@@ -60,7 +61,6 @@ import { auditBehaviorWrite } from "./behavior-audit.js";
 import {
   loadBehaviorCatalog,
   systemLoginOf,
-  type CatalogCommand,
   type SystemLoginEntry,
 } from "./behavior-catalog.js";
 import { buildBehaviorListView, type BehaviorListView } from "./behavior-list-view.js";
@@ -72,13 +72,20 @@ import type {
   RegistrationReport,
 } from "./command-registration-sync.js";
 import { asNameConflict, checkNamespaceFree } from "./command-writes.js";
+import {
+  StoredAfterRegistrationFailed,
+  commandColumnsOf,
+  leafColumnsOf,
+  proposedCommand,
+  registerThenStore,
+  type CommandRowSettings,
+} from "./command-register-first.js";
 import { BehaviorCommand } from "./models/behavior-command.model.js";
 import { BehaviorDefinition } from "./models/behavior-definition.model.js";
 import { findStatsBulk } from "./models/behavior-stats.model.js";
 import type {
   CommandReconciler,
   LockedRegistration,
-  RegisterOneResult,
 } from "../command-system/reconcile.service.js";
 import {
   loginTriggerOf,
@@ -145,28 +152,6 @@ function storedSummary({ row, command }: SystemLoginEntry): Record<string, unkno
 
 // ── row columns ─────────────────────────────────────────────────────────────
 
-/** The system row's columns as the root leaf of command `commandId`. */
-function commandTriggerColumnsOf(commandId: number) {
-  return {
-    triggerKind: "command" as const,
-    commandId,
-    subcommandGroup: "",
-    subcommand: "",
-    leafDescription: null,
-    options: null,
-    surface: null,
-    guildId: null,
-    channelId: null,
-    patternKind: null,
-    patternValue: null,
-    stopOnMatch: false,
-    ignoreBots: true,
-    audienceKind: "all" as const,
-    audienceUserId: null,
-    audienceGroupName: null,
-  };
-}
-
 /** The system row's columns as a bot DM message trigger (everyone; it always stops). */
 function messageTriggerColumnsOf(next: LoginMessageTrigger) {
   return {
@@ -189,60 +174,20 @@ function messageTriggerColumnsOf(next: LoginMessageTrigger) {
   };
 }
 
-/** The system command row's columns. */
-function commandColumnsOf(next: LoginCommandTrigger) {
+/** The system command's settings: always global, never default member permissions. */
+function loginCommandSettingsOf(next: LoginCommandTrigger): CommandRowSettings {
   return {
     name: next.name,
     description: next.description,
-    registration: "global" as const,
+    registration: "global",
     guildId: null,
-    integrationTypes: sortJoin([...next.integrationTypes]),
-    contexts: sortJoin([...next.contexts]),
+    integrationTypes: next.integrationTypes,
+    contexts: next.contexts,
     defaultMemberPermissions: null,
-    isSystem: true,
-  };
-}
-
-/**
- * The command the switch will store — registered before it is. A new one
- * has no row yet, so no id: 0 stands in (it only labels the reconciler's
- * result).
- */
-function proposedCommand(current: SystemLoginEntry, next: LoginCommandTrigger): CatalogCommand {
-  const id = current.command?.id ?? 0;
-  return {
-    id,
-    ...commandColumnsOf(next),
-    updatedAt: new Date(),
-    leaves: [{ ...current.row, ...commandTriggerColumnsOf(id), webhook: null }],
   };
 }
 
 // ── the switch ──────────────────────────────────────────────────────────────
-
-/** The store failed after Discord accepted the command; `takenBack` says whether Discord was put back. */
-class LoginStoreFailed extends Error {
-  constructor(
-    readonly cause: unknown,
-    readonly takenBack: boolean,
-  ) {
-    super(cause instanceof Error ? cause.message : String(cause));
-    this.name = "LoginStoreFailed";
-  }
-}
-
-function registrationRefused(name: string, result: Exclude<RegisterOneResult, { ok: true }>): BehaviorApiError {
-  const why =
-    result.reason === "bot_not_ready"
-      ? "the bot is not connected to Discord"
-      : `Discord did not accept /${name}: ${result.error}`;
-  return new BehaviorApiError(
-    "registration_failed",
-    `${why}; the login keeps its current trigger`,
-    undefined,
-    { targets: "outcomes" in result ? result.outcomes : [] },
-  );
-}
 
 async function storeCommandTrigger(
   current: SystemLoginEntry,
@@ -252,44 +197,18 @@ async function storeCommandTrigger(
   if (current.command) {
     // instance save: the model's cross-field validator needs every field
     const model = await BehaviorCommand.findByPk(current.command.id, { transaction });
-    model!.set(commandColumnsOf(next));
+    model!.set(commandColumnsOf(loginCommandSettingsOf(next), true));
     await model!.save({ transaction }).catch((err: unknown) => asNameConflict(err, next.name));
     return;
   }
-  const command = await BehaviorCommand.create(commandColumnsOf(next), { transaction }).catch(
+  const command = await BehaviorCommand.create(commandColumnsOf(loginCommandSettingsOf(next), true), {
+    transaction,
+  }).catch(
     (err: unknown) => asNameConflict(err, next.name),
   );
   const row = await BehaviorDefinition.findByPk(current.row.id, { transaction });
-  row!.set(commandTriggerColumnsOf(command.getDataValue("id") as number));
+  row!.set(leafColumnsOf(command.getDataValue("id") as number));
   await row!.save({ transaction });
-}
-
-/**
- * Put Discord back to what the DB holds after the store failed: the old
- * command's own settings when the switch only changed them, else no
- * registration under the new name. Never throws; answers whether it worked.
- */
-async function takeBack(
-  locked: LockedRegistration,
-  current: SystemLoginEntry,
-  next: LoginCommandTrigger,
-): Promise<boolean> {
-  try {
-    const undone =
-      current.command && current.command.name === next.name
-        ? (await locked.registerBehaviorCommand(current.command)).ok
-        : (await locked.releaseRegistration(next.name, "global")) !== "unavailable";
-    if (undone) return true;
-  } catch {
-    // reported below
-  }
-  botEventLog.record(
-    "error",
-    "bot",
-    `system login: storing /${next.name} failed and its registration could not be taken back; the next full reconcile restores Discord to the stored trigger`,
-    { name: next.name },
-  );
-  return false;
 }
 
 async function switchToCommand(
@@ -307,13 +226,20 @@ async function switchToCommand(
       { targets: [] },
     );
   }
-  const result = await locked.registerBehaviorCommand(proposedCommand(current, next));
-  if (!result.ok) throw registrationRefused(next.name, result);
-  try {
-    await behaviorTransaction((transaction) => storeCommandTrigger(current, next, transaction));
-  } catch (err) {
-    throw new LoginStoreFailed(err, await takeBack(locked, current, next));
-  }
+  // a new command has no row yet, so no id: 0 stands in (it only labels the reconciler's result)
+  const id = current.command?.id ?? 0;
+  const { outcomes } = await registerThenStore(locked, {
+    proposed: proposedCommand(id, loginCommandSettingsOf(next), true, [
+      { ...current.row, ...leafColumnsOf(id), webhook: null },
+    ]),
+    at: { name: next.name, target: "global" },
+    keeps: "the login keeps its current trigger",
+    // the old command's own settings when the switch only changed them,
+    // else no registration under the new name
+    restore: current.command && current.command.name === next.name ? current.command : null,
+    takeBackFailed: `system login: storing /${next.name} failed and its registration could not be taken back; the next full reconcile restores Discord to the stored trigger`,
+    store: () => behaviorTransaction((transaction) => storeCommandTrigger(current, next, transaction)),
+  });
   const previous = current.command?.name;
   if (previous !== undefined && previous !== next.name) {
     if ((await locked.releaseRegistration(previous, "global")) === "unavailable") {
@@ -325,7 +251,7 @@ async function switchToCommand(
       );
     }
   }
-  return { status: "registered", targets: result.outcomes };
+  return { status: "registered", targets: outcomes };
 }
 
 async function switchToMessage(
@@ -390,7 +316,7 @@ async function switchLoginTrigger(
 
 /** A switch that failed after it started → what the audit records of it (null: not audited). */
 function failureOutcome(err: unknown): Record<string, unknown> | null {
-  if (err instanceof LoginStoreFailed) {
+  if (err instanceof StoredAfterRegistrationFailed) {
     return { outcome: "store_failed", registrationTakenBack: err.takenBack, error: err.message };
   }
   if (err instanceof BehaviorApiError && (err.code === "name_conflict" || err.code === "registration_failed")) {
@@ -447,7 +373,7 @@ export function registerSystemLoginTriggerRoute(
       } catch (err) {
         const failure = failureOutcome(err);
         if (seen.login && failure) await audit(seen.login, failure);
-        throw err instanceof LoginStoreFailed ? err.cause : err;
+        throw err instanceof StoredAfterRegistrationFailed ? err.cause : err;
       }
 
       await audit(seen.login!, { outcome: "switched", registration: registration?.status ?? null });

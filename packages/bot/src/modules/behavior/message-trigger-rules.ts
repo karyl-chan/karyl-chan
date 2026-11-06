@@ -57,6 +57,22 @@ export function messageTriggerLocation(
   return `guild:${s.guildId}`;
 }
 
+/** A location key in a request body (the reorder, a trigger conversion). */
+export const MESSAGE_TRIGGER_LOCATION_PATTERN =
+  "^(bot_dm|guild:all|guild:\\d{17,20}|channel:\\d{17,20}:\\d{17,20})$";
+
+/** The other way: a key the schema let through → its surface, guild and channel. */
+export function parseMessageTriggerLocation(
+  key: string,
+): Pick<MessageTriggerState, "surface" | "guildId" | "channelId"> {
+  if (key === "bot_dm") return { surface: "bot_dm", guildId: null, channelId: null };
+  if (key === "guild:all") return { surface: "guild", guildId: null, channelId: null };
+  const [kind, guildId, channelId] = key.split(":");
+  return kind === "channel"
+    ? { surface: "guild", guildId: guildId!, channelId: channelId! }
+    : { surface: "guild", guildId: guildId!, channelId: null };
+}
+
 export function checkMessageTrigger(s: MessageTriggerState): void {
   if (s.surface === "bot_dm") {
     if (s.guildId !== null) refuse("guildId", "a bot DM trigger has no guild");

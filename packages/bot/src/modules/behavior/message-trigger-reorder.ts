@@ -24,19 +24,19 @@ import type { FastifyInstance } from "fastify";
 import { BehaviorApiError } from "./behavior-api-error.js";
 import { auditBehaviorWrite } from "./behavior-audit.js";
 import { behaviorTransaction, withBehaviorWriteLock } from "./behavior-write-lock.js";
-import { messageTriggerLocation } from "./message-trigger-rules.js";
+import {
+  MESSAGE_TRIGGER_LOCATION_PATTERN,
+  messageTriggerLocation,
+} from "./message-trigger-rules.js";
 import {
   BehaviorDefinition,
   rowOfBehaviorDefinition,
 } from "./models/behavior-definition.model.js";
 
-const LOCATION_PATTERN =
-  "^(bot_dm|guild:all|guild:\\d{17,20}|channel:\\d{17,20}:\\d{17,20})$";
-
 const reorderSchema = {
   type: "object",
   properties: {
-    location: { type: "string", pattern: LOCATION_PATTERN },
+    location: { type: "string", pattern: MESSAGE_TRIGGER_LOCATION_PATTERN },
     ids: {
       type: "array",
       items: { type: "integer", minimum: 1 },
