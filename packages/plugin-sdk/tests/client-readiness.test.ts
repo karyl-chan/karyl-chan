@@ -179,7 +179,14 @@ describe("readiness-v1 lifecycle", () => {
             : { selected: "redis-streams", consumerRequired: true },
       });
     });
-    server.post("/api/plugins/ready", async () => ({ ok: true }));
+    let readyCalls = 0;
+    server.post("/api/plugins/ready", async () => {
+      readyCalls++;
+      // A slow re-acknowledgement keeps the client in "initializing" after
+      // the selection callback has already run.
+      if (readyCalls === 2) await sleep(50);
+      return { ok: true };
+    });
     server.post("/api/plugins/heartbeat", async (_request, reply) => {
       heartbeatCalls++;
       if (heartbeatCalls === 1) return reply.code(401).send();
@@ -206,10 +213,12 @@ describe("readiness-v1 lifecycle", () => {
 
     await client.whenReady();
     await waitFor(() => selections.length === 2);
+    // The re-register is ready again only once the bot acknowledges /ready.
+    await waitFor(() => client.lifecycleState() === "ready");
     assert.deepEqual(selections, ["http", "redis-streams"]);
     assert.equal(firstRegisterCalls, 1);
     assert.equal(registerCalls, 2);
-    assert.equal(client.lifecycleState(), "ready");
+    assert.equal(readyCalls, 2);
   });
 
   it("keeps intentional no-secret startup live but explicitly serving dark", async () => {
