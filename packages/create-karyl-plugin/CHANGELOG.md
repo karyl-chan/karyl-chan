@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/karyl-chan/karyl-chan/compare/create-karyl-plugin-v1.0.0...create-karyl-plugin-v1.1.0) (2026-11-06)
+
+
+### Miscellaneous Chores
+
+* **create-karyl-plugin:** Synchronize plugin-platform versions
+
 ## [1.0.0](https://github.com/karyl-chan/karyl-chan/compare/create-karyl-plugin-v0.16.0...create-karyl-plugin-v1.0.0) (2026-10-15)
 
 
