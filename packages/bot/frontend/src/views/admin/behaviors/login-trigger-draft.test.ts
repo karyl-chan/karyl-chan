@@ -7,7 +7,7 @@ import {
     loginTriggerDraftOf,
     loginTriggerPatch,
     loginTriggerText,
-    switchesKind,
+    switchDraftOf,
 } from './login-trigger-draft';
 import { systemLoginCommand, systemLoginMessage } from './behavior-test-support';
 
@@ -60,7 +60,7 @@ describe('login trigger draft', () => {
             contexts: ['BotDM'],
             ifUpdatedAt: saved.updatedAt,
         });
-        expect(switchesKind(saved, draft)).toBe(true);
+        expect(switchDraftOf(saved, 'command')).toEqual({ ...loginTriggerDraftOf(saved), kind: 'command' });
     });
 
     it('a new pattern is a change of the same kind, sent with its sample', () => {
@@ -73,7 +73,6 @@ describe('login trigger draft', () => {
             sample: '!admin',
             ifUpdatedAt: saved.updatedAt,
         });
-        expect(switchesKind(saved, draft)).toBe(false);
     });
 
     it('a sample alone is not a change', () => {

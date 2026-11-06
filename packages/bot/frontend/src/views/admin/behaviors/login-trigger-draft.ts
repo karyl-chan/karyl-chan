@@ -20,9 +20,9 @@ import type { Translate } from './translate';
 
 /**
  * The edit draft of the System Behavior's trigger (boards 3 and 4): the
- * login is a bot DM message pattern or a global command, and the form
- * keeps both halves so flipping the kind back and forth loses nothing.
- * Only the chosen half is sent (PUT /api/behaviors/system/login/trigger).
+ * login is a bot DM message pattern or a global command. The card edits
+ * the half the login is on; the switch dialog (from the kind tag, #172)
+ * the other one. Only the chosen half is sent (PUT /api/behaviors/system/login/trigger).
  *
  * A message pattern is `startswith` or `endswith` (no regex), and every
  * message save carries a `sample`: a DM the admin would send, which the
@@ -142,9 +142,13 @@ export function loginTriggerPatch(
     return { ...loginTriggerBody(draft), ifUpdatedAt: saved.updatedAt };
 }
 
-/** Whether saving moves the login from a message to a command or back (board 4's confirm). */
-export function switchesKind(saved: BehaviorItemView, draft: LoginTriggerDraft): boolean {
-    return saved.kind !== draft.kind;
+/**
+ * What the switch dialog (board 4) starts from when the owner picks the
+ * other kind on the tag: the saved login's draft, turned to that kind —
+ * its other half holds the defaults (or, back from a command, `!login`).
+ */
+export function switchDraftOf(saved: BehaviorItemView, kind: LoginTriggerDraft['kind']): LoginTriggerDraft {
+    return { ...loginTriggerDraftOf(saved), kind };
 }
 
 /** The trigger as a user sends it: the pattern, or `/name`. */

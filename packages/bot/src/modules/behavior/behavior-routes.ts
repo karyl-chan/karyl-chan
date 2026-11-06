@@ -10,6 +10,7 @@
  *   PUT  /api/behaviors/reorder                  — 一個位置內的訊息觸發排序（message-trigger-reorder.ts）
  *   POST /api/behaviors/:id/webhook-secret/rotate — 輪換 webhook 密鑰（webhook-secret-rotate.ts）
  *   /api/behavior-commands[/:id[/resync]]        — 指令的寫入與重新註冊（behavior-command-routes.ts）
+ *   POST /api/behaviors/:id/convert-trigger      — 自訂 behavior 在訊息觸發與指令觸發間轉換（behavior-trigger-convert.ts）
  *   PUT  /api/behaviors/system/login/trigger     — 切換登入系統列的觸發（system-login-trigger-route.ts）
  *   GET  /api/behavior-groups/:groupName/members — 群組名單
  *   PUT  /api/behavior-groups/:groupName/members — 全量替換群組名單
@@ -64,6 +65,10 @@ import {
   loginTriggerSchema,
   registerSystemLoginTriggerRoute,
 } from "./system-login-trigger-route.js";
+import {
+  convertTriggerSchema,
+  registerTriggerConvertRoute,
+} from "./behavior-trigger-convert.js";
 
 export type { BehaviorRoutesOptions };
 
@@ -95,6 +100,7 @@ export async function registerBehaviorRoutes(
     registerWebhookSecretRotateRoute(scope);
     registerBehaviorCommandRoutes(scope, options);
     registerSystemLoginTriggerRoute(scope, options);
+    registerTriggerConvertRoute(scope, options);
     registerGroupMemberRoutes(scope);
   });
 }
@@ -117,8 +123,8 @@ function registerReadAndTestRoutes(
   });
 
   // ── GET /api/behaviors/schema（#108）────────────────────────────────────────
-  // 寫入路由實際驗證用的 JSON schema：訊息觸發、指令（含葉節點）與新增的
-  // 子指令。admin UI 用它在送出前檢查欄位格式，schema 只有這一份，前端不另抄。
+  // 寫入路由實際驗證用的 JSON schema：訊息觸發、指令（含葉節點）、新增的
+  // 子指令、登入觸發的切換與觸發轉換。admin UI 用它在送出前檢查欄位格式，schema 只有這一份，前端不另抄。
   // 跨欄位規則不在 schema 裡：訊息觸發的（message-trigger-rules.ts）由 UI 的
   // 表單結構避開；指令的（command-tree-rules.ts）是唯一例外，前端有一份鏡像
   // （frontend/.../command-rules.ts），由 tests/behavior-command-rules-mirror.test.ts
@@ -130,6 +136,7 @@ function registerReadAndTestRoutes(
       command: createCommandSchema,
       commandLeaf: addLeafSchema,
       loginTrigger: loginTriggerSchema,
+      convertTrigger: convertTriggerSchema,
     });
   });
 

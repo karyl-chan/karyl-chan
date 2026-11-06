@@ -2,52 +2,31 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@iconify/vue';
-import {
-    AppBadge,
-    AppButton,
-    AppItemCard,
-    AppSelectField,
-    AppTextField,
-    AppToggle,
-    Stack,
-    type SelectOption,
-} from '@karyl-chan/ui';
+import { AppBadge, AppButton, AppItemCard, AppTextField, AppToggle, Stack } from '@karyl-chan/ui';
 import {
     getBehaviorSchemas,
     resyncBehaviorCommand,
     switchLoginTrigger,
     type BehaviorItemView,
-    type LoginPatternKind,
     type RegistrationReport,
 } from '../../../api/behavior';
 import { useCurrentUserStore } from '../../../stores/currentUserStore';
 import BehaviorActionDetails from './BehaviorActionDetails.vue';
 import BehaviorSourceNotice from './BehaviorSourceNotice.vue';
 import CommandRegistrationResult from './CommandRegistrationResult.vue';
-import CommandVisibilityFields from './CommandVisibilityFields.vue';
+import LoginTriggerFields from './LoginTriggerFields.vue';
 import LoginTriggerSwitchDialog from './LoginTriggerSwitchDialog.vue';
+import TriggerKindMenu from './TriggerKindMenu.vue';
 import { NO_ERRORS, errorsFromRefusal, hasErrors, isStale, type FormErrors } from './behavior-errors';
-import type { CommandDraft } from './command-draft';
 import {
-    LOGIN_COMMAND_REQUIRED,
-    LOGIN_PATTERN_KINDS,
-    loginCommandDraftOf,
     loginTriggerDraftErrors,
     loginTriggerDraftOf,
     loginTriggerDraftModel,
     loginTriggerFields,
     loginTriggerPatch,
     loginTriggerText,
-    switchesKind,
-    type LoginTriggerDraft,
 } from './login-trigger-draft';
-import { previewMatch } from './message-trigger-draft';
-import {
-    isRegistrationRefusal,
-    registrationFailure,
-    registrationResult,
-    type RegistrationResult,
-} from './registration-result';
+import { isRegistrationRefusal, registrationFailure, registrationResult } from './registration-result';
 import { useDraftForm } from './use-draft-form';
 import { useRegistrationResult } from './use-registration-results';
 
@@ -55,16 +34,20 @@ import { useRegistrationResult } from './use-registration-results';
  * The System Behavior — the login — pinned on top of its section, locked
  * (board 3). It cannot be deleted, disabled or given another action; its
  * trigger is the one thing an admin changes: a message pattern in DMs
- * with the bot, or a global command. Switching between the two goes
- * through board 4's confirm (LoginTriggerSwitchDialog), which runs the
- * switch and shows each step; a change within the same kind saves
- * directly, a command's with what Discord answered. On a command it can
+ * with the bot, or a global command. Switching between the two starts
+ * from the kind tag in the title row (TriggerKindMenu, as for every
+ * behavior, #172) and goes through board 4's dialog
+ * (LoginTriggerSwitchDialog): the new trigger's fields, then the confirm
+ * that runs the switch and shows each step. A change within the same kind
+ * is made in the card and saves directly, a command's with what Discord
+ * answered. On a command it can
  * also be registered again as stored (resync), for when Discord lost it.
  *
  * A message save needs a sample DM the pattern matches (the server checks
  * it again), and a command always keeps guild install and bot DMs — both
  * so a save cannot lock the owner out. Only a bot owner may change any of
- * it: for anyone else the card is read-only and says so.
+ * it: for anyone else the card is read-only, the tag's other kind is
+ * disabled, and both say why.
  */
 const props = defineProps<{
     system: BehaviorItemView;
@@ -143,21 +126,11 @@ function showRefusal(err: unknown) {
     }
 }
 
-// ── save: board 4's confirm when the kind changes, straight through otherwise ──
-
-const switching = ref(false);
-/** A switch that went through, handed to the page once its dialog closes (the card may move). */
-let switched: BehaviorItemView | null = null;
+// ── save: an edit within the same kind ──────────────────────────────────────
 
 async function save() {
     if (!canSave.value) return;
     errors.value = NO_ERRORS;
-    if (switchesKind(base.value, draft.value)) {
-        registration.value = null;
-        switched = null;
-        switching.value = true;
-        return;
-    }
     const patch = loginTriggerPatch(base.value, draft.value);
     if (!patch) return;
     saving.value = true;
@@ -178,6 +151,20 @@ async function save() {
     } finally {
         saving.value = false;
     }
+}
+
+// ── switching kind: from the tag, through board 4's dialog ───────────────────
+
+const switching = ref(false);
+/** A switch that went through, handed to the page once its dialog closes (the card may move). */
+let switched: BehaviorItemView | null = null;
+
+/** The owner chose the other kind on the tag: the dialog takes it from here (the card's edit stays). */
+function startSwitch() {
+    if (!isOwner.value) return;
+    registration.value = null;
+    switched = null;
+    switching.value = true;
 }
 
 function onSwitched(result: { system: BehaviorItemView; registration: RegistrationReport | null }) {
@@ -218,38 +205,8 @@ const leaf = computed(() => (props.system.kind === 'command' ? props.system.leav
 const title = computed(() => leaf.value?.title ?? '');
 const summary = computed(() => loginTriggerText(loginTriggerDraftOf(props.system)));
 
-const kindOptions = computed<SelectOption<'message' | 'command'>[]>(() => [
-    { value: 'message', label: t('behaviors.system.kindMessage') },
-    { value: 'command', label: t('behaviors.system.kindCommand') },
-]);
-const patternKindOptions = computed<SelectOption<LoginPatternKind>[]>(() =>
-    LOGIN_PATTERN_KINDS.map((k) => ({ value: k, label: t(`behaviors.trigger.kind.${k}`) }))
-);
-
-const visibilityDraft = computed<CommandDraft>(() => loginCommandDraftOf(draft.value));
-function patchVisibility(patch: Partial<CommandDraft>) {
-    const next: Partial<LoginTriggerDraft> = {};
-    if (patch.integrationTypes) next.integrationTypes = patch.integrationTypes;
-    if (patch.contexts) next.contexts = patch.contexts;
-    applyPatch(next);
-}
-
-/** Whether the sample DM would log in — as Discord delivers it, trimmed. */
-const preview = computed(() =>
-    draft.value.sample.trim() === ''
-        ? null
-        : previewMatch(draft.value.patternKind, draft.value.patternValue, draft.value.sample.trim())
-);
-
-/** Board 3's line under a kind change: the new trigger first, the old one after. */
-const switchHint = computed(() => {
-    if (!switchesKind(base.value, draft.value)) return '';
-    const before = loginTriggerText(loginTriggerDraftOf(base.value));
-    const after = loginTriggerText(draft.value);
-    return draft.value.kind === 'command'
-        ? t('behaviors.system.switchToCommandHint', { command: after, old: before })
-        : t('behaviors.system.switchToMessageHint', { pattern: after, old: before });
-});
+/** Why the tag does not offer the other kind: only a bot owner may switch the login. */
+const switchBlocked = computed(() => (isOwner.value ? null : t('behaviors.system.ownerOnly')));
 </script>
 
 <template>
@@ -270,18 +227,7 @@ const switchHint = computed(() => {
                 <AppBadge v-if="dirty" size="sm" tone="warn" icon="material-symbols:edit-outline-rounded">
                     {{ t('behaviors.card.unsaved') }}
                 </AppBadge>
-                <AppBadge
-                    v-if="system.kind === 'command'"
-                    size="sm"
-                    tone="accent"
-                    variant="outline"
-                    icon="material-symbols:bolt-outline-rounded"
-                >
-                    {{ t('behaviors.card.triggerCommand') }}
-                </AppBadge>
-                <AppBadge v-else size="sm" icon="material-symbols:article-outline">
-                    {{ t('behaviors.card.triggerMessage') }}
-                </AppBadge>
+                <TriggerKindMenu :kind="system.kind" :blocked="switchBlocked" @convert="startSwitch" />
                 <AppBadge size="sm" icon="material-symbols:settings-outline" :title="t('behaviors.card.tagSystem')">
                     {{ t('behaviors.card.tagSystemShort') }}
                 </AppBadge>
@@ -307,87 +253,13 @@ const switchHint = computed(() => {
                     <fieldset class="trigger" :disabled="!isOwner">
                         <Stack gap="3">
                             <h4 class="part">{{ t('behaviors.trigger.title') }}</h4>
-                            <div class="grid">
-                                <label class="field">
-                                    <span class="field-label">{{ t('behaviors.system.triggerKind') }}</span>
-                                    <AppSelectField
-                                        :model-value="draft.kind"
-                                        :options="kindOptions"
-                                        :drawer-title="t('behaviors.system.triggerKind')"
-                                        data-test="login-kind"
-                                        @update:model-value="applyPatch({ kind: $event })"
-                                    />
-                                </label>
-                            </div>
-
-                            <template v-if="draft.kind === 'message'">
-                                <div class="grid">
-                                    <label class="field">
-                                        <span class="field-label">{{ t('behaviors.trigger.patternKind') }}</span>
-                                        <AppSelectField
-                                            :model-value="draft.patternKind"
-                                            :options="patternKindOptions"
-                                            :drawer-title="t('behaviors.trigger.patternKind')"
-                                            @update:model-value="applyPatch({ patternKind: $event })"
-                                        />
-                                        <p v-if="fieldErrors.patternKind" class="field-error">{{ fieldErrors.patternKind }}</p>
-                                    </label>
-                                    <AppTextField
-                                        class="mono"
-                                        data-test="login-pattern"
-                                        :model-value="draft.patternValue"
-                                        :label="t('behaviors.trigger.patternValue')"
-                                        :error="fieldErrors.patternValue"
-                                        @update:model-value="applyPatch({ patternValue: String($event) })"
-                                    />
-                                </div>
-                                <div class="try">
-                                    <AppTextField
-                                        data-test="login-sample"
-                                        :model-value="draft.sample"
-                                        :label="t('behaviors.system.sample')"
-                                        :hint="t('behaviors.system.sampleHint')"
-                                        :error="fieldErrors.sample"
-                                        @update:model-value="applyPatch({ sample: String($event) })"
-                                    />
-                                    <span v-if="preview && !fieldErrors.sample" role="status" :class="['try-result', preview]">
-                                        {{ t(`behaviors.trigger.preview.${preview}`) }}
-                                    </span>
-                                </div>
-                                <p class="hint">{{ t('behaviors.system.messageNote') }}</p>
-                            </template>
-
-                            <template v-else>
-                                <div class="grid">
-                                    <AppTextField
-                                        class="mono"
-                                        data-test="login-name"
-                                        :model-value="draft.name"
-                                        :label="t('behaviors.system.commandName')"
-                                        :hint="t('behaviors.command.nameHint')"
-                                        :error="fieldErrors.name"
-                                        @update:model-value="applyPatch({ name: String($event) })"
-                                    />
-                                    <AppTextField
-                                        :model-value="draft.description"
-                                        :label="t('behaviors.system.commandDescription')"
-                                        :hint="t('behaviors.command.descriptionHint')"
-                                        :error="fieldErrors.description"
-                                        @update:model-value="applyPatch({ description: String($event) })"
-                                    />
-                                </div>
-                                <CommandVisibilityFields
-                                    :draft="visibilityDraft"
-                                    :errors="fieldErrors"
-                                    :section="system.section"
-                                    :guild-names="guildNames"
-                                    global-only
-                                    :required="LOGIN_COMMAND_REQUIRED"
-                                    :required-reason="t('behaviors.system.mustKeep')"
-                                    @patch="patchVisibility"
-                                />
-                                <p class="hint">{{ t('behaviors.system.commandNote') }}</p>
-                            </template>
+                            <LoginTriggerFields
+                                :draft="draft"
+                                :errors="fieldErrors"
+                                :section="system.section"
+                                :guild-names="guildNames"
+                                @patch="applyPatch"
+                            />
                         </Stack>
                     </fieldset>
 
@@ -402,7 +274,6 @@ const switchHint = computed(() => {
                     <p v-if="errors.general" class="error" role="alert" data-test="general-error">{{ errors.general }}</p>
 
                     <footer v-if="isOwner" class="footer">
-                        <span v-if="switchHint" class="hint switch-hint" data-test="switch-hint">{{ switchHint }}</span>
                         <AppButton
                             v-if="system.kind === 'command'"
                             variant="ghost"
@@ -427,7 +298,6 @@ const switchHint = computed(() => {
         <LoginTriggerSwitchDialog
             :visible="switching"
             :saved="base"
-            :draft="draft"
             :guild-names="guildNames"
             @switched="onSwitched"
             @refused="onSwitchRefused"
@@ -464,28 +334,7 @@ const switchHint = computed(() => {
     font-weight: 600;
     color: var(--text-muted);
 }
-.grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
-    gap: 0.6rem 1rem;
-}
-.field { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
-.field-label { font-size: 0.75rem; color: var(--text-muted); font-weight: 600; }
-.field-error { margin: 0; font-size: 0.75rem; color: var(--danger); }
-.mono :deep(input) { font-family: var(--font-mono, ui-monospace, monospace); }
 .readonly { max-width: 22rem; }
-.try {
-    display: flex;
-    flex-direction: column;
-    gap: 0.3rem;
-    padding: 0.55rem 0.7rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: var(--bg-page);
-}
-.try-result { font-size: 0.82rem; color: var(--text-muted); }
-.try-result.match { color: var(--success-text, var(--text)); }
-.try-result.invalid { color: var(--danger); }
 .hint { margin: 0; font-size: 0.78rem; color: var(--text-muted); line-height: 1.6; }
 .conflict {
     display: flex;
@@ -508,7 +357,6 @@ const switchHint = computed(() => {
     padding-top: 0.75rem;
     border-top: 1px solid var(--border);
 }
-.switch-hint { flex: 1; min-width: 12rem; }
 .trigger { border: 0; margin: 0; padding: 0; min-width: 0; }
 .owner-only {
     margin: 0;

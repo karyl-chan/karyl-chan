@@ -103,7 +103,7 @@ export function useBehaviorList() {
         if (before && before.section !== system.section) await follow(system, mayLeave);
     }
 
-    /** An item was created: reload so it is listed, then open it where it lives (#104). */
+    /** An item was created (or converted to the other kind, #172): reload so it is listed, then open it where it lives (#104). */
     async function showCreated(item: BehaviorItemView, mayLeave: MayLeave = allowLeave): Promise<void> {
         await load();
         await follow(item, mayLeave);

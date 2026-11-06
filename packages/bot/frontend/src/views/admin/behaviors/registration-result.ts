@@ -1,4 +1,4 @@
-import type { RegistrationReport, RegistrationTargetOutcome } from '../../../api/behavior';
+import type { ConvertRegistrationReport, RegistrationTargetOutcome } from '../../../api/behavior';
 import { ApiError } from '../../../api/client';
 import { describeBehaviorError } from './behavior-errors';
 import type { Translate } from './translate';
@@ -38,7 +38,7 @@ function outcomeLines(
 
 export function registrationResult(
     t: Translate,
-    report: RegistrationReport,
+    report: ConvertRegistrationReport,
     guildNames: ReadonlyMap<string, string>,
 ): RegistrationResult {
     switch (report.status) {
@@ -61,6 +61,14 @@ export function registrationResult(
             };
         case 'removed':
             return { tone: 'ok', headline: t('behaviors.registration.removed'), detail: null, targets: [] };
+        case 'failed':
+            // a trigger conversion that stands: Discord refused the command it left behind
+            return {
+                tone: 'danger',
+                headline: t('behaviors.registration.failedStored'),
+                detail: report.reason,
+                targets: outcomeLines(t, report.targets, guildNames),
+            };
     }
 }
 

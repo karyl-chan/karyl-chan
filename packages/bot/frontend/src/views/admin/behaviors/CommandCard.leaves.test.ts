@@ -38,7 +38,7 @@ afterEach(() => mounted.splice(0).forEach((w) => w.unmount()));
 
 async function mountOpen(command: CommandView): Promise<VueWrapper> {
     const wrapper = mount(CommandCard, {
-        props: { command, guildNames: new Map() },
+        props: { command, guildNames: new Map(), groupNames: [] },
         global: { plugins: [i18n] },
         attachTo: document.body,
     });

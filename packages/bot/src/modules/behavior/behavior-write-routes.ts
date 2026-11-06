@@ -15,11 +15,8 @@
  */
 
 import type { FastifyInstance } from "fastify";
-import type { Transaction } from "sequelize";
 import { BehaviorApiError } from "./behavior-api-error.js";
 import { auditBehaviorWrite } from "./behavior-audit.js";
-import { loadBehaviorCatalog } from "./behavior-catalog.js";
-import { messageTriggerView, type MessageTriggerView } from "./behavior-list-view.js";
 import {
   behaviorCommonFields,
   commandLeafFields,
@@ -37,6 +34,7 @@ import {
   refuseSystem,
 } from "./behavior-write-guards.js";
 import { checkMessageTrigger, type MessageTriggerState } from "./message-trigger-rules.js";
+import { messageTriggerViewOf, nextMessageSortOrder } from "./message-trigger-writes.js";
 import { deleteCommandLeaf, patchCommandLeaf, type LeafPatch } from "./command-leaf-writes.js";
 import type { BehaviorCommandRegistrar } from "./command-registration-sync.js";
 import {
@@ -48,7 +46,6 @@ import {
   BehaviorWebhookAction,
   rowOfBehaviorWebhookAction,
 } from "./models/behavior-webhook-action.model.js";
-import { findStatsBulk } from "./models/behavior-stats.model.js";
 import { pruneUnusedGroupMembers } from "./models/behavior-group-member.model.js";
 import {
   prepareWebhookWrite,
@@ -129,22 +126,6 @@ function refuseForeignFields(body: object, keys: readonly string[], kind: string
       foreign,
     );
   }
-}
-
-async function messageTriggerViewOf(id: number): Promise<MessageTriggerView> {
-  const catalog = await loadBehaviorCatalog();
-  const trigger = catalog.messageTriggers.find((t) => t.id === id);
-  if (!trigger) throw new BehaviorApiError("not_found", `behavior ${id} does not exist`);
-  return messageTriggerView(trigger, await findStatsBulk([id]));
-}
-
-/** The next sortOrder after every message trigger (inside the write transaction). */
-async function nextMessageSortOrder(transaction: Transaction): Promise<number> {
-  const max = (await BehaviorDefinition.max("sortOrder", {
-    where: { triggerKind: "message" },
-    transaction,
-  })) as number | null;
-  return Number.isFinite(max) ? (max as number) + 1 : 0;
 }
 
 function stateOf(row: BehaviorDefinitionRow): MessageTriggerState {

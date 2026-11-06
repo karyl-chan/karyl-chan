@@ -1,10 +1,12 @@
 /**
- * The System Behavior card (boards 3 and 4, #139): the login is pinned
- * and locked — only its trigger changes. Switching between a message
- * pattern and a command goes through a confirm that says the order (the
- * new trigger first) and then what each step did; a change within the
- * same kind saves directly. A message save needs a matching sample DM, a
- * command keeps guild install and bot DMs, and only an owner may edit.
+ * The System Behavior card (boards 3 and 4, #139, #172): the login is
+ * pinned and locked — only its trigger changes. Switching between a
+ * message pattern and a command starts from the kind tag in the title row
+ * (the card body has no kind select), fills the new trigger in a dialog,
+ * then confirms with the order (the new trigger first) and shows what each
+ * step did; a change within the same kind saves directly. A message save
+ * needs a matching sample DM, a command keeps guild install and bot DMs,
+ * and only an owner may edit or switch.
  */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
@@ -60,13 +62,19 @@ async function mountOpen(system: BehaviorItemView = systemLoginMessage()): Promi
     return wrapper;
 }
 
-/** Pick a value in one of the card's AppSelectFields (its options are teleported). */
-async function choose(wrapper: VueWrapper, label: string, option: string) {
-    const field = wrapper.findAll('label.field').find((f) => f.find('.field-label').text() === label)!;
-    await field.find('button.select-trigger').trigger('click');
+/** Pick a kind on the title row's tag (its menu is teleported). */
+async function pickKind(wrapper: VueWrapper, kind: 'message' | 'command') {
+    await wrapper.find('[data-test="trigger-kind"]').trigger('click');
     await flushPromises();
-    const item = [...document.querySelectorAll<HTMLElement>('li')].find((li) => li.textContent?.trim() === option)!;
-    item.click();
+    document.querySelector<HTMLElement>(`[data-test="convert-to-${kind}"]`)!.click();
+    await flushPromises();
+}
+
+/** Type into an input of the (teleported) switch dialog. */
+async function typeInDialog(field: string, value: string) {
+    const input = dialog()!.querySelector<HTMLInputElement>(`[data-test="${field}"] input`)!;
+    input.value = value;
+    input.dispatchEvent(new Event('input'));
     await flushPromises();
 }
 
@@ -103,6 +111,29 @@ describe('SystemLoginCard — locked', () => {
         expect(wrapper.find('[data-test="resync"]').exists()).toBe(false);
     });
 
+    it('has no kind select in the card body: the kind changes from the tag', async () => {
+        const wrapper = await mountOpen();
+        expect(wrapper.find('[data-test="login-kind"]').exists()).toBe(false);
+        expect(wrapper.find('[data-test="trigger-kind"]').text()).toContain('behaviors.card.triggerMessage');
+        await wrapper.find('[data-test="trigger-kind"]').trigger('click');
+        await flushPromises();
+        expect(document.querySelector('[data-test="convert-to-message"]')!.hasAttribute('disabled')).toBe(true);
+        expect(document.querySelector('[data-test="convert-to-command"]')!.hasAttribute('disabled')).toBe(false);
+    });
+
+    it('an admin who is not the owner cannot switch the kind, and the tag says why', async () => {
+        signInAs(false);
+        const wrapper = await mountOpen();
+        await wrapper.find('[data-test="trigger-kind"]').trigger('click');
+        await flushPromises();
+        const other = document.querySelector<HTMLElement>('[data-test="convert-to-command"]')!;
+        expect(other.hasAttribute('disabled')).toBe(true);
+        expect(other.querySelector('[data-test="convert-blocked"]')!.textContent).toBe('behaviors.system.ownerOnly');
+        other.click();
+        await flushPromises();
+        expect(dialog()).toBeNull();
+    });
+
     it('shows a command login as its command', async () => {
         const wrapper = await mountOpen(systemLoginCommand());
         expect(wrapper.find('[data-test="system-summary"]').text()).toBe('/login');
@@ -111,16 +142,18 @@ describe('SystemLoginCard — locked', () => {
 });
 
 describe('SystemLoginCard — message → command (board 4)', () => {
-    it('confirms first, then runs the switch and says what each step did', async () => {
+    it('fills the new command, confirms, then runs the switch and says what each step did', async () => {
         const after = systemLoginCommand();
         api.switchLoginTrigger.mockResolvedValue({ system: after, registration: registered });
         const wrapper = await mountOpen();
-        await choose(wrapper, 'behaviors.system.triggerKind', 'behaviors.system.kindCommand');
-        expect(wrapper.find('[data-test="switch-hint"]').text()).toContain('behaviors.system.switchToCommandHint');
-        await save(wrapper);
+        await pickKind(wrapper, 'command');
+
+        // the new trigger's fields first, with the login command's defaults
+        expect(dialog()!.querySelector('[data-test="switch-fill"]')).not.toBeNull();
+        expect(dialog()!.querySelector<HTMLInputElement>('[data-test="login-name"] input')!.value).toBe('login');
+        await click('[data-test="switch-next"]');
 
         // nothing happens before the admin starts it
-        expect(dialog()).not.toBeNull();
         expect(api.switchLoginTrigger).not.toHaveBeenCalled();
         expect(steps().map((s) => s.textContent)).toEqual([
             expect.stringContaining('behaviors.system.steps.register'),
@@ -154,8 +187,8 @@ describe('SystemLoginCard — message → command (board 4)', () => {
             })
         );
         const wrapper = await mountOpen();
-        await choose(wrapper, 'behaviors.system.triggerKind', 'behaviors.system.kindCommand');
-        await save(wrapper);
+        await pickKind(wrapper, 'command');
+        await click('[data-test="switch-next"]');
         await click('[data-test="switch-start"]');
 
         expect(steps().map((s) => s.dataset.tone)).toEqual(['fail', 'skip', 'skip']);
@@ -166,20 +199,32 @@ describe('SystemLoginCard — message → command (board 4)', () => {
 
         await click('[data-test="switch-close"]');
         expect(wrapper.emitted('updated')).toBeUndefined();
-        // the edit is still there to retry
-        expect(wrapper.find('[data-test="switch-hint"]').exists()).toBe(true);
+        expect(wrapper.find('[data-test="system-summary"]').text()).toBe('!login');
     });
 
-    it('a refusal of a field closes the dialog and shows it on the field', async () => {
+    it('a refusal of a field goes back to the field, in the dialog', async () => {
         api.switchLoginTrigger.mockRejectedValue(
             new ApiError(409, '/login is already taken by a command of plugin #7', 'name_conflict', 'name')
         );
         const wrapper = await mountOpen();
-        await choose(wrapper, 'behaviors.system.triggerKind', 'behaviors.system.kindCommand');
-        await save(wrapper);
+        await pickKind(wrapper, 'command');
+        await click('[data-test="switch-next"]');
+        await click('[data-test="switch-start"]');
+        expect(dialog()!.querySelector('[data-test="switch-fill"]')).not.toBeNull();
+        expect(dialog()!.querySelector('[data-test="login-name"]')!.textContent).toContain('already taken');
+        expect(dialog()!.querySelector<HTMLButtonElement>('[data-test="switch-next"]')!.disabled).toBe(true);
+        await typeInDialog('login-name', 'signin');
+        expect(dialog()!.querySelector<HTMLButtonElement>('[data-test="switch-next"]')!.disabled).toBe(false);
+    });
+
+    it('a stale version closes the dialog and the card reloads', async () => {
+        api.switchLoginTrigger.mockRejectedValue(new ApiError(409, 'changed by someone else', 'validation_failed', 'ifUpdatedAt'));
+        const wrapper = await mountOpen();
+        await pickKind(wrapper, 'command');
+        await click('[data-test="switch-next"]');
         await click('[data-test="switch-start"]');
         expect(dialog()).toBeNull();
-        expect(wrapper.find('[data-test="login-name"]').text()).toContain('already taken');
+        expect(wrapper.emitted('reload')).toHaveLength(1);
     });
 });
 
@@ -205,15 +250,20 @@ describe('SystemLoginCard — the command keeps what the owner needs', () => {
 });
 
 describe('SystemLoginCard — command → message', () => {
-    it('turns the pattern on first; a removal Discord has not made yet is a warning', async () => {
+    it('needs a sample DM; turns the pattern on first; a removal Discord has not made yet is a warning', async () => {
         api.switchLoginTrigger.mockResolvedValue({
             system: systemLoginMessage(),
             registration: { status: 'deferred', reason: '/login could not be removed from Discord yet' },
         });
         const wrapper = await mountOpen(systemLoginCommand());
-        await choose(wrapper, 'behaviors.system.triggerKind', 'behaviors.system.kindMessage');
-        await wrapper.find('[data-test="login-sample"] input').setValue('!login');
-        await save(wrapper);
+        await pickKind(wrapper, 'message');
+        expect(dialog()!.querySelector<HTMLInputElement>('[data-test="login-pattern"] input')!.value).toBe('!login');
+        // the sample is what keeps the owner from locking themselves out
+        expect(dialog()!.querySelector('[data-test="login-sample"]')!.textContent).toContain('behaviors.system.sampleRequired');
+        expect(dialog()!.querySelector<HTMLButtonElement>('[data-test="switch-next"]')!.disabled).toBe(true);
+        await typeInDialog('login-sample', '!login');
+        await click('[data-test="switch-next"]');
+
         expect(document.querySelector('[data-test="switch-sample"]')?.textContent).toContain('behaviors.system.switch.sampleNote');
         expect(steps().map((s) => s.textContent)).toEqual([
             expect.stringContaining('behaviors.system.steps.enable'),

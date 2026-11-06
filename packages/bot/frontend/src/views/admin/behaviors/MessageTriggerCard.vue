@@ -14,10 +14,12 @@ import {
     useConfirm,
     useToastStore,
 } from '@karyl-chan/ui';
-import { deleteBehavior, updateBehavior, type MessageTriggerView } from '../../../api/behavior';
+import { deleteBehavior, updateBehavior, type CommandView, type MessageTriggerView } from '../../../api/behavior';
 import BehaviorDeliveries from './BehaviorDeliveries.vue';
+import ConvertToCommandDialog from './ConvertToCommandDialog.vue';
 import GroupMembersPanel from './GroupMembersPanel.vue';
 import MessageTriggerFields from './MessageTriggerFields.vue';
+import TriggerKindMenu from './TriggerKindMenu.vue';
 import WebhookActionFields from './WebhookActionFields.vue';
 import WebhookTestResult from './WebhookTestResult.vue';
 import { NO_ERRORS, describeBehaviorError, errorsFromRefusal, hasErrors, isStale, type FormErrors } from './behavior-errors';
@@ -34,7 +36,8 @@ import { useDraftForm } from './use-draft-form';
 
 /**
  * A Message Trigger (board 7): the header row toggles, test-fires and
- * deletes; the expanded body edits the trigger (MessageTriggerFields) and
+ * deletes, and its kind tag converts it to a command leaf (#172,
+ * ConvertToCommandDialog); the expanded body edits the trigger (MessageTriggerFields) and
  * its action (WebhookActionFields), and lists its recent deliveries
  * (BehaviorDeliveries). The System Behavior is not shown here:
  * SystemLoginCard owns the login, whatever its trigger.
@@ -51,6 +54,8 @@ const props = defineProps<{
     /** Audience Groups in use, sorted, and how many triggers use each. */
     groupNames: readonly string[];
     groupUse: ReadonlyMap<string, number>;
+    /** Every command on the page: a conversion may add this trigger to one with subcommands. */
+    commands: readonly CommandView[];
 }>();
 
 const emit = defineEmits<{
@@ -58,6 +63,8 @@ const emit = defineEmits<{
     (e: 'deleted', id: number): void;
     /** The list is out of date (a stale write was refused). */
     (e: 'reload'): void;
+    /** The trigger became a leaf of this command (it leaves the message trigger list). */
+    (e: 'converted', command: CommandView): void;
 }>();
 
 const { t } = useI18n();
@@ -194,6 +201,15 @@ async function remove() {
     }
 }
 
+// ── convert to a command (#172) ─────────────────────────────────────────────
+
+const converting = ref(false);
+
+function onConverted(command: CommandView) {
+    converting.value = false;
+    emit('converted', command);
+}
+
 // ── view ────────────────────────────────────────────────────────────────────
 
 const unhealthy = computed(() => (props.trigger.stats?.consecutiveFailures ?? 0) >= 3);
@@ -247,9 +263,7 @@ const savedGroup = computed(() =>
                 <AppBadge v-if="dirty" size="sm" tone="warn" icon="material-symbols:edit-outline-rounded">
                     {{ t('behaviors.card.unsaved') }}
                 </AppBadge>
-                <AppBadge size="sm" icon="material-symbols:article-outline">
-                    {{ t('behaviors.card.triggerMessage') }}
-                </AppBadge>
+                <TriggerKindMenu kind="message" @convert="converting = true" />
                 <AppBadge v-if="trigger.stopOnMatch" size="sm" tone="warn" icon="material-symbols:stop-circle-outline-rounded" :title="t('behaviors.card.tagStop')">
                     {{ t('behaviors.card.tagStopShort') }}
                 </AppBadge>
@@ -354,6 +368,16 @@ const savedGroup = computed(() =>
                 </Stack>
             </form>
         </AppItemCard>
+
+        <ConvertToCommandDialog
+            :visible="converting"
+            :trigger="trigger"
+            :commands="commands"
+            :guild-names="guildNames"
+            @close="converting = false"
+            @converted="onConverted"
+            @reload="emit('reload')"
+        />
     </div>
 </template>
 

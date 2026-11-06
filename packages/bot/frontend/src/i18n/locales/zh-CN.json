@@ -1489,7 +1489,8 @@
                 "unchanged": "已是最新",
                 "skipped": "没有注册：bot 不在这个服务器",
                 "failed": "失败"
-            }
+            },
+            "failedStored": "已保存，但 Discord 拒绝更新指令，请重新同步："
         },
         "option": {
             "title": "指令参数",
@@ -1549,15 +1550,10 @@
             "submit": "转换并新增子指令"
         },
         "system": {
-            "triggerKind": "触发类型",
-            "kindMessage": "消息 Pattern（与 bot 的私信）",
-            "kindCommand": "Slash 指令",
             "messageNote": "登录的消息匹配只能用在与 bot 的私信：服务器频道里的回复所有人都看得到，登录链接会外泄。只能用开头匹配或结尾匹配（不能用正则表达式）；消息前后的空白会被 Discord 去掉，所以 pattern 不能以空白开头或结尾。",
             "commandName": "Slash 指令名称",
             "commandDescription": "Slash 指令说明",
             "commandNote": "登录一律注册为全局指令，不设默认成员权限，并且一定保留「服务器安装」与「bot 私信」，确保你随时找得到它；不需要参数，回复一律只有执行的人看得到。",
-            "switchToCommandHint": "改变触发方式会先把 {command} 注册到 Discord，成功后才停用 {old}。",
-            "switchToMessageHint": "改变触发方式会先启用 {pattern}，再从 Discord 移除 {old}。",
             "save": "保存触发方式",
             "whereMessage": "消息 Pattern · 与 bot 的私信",
             "whereCommand": "Slash 指令 · {section}",
@@ -1580,7 +1576,11 @@
                 "start": "开始切换",
                 "failed": "{old} 保持启用，没有任何变更。",
                 "done": "切换完成。登录现在是 {trigger}，这一行在「{section}」的最上方。",
-                "sampleNote": "已用你的示例私信「{sample}」确认 {pattern} 会触发。"
+                "sampleNote": "已用你的示例私信「{sample}」确认 {pattern} 会触发。",
+                "fillCommand": "设置取代 {old} 的指令。下一步确认之前，什么都不会改变。",
+                "fillMessage": "设置取代 {old} 的消息 pattern。下一步确认之前，什么都不会改变。",
+                "next": "下一步",
+                "back": "上一步"
             },
             "sample": "示例私信（必填）",
             "sampleHint": "写一条你登录时会发给 bot 的私信。保存前会用它确认 pattern 真的会触发，避免打错字把自己锁在门外；示例不会被保存。",
@@ -1634,6 +1634,50 @@
                 "token": "签名已验证（token）"
             },
             "retention": "保留最近 20 条、最多 7 天内的投递；测试 webhook 不计入。"
+        },
+        "convertTrigger": {
+            "menuTitle": "触发方式",
+            "menuLabel": "触发方式：{kind}，可转换成另一种",
+            "current": "当前",
+            "lossesTitle": "转换后会失去或改变的东西",
+            "kept": "会保留：这个行为本身 —— id、标题、备注、启用状态、webhook 与密钥、统计和最近投递。",
+            "becomes": "转换后",
+            "submit": "转换",
+            "stale": "这个行为在页面加载后被改过，已重新加载列表，请确认后再转换一次。",
+            "toCommand": {
+                "title": "把「{title}」转成指令",
+                "intro": "消息触发会变成指令的叶节点：一个新指令，或某个已经有子指令的指令下多一个子指令。会先向 Discord 注册指令；Discord 拒绝的话，消息触发保持原样。",
+                "target": "指令",
+                "targets": {
+                    "new": "新指令",
+                    "existing": "加入现有指令作为子指令"
+                },
+                "noExisting": "目前没有已经有子指令的指令。只有自己一个动作的指令，要先在它的卡片里「转换成子指令」。",
+                "singleNote": "只列出已经有子指令的指令。{commands} 要先在它的卡片里「转换成子指令」，才能加入。",
+                "existing": "加入到",
+                "subcommand": "子指令名称",
+                "nameFromTitleEmpty": "标题无法转成名称。名称只能用小写 a–z、数字 0–9、_ 和 -，最多 32 个字符。"
+            },
+            "toMessage": {
+                "title": "把 /{command} 的叶节点转成消息触发",
+                "intro": "叶节点会变成消息触发：选它匹配的位置和匹配样式。会先存好消息触发，再把指令重新注册（不含这个叶节点）。",
+                "leaf": "要转换的叶节点",
+                "commandGone": "/{command} 没有其他叶节点，已一并删除。",
+                "leafPlaceholder": "选择叶节点"
+            },
+            "loss": {
+                "channel": "指定频道的限制：Discord 无法把指令限制在单一频道，指令会在整个服务器出现。",
+                "audience": "对象筛选（指定用户、群组）：转换后，所有看得到指令的人都能执行。",
+                "pattern": "匹配样式「{pattern}」、「匹配成功后停止」和排序位置。",
+                "replyPrivate": "回复可见度：默认改成只有执行的人看得到（原本公开在频道）。",
+                "payloadToCommand": "webhook 收到的 payload 会从消息内容改成指令的 options 和 _meta。",
+                "options": "指令参数（{count} 个 options）。",
+                "replyDm": "回复可见度：在服务器里会改成私信给作者，而不是只有执行的人看得到。",
+                "replyPublic": "回复可见度：在服务器里，原本只有自己看得到的回复会变成公开。",
+                "payloadToMessage": "webhook 收到的 payload 会从 options 改成消息内容。",
+                "commandRemoved": "这是 /{command} 最后一个叶节点：指令会被删除，并从 Discord 移除。",
+                "subcommandRemoved": "/{command} {subcommand} 会从 Discord 上的指令移除。"
+            }
         }
     },
     "config": {

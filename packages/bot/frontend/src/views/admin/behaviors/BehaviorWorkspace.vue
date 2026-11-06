@@ -21,6 +21,8 @@ const props = defineProps<{
     /** Audience Groups in use, sorted, and how many triggers use each. */
     groupNames: readonly string[];
     groupUse: ReadonlyMap<string, number>;
+    /** Every command on the page, whatever its section: a trigger conversion may join one. */
+    commands: readonly CommandView[];
     /** The card to open (an item that just moved here or was created), by itemKey. */
     expandKey: string | null;
     loading?: boolean;
@@ -35,6 +37,8 @@ const emit = defineEmits<{
     /** The login's trigger changed (or its command was resynced). */
     (e: 'systemUpdated', system: BehaviorItemView): void;
     (e: 'deleted', id: number): void;
+    /** A behavior changed its kind of trigger (#172): it is listed elsewhere now. */
+    (e: 'converted', item: BehaviorItemView): void;
     (e: 'add'): void;
     /** A new order for this section's message triggers (its Message Trigger Location). */
     (e: 'reorder', ids: number[]): void;
@@ -134,9 +138,11 @@ const note = computed(() => {
                         :command="c"
                         :expand="expandKey === itemKey(c)"
                         :guild-names="guildNames"
+                        :group-names="groupNames"
                         @updated="emit('commandUpdated', $event)"
                         @reload="emit('reload')"
                         @deleted="emit('reload')"
+                        @converted="emit('converted', $event)"
                     />
                 </div>
             </template>
@@ -152,9 +158,11 @@ const note = computed(() => {
                         :guild-names="guildNames"
                         :group-names="groupNames"
                         :group-use="groupUse"
+                        :commands="commands"
                         @updated="emit('updated', $event)"
                         @deleted="emit('deleted', $event)"
                         @reload="emit('reload')"
+                        @converted="emit('converted', $event)"
                     >
                         <template #handle>
                             <button
