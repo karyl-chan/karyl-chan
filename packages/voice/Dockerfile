@@ -46,8 +46,8 @@ FROM node:22-bullseye-slim AS runtime
 
 WORKDIR /usr/src/app
 
-# ffmpeg is required by @discordjs/voice for audio decoding; prism-media
-# discovers it via PATH (we don't ship ffmpeg-static). bullseye ships ffmpeg
+# ffmpeg is required for audio decoding; the voice manager spawns it from
+# PATH (we don't ship ffmpeg-static). bullseye ships ffmpeg
 # 4.3, covering all opus paths the service uses.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \

@@ -1,0 +1,215 @@
+/**
+ * The public-media rule (#158): one definition, shared by the bot's
+ * `assertPublicMediaTarget` and the voice media proxy.
+ */
+import { strict as assert } from "node:assert";
+import { afterEach, describe, it } from "node:test";
+import {
+  TargetRefusedError,
+  isPluginTargetAddress,
+  isPublicMediaAddress,
+  mediaPolicyFor,
+  resolvePublicMediaTarget,
+} from "../src/net/index.js";
+
+const fakeLookup =
+  (answers: Array<{ address: string; family: number }>) =>
+  async () =>
+    answers;
+
+describe("isPublicMediaAddress", () => {
+  it("passes public addresses only", () => {
+    assert.equal(isPublicMediaAddress("8.8.8.8"), true);
+    assert.equal(isPublicMediaAddress("2606:4700:4700::1111"), true);
+    for (const ip of [
+      "127.0.0.1",
+      "::1",
+      "10.0.0.5",
+      "192.168.1.1",
+      "169.254.169.254",
+      "100.100.100.200",
+      "0.0.0.0",
+      "224.0.0.1",
+      "64:ff9b::808:808",
+      "::ffff:127.0.0.1",
+    ]) {
+      assert.equal(isPublicMediaAddress(ip), false, ip);
+    }
+  });
+
+  it("lets private (only) through with the legacy hatch", () => {
+    assert.equal(isPublicMediaAddress("10.0.0.5", { allowPrivate: true }), true);
+    assert.equal(isPublicMediaAddress("127.0.0.1", { allowPrivate: true }), false);
+    assert.equal(
+      isPublicMediaAddress("169.254.169.254", { allowPrivate: true }),
+      false,
+    );
+  });
+
+  it("refuses a non-literal", () => {
+    assert.equal(isPublicMediaAddress("example.com"), false);
+  });
+});
+
+describe("resolvePublicMediaTarget", () => {
+  afterEach(() => {
+    delete process.env.WEBHOOK_ALLOW_PRIVATE;
+  });
+
+  it("returns the pinned address of a public literal", async () => {
+    assert.deepEqual(await resolvePublicMediaTarget("8.8.8.8", 443), [
+      { address: "8.8.8.8", family: 4 },
+    ]);
+    assert.deepEqual(await resolvePublicMediaTarget("[2606:4700::1]", 80), [
+      { address: "2606:4700::1", family: 6 },
+    ]);
+  });
+
+  it("returns every DNS answer when all are public", async () => {
+    const got = await resolvePublicMediaTarget("cdn.example.com", 443, {
+      lookup: fakeLookup([
+        { address: "1.1.1.1", family: 4 },
+        { address: "2606:4700::1", family: 6 },
+      ]),
+    });
+    assert.deepEqual(got, [
+      { address: "1.1.1.1", family: 4 },
+      { address: "2606:4700::1", family: 6 },
+    ]);
+  });
+
+  it("refuses the whole host when one answer is not public", async () => {
+    await assert.rejects(
+      resolvePublicMediaTarget("sneaky.example.com", 443, {
+        lookup: fakeLookup([
+          { address: "1.1.1.1", family: 4 },
+          { address: "10.0.0.5", family: 4 },
+        ]),
+      }),
+      TargetRefusedError,
+    );
+  });
+
+  it("refuses loopback / private / metadata literals", async () => {
+    for (const host of ["127.0.0.1", "10.0.0.5", "169.254.169.254", "::1"]) {
+      await assert.rejects(
+        resolvePublicMediaTarget(host, 80),
+        TargetRefusedError,
+        host,
+      );
+    }
+  });
+
+  it("honours WEBHOOK_ALLOW_PRIVATE per call, for private only", async () => {
+    process.env.WEBHOOK_ALLOW_PRIVATE = "true";
+    assert.deepEqual(await resolvePublicMediaTarget("10.0.0.5", 80), [
+      { address: "10.0.0.5", family: 4 },
+    ]);
+    await assert.rejects(
+      resolvePublicMediaTarget("127.0.0.1", 80),
+      TargetRefusedError,
+    );
+  });
+
+  it("refuses metadata hostnames without resolving them", async () => {
+    let asked = false;
+    await assert.rejects(
+      resolvePublicMediaTarget("Metadata.Google.Internal.", 80, {
+        lookup: async () => {
+          asked = true;
+          return [{ address: "8.8.8.8", family: 4 }];
+        },
+      }),
+      TargetRefusedError,
+    );
+    assert.equal(asked, false);
+  });
+
+  it("refuses an invalid host, an invalid port, and a DNS failure", async () => {
+    await assert.rejects(resolvePublicMediaTarget("bad host", 80), TargetRefusedError);
+    await assert.rejects(resolvePublicMediaTarget("8.8.8.8", 0), TargetRefusedError);
+    await assert.rejects(resolvePublicMediaTarget("8.8.8.8", 65536), TargetRefusedError);
+    await assert.rejects(
+      resolvePublicMediaTarget("gone.example.com", 80, {
+        lookup: async () => {
+          throw new Error("ENOTFOUND");
+        },
+      }),
+      TargetRefusedError,
+    );
+    await assert.rejects(
+      resolvePublicMediaTarget("empty.example.com", 80, { lookup: fakeLookup([]) }),
+      TargetRefusedError,
+    );
+  });
+});
+
+describe("isPluginTargetAddress", () => {
+  it("passes public and private, loopback only outside production", () => {
+    assert.equal(isPluginTargetAddress("8.8.8.8", { allowLoopback: false }), true);
+    assert.equal(isPluginTargetAddress("172.18.0.5", { allowLoopback: false }), true);
+    assert.equal(isPluginTargetAddress("fd00::5", { allowLoopback: false }), true);
+    assert.equal(isPluginTargetAddress("127.0.0.1", { allowLoopback: false }), false);
+    assert.equal(isPluginTargetAddress("127.0.0.1", { allowLoopback: true }), true);
+  });
+
+  it("never passes metadata, link-local, unspecified or reserved", () => {
+    for (const ip of ["169.254.169.254", "168.63.129.16", "fe80::1", "0.0.0.0", "240.0.0.1"]) {
+      assert.equal(isPluginTargetAddress(ip, { allowLoopback: true }), false, ip);
+    }
+  });
+
+  it("judges NAT64 / 6to4 by the IPv4 they embed", () => {
+    assert.equal(isPluginTargetAddress("64:ff9b::ac12:5", { allowLoopback: false }), true);
+    assert.equal(isPluginTargetAddress("64:ff9b::a9fe:a9fe", { allowLoopback: true }), false);
+    assert.equal(isPluginTargetAddress("64:ff9b:1::1", { allowLoopback: true }), false);
+  });
+});
+
+describe("mediaPolicyFor", () => {
+  afterEach(() => {
+    delete process.env.NODE_ENV;
+  });
+
+  it("is the public-media rule without a trusted origin", async () => {
+    const policy = mediaPolicyFor();
+    await assert.rejects(policy("172.18.0.5", 3000), TargetRefusedError);
+    assert.deepEqual(await policy("8.8.8.8", 443), [{ address: "8.8.8.8", family: 4 }]);
+  });
+
+  it("lets the trusted origin (exact host and port) use the plugin rule", async () => {
+    const policy = mediaPolicyFor("http://172.18.0.5:3000");
+    assert.deepEqual(await policy("172.18.0.5", 3000), [
+      { address: "172.18.0.5", family: 4 },
+    ]);
+    // Another port, or another private host, is just a media URL again.
+    await assert.rejects(policy("172.18.0.5", 3001), TargetRefusedError);
+    await assert.rejects(policy("172.18.0.6", 3000), TargetRefusedError);
+  });
+
+  it("uses the scheme's default port for an origin without one", async () => {
+    const policy = mediaPolicyFor("http://172.18.0.5");
+    assert.deepEqual(await policy("172.18.0.5", 80), [
+      { address: "172.18.0.5", family: 4 },
+    ]);
+  });
+
+  it("refuses a loopback trusted origin in production", async () => {
+    process.env.NODE_ENV = "production";
+    await assert.rejects(
+      mediaPolicyFor("http://127.0.0.1:3000")("127.0.0.1", 3000),
+      TargetRefusedError,
+    );
+    process.env.NODE_ENV = "development";
+    assert.deepEqual(await mediaPolicyFor("http://127.0.0.1:3000")("127.0.0.1", 3000), [
+      { address: "127.0.0.1", family: 4 },
+    ]);
+  });
+
+  it("ignores a malformed trusted origin", async () => {
+    await assert.rejects(
+      mediaPolicyFor("not a url")("172.18.0.5", 80),
+      TargetRefusedError,
+    );
+  });
+});

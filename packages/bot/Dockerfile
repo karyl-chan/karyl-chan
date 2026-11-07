@@ -111,8 +111,8 @@ FROM bullseye AS runtime
 WORKDIR /usr/src/app
 
 # ffmpeg is required by @discordjs/voice for audio decoding. We use
-# the apt package rather than the ffmpeg-static npm binary; prism-media
-# discovers it via PATH. bullseye ships ffmpeg 4.3, which covers all
+# the apt package rather than the ffmpeg-static npm binary; the voice
+# manager spawns it from PATH. bullseye ships ffmpeg 4.3, which covers all
 # opus codec paths the bot uses. --no-install-recommends keeps the
 # image slim (~80MB vs 200MB).
 RUN apt-get update \

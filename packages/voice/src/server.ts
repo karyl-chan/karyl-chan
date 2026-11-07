@@ -175,20 +175,34 @@ export function buildServer(opts: VoiceServerOptions): {
 
   server.post("/internal/voice/play", async (request, reply) => {
     if (!requireHmac(request, reply)) return;
-    const body = parseBody<{ guildId?: unknown; url?: unknown }>(request);
+    const body = parseBody<{
+      guildId?: unknown;
+      url?: unknown;
+      trustedOrigin?: unknown;
+    }>(request);
     if (typeof body.guildId !== "string" || body.guildId.length === 0) {
       return reply.code(400).send({ error: "guildId required" });
     }
     if (typeof body.url !== "string" || body.url.length === 0) {
       return reply.code(400).send({ error: "url required" });
     }
+    if (body.trustedOrigin !== undefined && typeof body.trustedOrigin !== "string") {
+      return reply.code(400).send({ error: "trustedOrigin must be a string" });
+    }
     try {
-      return playUrl(body.guildId, body.url);
+      // trustedOrigin: the bot vetted the plugin's own origin (see
+      // PlayOptions); this signed channel only carries it through.
+      return await playUrl(body.guildId, body.url, {
+        trustedOrigin: body.trustedOrigin,
+      });
     } catch (err) {
       if (err instanceof Error && err.message === "not_joined") {
         return reply
           .code(409)
           .send({ error: "bot not joined to a voice channel in that guild" });
+      }
+      if (err instanceof Error && err.message === "unsupported_media_url") {
+        return reply.code(400).send({ error: "unsupported media URL" });
       }
       throw err;
     }

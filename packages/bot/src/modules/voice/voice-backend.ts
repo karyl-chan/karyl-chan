@@ -32,6 +32,7 @@ import {
   shutdownAllVoice,
   setVoiceLogger,
   VoiceCapacityError,
+  type PlayOptions,
   type VoiceStatus,
 } from "@karyl-chan/voice";
 import { moduleLogger } from "../../logger.js";
@@ -62,7 +63,8 @@ export interface VoiceJoinRequest {
 export interface VoiceBackend {
   join(req: VoiceJoinRequest): Promise<VoiceStatus>;
   leave(guildId: string): Promise<VoiceStatus>;
-  play(guildId: string, url: string): Promise<VoiceStatus>;
+  /** `options.trustedOrigin`: see PlayOptions in @karyl-chan/voice. */
+  play(guildId: string, url: string, options?: PlayOptions): Promise<VoiceStatus>;
   pause(guildId: string, paused?: boolean): Promise<VoiceStatus>;
   stop(guildId: string): Promise<VoiceStatus>;
   status(guildId: string): Promise<VoiceStatus>;
@@ -103,8 +105,12 @@ export class InProcessVoiceBackend implements VoiceBackend {
     return leaveVoice(guildId);
   }
 
-  async play(guildId: string, url: string): Promise<VoiceStatus> {
-    return playUrl(guildId, url);
+  async play(
+    guildId: string,
+    url: string,
+    options?: PlayOptions,
+  ): Promise<VoiceStatus> {
+    return playUrl(guildId, url, options);
   }
 
   async pause(guildId: string, paused?: boolean): Promise<VoiceStatus> {
@@ -172,4 +178,4 @@ export function resetVoiceBackendForTest(): void {
   clientAccessor = () => null;
 }
 
-export { VoiceCapacityError, type VoiceStatus };
+export { VoiceCapacityError, type PlayOptions, type VoiceStatus };

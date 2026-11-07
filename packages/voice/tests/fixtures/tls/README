@@ -1,0 +1,8 @@
+Test-only TLS fixtures for the voice media proxy tests (#158). Never trust
+these anywhere else; the CA key was discarded after signing.
+
+ca.pem                     test CA (the proxy's injected `ca` in tests)
+server.pem / server.key    leaf for allowed.test, other.test, refused.test,
+                           127.0.0.1, signed by ca.pem
+untrusted.pem / .key       self-signed leaf for allowed.test (not from ca.pem),
+                           to prove upstream certificate verification is on

@@ -182,10 +182,11 @@ async function handlePlay(command: ChatInputCommandInteraction): Promise<void> {
   // Everything below waits on the network (DNS, the voice backend), so
   // defer first to stay inside Discord's 3-second interaction deadline.
   await command.deferReply({ flags: "Ephemeral" });
-  // SSRF guard (#162): ffmpeg fetches the URL itself, so refuse anything
-  // that isn't on the public internet (metadata, link-local, loopback,
-  // RFC1918 …) — the same policy the plugin voice.play RPC applies to
-  // arbitrary media URLs. Redirects / HLS segments are not covered (#158).
+  // SSRF guard (#162): refuse anything that isn't on the public internet
+  // (metadata, link-local, loopback, RFC1918 …) up front, with a readable
+  // reply — the same policy the plugin voice.play RPC applies to arbitrary
+  // media URLs. Redirect hops and HLS segments are vetted by the voice
+  // media proxy that every ffmpeg fetch goes through (#158).
   try {
     await assertPublicMediaUrl(parsed);
   } catch (err) {
@@ -217,6 +218,15 @@ async function handlePlay(command: ChatInputCommandInteraction): Promise<void> {
       await editReplyEmbed(
         command,
         tForInteraction(command, "voice.not-joined"),
+        FAILED_COLOR,
+      );
+      return;
+    }
+    if (err instanceof Error && err.message === "unsupported_media_url") {
+      // https to an IPv6 literal: the media proxy cannot carry it (#158).
+      await editReplyEmbed(
+        command,
+        tForInteraction(command, "voice.url-not-allowed"),
         FAILED_COLOR,
       );
       return;

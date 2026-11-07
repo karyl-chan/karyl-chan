@@ -225,8 +225,13 @@ export async function registerVoiceRpcRoutes(
       } catch {
         /* malformed plugin url — fall through to the strict check */
       }
+      // A play on the plugin's own origin may reach that (docker-internal)
+      // origin through the voice media proxy too — and only that origin;
+      // redirects and playlist entries elsewhere stay public-only (#158).
+      let trustedOrigin: string | undefined;
       try {
         if (pluginOrigin && parsed.origin === pluginOrigin) {
+          trustedOrigin = pluginOrigin;
           const port = parsed.port
             ? Number(parsed.port)
             : parsed.protocol === "https:"
@@ -249,12 +254,18 @@ export async function registerVoiceRpcRoutes(
       try {
         // The vetted, normalized URL — never the raw body string (see
         // assertPublicMediaUrl for the parser differential).
-        return await getVoiceBackend().play(body.guild_id, parsed.href);
+        return await getVoiceBackend().play(body.guild_id, parsed.href, {
+          trustedOrigin,
+        });
       } catch (err) {
         if (err instanceof Error && err.message === "not_joined") {
           reply
             .code(409)
             .send({ error: "bot not joined to a voice channel in that guild" });
+          return;
+        }
+        if (err instanceof Error && err.message === "unsupported_media_url") {
+          reply.code(400).send({ error: "unsupported media URL" });
           return;
         }
         if (err instanceof Error && err.message === "ffmpeg_not_available") {

@@ -68,6 +68,28 @@ describe("RemoteVoiceBackend", () => {
     ).rejects.toBeInstanceOf(VoiceCapacityError);
   });
 
+  it("carries a play's trusted plugin origin to the service", async () => {
+    const calls = stubFetch(200, { playing: true });
+    const backend = new RemoteVoiceBackend({
+      serviceUrl: "http://voice:4000",
+      secret: () => "s",
+    });
+    await backend.play("g1", "http://radio:3000/internal/audio/a.mp3", {
+      trustedOrigin: "http://radio:3000",
+    });
+    await backend.play("g1", "https://cdn.example.com/a.mp3");
+    expect(calls[0].url).toBe("http://voice:4000/internal/voice/play");
+    expect(JSON.parse(calls[0].body)).toEqual({
+      guildId: "g1",
+      url: "http://radio:3000/internal/audio/a.mp3",
+      trustedOrigin: "http://radio:3000",
+    });
+    expect(JSON.parse(calls[1].body)).toEqual({
+      guildId: "g1",
+      url: "https://cdn.example.com/a.mp3",
+    });
+  });
+
   it("surfaces other non-2xx as a generic error", async () => {
     stubFetch(409, { error: "not joined" });
     const backend = new RemoteVoiceBackend({

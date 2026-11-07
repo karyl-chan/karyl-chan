@@ -417,9 +417,6 @@ importers:
       opusscript:
         specifier: ^0.0.8
         version: 0.0.8
-      prism-media:
-        specifier: ^1.3.5
-        version: 1.3.5(@discordjs/opus@0.10.0)(opusscript@0.0.8)
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

@@ -8,17 +8,16 @@
  */
 
 import { addressBytes, normalizeIpLiteral } from "./ip-address.js";
+import { normalizeHostname } from "@karyl-chan/voice/net";
+
+// One hostname normalisation for every policy (shared with voice, #158).
+export { normalizeHostname };
 
 export type AllowlistEntry =
   | { kind: "host"; source: string; host: string }
   | { kind: "cidr"; source: string; bytes: number[]; prefix: number };
 
 const HOSTNAME_RE = /^[a-z0-9]([a-z0-9\-.]*[a-z0-9])?$/;
-
-/** Lower-case and drop the FQDN trailing dot, so `NAS.lan.` == `nas.lan`. */
-export function normalizeHostname(host: string): string {
-  return host.trim().toLowerCase().replace(/\.$/, "");
-}
 
 /**
  * Parse allowlist entries — a hostname (exact match), a bare IP, or a

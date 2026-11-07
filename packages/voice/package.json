@@ -10,6 +10,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./net": {
+      "import": "./dist/net/index.js",
+      "types": "./dist/net/index.d.ts"
     }
   },
   "license": "MIT",
@@ -29,8 +33,7 @@
     "@karyl-chan/plugin-sdk": "workspace:*",
     "fastify": "^5.8.5",
     "libsodium-wrappers": "^0.8.4",
-    "opusscript": "^0.0.8",
-    "prism-media": "^1.3.5"
+    "opusscript": "^0.0.8"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

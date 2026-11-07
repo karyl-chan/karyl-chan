@@ -10,10 +10,11 @@
  *
  * @discordjs/voice handles the gateway voice handshake and the UDP audio
  * relay; we track which guild has an active connection and give a thin facade
- * for join/leave/play/stop. Audio playback uses ffmpeg (via prism-media's
- * FFmpeg transformer) to decode any format the underlying ffmpeg binary
- * supports — direct .mp3 / .ogg / .opus URLs, HLS streams, etc. YouTube
- * extraction is intentionally out of scope; plugins feed us a direct URL.
+ * for join/leave/play/stop. Audio playback spawns ffmpeg (ffmpeg-decoder.ts)
+ * to decode direct .mp3 / .ogg / .opus URLs, HLS streams, etc. — fetching
+ * only through the per-process media proxy (media-proxy.ts), which vets and
+ * pins every request ffmpeg makes (#158). YouTube extraction is
+ * intentionally out of scope; plugins feed us a direct URL.
  *
  * The admission-control cap (MAX_CONCURRENT_VOICE_GUILDS) lives here so it
  * applies wherever the manager runs.
@@ -30,9 +31,11 @@ import {
   type AudioPlayer,
   type DiscordGatewayAdapterCreator,
 } from "@discordjs/voice";
-import { execSync } from "node:child_process";
-import { PassThrough, pipeline } from "node:stream";
-import prism from "prism-media";
+import { execSync, type ChildProcess } from "node:child_process";
+import { PassThrough, pipeline, type Readable } from "node:stream";
+import { spawnFfmpegDecoder } from "./ffmpeg-decoder.js";
+import { startMediaProxy, type MediaProxy } from "./media-proxy.js";
+import { mediaPolicyFor } from "./net/media-target.js";
 
 // ─── Logging ──────────────────────────────────────────────────────────
 //
@@ -61,13 +64,12 @@ export function setVoiceLogger(logger: VoiceLogger): void {
   log = logger;
 }
 
-// prism-media 1.3.5 has hardcoded ffmpeg discovery: it tries
-// require('ffmpeg-static') FIRST (ignoring FFMPEG_PATH env entirely), then
-// falls back to PATH lookup. We don't ship ffmpeg-static (it segfaults on
-// Debian Trixie), so prism's require() throws and it falls through to
-// spawn('ffmpeg', ...) which finds the apt-installed binary on PATH. Both the
-// bot image and the voice image apt-install ffmpeg.
-{
+// ffmpeg comes from PATH (both the bot image and the voice image
+// apt-install it; we don't ship ffmpeg-static, which segfaults on Debian
+// Trixie). We spawn it ourselves rather than through prism-media's FFmpeg,
+// which cannot take an env: the child must run without `no_proxy` (see
+// ffmpeg-decoder.ts).
+const ffmpegCommand: string = (() => {
   let resolved: string | null = null;
   try {
     const fromPath = execSync("command -v ffmpeg 2>/dev/null", {
@@ -75,9 +77,28 @@ export function setVoiceLogger(logger: VoiceLogger): void {
     }).trim();
     if (fromPath) resolved = fromPath;
   } catch {
-    // No system ffmpeg — voice playback will throw at first /play.
+    // No system ffmpeg — voice playback will fail at first /play.
   }
   log.info({ ffmpegPath: resolved }, "voice-manager: ffmpeg resolved");
+  return resolved ?? "ffmpeg";
+})();
+
+// Late-bound so setVoiceLogger applies to the proxies too.
+const proxyLog = { warn: (obj: unknown, msg: string) => log.warn(obj, msg) };
+
+// One media proxy per process (public-media policy), started on first play
+// and reused; closed by shutdownAllVoice. A failed start is not cached, so
+// the next play retries.
+let mediaProxy: Promise<MediaProxy> | null = null;
+// Per-play proxies (plays with a trustedOrigin), open while their ffmpeg runs.
+const playProxies = new Set<MediaProxy>();
+
+function getMediaProxy(): Promise<MediaProxy> {
+  mediaProxy ??= startMediaProxy({ log: proxyLog }).catch((err: unknown) => {
+    mediaProxy = null;
+    throw err;
+  });
+  return mediaProxy;
 }
 
 interface GuildVoiceState {
@@ -261,70 +282,87 @@ export function leaveVoice(guildId: string): VoiceStatus {
   return getStatus(guildId);
 }
 
+export interface PlayOptions {
+  /**
+   * Origin (`http://host:port`) of the plugin asking to play a URL on its
+   * own HTTP surface (e.g. the radio plugin's `/internal/audio/…`), which
+   * the caller vetted with the plugin-target policy. Requests to exactly
+   * that host and port may then reach a docker-internal address; every
+   * other request of the play stays under the public-media rule.
+   */
+  trustedOrigin?: string;
+}
+
 /**
- * Stream-decode and play an audio URL. Returns immediately once the player
- * accepts the resource — playback continues in the background. Replaces any
- * currently-playing track. Caller must already be joined via joinVoice().
+ * Stream-decode and play an audio URL. Resolves once the player accepts the
+ * resource — playback continues in the background. Replaces any
+ * currently-playing track. Caller must already be joined via joinVoice()
+ * (else rejects with `not_joined`).
+ *
+ * Async only because the media proxy starts lazily. A play with a
+ * `trustedOrigin` gets its own proxy (its policy differs), closed when its
+ * ffmpeg exits.
  */
-export function playUrl(guildId: string, url: string): VoiceStatus {
-  const state = states.get(guildId);
-  if (!state) {
+export async function playUrl(
+  guildId: string,
+  url: string,
+  options: PlayOptions = {},
+): Promise<VoiceStatus> {
+  if (!states.has(guildId)) {
     throw new Error("not_joined");
   }
-  // Spawn ffmpeg: input from URL, resample to 48kHz stereo PCM (Discord's
-  // native rate), pipe to stdout. prism-media handles the lifecycle.
-  //
-  // -reconnect keeps long radio streams alive across transient blips.
-  // -rw_timeout bounds a single input I/O wait (10s) so ffmpeg errors out
-  // instead of hanging on a dead connection; -reconnect then retries.
-  // -protocol_whitelist locks ffmpeg's input side to the HTTP stack (+ pipe/
-  // fd for prism's stdout, + crypto for AES-HLS) so a crafted playlist can't
-  // pivot to file:/concat:/data: etc. (defence-in-depth with the bot's SSRF
-  // host-policy check in voice-rpc.ts).
-  const ffmpeg = new prism.FFmpeg({
-    args: [
-      "-protocol_whitelist",
-      "http,https,tls,tcp,crypto,pipe,fd",
-      "-reconnect",
-      "1",
-      "-reconnect_streamed",
-      "1",
-      "-reconnect_delay_max",
-      "5",
-      "-rw_timeout",
-      "10000000",
-      "-loglevel",
-      "error",
-      "-i",
-      url,
-      "-analyzeduration",
-      "0",
-      "-f",
-      "s16le",
-      "-ar",
-      "48000",
-      "-ac",
-      "2",
-    ],
-  });
-  const child = (
-    ffmpeg as unknown as {
-      process?: {
-        stderr?: { on: (e: string, cb: (b: Buffer) => void) => void };
-      };
-    }
-  ).process;
-  child?.stderr?.on("data", (b: Buffer) => {
+  const ownProxy = options.trustedOrigin
+    ? await startMediaProxy({
+        resolveTarget: mediaPolicyFor(options.trustedOrigin),
+        log: proxyLog,
+      })
+    : null;
+  if (ownProxy) playProxies.add(ownProxy);
+  const proxy = ownProxy ?? (await getMediaProxy());
+  const closeOwnProxy = (): void => {
+    if (!ownProxy || !playProxies.delete(ownProxy)) return;
+    ownProxy
+      .close()
+      .catch((err: unknown) => log.warn({ err }, "media proxy close failed"));
+  };
+  // Re-read: a leave may have landed while the proxy was starting.
+  const state = states.get(guildId);
+  if (!state) {
+    closeOwnProxy();
+    throw new Error("not_joined");
+  }
+  // Spawn ffmpeg: input from URL (through the media proxy only), resampled
+  // to 48kHz stereo PCM (Discord's native rate) on stdout. The protocol /
+  // format whitelists and the proxy wiring live in ffmpeg-decoder.ts.
+  let child: ChildProcess;
+  try {
+    // Throws media_proxy_closed if a shutdown closed the proxy while this
+    // play awaited it; a later close kills the child (spawnFfmpegDecoder).
+    child = spawnFfmpegDecoder({ command: ffmpegCommand, url, proxy });
+  } catch (err) {
+    closeOwnProxy();
+    throw err;
+  }
+  child.on("close", closeOwnProxy);
+  child.stderr?.on("data", (b: Buffer) => {
     const text = b.toString("utf8").trim();
     if (text) log.warn({ url, guildId, ffmpeg: text }, "ffmpeg stderr");
   });
   // A ~2 s PCM jitter buffer between ffmpeg and the audio player. pipeline()
   // ties their lifecycles: an ffmpeg error/EOF tears down the buffer, and the
-  // buffer being destroyed (player swapping in the next track) kills the
-  // ffmpeg child — so a skip never leaks a zombie ffmpeg.
+  // buffer being destroyed (player swapping in the next track) ends the
+  // pipeline with an error, on which we kill the ffmpeg child — so a skip
+  // never leaks a zombie ffmpeg.
   const PCM_BYTES_PER_SECOND = 48_000 * 2 * 2;
   const buffered = new PassThrough({ highWaterMark: PCM_BYTES_PER_SECOND * 2 });
-  pipeline(ffmpeg, buffered, (err) => {
+  child.on("error", (err) => {
+    // Spawn failure (no ffmpeg on PATH) — end the track instead of hanging.
+    log.error({ err, url, guildId }, "ffmpeg failed to start");
+    buffered.destroy(err);
+  });
+  // stdio is ["ignore", "pipe", "pipe"], so stdout is always a stream.
+  pipeline(child.stdout as Readable, buffered, (err) => {
+    if (err) child.kill("SIGKILL");
     // ERR_STREAM_PREMATURE_CLOSE just means the player swapped this track out
     // (skip / stop / leave) and destroyed the buffer — expected.
     if (
@@ -400,8 +438,22 @@ export function getStatus(guildId: string): VoiceStatus {
   };
 }
 
-/** Tear down all active voice connections (graceful shutdown / tests). */
+/**
+ * Tear down all active voice connections and the media proxy (graceful
+ * shutdown / tests). The proxy closes in the background; a later play
+ * starts a fresh one.
+ */
 export function shutdownAllVoice(): void {
+  const proxy = mediaProxy;
+  mediaProxy = null;
+  const closing = [
+    ...(proxy ? [proxy.then((p) => p.close())] : []),
+    ...[...playProxies].map((p) => p.close()),
+  ];
+  playProxies.clear();
+  for (const c of closing) {
+    c.catch((err: unknown) => log.warn({ err }, "media proxy shutdown failed"));
+  }
   for (const [guildId, state] of states.entries()) {
     try {
       state.player.stop(true);

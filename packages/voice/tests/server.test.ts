@@ -118,6 +118,32 @@ describe("voice server HMAC gate", () => {
     });
     assert.equal(res.statusCode, 400);
   });
+
+  it("400s a play whose trustedOrigin is not a string", async () => {
+    const { server } = buildServer({ hmacSecret: SECRET, botInternalUrl: "http://bot" });
+    const path = "/internal/voice/play";
+    const body = JSON.stringify({ guildId: "g1", url: "http://x/a.mp3", trustedOrigin: 5 });
+    const res = await server.inject({
+      method: "POST",
+      url: path,
+      headers: signedHeaders(path, body),
+      payload: body,
+    });
+    assert.equal(res.statusCode, 400);
+  });
+
+  it("409s a play for a guild that was never joined", async () => {
+    const { server } = buildServer({ hmacSecret: SECRET, botInternalUrl: "http://bot" });
+    const path = "/internal/voice/play";
+    const body = JSON.stringify({ guildId: "never-joined", url: "http://x/a.mp3" });
+    const res = await server.inject({
+      method: "POST",
+      url: path,
+      headers: signedHeaders(path, body),
+      payload: body,
+    });
+    assert.equal(res.statusCode, 409);
+  });
 });
 
 describe("voice server /health", () => {
