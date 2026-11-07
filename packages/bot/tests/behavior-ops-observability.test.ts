@@ -63,6 +63,26 @@ describe("BH-6.1 forward stats", () => {
     expect(st.consecutiveFailures).toBe(0);
     expect(st.lastFiredAt).not.toBeNull();
   });
+
+  it("counts every outcome when one behavior fires concurrently", async () => {
+    const id = await seedMessageTrigger();
+    // The first burst also races the row's creation.
+    await Promise.all(
+      Array.from({ length: 20 }, () => recordForwardOutcome(id, true)),
+    );
+    let st = (await findStatsBulk([id])).get(id)!;
+    expect(st.successCount).toBe(20);
+
+    await Promise.all(
+      Array.from({ length: 15 }, () => recordForwardOutcome(id, false, "boom")),
+    );
+    st = (await findStatsBulk([id])).get(id)!;
+    expect(st.successCount).toBe(20);
+    expect(st.failureCount).toBe(15);
+    expect(st.consecutiveFailures).toBe(15);
+    expect(st.lastError).toBe("boom");
+    expect(st.lastErrorAt).not.toBeNull();
+  });
 });
 
 describe("BH-6.2 test-fire", () => {
