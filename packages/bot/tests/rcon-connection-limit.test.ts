@@ -31,7 +31,6 @@ vi.mock("../src/modules/builtin-features/rcon-forward/pinned-rcon.js", () => {
       send: ReturnType<typeof vi.fn>;
       removeAllListeners: ReturnType<typeof vi.fn>;
       on: ReturnType<typeof vi.fn>;
-      repin: ReturnType<typeof vi.fn>;
     },
   ) {
     this.connect = vi.fn().mockResolvedValue(undefined);
@@ -39,7 +38,6 @@ vi.mock("../src/modules/builtin-features/rcon-forward/pinned-rcon.js", () => {
     this.send = vi.fn();
     this.removeAllListeners = vi.fn();
     this.on = vi.fn().mockReturnThis();
-    this.repin = vi.fn();
   }
   return { PinnedRcon: MockPinnedRcon };
 });

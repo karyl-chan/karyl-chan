@@ -4,6 +4,9 @@
  * rebinding guard). DNS (`dns/promises.lookup`) and the pinned client
  * are stubbed; the host policy itself is the real one. That the pinned
  * client connects only to its addresses is tests/pinned-rcon.test.ts.
+ *
+ * #163 — every reconnect builds a fresh client, and a replaced client's
+ * late events never touch the connection that replaced it.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -20,7 +23,6 @@ interface FakeRcon {
   port: number;
   password: string;
   pinned: Pinned;
-  repin: ReturnType<typeof vi.fn>;
   connect: ReturnType<typeof vi.fn>;
   disconnect: ReturnType<typeof vi.fn>;
   send: ReturnType<typeof vi.fn>;
@@ -36,9 +38,6 @@ vi.mock("../src/modules/builtin-features/rcon-forward/pinned-rcon.js", () => {
     this.port = port;
     this.password = password;
     this.pinned = pinned;
-    this.repin = vi.fn((next: Pinned) => {
-      this.pinned = next;
-    });
     this.handlers = new Map();
     this.connect = vi.fn();
     this.disconnect = vi.fn();
@@ -53,7 +52,10 @@ vi.mock("../src/modules/builtin-features/rcon-forward/pinned-rcon.js", () => {
     this.handlers.clear();
   };
   MockPinnedRcon.prototype.emit = function (this: Self, event: string, ...args: unknown[]) {
-    for (const cb of this.handlers.get(event) ?? []) cb(...args);
+    const listeners = this.handlers.get(event) ?? [];
+    // Like an EventEmitter: an "error" nobody listens to throws.
+    if (event === "error" && listeners.length === 0) throw args[0];
+    for (const cb of listeners) cb(...args);
   };
   return { PinnedRcon: MockPinnedRcon };
 });
@@ -194,23 +196,19 @@ describe("RCON reconnect", () => {
     return channel;
   }
 
-  it("re-resolves and repins the client to the new IP before connecting", async () => {
+  it("re-resolves and connects a fresh client pinned to the new IP", async () => {
     await connectThenDrop(answer("10.0.0.5"));
     mockedLookup.mockResolvedValue(answer("10.0.0.6"));
 
     await vi.advanceTimersByTimeAsync(2000);
 
     expect(mockedLookup).toHaveBeenCalledTimes(2);
-    expect(instances).toHaveLength(1);
-    expect(instances[0].repin).toHaveBeenCalledWith([{ address: "10.0.0.6", family: 4 }]);
-    expect(instances[0].connect).toHaveBeenCalledTimes(2);
-    expect(instances[0].repin.mock.invocationCallOrder[0]).toBeLessThan(
-      instances[0].connect.mock.invocationCallOrder[1],
-    );
+    expect(instances).toHaveLength(2);
+    expect(instances[1].pinned).toEqual([{ address: "10.0.0.6", family: 4 }]);
+    expect(instances[1].connect).toHaveBeenCalledOnce();
+    expect(instances[0].connect).toHaveBeenCalledOnce();
+    expect(RconConnectionService.getConnection("c1")?.conn).toBe(instances[1]);
     expect(RconConnectionService.getConnection("c1")?.host).toBe("mc-server");
-    // The listeners were re-attached; a later auth resets the attempt count.
-    instances[0].emit("auth");
-    expect(RconConnectionService.getConnection("c1")?.reconnectAttempts).toBe(0);
   });
 
   it("fails the attempt when the host now resolves to metadata, then tries again", async () => {
@@ -219,14 +217,14 @@ describe("RCON reconnect", () => {
 
     await vi.advanceTimersByTimeAsync(2000);
 
-    expect(instances[0].repin).not.toHaveBeenCalled();
-    expect(instances[0].connect).toHaveBeenCalledOnce();
+    expect(instances).toHaveLength(1);
 
     // The next attempt (4 s backoff) resolves to the real address again.
     await vi.advanceTimersByTimeAsync(4000);
 
-    expect(instances[0].repin).toHaveBeenCalledWith([{ address: "10.0.0.5", family: 4 }]);
-    expect(instances[0].connect).toHaveBeenCalledTimes(2);
+    expect(instances).toHaveLength(2);
+    expect(instances[1].pinned).toEqual([{ address: "10.0.0.5", family: 4 }]);
+    expect(instances[1].connect).toHaveBeenCalledOnce();
     expect(embedTitles(channel)).toEqual(["RCON Error", "Connection Lost", "Connection Lost"]);
   });
 
@@ -236,11 +234,12 @@ describe("RCON reconnect", () => {
 
     await vi.advanceTimersByTimeAsync(2000);
 
-    expect(instances[0].connect).toHaveBeenCalledOnce();
+    expect(instances).toHaveLength(1);
 
     await vi.advanceTimersByTimeAsync(4000);
 
-    expect(instances[0].connect).toHaveBeenCalledTimes(2);
+    expect(instances).toHaveLength(2);
+    expect(instances[1].connect).toHaveBeenCalledOnce();
   });
 
   it("gives up after the last attempt when every re-resolve is refused", async () => {
@@ -249,8 +248,7 @@ describe("RCON reconnect", () => {
 
     await vi.advanceTimersByTimeAsync(2000 + 4000 + 8000);
 
-    expect(instances[0].repin).not.toHaveBeenCalled();
-    expect(instances[0].connect).toHaveBeenCalledOnce();
+    expect(instances).toHaveLength(1);
     expect(RconConnectionService.getConnection("c1")).toBeUndefined();
     expect(embedTitles(channel).at(-1)).toBe("Connection Failed");
     expect(botEventLog.record).toHaveBeenCalledWith(
@@ -288,7 +286,122 @@ describe("RCON reconnect", () => {
 
     await vi.advanceTimersByTimeAsync(2000);
 
-    expect(instances[0].repin).not.toHaveBeenCalled();
-    expect(instances[0].connect).toHaveBeenCalledOnce();
+    expect(instances).toHaveLength(1);
+  });
+});
+
+describe("RCON reconnect lifecycle", () => {
+  async function connected() {
+    vi.useFakeTimers();
+    mockedLookup.mockResolvedValue(answer("10.0.0.5"));
+    const channel = makeChannel();
+    await RconConnectionService.initializeConnection("c1", "mc-server", 25575, "pw", channel);
+    instances[0].emit("auth");
+    return channel;
+  }
+
+  /** Drop the current client and let the next attempt's backoff elapse. */
+  async function dropAndRetry(delayMs: number) {
+    instances.at(-1)!.emit("error", new Error("ECONNRESET"));
+    await vi.advanceTimersByTimeAsync(delayMs);
+  }
+
+  it("a replaced client's late end leaves the re-created connection alone", async () => {
+    await connected();
+    await RconConnectionService.initializeConnection("c1", "mc-server", 25575, "pw", makeChannel());
+    expect(instances).toHaveLength(2);
+
+    instances[0].emit("end");
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(RconConnectionService.getConnection("c1")?.conn).toBe(instances[1]);
+  });
+
+  it("the dropped client's late end leaves the reconnected connection alone", async () => {
+    await connected();
+    await dropAndRetry(2000);
+    expect(instances).toHaveLength(2);
+
+    instances[0].emit("end");
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(RconConnectionService.getConnection("c1")?.conn).toBe(instances[1]);
+  });
+
+  it("a replaced client's late error neither throws nor drives another attempt", async () => {
+    const channel = await connected();
+    await dropAndRetry(2000);
+    const sent = channel.send.mock.calls.length;
+
+    expect(() => instances[0].emit("error", new Error("EPIPE"))).not.toThrow();
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(instances).toHaveLength(2);
+    expect(channel.send.mock.calls.length).toBe(sent);
+    expect(RconConnectionService.getConnection("c1")?.reconnectAttempts).toBe(1);
+  });
+
+  it("a cleaned-up client's late error does not throw", async () => {
+    await connected();
+    await RconConnectionService.cleanupConnection("c1");
+
+    expect(() => instances[0].emit("error", new Error("EPIPE"))).not.toThrow();
+  });
+
+  it("queues commands until the reconnected client authenticates", async () => {
+    await connected();
+    instances[0].emit("error", new Error("ECONNRESET"));
+
+    expect(RconConnectionService.getConnection("c1")?.authenticated).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(2000);
+    RconConnectionService.getConnection("c1")!.queuedCommands.push({
+      content: "list",
+      timestamp: Date.now(),
+      channelId: "channel-1",
+    });
+    instances[1].emit("auth");
+
+    expect(RconConnectionService.getConnection("c1")?.authenticated).toBe(true);
+    expect(instances[1].send).toHaveBeenCalledWith("list");
+    expect(instances[0].send).not.toHaveBeenCalled();
+  });
+
+  it("a successful reconnect resets the attempt count", async () => {
+    const channel = await connected();
+    await dropAndRetry(2000);
+    expect(RconConnectionService.getConnection("c1")?.reconnectAttempts).toBe(1);
+
+    instances[1].emit("auth");
+    expect(RconConnectionService.getConnection("c1")?.reconnectAttempts).toBe(0);
+
+    // The next drop starts the count again, with the first backoff.
+    await dropAndRetry(2000);
+    expect(instances).toHaveLength(3);
+    const lost = channel.send.mock.calls
+      .map((args: unknown[]) => (args[0] as { embeds: Array<{ title: string; description?: string }> }).embeds[0])
+      .filter((embed) => embed.title === "Connection Lost")
+      .map((embed) => embed.description);
+    expect(lost).toEqual(["正在嘗試重新連接 (1/3)...", "正在嘗試重新連接 (1/3)..."]);
+  });
+
+  it("notifies the channel when socket errors use up every attempt", async () => {
+    const channel = await connected();
+    await dropAndRetry(2000);
+    await dropAndRetry(4000);
+    await dropAndRetry(8000);
+    expect(instances).toHaveLength(4);
+
+    instances[3].emit("error", new Error("ECONNREFUSED"));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(RconConnectionService.getConnection("c1")).toBeUndefined();
+    expect(embedTitles(channel).at(-1)).toBe("Connection Failed");
+    expect(botEventLog.record).toHaveBeenCalledWith(
+      "error",
+      "feature",
+      "RCON reconnect exhausted: mc-server:25575",
+      expect.objectContaining({ host: "mc-server", attempts: 3 }),
+    );
   });
 });
