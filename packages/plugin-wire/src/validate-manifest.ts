@@ -23,8 +23,9 @@ import type {
  * module confirms the URL parses and is http(s); whether that target is
  * *allowed* is the bot's call, applied after this returns.
  *
- * Rule IDs (V-02 ~ V-08, V-C1 ~ V-C3) trace to B-sdk §4. V-01 was
- * `schema_version === "1"`, no longer enforced — see `manifest.ts`.
+ * Rule IDs (V-01 ~ V-08, V-C1 ~ V-C3) trace to B-sdk §4. V-01 was
+ * `schema_version === "1"`; it now only rejects values other than
+ * absent / null / "1" — see `isSupportedSchemaVersion` and `manifest.ts`.
  */
 
 /** Hard cap on how many capabilities one plugin may declare. */
@@ -44,21 +45,27 @@ function reject(error: string): { ok: false; error: string } {
   return { ok: false, error };
 }
 
+/**
+ * The V-01 rule: which `schema_version` values this build understands.
+ * The pre-release SDK dropped the field, so absent (and `null`) is fine,
+ * as is the legacy `"1"`. Any other value signals a deliberate
+ * future-schema attempt this build doesn't understand.
+ *
+ * Exported so the bot's track-3 command guard applies the exact rule
+ * the register-time validation does, rather than a copy that can drift.
+ */
+export function isSupportedSchemaVersion(value: unknown): boolean {
+  return value === undefined || value === null || value === "1";
+}
+
 export function validateManifestProtocol(input: unknown): ManifestValidation {
   if (!input || typeof input !== "object") {
     return reject("manifest must be an object");
   }
   const m = input as Record<string, unknown>;
 
-  // schema_version was the V-01 check — pre-release SDK dropped the
-  // field, so we tolerate both absent and the legacy "1" value. Any
-  // other value is still rejected because it signals a deliberate
-  // future-schema attempt that this build doesn't understand.
-  if (
-    m.schema_version !== undefined &&
-    m.schema_version !== null &&
-    m.schema_version !== "1"
-  ) {
+  // V-01 — see `isSupportedSchemaVersion`.
+  if (!isSupportedSchemaVersion(m.schema_version)) {
     return reject(
       `unsupported schema_version (got ${JSON.stringify(m.schema_version)})`,
     );
