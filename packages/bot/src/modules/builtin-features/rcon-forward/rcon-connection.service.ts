@@ -317,12 +317,17 @@ export class RconConnectionService {
               log.error({ err: e }, "failed to send RCON error embed"),
             );
         }
-        this.handleConnectionError(connectionName, host, port, password);
+        this.handleConnectionError(connectionName, host, port, password).catch(
+          (e: unknown) =>
+            log.error({ err: e, connectionName }, "RCON reconnect failed"),
+        );
       })
       .on("end", () => {
         if (!isCurrent()) return;
         log.info({ connectionName }, "Connection ended");
-        this.handleConnectionEnd(connectionName);
+        this.handleConnectionEnd(connectionName).catch((e: unknown) =>
+          log.error({ err: e, connectionName }, "清理連接時發生錯誤"),
+        );
       });
   }
 
@@ -431,11 +436,16 @@ export class RconConnectionService {
     }
   }
 
-  /** Every attempt failed: notify the channels, then close the connection. */
+  /** Every attempt failed: close the connection, then notify its channels. */
   private static async giveUpReconnecting(
     connectionName: string,
     connection: RconConnection,
   ) {
+    // Close first: the notices below wait on Discord, and by then the
+    // name may belong to a connection re-created in the meantime.
+    if (this.connectionMap[connectionName] === connection) {
+      await this.handleConnectionEnd(connectionName);
+    }
     for (const channel of connection.channels) {
       try {
         await channel.send({
@@ -465,7 +475,6 @@ export class RconConnectionService {
         attempts: connection.reconnectAttempts,
       },
     );
-    await this.handleConnectionEnd(connectionName);
   }
 
   private static processQueuedCommands(connectionName: string) {

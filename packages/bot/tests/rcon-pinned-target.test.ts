@@ -404,4 +404,26 @@ describe("RCON reconnect lifecycle", () => {
       expect.objectContaining({ host: "mc-server", attempts: 3 }),
     );
   });
+
+  it("a connection re-created while the failure notice is sent stays", async () => {
+    const channel = await connected();
+    await dropAndRetry(2000);
+    await dropAndRetry(4000);
+    await dropAndRetry(8000);
+    let deliver: () => void = () => {};
+    channel.send.mockImplementation((message: { embeds: Array<{ title: string }> }) =>
+      message.embeds[0].title === "Connection Failed"
+        ? new Promise<void>((resolve) => {
+            deliver = resolve;
+          })
+        : Promise.resolve(),
+    );
+    instances[3].emit("error", new Error("ECONNREFUSED")); // "Connection Failed" now in flight
+
+    await RconConnectionService.initializeConnection("c1", "mc-server", 25575, "pw", makeChannel());
+    deliver();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(RconConnectionService.getConnection("c1")?.conn).toBe(instances[4]);
+  });
 });
