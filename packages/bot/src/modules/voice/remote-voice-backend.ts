@@ -20,7 +20,11 @@ import type {
   VoiceBackend,
   VoiceJoinRequest,
 } from "./voice-backend.js";
-import { VoiceCapacityError, type VoiceStatus } from "@karyl-chan/voice";
+import {
+  VoiceCapacityError,
+  type PlayOptions,
+  type VoiceStatus,
+} from "@karyl-chan/voice";
 
 const log = moduleLogger("remote-voice-backend");
 
@@ -68,8 +72,16 @@ export class RemoteVoiceBackend implements VoiceBackend {
     return this.call("/internal/voice/leave", { guildId });
   }
 
-  async play(guildId: string, url: string): Promise<VoiceStatus> {
-    return this.call("/internal/voice/play", { guildId, url });
+  async play(
+    guildId: string,
+    url: string,
+    options?: PlayOptions,
+  ): Promise<VoiceStatus> {
+    return this.call("/internal/voice/play", {
+      guildId,
+      url,
+      ...(options?.trustedOrigin ? { trustedOrigin: options.trustedOrigin } : {}),
+    });
   }
 
   async pause(guildId: string, paused?: boolean): Promise<VoiceStatus> {

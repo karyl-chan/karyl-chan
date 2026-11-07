@@ -24,5 +24,6 @@ export {
   VoiceCapacityError,
   type VoiceStatus,
   type JoinOptions,
+  type PlayOptions,
   type VoiceLogger,
 } from "./voice-manager.js";

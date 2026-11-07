@@ -70,7 +70,9 @@ describe("voice.play RPC media URL", () => {
   it("hands playback the normalized URL, not a backslash-smuggled raw string", async () => {
     const res = await postPlay(`http://8.8.8.8${BACKSLASH}@127.0.0.1/`);
     expect(res.statusCode).toBe(200);
-    expect(play).toHaveBeenCalledWith("g1", "http://8.8.8.8/@127.0.0.1/");
+    expect(play).toHaveBeenCalledWith("g1", "http://8.8.8.8/@127.0.0.1/", {
+      trustedOrigin: undefined,
+    });
   });
 
   it("refuses a backslash-smuggled loopback target", async () => {
@@ -79,7 +81,7 @@ describe("voice.play RPC media URL", () => {
     expect(play).not.toHaveBeenCalled();
   });
 
-  it("hands playback the normalized URL on the plugin's own origin too", async () => {
+  it("hands playback the normalized URL on the plugin's own origin too, trusting only that origin", async () => {
     vi.mocked(lookup).mockResolvedValue([
       { address: "172.18.0.5", family: 4 },
     ] as never);
@@ -88,6 +90,7 @@ describe("voice.play RPC media URL", () => {
     expect(play).toHaveBeenCalledWith(
       "g1",
       `${PLUGIN_URL}/internal/audio/ab.mp3`,
+      { trustedOrigin: PLUGIN_URL },
     );
   });
 });

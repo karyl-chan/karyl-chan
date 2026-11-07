@@ -11,6 +11,7 @@ import {
   type AddressClass,
 } from "./ip-address.js";
 import {
+  isPluginTargetAddress,
   isPublicMediaAddress,
   legacyAllowPrivate,
   METADATA_HOSTNAMES,
@@ -333,24 +334,14 @@ export async function assertPluginTarget(
   port: number,
 ): Promise<void> {
   // Same per-call read rationale as `legacyAllowPrivate` — tests
-  // toggle NODE_ENV per-case to assert the prod vs dev branch.
-  const isProd = process.env.NODE_ENV === "production";
-  const deniedClass = (cls: AddressClass): boolean => {
-    if (cls === "public" || cls === "private") return false;
-    if (cls === "loopback") return isProd;
-    return true; // linkLocal, metadata, unspecified, reserved
-  };
+  // toggle NODE_ENV per-case to assert the prod vs dev branch. The rule
+  // is `isPluginTargetAddress` in @karyl-chan/voice/net, shared with the
+  // voice media proxy (a plugin playing a URL on its own origin, #158).
+  const allowLoopback = process.env.NODE_ENV !== "production";
   await checkHost(
     host,
     port,
-    (address) => {
-      const cls = classOf(address);
-      if (cls === "transition") {
-        const inner = embeddedClass(address);
-        return inner === null || deniedClass(inner);
-      }
-      return deniedClass(cls);
-    },
+    (address) => !isPluginTargetAddress(address, { allowLoopback }),
     "Plugin 目標不被允許",
   );
 }
