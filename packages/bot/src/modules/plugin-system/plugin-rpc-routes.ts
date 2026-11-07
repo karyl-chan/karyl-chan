@@ -31,6 +31,7 @@ import { decryptSecret } from "../../utils/crypto.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { shouldRecord } from "../bot-events/bot-event-dedup.js";
 import { featureReachResolver } from "../feature-toggle/feature-reach-resolver.js";
+import { pluginReachesGuild } from "./plugin-guild-reach.js";
 import { jwtService } from "../web-core/jwt.service.js";
 import { discordErrorStatus } from "../web-core/discord-error.js";
 import { assertPluginTarget } from "../../utils/host-policy.js";
@@ -302,12 +303,14 @@ async function fetchChannelOr404(
 }
 
 /**
- * PM-8: the ONE reach check every guild-targeted RPC gate goes through.
- * "Effectively enabled" means the full 3-tier chain (per-guild row →
- * operator default → manifest default), cached in FeatureReachResolver;
- * a plugin that declares NO guild features passes unconditionally (its
- * only per-guild surface is the plugin-level enabled flag, enforced at
- * dispatch/auth).
+ * PM-8: the ONE reach check every guild-targeted RPC gate goes through —
+ * Guild Reach (plugin-guild-reach.ts). Feature Reach: "effectively
+ * enabled" means the full 3-tier chain (per-guild row → operator default
+ * → manifest default), cached in FeatureReachResolver; a plugin that
+ * declares NO guild features passes unconditionally (its only per-guild
+ * surface is the plugin-level enabled flag, enforced at dispatch/auth).
+ * Failing that, a usable track-3 command grants reach, so a command's
+ * replies into the guild follow the command, not the features (#129).
  *
  * Replaces the previous explicit-rows-only reads
  * (`findEnabledFeaturesByPluginGuild`), which 403'd two legitimate
@@ -323,23 +326,20 @@ async function pluginHasGuildReach(
   if (!plugin) return false;
   const manifest = parsePluginManifest(plugin);
   if (!manifest) return false;
-  return featureReachResolver.hasAnyFeatureEnabledInGuild(
-    pluginId,
-    guildId,
-    manifest,
-  );
+  return pluginReachesGuild(plugin, guildId, manifest);
 }
 
 /**
- * Per-guild feature gate shared by every channel-targeted message RPC: the
- * plugin must have at least one effectively-enabled feature in the
- * channel's guild. DM and group-DM channels are exempt (no guildId);
- * threads inherit guildId from their parent and go through the gate,
- * which is the intended behaviour. Writes the 403 and returns false when
+ * Per-guild reach gate shared by every channel-targeted message RPC: the
+ * plugin must have Guild Reach in the channel's guild (an
+ * effectively-enabled feature, or a usable track-3 command). DM and
+ * group-DM channels are exempt (no guildId); threads inherit guildId
+ * from their parent and go through the gate, which is the intended
+ * behaviour. Writes the 403 and returns false when
  * blocked. `warnVerb` additionally records a deduped warn event
  * (messages.send's historical behavior).
  */
-async function passesGuildFeatureGate(
+async function passesGuildReachGate(
   channel: NonNullable<Awaited<ReturnType<Client["channels"]["fetch"]>>>,
   ctx: { pluginId: number; pluginKey: string },
   reply: FastifyReply,
@@ -353,7 +353,7 @@ async function passesGuildFeatureGate(
     botEventLog.record(
       "warn",
       "feature",
-      `plugin ${ctx.pluginKey} tried to ${opts.warnVerb} to guild ${channelGuildId} without enabled feature`,
+      `plugin ${ctx.pluginKey} tried to ${opts.warnVerb} to guild ${channelGuildId} without enabled feature or usable plugin command`,
       { pluginId: ctx.pluginId, guildId: channelGuildId },
     );
   }
@@ -551,7 +551,7 @@ function registerRpcRoutes(
         reply.code(400).send({ error: "channel is not text-sendable" });
         return;
       }
-      if (!(await passesGuildFeatureGate(channel, ctx, reply, { warnVerb: "send" }))) return;
+      if (!(await passesGuildReachGate(channel, ctx, reply, { warnVerb: "send" }))) return;
       // Sanitize allowed_mentions — plugins must not be able to force
       // mass-ping behaviour. We strip `parse` entirely (the field that
       // toggles broad @everyone / @here / "every role mention in
@@ -773,7 +773,7 @@ function registerRpcRoutes(
       }
       // Gate symmetric with messages.send/edit: a plugin enabled in guild A
       // cannot delete messages in guild B even if it knows the ids.
-      if (!(await passesGuildFeatureGate(channel, ctx, reply))) return;
+      if (!(await passesGuildReachGate(channel, ctx, reply))) return;
       try {
         const msg = await channel.messages.fetch(body.message_id);
         await msg.delete();
@@ -846,7 +846,7 @@ function registerRpcRoutes(
         reply.code(400).send({ error: "channel not text-based" });
         return;
       }
-      if (!(await passesGuildFeatureGate(channel, ctx, reply))) return;
+      if (!(await passesGuildReachGate(channel, ctx, reply))) return;
       if (body.components !== undefined) {
         const failure = findUnownedCustomId(ctx.pluginKey, body.components);
         if (failure) {
@@ -906,7 +906,7 @@ function registerRpcRoutes(
         reply.code(400).send({ error: "channel not text-based" });
         return;
       }
-      if (!(await passesGuildFeatureGate(channel, ctx, reply))) return;
+      if (!(await passesGuildReachGate(channel, ctx, reply))) return;
       try {
         const msg = await channel.messages.fetch(body.message_id);
         await msg.react(body.emoji);
@@ -957,7 +957,7 @@ function registerRpcRoutes(
         reply.code(400).send({ error: "channel does not support typing" });
         return;
       }
-      if (!(await passesGuildFeatureGate(channel, ctx, reply))) return;
+      if (!(await passesGuildReachGate(channel, ctx, reply))) return;
       try {
         await channel.sendTyping();
         return { ok: true };

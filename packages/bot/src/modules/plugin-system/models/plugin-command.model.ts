@@ -98,6 +98,16 @@ export const findPluginCommandsByPlugin = async (
   return rows.map(rowOfPluginCommand);
 };
 
+/** 一個 plugin 的軌三列（featureKey IS NULL；軌一 guild feature 列不在內）。 */
+export const findTrackThreeCommandsByPlugin = async (
+  pluginId: number,
+): Promise<PluginCommandRow[]> => {
+  const rows = await PluginCommand.findAll({
+    where: { pluginId, featureKey: { [Op.is]: null } },
+  });
+  return rows.map(rowOfPluginCommand);
+};
+
 // ── 註冊目標 ─────────────────────────────────────────────────────────────────
 // CommandTarget 是 command-system 的型別；這裡只做 type import，不形成
 // plugin-system → command-system 的 runtime 依賴。
