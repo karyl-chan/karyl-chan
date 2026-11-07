@@ -7,6 +7,9 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatInputCommandInteraction } from "discord.js";
+import { lookup } from "dns/promises";
+import en from "../src/i18n/locales/en.json" with { type: "json" };
+import { FAILED_COLOR, SUCCEEDED_COLOR } from "../src/utils/constant.js";
 
 vi.mock("dns/promises", () => ({ lookup: vi.fn() }));
 
@@ -27,16 +30,10 @@ vi.mock(
   }),
 );
 
-const { lookup } = await import("dns/promises");
+// The command module must load after the mocks above apply.
 const { registerVoiceCommands } = await import(
   "../src/modules/builtin-features/voice/voice.commands.js"
 );
-const { FAILED_COLOR, SUCCEEDED_COLOR } = await import(
-  "../src/utils/constant.js"
-);
-const { default: en } = await import("../src/i18n/locales/en.json", {
-  with: { type: "json" },
-});
 
 registerVoiceCommands();
 
@@ -44,8 +41,15 @@ interface Reply {
   embeds: Array<{ description: string; color: number }>;
 }
 
-function playCommand(url: string) {
-  const reply = vi.fn<(r: Reply) => Promise<void>>(async () => {});
+/**
+ * Run `/voice play <url>` and return the one message the user ends up
+ * seeing: the deferred reply's edit. The reply is deferred (ephemeral)
+ * before any network work, so the 3-second interaction deadline holds.
+ */
+async function runPlay(url: string): Promise<Reply> {
+  const reply = vi.fn(async () => {});
+  const deferReply = vi.fn(async () => {});
+  const editReply = vi.fn<(r: Reply) => Promise<void>>(async () => {});
   const interaction = {
     guildId: "g1",
     locale: "en-US",
@@ -55,15 +59,14 @@ function playCommand(url: string) {
       getString: () => url,
     },
     reply,
+    deferReply,
+    editReply,
   } as unknown as ChatInputCommandInteraction;
-  return { interaction, reply };
-}
-
-async function runPlay(url: string): Promise<Reply> {
-  const { interaction, reply } = playCommand(url);
   await registered.handler!(interaction);
-  expect(reply).toHaveBeenCalledTimes(1);
-  return reply.mock.calls[0][0];
+  expect(reply).not.toHaveBeenCalled();
+  expect(deferReply).toHaveBeenCalledWith({ flags: "Ephemeral" });
+  expect(editReply).toHaveBeenCalledTimes(1);
+  return editReply.mock.calls[0][0];
 }
 
 const REFUSED = en.voice["url-not-allowed"];
@@ -73,6 +76,8 @@ function expectRefused(r: Reply): void {
   expect(play).not.toHaveBeenCalled();
   expect(r.embeds[0]).toEqual({ description: REFUSED, color: FAILED_COLOR });
 }
+
+const BACKSLASH = "\\";
 
 beforeEach(() => {
   play.mockReset();
@@ -87,6 +92,8 @@ describe("/voice play host policy", () => {
     ["loopback", "http://127.0.0.1:8080/a.mp3"],
     ["IPv6 link-local", "http://[fe80::1]/a.mp3"],
     ["metadata hostname", "http://metadata.google.internal/computeMetadata/v1/"],
+    ["backslash-smuggled loopback", `http://127.0.0.1${BACKSLASH}@8.8.8.8/`],
+    ["tab-split loopback", "http://127.0.\t0.1/a.mp3"],
   ])("refuses a %s target without invoking playback", async (_label, url) => {
     expectRefused(await runPlay(url));
   });
@@ -112,5 +119,37 @@ describe("/voice play host policy", () => {
     expect(play).toHaveBeenCalledWith("g1", url);
     expect(r.embeds[0].color).toBe(SUCCEEDED_COLOR);
     expect(r.embeds[0].description).toContain(url);
+  });
+
+  // ffmpeg splits the authority on `/?#` only, so a raw `\@` would make
+  // it connect to the host after the `@` — not the one that was vetted.
+  // The vetted, WHATWG-normalized href is what reaches playback.
+  it("hands playback the normalized URL, not a backslash-smuggled raw string", async () => {
+    const r = await runPlay(`http://8.8.8.8${BACKSLASH}@127.0.0.1/`);
+    expect(play).toHaveBeenCalledWith("g1", "http://8.8.8.8/@127.0.0.1/");
+    expect(r.embeds[0].description).toContain("http://8.8.8.8/@127.0.0.1/");
+  });
+
+  it("hands playback the normalized URL with inner tabs stripped", async () => {
+    await runPlay("http://8.8.8.8/a\tb.mp3");
+    expect(play).toHaveBeenCalledWith("g1", "http://8.8.8.8/ab.mp3");
+  });
+
+  it("does not defer for a URL refused before any network work", async () => {
+    const reply = vi.fn<(r: Reply) => Promise<void>>(async () => {});
+    const deferReply = vi.fn(async () => {});
+    const interaction = {
+      guildId: "g1",
+      locale: "en-US",
+      guildLocale: null,
+      options: { getSubcommand: () => "play", getString: () => "ftp://x/a" },
+      reply,
+      deferReply,
+    } as unknown as ChatInputCommandInteraction;
+    await registered.handler!(interaction);
+    expect(deferReply).not.toHaveBeenCalled();
+    expect(reply.mock.calls[0][0].embeds[0].description).toBe(
+      en.voice["http-only"],
+    );
   });
 });

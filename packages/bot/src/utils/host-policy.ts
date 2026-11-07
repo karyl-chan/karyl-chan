@@ -290,6 +290,26 @@ export async function assertPublicMediaTarget(
 }
 
 /**
+ * `assertPublicMediaTarget` for a parsed http(s) media URL: vets its
+ * host at the URL's port (explicit, else 443 / 80).
+ *
+ * Hand ffmpeg `url.href`, never the raw input string. The check runs on
+ * the WHATWG parse, and ffmpeg parses the raw string its own way: it
+ * splits the authority on `/?#` only, so `http://8.8.8.8\@127.0.0.1/`
+ * vets 8.8.8.8 yet connects to 127.0.0.1 (#162). The normalized href
+ * (`http://8.8.8.8/@127.0.0.1/`, inner tabs / newlines stripped) is the
+ * URL that was vetted.
+ */
+export async function assertPublicMediaUrl(url: URL): Promise<void> {
+  const port = url.port
+    ? Number(url.port)
+    : url.protocol === "https:"
+      ? 443
+      : 80;
+  await assertPublicMediaTarget(url.hostname, port);
+}
+
+/**
  * assertPluginTarget — Plugin manifest URLs (docker-compose internal services).
  *
  * Blocks cloud metadata / link-local (same as assertAllowedTarget),
