@@ -28,8 +28,9 @@
  *
  * Rewrites, so https keeps working:
  *   - a 3xx `Location` resolving to https is re-encoded;
- *   - an HLS playlist body (sniffed: optional UTF-8 BOM, then `#EXTM3U`,
- *     which is what ffmpeg's hls probe / parse_playlist require) is
+ *   - an HLS playlist body (sniffed: optional ID3v2 tags, which ffmpeg's
+ *     probe and avformat_open_input skip, an optional UTF-8 BOM, then
+ *     `#EXTM3U`, which ffmpeg's hls probe / parse_playlist require) is
  *     buffered (capped) and every absolute https URI in it — bare URI
  *     lines and `URI="…"` attributes — is re-encoded. Anything else
  *     streams through untouched (radio streams never end).
@@ -56,7 +57,8 @@ import type { AddressInfo } from "node:net";
 import { isIP } from "node:net";
 import { pipeline, type Duplex, type Readable } from "node:stream";
 import zlib from "node:zlib";
-import { resolvePublicMediaTarget } from "./net/media-target.js";
+import { defaultPortFor } from "./net/host-vetting.js";
+import { resolvePublicMediaTarget, type MediaPolicy } from "./net/media-target.js";
 import { pinnedLookup, type PinnedAddress } from "./net/pinned-lookup.js";
 import type { VoiceLogger } from "./voice-manager.js";
 
@@ -131,7 +133,7 @@ function decodeTarget(target: string): UpstreamTarget | null {
     host = host.slice(0, -TLS_MARKER_SUFFIX.length);
     if (!host) return null;
   }
-  const port = explicitPort ?? (tls ? 443 : 80);
+  const port = explicitPort ?? defaultPortFor(tls ? "https:" : "http:");
   const path = rest === "" ? "/" : rest.startsWith("/") ? rest : `/${rest}`;
   let url: URL;
   try {
@@ -188,14 +190,58 @@ export function rewritePlaylist(text: string, base: URL): string {
 
 const UTF8_BOM = Buffer.from([0xef, 0xbb, 0xbf]);
 const EXTM3U = Buffer.from("#EXTM3U");
-/** Bytes needed to decide whether a body is a playlist. */
+/** Bytes needed after any ID3 tags to decide whether a body is a playlist. */
 const SNIFF_BYTES = UTF8_BOM.length + EXTM3U.length;
+const ID3_HEADER_BYTES = 10;
 
-function looksLikePlaylist(head: Buffer): boolean {
-  const body = head.subarray(0, UTF8_BOM.length).equals(UTF8_BOM)
-    ? head.subarray(UTF8_BOM.length)
-    : head;
-  return body.subarray(0, EXTM3U.length).equals(EXTM3U);
+/**
+ * Total length of the ID3v2 tag starting at `offset` (header + synchsafe
+ * size + optional footer), mirroring ffmpeg's ff_id3v2_match /
+ * ff_id3v2_tag_len; null when no valid ID3v2 header starts there. Needs
+ * the 10 header bytes.
+ */
+function id3v2TagLength(buf: Buffer, offset: number): number | null {
+  const b = buf.subarray(offset, offset + ID3_HEADER_BYTES);
+  if (b.length < ID3_HEADER_BYTES) return null;
+  if (b[0] !== 0x49 || b[1] !== 0x44 || b[2] !== 0x33) return null; // "ID3"
+  if (b[3] === 0xff || b[4] === 0xff) return null;
+  if ((b[6] | b[7] | b[8] | b[9]) & 0x80) return null; // size is synchsafe
+  const size =
+    ((b[6] & 0x7f) << 21) | ((b[7] & 0x7f) << 14) | ((b[8] & 0x7f) << 7) | (b[9] & 0x7f);
+  const footer = b[5] & 0x10 ? ID3_HEADER_BYTES : 0;
+  return ID3_HEADER_BYTES + size + footer;
+}
+
+/**
+ * The sniff verdict for a body's first bytes: need more, a playlist (whose
+ * first `prefix` bytes are ID3 tags to keep verbatim), or a stream to
+ * pass through. ID3 tags larger than `maxPrefix` in total are not waited
+ * for: such a body streams (an MP3 with big cover art, most likely).
+ */
+export function sniffBody(
+  head: Buffer,
+  ended: boolean,
+  maxPrefix: number,
+): { kind: "more" } | { kind: "playlist"; prefix: number } | { kind: "stream" } {
+  let offset = 0;
+  for (;;) {
+    const rest = head.subarray(offset);
+    if (rest.length < 3 || rest.subarray(0, 3).toString("latin1") !== "ID3") break;
+    if (rest.length < ID3_HEADER_BYTES) return ended ? { kind: "stream" } : { kind: "more" };
+    const len = id3v2TagLength(head, offset);
+    if (len === null) break;
+    if (offset + len > maxPrefix) return { kind: "stream" };
+    if (head.length < offset + len) return ended ? { kind: "stream" } : { kind: "more" };
+    offset += len;
+  }
+  const rest = head.subarray(offset);
+  if (rest.length < SNIFF_BYTES && !ended) return { kind: "more" };
+  const text = rest.subarray(0, UTF8_BOM.length).equals(UTF8_BOM)
+    ? rest.subarray(UTF8_BOM.length)
+    : rest;
+  return text.subarray(0, EXTM3U.length).equals(EXTM3U)
+    ? { kind: "playlist", prefix: offset }
+    : { kind: "stream" };
 }
 
 /** Hop-by-hop headers (RFC 9110 §7.6.1) plus the proxy-only ones. */
@@ -236,7 +282,7 @@ export interface MediaProxyOptions {
    * The policy: vet `host:port` and return the addresses to connect to,
    * or throw to refuse. Default `resolvePublicMediaTarget`.
    */
-  resolveTarget?: (host: string, port: number) => Promise<PinnedAddress[]>;
+  resolveTarget?: MediaPolicy;
   /** Upstream TLS trust (test seam: a test CA). Default: Node's roots. */
   tls?: { ca?: string | Buffer | Array<string | Buffer> };
   /** Largest HLS playlist the proxy buffers to rewrite. Default 2 MiB. */
@@ -251,6 +297,18 @@ export interface MediaProxy {
   readonly url: string;
   readonly port: number;
   address(): AddressInfo;
+  /**
+   * True from the moment close() is called. A closed proxy's ephemeral
+   * port may be handed to a later proxy with another policy, so nothing
+   * may be started against it (see spawnFfmpegDecoder).
+   */
+  readonly closed: boolean;
+  /**
+   * Run `listener` when close() is called (immediately if already
+   * closed) — how a decoder bound to this proxy is killed with it.
+   * Returns an unsubscribe function.
+   */
+  onClose(listener: () => void): () => void;
   close(): Promise<void>;
 }
 
@@ -337,7 +395,7 @@ export async function startMediaProxy(
     }
     if (res.destroyed) return;
 
-    const defaultPort = target.tls ? 443 : 80;
+    const defaultPort = defaultPortFor(target.tls ? "https:" : "http:");
     const hostHeader =
       (isIP(target.host) === 6 ? `[${target.host}]` : target.host) +
       (target.port === defaultPort ? "" : `:${target.port}`);
@@ -431,11 +489,14 @@ export async function startMediaProxy(
     let decided = false;
     const decide = (ended: boolean): void => {
       if (decided) return;
+      const verdict = sniffBody(head, ended, maxPlaylistBytes);
+      if (verdict.kind === "more") return;
       decided = true;
+      body.pause();
       body.removeListener("data", onSniff);
       body.removeListener("end", onSniffEnd);
-      if (looksLikePlaylist(head)) {
-        bufferPlaylist(head, ended);
+      if (verdict.kind === "playlist") {
+        bufferPlaylist(head, verdict.prefix, ended);
       } else {
         res.writeHead(status, headers);
         res.write(head);
@@ -445,16 +506,13 @@ export async function startMediaProxy(
     };
     const onSniff = (chunk: Buffer): void => {
       head = Buffer.concat([head, chunk]);
-      if (head.length >= SNIFF_BYTES) {
-        body.pause();
-        decide(false);
-      }
+      decide(false);
     };
     const onSniffEnd = (): void => decide(true);
     body.on("data", onSniff);
     body.on("end", onSniffEnd);
 
-    const bufferPlaylist = (first: Buffer, ended: boolean): void => {
+    const bufferPlaylist = (first: Buffer, prefix: number, ended: boolean): void => {
       const chunks = [first];
       let size = first.length;
       const tooBig = (): boolean => {
@@ -468,8 +526,13 @@ export async function startMediaProxy(
         return true;
       };
       const finish = (): void => {
-        const text = Buffer.concat(chunks).toString("utf8");
-        const out = Buffer.from(rewritePlaylist(text, target.url), "utf8");
+        const all = Buffer.concat(chunks);
+        // ID3 tags (if any) stay byte for byte; only the text is rewritten.
+        const text = all.subarray(prefix).toString("utf8");
+        const out = Buffer.concat([
+          all.subarray(0, prefix),
+          Buffer.from(rewritePlaylist(text, target.url), "utf8"),
+        ]);
         // The body changed length: a 206 slice of it is meaningless now,
         // so answer the whole (rewritten) playlist as a plain 200.
         delete headers["content-range"];
@@ -521,15 +584,38 @@ export async function startMediaProxy(
     });
   });
   const address = server.address() as AddressInfo;
+  let closed = false;
+  const closeListeners = new Set<() => void>();
   return {
     url: `http://127.0.0.1:${address.port}`,
     port: address.port,
     address: () => server.address() as AddressInfo,
-    close: () =>
-      new Promise<void>((resolve) => {
+    get closed() {
+      return closed;
+    },
+    onClose(listener) {
+      if (closed) {
+        listener();
+        return () => {};
+      }
+      closeListeners.add(listener);
+      return () => closeListeners.delete(listener);
+    },
+    close: () => {
+      if (!closed) {
+        closed = true;
+        for (const listener of closeListeners) listener();
+        closeListeners.clear();
+      }
+      return new Promise<void>((resolve) => {
+        if (!server.listening) {
+          resolve();
+          return;
+        }
         server.close(() => resolve());
         server.closeAllConnections();
-      }),
+      });
+    },
   };
 }
 

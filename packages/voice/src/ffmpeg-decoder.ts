@@ -31,12 +31,17 @@
  *      which open further URLs of their own. Every listed demuxer exists
  *      in ffmpeg 4.3 (production) and 8.1.
  *
+ * A decoder is bound to its proxy's lifetime: it is never started against
+ * a closed proxy, and closing the proxy kills it. Otherwise a long
+ * `-reconnect` could find the closed proxy's ephemeral port reused by a
+ * later proxy with another policy (a per-play `trustedOrigin` one).
+ *
  * Residual: a server can still make ffmpeg spend time and bandwidth
  * within the public internet (that is what playing a URL means).
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { toProxyUrl } from "./media-proxy.js";
+import { toProxyUrl, type MediaProxy } from "./media-proxy.js";
 
 export const FFMPEG_PROTOCOL_WHITELIST = "http,tcp,crypto,pipe,fd";
 
@@ -127,22 +132,32 @@ export interface SpawnDecoderOptions {
   /** ffmpeg binary. Default `ffmpeg` (PATH). */
   command?: string;
   url: string;
-  /** The media proxy, `http://127.0.0.1:<port>`. */
-  proxyUrl: string;
+  /** The media proxy the decoder fetches through, and lives no longer than. */
+  proxy: MediaProxy;
   /** Base environment (proxy variables are stripped). Default process.env. */
   env?: NodeJS.ProcessEnv;
 }
 
-/** Spawn the decoder: stdout is the PCM, stderr ffmpeg's log, no stdin. */
+/**
+ * Spawn the decoder: stdout is the PCM, stderr ffmpeg's log, no stdin.
+ * Throws `media_proxy_closed` when the proxy is already closed; the child
+ * is SIGKILLed when the proxy closes.
+ */
 export function spawnFfmpegDecoder({
   command = "ffmpeg",
   url,
-  proxyUrl,
+  proxy,
   env,
 }: SpawnDecoderOptions): ChildProcess {
-  return spawn(command, ffmpegDecodeArgs(url, proxyUrl), {
-    env: ffmpegChildEnv(proxyUrl, env),
+  if (proxy.closed) throw new Error("media_proxy_closed");
+  const args = ffmpegDecodeArgs(url, proxy.url);
+  const child = spawn(command, args, {
+    env: ffmpegChildEnv(proxy.url, env),
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
+  const unsubscribe = proxy.onClose(() => child.kill("SIGKILL"));
+  child.once("close", unsubscribe);
+  child.once("error", unsubscribe);
+  return child;
 }

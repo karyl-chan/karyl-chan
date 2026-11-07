@@ -336,11 +336,9 @@ export async function playUrl(
   // format whitelists and the proxy wiring live in ffmpeg-decoder.ts.
   let child: ChildProcess;
   try {
-    child = spawnFfmpegDecoder({
-      command: ffmpegCommand,
-      url,
-      proxyUrl: proxy.url,
-    });
+    // Throws media_proxy_closed if a shutdown closed the proxy while this
+    // play awaited it; a later close kills the child (spawnFfmpegDecoder).
+    child = spawnFfmpegDecoder({ command: ffmpegCommand, url, proxy });
   } catch (err) {
     closeOwnProxy();
     throw err;

@@ -18,7 +18,7 @@
  *     proxy if the decoder did not strip / replace them.
  */
 import { strict as assert } from "node:assert";
-import { spawnSync } from "node:child_process";
+import { spawnSync, type ChildProcess } from "node:child_process";
 import { createCipheriv, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import http from "node:http";
@@ -28,9 +28,13 @@ import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { ffmpegChildEnv, spawnFfmpegDecoder } from "../src/ffmpeg-decoder.js";
 import { startMediaProxy, type MediaProxy } from "../src/media-proxy.js";
-import type { PinnedAddress } from "../src/net/index.js";
+import { mediaPolicyFor, type PinnedAddress } from "../src/net/index.js";
+import { id3Tag } from "./helpers/id3-tag.js";
 
 const hasFfmpeg = !spawnSync("ffmpeg", ["-version"], { windowsHide: true }).error;
+// Skip locally without ffmpeg; in CI (which installs it) a missing ffmpeg
+// must fail loudly rather than skip the end-to-end proof.
+const skipWithoutFfmpeg = !hasFfmpeg && process.env.CI !== "true" && "ffmpeg not on PATH";
 
 const fixture = (name: string): Buffer =>
   readFileSync(
@@ -85,7 +89,18 @@ interface Decoded {
   stderr: string;
 }
 
-describe("ffmpeg through the media proxy", { skip: !hasFfmpeg && "ffmpeg not on PATH" }, () => {
+describe("decoder lifetime", () => {
+  it("refuses to start against a closed proxy", async () => {
+    const proxy = await startMediaProxy({ log: { warn: () => {} } });
+    await proxy.close();
+    assert.throws(
+      () => spawnFfmpegDecoder({ url: "http://example.com/a.mp3", proxy }),
+      /media_proxy_closed/,
+    );
+  });
+});
+
+describe("ffmpeg through the media proxy", { skip: skipWithoutFfmpeg }, () => {
   let proxy: MediaProxy;
   let refusedPort: number;
   let refusedConnections = 0;
@@ -94,6 +109,11 @@ describe("ffmpeg through the media proxy", { skip: !hasFfmpeg && "ffmpeg not on 
   let plainPort: number;
   let secure: https.Server;
   let tlsPort: number;
+  let plugin: http.Server;
+  let pluginPort: number;
+  let pluginProxy: MediaProxy;
+  const pluginHits: string[] = [];
+  const endless = new Set<http.ServerResponse>();
   const plainHits: string[] = [];
   const secureHits: string[] = [];
   let wav: Buffer;
@@ -107,11 +127,11 @@ describe("ffmpeg through the media proxy", { skip: !hasFfmpeg && "ffmpeg not on 
     uris.map((u) => `#EXTINF:1.0,\n${u}\n`).join("") +
     "#EXT-X-ENDLIST\n";
 
-  function decode(url: string): Promise<Decoded> {
+  function decode(url: string, via: MediaProxy = proxy): Promise<Decoded> {
     return new Promise((resolve) => {
       const child = spawnFfmpegDecoder({
         url,
-        proxyUrl: proxy.url,
+        proxy: via,
         env: {
           ...process.env,
           no_proxy: "*",
@@ -169,6 +189,19 @@ describe("ffmpeg through the media proxy", { skip: !hasFfmpeg && "ffmpeg not on 
         res.end(playlist(`httpproxy://${refused}/seg.ts`));
       } else if (url === "/hls-lan-https.m3u8") {
         res.end(playlist(`https://${refused}/seg.ts`));
+      } else if (url === "/endless.wav") {
+        // A radio-like stream: a WAV header, then PCM trickling forever.
+        const header = wav.subarray(0, 44);
+        header.writeUInt32LE(0xffffffff - 8, 4);
+        header.writeUInt32LE(0xffffffff - 44, 40);
+        res.writeHead(200, { "content-type": "audio/wav" });
+        res.write(header);
+        endless.add(res);
+        const timer = setInterval(() => res.write(wav.subarray(44, 44 + 8820)), 100);
+        res.on("close", () => {
+          clearInterval(timer);
+          endless.delete(res);
+        });
       } else if (url === "/manifest.mpd") {
         res.writeHead(200, { "content-type": "application/dash+xml" });
         res.end(
@@ -213,6 +246,13 @@ describe("ffmpeg through the media proxy", { skip: !hasFfmpeg && "ffmpeg not on 
 #EXTINF`,
             ),
           );
+        } else if (url === "/id3.m3u8") {
+          res.end(
+            Buffer.concat([
+              id3Tag(300, true),
+              Buffer.from(playlist(`https://127.0.0.1:${refusedPort}/seg1.ts`)),
+            ]),
+          );
         } else if (url === "/hop.wav") {
           res.writeHead(302, { location: `https://other.test:${tlsPort}/tone.wav` });
           res.end();
@@ -224,6 +264,31 @@ describe("ffmpeg through the media proxy", { skip: !hasFfmpeg && "ffmpeg not on 
     );
     await new Promise<void>((r) => secure.listen(0, "127.0.0.1", r));
     tlsPort = (secure.address() as AddressInfo).port;
+
+    // A "plugin" on loopback; plays from it carry it as trustedOrigin.
+    plugin = http.createServer((req, res) => {
+      const url = req.url ?? "";
+      pluginHits.push(url);
+      if (url === "/internal/audio/tone.wav") {
+        res.end(wav);
+      } else if (url === "/internal/list.m3u8") {
+        res.end(playlist(`http://${refused}/seg.ts`));
+      } else if (url === "/internal/redirect.wav") {
+        res.writeHead(302, { location: `http://${refused}/tone.wav` });
+        res.end();
+      } else {
+        res.writeHead(404);
+        res.end();
+      }
+    });
+    await new Promise<void>((r) => plugin.listen(0, "127.0.0.1", r));
+    pluginPort = (plugin.address() as AddressInfo).port;
+    // The real per-play policy (loopback counts as a plugin target outside
+    // production): only 127.0.0.1:<pluginPort> is trusted.
+    pluginProxy = await startMediaProxy({
+      resolveTarget: mediaPolicyFor(`http://127.0.0.1:${pluginPort}`),
+      log: { warn: () => {} },
+    });
 
     proxy = await startMediaProxy({
       resolveTarget: async (host: string): Promise<PinnedAddress[]> => {
@@ -239,7 +304,9 @@ describe("ffmpeg through the media proxy", { skip: !hasFfmpeg && "ffmpeg not on 
 
   after(async () => {
     await proxy?.close();
-    for (const s of [plain, secure]) {
+    await pluginProxy?.close();
+    for (const res of endless) res.destroy();
+    for (const s of [plain, secure, plugin]) {
       s?.closeAllConnections();
       await new Promise((r) => s?.close(r));
     }
@@ -321,6 +388,78 @@ describe("ffmpeg through the media proxy", { skip: !hasFfmpeg && "ffmpeg not on 
     const r = await decode(`https://allowed.test:${tlsPort}/aes-lan-key.m3u8`);
     assert.equal(r.pcmBytes, 0);
     assert.equal(refusedConnections, before);
+  });
+
+  it("(j) an ID3-prefixed playlist naming a refused https segment never reaches it", async () => {
+    // The proxy skips the ID3 tag and rewrites the playlist (see the
+    // sniffBody unit tests). ffmpeg 8.1 itself refuses an ID3-prefixed
+    // playlist even from a local file (its hls probe skips the tag, but
+    // parse_playlist does not), so this can only prove the refused host
+    // stays unreached, not that such a playlist plays.
+    const before = refusedConnections;
+    secureHits.length = 0;
+    const r = await decode(`https://allowed.test:${tlsPort}/id3.m3u8`);
+    assert.equal(r.pcmBytes, 0);
+    assert.equal(refusedConnections, before);
+    assert.ok(secureHits.includes("/id3.m3u8"));
+  });
+
+  it("(k) trustedOrigin: a file on the plugin's own loopback origin decodes", async () => {
+    const r = await decode(
+      `http://127.0.0.1:${pluginPort}/internal/audio/tone.wav`,
+      pluginProxy,
+    );
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(r.pcmBytes >= PCM_PER_SECOND * 0.9, `pcm ${r.pcmBytes}`);
+  });
+
+  it("(l) trustedOrigin: its playlist naming another loopback port never reaches it", async () => {
+    const before = refusedConnections;
+    const r = await decode(`http://127.0.0.1:${pluginPort}/internal/list.m3u8`, pluginProxy);
+    assert.equal(r.pcmBytes, 0);
+    assert.equal(refusedConnections, before);
+    assert.ok(pluginHits.includes("/internal/list.m3u8"));
+  });
+
+  it("(m) trustedOrigin: its redirect to another loopback port never reaches it", async () => {
+    const before = refusedConnections;
+    const r = await decode(
+      `http://127.0.0.1:${pluginPort}/internal/redirect.wav`,
+      pluginProxy,
+    );
+    assert.equal(r.pcmBytes, 0);
+    assert.equal(refusedConnections, before);
+    assert.ok(pluginHits.includes("/internal/redirect.wav"));
+  });
+
+  it("(n) closing a proxy kills the decoder streaming through it", async () => {
+    const own = await startMediaProxy({
+      resolveTarget: async () => [{ address: "127.0.0.1", family: 4 }],
+      log: { warn: () => {} },
+    });
+    const child: ChildProcess = spawnFfmpegDecoder({
+      url: `http://allowed.test:${plainPort}/endless.wav`,
+      proxy: own,
+    });
+    let pcm = 0;
+    child.stderr!.resume();
+    const exited = new Promise<number>((resolve) => {
+      child.on("close", () => resolve(Date.now()));
+    });
+    await new Promise<void>((resolve) => {
+      child.stdout!.on("data", (b: Buffer) => {
+        pcm += b.length;
+        if (pcm > PCM_PER_SECOND / 4) resolve();
+      });
+    });
+    const closedAt = Date.now();
+    await own.close();
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("decoder outlived its proxy")), 5_000),
+    );
+    const exitedAt = await Promise.race([exited, timeout]);
+    assert.ok(exitedAt - closedAt < 2_000, `exited ${exitedAt - closedAt} ms after close`);
+    assert.equal(child.exitCode === 0, false, "killed, not a clean end");
   });
 
   it("a DASH manifest is refused by the format whitelist", async () => {

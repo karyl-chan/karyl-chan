@@ -62,6 +62,16 @@ jobs:
           pnpm --filter @karyl-chan/ui typecheck
           pnpm --filter @karyl-chan/ui test
 
+      # The media-proxy integration test (#158) drives a real ffmpeg and
+      # skips without one. Ubuntu's ffmpeg is newer than production's 4.3
+      # (bullseye), but running it beats skipping.
+      - name: Install ffmpeg (voice)
+        if: matrix.target == 'voice'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -version | head -1
+
       - name: Build & test voice
         if: matrix.target == 'voice'
         # `...` builds the workspace deps (plugin-sdk) before voice.

@@ -16,11 +16,13 @@ import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import zlib from "node:zlib";
 import {
+  sniffBody,
   startMediaProxy,
   toProxyUrl,
   type MediaProxy,
 } from "../src/media-proxy.js";
 import type { PinnedAddress } from "../src/net/index.js";
+import { id3Tag } from "./helpers/id3-tag.js";
 
 const fixture = (name: string): Buffer =>
   readFileSync(
@@ -159,6 +161,76 @@ describe("toProxyUrl", () => {
   });
 });
 
+describe("sniffBody", () => {
+  const LIST = Buffer.from("#EXTM3U\nseg.ts\n");
+
+  it("recognises a playlist, with or without a BOM", () => {
+    assert.deepEqual(sniffBody(LIST, false, 1024), { kind: "playlist", prefix: 0 });
+    assert.deepEqual(
+      sniffBody(Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), LIST]), false, 1024),
+      { kind: "playlist", prefix: 0 },
+    );
+    assert.deepEqual(sniffBody(Buffer.from("ID3-ish audio..."), false, 1024), {
+      kind: "stream",
+    });
+  });
+
+  it("skips ID3v2 tags (synchsafe size, footer flag) before #EXTM3U", () => {
+    const tag = id3Tag(200);
+    assert.deepEqual(sniffBody(Buffer.concat([tag, LIST]), false, 1024), {
+      kind: "playlist",
+      prefix: 210,
+    });
+    const withFooter = id3Tag(200, true);
+    assert.deepEqual(sniffBody(Buffer.concat([withFooter, LIST]), false, 1024), {
+      kind: "playlist",
+      prefix: 220,
+    });
+    // Two tags back to back (ffmpeg's ID3 reader loops too).
+    assert.deepEqual(sniffBody(Buffer.concat([tag, tag, LIST]), false, 1024), {
+      kind: "playlist",
+      prefix: 420,
+    });
+    // A synchsafe size of 0x81 (bytes 00 00 01 01) is 129, not 257.
+    const t = id3Tag(129);
+    assert.deepEqual([...t.subarray(6, 10)], [0, 0, 1, 1]);
+    assert.deepEqual(sniffBody(Buffer.concat([t, LIST]), false, 1024), {
+      kind: "playlist",
+      prefix: 139,
+    });
+  });
+
+  it("waits for a whole tag, but not past the cap", () => {
+    const tag = id3Tag(500);
+    assert.deepEqual(sniffBody(tag.subarray(0, 100), false, 1024), { kind: "more" });
+    assert.deepEqual(sniffBody(tag.subarray(0, 4), false, 1024), { kind: "more" });
+    assert.deepEqual(sniffBody(Buffer.from("#EX"), false, 1024), { kind: "more" });
+    assert.deepEqual(sniffBody(tag.subarray(0, 100), true, 1024), { kind: "stream" });
+    // A tag bigger than the cap (an MP3's cover art) streams at once.
+    assert.deepEqual(sniffBody(id3Tag(5000).subarray(0, 10), false, 1024), {
+      kind: "stream",
+    });
+  });
+});
+
+describe("media proxy lifecycle", () => {
+  it("reports closed and runs close listeners once, even late ones", async () => {
+    const proxy = await startMediaProxy({ log: { warn: () => {} } });
+    let early = 0;
+    let late = 0;
+    let unsubscribed = 0;
+    proxy.onClose(() => early++);
+    const off = proxy.onClose(() => unsubscribed++);
+    off();
+    assert.equal(proxy.closed, false);
+    await proxy.close();
+    await proxy.close();
+    assert.equal(proxy.closed, true);
+    proxy.onClose(() => late++);
+    assert.deepEqual([early, late, unsubscribed], [1, 1, 0]);
+  });
+});
+
 describe("media proxy", () => {
   let proxy: MediaProxy;
   let allowed: Upstream;
@@ -202,6 +274,13 @@ describe("media proxy", () => {
         res.end("#EXTM3U\n");
       } else if (url.startsWith("/big-playlist")) {
         res.end("#EXTM3U\n" + "#EXTINF:1,\nseg.ts\n".repeat(200));
+      } else if (url.startsWith("/id3-playlist")) {
+        res.end(
+          Buffer.concat([
+            id3Tag(64, true),
+            Buffer.from("#EXTM3U\nhttps://cdn.example.com/a.ts\n"),
+          ]),
+        );
       } else if (url.startsWith("/big-stream")) {
         res.end("ID3".padEnd(5000, "x"));
       } else {
@@ -344,6 +423,31 @@ describe("media proxy", () => {
         "http://plain.example.com/seg3.ts\r\n" +
         "#EXTINF:2.0,\r\n" +
         "httpproxy://10.0.0.5:22/seg4.ts\r\n",
+    );
+  });
+
+  it("rewrites an ID3-prefixed playlist, keeping the tag bytes", async () => {
+    const res = await new Promise<Buffer>((resolve, reject) => {
+      http
+        .request(
+          {
+            host: "127.0.0.1",
+            port: proxy.port,
+            path: `http://allowed.test:${allowed.port}/id3-playlist.m3u8`,
+          },
+          (r) => {
+            const chunks: Buffer[] = [];
+            r.on("data", (c: Buffer) => chunks.push(c));
+            r.on("end", () => resolve(Buffer.concat(chunks)));
+          },
+        )
+        .on("error", reject)
+        .end();
+    });
+    assert.deepEqual(res.subarray(0, 84), id3Tag(64, true));
+    assert.equal(
+      res.subarray(84).toString("utf8"),
+      "#EXTM3U\nhttp://cdn.example.com.karyl-tls.invalid/a.ts\n",
     );
   });
 

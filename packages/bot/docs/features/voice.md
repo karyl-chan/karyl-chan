@@ -78,12 +78,15 @@ voice service alike:
   with host and port.
 - The proxy never follows a redirect; it hands the 3xx back, so the next
   hop comes through it again.
+- An ffmpeg never outlives its proxy: none is started against a closed
+  proxy, and closing a proxy kills the ffmpeg fetching through it.
 - ffmpeg speaks only plain http (`-protocol_whitelist
   http,tcp,crypto,pipe,fd`). An https URL is handed to ffmpeg as
   `http://<host>.karyl-tls.invalid[:port]/…` and the proxy does the TLS
   itself, verifying the certificate for the real hostname. The proxy
   rewrites https `Location` headers and the https URIs in HLS playlists
-  to that form. A URI it misses stays `https://…`, which ffmpeg cannot
+  (recognised by `#EXTM3U`, after an optional ID3v2 tag and BOM) to that
+  form. A URI it misses stays `https://…`, which ffmpeg cannot
   open, so a miss fails playback rather than bypassing the proxy.
 - `-format_whitelist` limits ffmpeg to the demuxers playback needs (HLS,
   MPEG-TS, MP3, AAC, AC-3, Ogg, FLAC, WAV, Matroska, MP4 / MOV, WebVTT).
