@@ -113,12 +113,16 @@ Up to 10 forwards per channel per minute. Over-limit messages get a
 
 Connection errors are retried with exponential backoff (`min(1000 · 2^n, 30s)`,
 so 2s → 4s → 8s) for up to three attempts. After three failures the connection
-closes and the channel is notified. Connections idle for 30 minutes are
-cleaned up.
+closes and the channel is notified ("Connection Failed"). A reconnect that
+authenticates again resets the count, so the next drop gets three fresh
+attempts. Commands sent while reconnecting are queued and go out once the
+new connection authenticates. Connections idle for 30 minutes are cleaned
+up.
 
-Every attempt resolves and checks the host again, then reconnects to
-the fresh answers only, so a container that restarted with a new IP is
-reached at the new IP. If DNS fails, or the host policy now refuses the
+Every attempt resolves and checks the host again, then connects a new
+client to the fresh answers only, so a container that restarted with a
+new IP is reached at the new IP. The replaced client's late socket events
+are ignored. If DNS fails, or the host policy now refuses the
 host (an answer has become a metadata / link-local address), that
 attempt fails without connecting and the next attempt follows.
 

@@ -18,7 +18,7 @@ import {
  * header depends on the name.
  */
 export class PinnedRcon extends Rcon {
-  private pinned: readonly PinnedAddress[];
+  private readonly pinned: readonly PinnedAddress[];
 
   constructor(
     host: string,
@@ -27,11 +27,6 @@ export class PinnedRcon extends Rcon {
     pinned: readonly PinnedAddress[],
   ) {
     super(host, port, password);
-    this.pinned = pinned;
-  }
-
-  /** Point the next `connect()` at a freshly vetted address set. */
-  repin(pinned: readonly PinnedAddress[]): void {
     this.pinned = pinned;
   }
 

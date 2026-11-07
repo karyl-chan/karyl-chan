@@ -104,14 +104,7 @@ export class RconConnectionService {
       // Resolved and vetted once; the client connects only to these.
       const addresses = await resolveAllowedTarget(host, port);
 
-      if (this.connectionMap[connectionName]) {
-        try {
-          await this.connectionMap[connectionName].conn.disconnect();
-        } catch (error) {
-          log.error({ err: error, connectionName }, "清理舊連接時發生錯誤");
-        }
-        delete this.connectionMap[connectionName];
-      }
+      this.dropClient(connectionName);
 
       const rconInstance = new PinnedRcon(host, port, password, addresses);
 
@@ -175,12 +168,7 @@ export class RconConnectionService {
           log.error({ err }, "failed to send connection error embed"),
         );
 
-      if (this.connectionMap[connectionName]) {
-        try {
-          await this.connectionMap[connectionName].conn.disconnect();
-        } catch {}
-        delete this.connectionMap[connectionName];
-      }
+      this.dropClient(connectionName);
 
       lockResolver.reject(
         error instanceof Error ? error : new Error("未知錯誤"),
@@ -203,6 +191,38 @@ export class RconConnectionService {
     return this.handleConnectionEnd(connectionName);
   }
 
+  /**
+   * Stop listening to a client that is being replaced or closed, and
+   * close it. Its socket can still emit afterwards (a late `end`, or an
+   * error on the dying socket); those must neither reach the connection
+   * that replaced it nor throw as an unhandled `error` event.
+   */
+  private static retireClient(connectionName: string, client: PinnedRcon) {
+    client.removeAllListeners();
+    client.on("error", (err: Error) => {
+      log.debug({ err, connectionName }, "Ignored error from a retired client");
+    });
+    try {
+      client.disconnect();
+    } catch (error) {
+      log.error({ err: error, connectionName }, "關閉連接時發生錯誤");
+    }
+  }
+
+  /**
+   * Retire the named connection's client and forget the connection, with
+   * no other cleanup — for `initializeConnection`, which replaces it or
+   * fails while it holds the connection lock (`handleConnectionEnd`
+   * would release that lock).
+   */
+  private static dropClient(connectionName: string) {
+    const connection = this.connectionMap[connectionName];
+    if (!connection) return;
+    this.retireClient(connectionName, connection.conn);
+    delete this.connectionMap[connectionName];
+  }
+
+  /** Attach the handlers for the connection's current client. */
   private static setupEventListeners(
     connectionName: string,
     host: string,
@@ -211,12 +231,16 @@ export class RconConnectionService {
   ) {
     const connection = this.connectionMap[connectionName];
     if (!connection) return;
+    const client = connection.conn;
+    // A client acts on the connection only while it is that connection's
+    // client: a replaced client's late events are ignored.
+    const isCurrent = () =>
+      this.connectionMap[connectionName] === connection &&
+      connection.conn === client;
 
-    connection.conn.removeAllListeners();
-    log.debug({ connectionName }, "Removed all existing listeners");
-
-    connection.conn
+    client
       .on("auth", () => {
+        if (!isCurrent()) return;
         log.info({ connectionName }, "Connection authenticated");
         connection.authenticated = true;
         connection.reconnectAttempts = 0;
@@ -232,6 +256,7 @@ export class RconConnectionService {
         );
       })
       .on("response", (str: string) => {
+        if (!isCurrent()) return;
         log.debug(
           { connectionName, bytes: str?.length ?? 0 },
           "Received response",
@@ -257,6 +282,7 @@ export class RconConnectionService {
         }
       })
       .on("server", (str: string) => {
+        if (!isCurrent()) return;
         log.debug(
           { connectionName, bytes: str?.length ?? 0 },
           "Received server message",
@@ -281,6 +307,7 @@ export class RconConnectionService {
         }
       })
       .on("error", (err: Error) => {
+        if (!isCurrent()) return;
         log.error({ err, connectionName }, "RCON connection error");
         for (const channel of connection.channels) {
           channel
@@ -297,11 +324,17 @@ export class RconConnectionService {
               log.error({ err: e }, "failed to send RCON error embed"),
             );
         }
-        this.handleConnectionError(connectionName, host, port, password);
+        this.handleConnectionError(connectionName, host, port, password).catch(
+          (e: unknown) =>
+            log.error({ err: e, connectionName }, "處理連接錯誤時發生錯誤"),
+        );
       })
       .on("end", () => {
+        if (!isCurrent()) return;
         log.info({ connectionName }, "Connection ended");
-        this.handleConnectionEnd(connectionName);
+        this.handleConnectionEnd(connectionName).catch((e: unknown) =>
+          log.error({ err: e, connectionName }, "處理連接關閉時發生錯誤"),
+        );
       });
   }
 
@@ -324,14 +357,7 @@ export class RconConnectionService {
         connection.queuedCommands = [];
       }
 
-      // 移除所有事件監聽器
-      connection.conn.removeAllListeners();
-
-      try {
-        await connection.conn.disconnect();
-      } catch (error) {
-        log.error({ err: error, connectionName }, "關閉連接時發生錯誤");
-      }
+      this.retireClient(connectionName, connection.conn);
 
       delete this.connectionMap[connectionName];
       this.connectionLocks.delete(connectionName);
@@ -351,8 +377,15 @@ export class RconConnectionService {
 
     log.error({ connectionName }, "連接錯誤");
 
+    // Commands queue until a fresh client authenticates again.
+    connection.authenticated = false;
+
     if (connection.reconnectAttempts < MAX_RETRY_ATTEMPTS) {
       connection.reconnectAttempts++;
+      // The dropped client is done; every attempt connects a fresh one.
+      // node-rcon authenticates a client once, so a reused one would
+      // never emit `auth` again (and never reset the attempt count).
+      this.retireClient(connectionName, connection.conn);
       const delay = Math.min(
         1000 * Math.pow(2, connection.reconnectAttempts),
         30000,
@@ -385,9 +418,10 @@ export class RconConnectionService {
         if (this.connectionMap[connectionName] !== connection) return;
         const addresses = await resolveAllowedTarget(host, port);
         if (this.connectionMap[connectionName] !== connection) return;
-        connection.conn.repin(addresses);
+        const client = new PinnedRcon(host, port, password, addresses);
+        connection.conn = client;
         this.setupEventListeners(connectionName, host, port, password);
-        await connection.conn.connect();
+        await client.connect();
       } catch (error) {
         log.error(
           { err: error, connectionName, attempt: connection.reconnectAttempts },
@@ -397,45 +431,57 @@ export class RconConnectionService {
         if (this.connectionMap[connectionName] !== connection) return;
 
         if (connection.reconnectAttempts >= MAX_RETRY_ATTEMPTS) {
-          // 如果達到最大重試次數，清理連接並通知用戶
-          for (const channel of connection.channels) {
-            try {
-              await channel.send({
-                embeds: [
-                  {
-                    color: FAILED_COLOR,
-                    title: "Connection Failed",
-                    description:
-                      "重連次數已達上限，連接將被關閉。所有未發送的指令將被清除。",
-                  },
-                ],
-              });
-            } catch (error) {
-              log.error(
-                { err: error, channelId: channel.id },
-                "無法發送連接失敗通知到頻道",
-              );
-            }
-          }
-          botEventLog.record(
-            "error",
-            "feature",
-            `RCON reconnect exhausted: ${host}:${port}`,
-            {
-              host,
-              port,
-              attempts: connection.reconnectAttempts,
-            },
-          );
-          await this.handleConnectionEnd(connectionName);
+          await this.giveUpReconnecting(connectionName, connection);
         } else {
           // No socket was opened, so no socket error drives the next attempt.
           await this.handleConnectionError(connectionName, host, port, password);
         }
       }
     } else {
+      // The last attempt's socket failed too.
+      await this.giveUpReconnecting(connectionName, connection);
+    }
+  }
+
+  /** Every attempt failed: close the connection, then notify its channels. */
+  private static async giveUpReconnecting(
+    connectionName: string,
+    connection: RconConnection,
+  ) {
+    // Close first: the notices below wait on Discord, and by then the
+    // name may belong to a connection re-created in the meantime.
+    if (this.connectionMap[connectionName] === connection) {
       await this.handleConnectionEnd(connectionName);
     }
+    for (const channel of connection.channels) {
+      try {
+        await channel.send({
+          embeds: [
+            {
+              color: FAILED_COLOR,
+              title: "Connection Failed",
+              description:
+                "重連次數已達上限，連接將被關閉。所有未發送的指令將被清除。",
+            },
+          ],
+        });
+      } catch (error) {
+        log.error(
+          { err: error, channelId: channel.id },
+          "無法發送連接失敗通知到頻道",
+        );
+      }
+    }
+    botEventLog.record(
+      "error",
+      "feature",
+      `RCON reconnect exhausted: ${connection.host}:${connection.port}`,
+      {
+        host: connection.host,
+        port: connection.port,
+        attempts: connection.reconnectAttempts,
+      },
+    );
   }
 
   private static processQueuedCommands(connectionName: string) {

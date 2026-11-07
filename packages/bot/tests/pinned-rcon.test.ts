@@ -90,17 +90,4 @@ describe("PinnedRcon", () => {
     await auth;
     await ended;
   });
-
-  it("connects to the new addresses after a repin", async () => {
-    client = new PinnedRcon("rcon.invalid", ctx.port, "pw", [
-      { address: "127.0.0.2", family: 4 },
-    ]);
-    client.repin([{ address: "127.0.0.1", family: 4 }]);
-    const auth = authenticated(client);
-
-    await client.connect();
-    await auth;
-
-    expect(ctx.peers).toEqual(["127.0.0.1"]);
-  });
 });
