@@ -291,7 +291,7 @@ describe("RCON reconnect", () => {
 });
 
 describe("RCON reconnect lifecycle", () => {
-  async function connected() {
+  async function connectAndAuth() {
     vi.useFakeTimers();
     mockedLookup.mockResolvedValue(answer("10.0.0.5"));
     const channel = makeChannel();
@@ -307,7 +307,7 @@ describe("RCON reconnect lifecycle", () => {
   }
 
   it("a replaced client's late end leaves the re-created connection alone", async () => {
-    await connected();
+    await connectAndAuth();
     await RconConnectionService.initializeConnection("c1", "mc-server", 25575, "pw", makeChannel());
     expect(instances).toHaveLength(2);
 
@@ -318,7 +318,7 @@ describe("RCON reconnect lifecycle", () => {
   });
 
   it("the dropped client's late end leaves the reconnected connection alone", async () => {
-    await connected();
+    await connectAndAuth();
     await dropAndRetry(2000);
     expect(instances).toHaveLength(2);
 
@@ -329,7 +329,7 @@ describe("RCON reconnect lifecycle", () => {
   });
 
   it("a replaced client's late error neither throws nor drives another attempt", async () => {
-    const channel = await connected();
+    const channel = await connectAndAuth();
     await dropAndRetry(2000);
     const sent = channel.send.mock.calls.length;
 
@@ -342,14 +342,14 @@ describe("RCON reconnect lifecycle", () => {
   });
 
   it("a cleaned-up client's late error does not throw", async () => {
-    await connected();
+    await connectAndAuth();
     await RconConnectionService.cleanupConnection("c1");
 
     expect(() => instances[0].emit("error", new Error("EPIPE"))).not.toThrow();
   });
 
   it("queues commands until the reconnected client authenticates", async () => {
-    await connected();
+    await connectAndAuth();
     instances[0].emit("error", new Error("ECONNRESET"));
 
     expect(RconConnectionService.getConnection("c1")?.authenticated).toBe(false);
@@ -368,7 +368,7 @@ describe("RCON reconnect lifecycle", () => {
   });
 
   it("a successful reconnect resets the attempt count", async () => {
-    const channel = await connected();
+    const channel = await connectAndAuth();
     await dropAndRetry(2000);
     expect(RconConnectionService.getConnection("c1")?.reconnectAttempts).toBe(1);
 
@@ -386,7 +386,7 @@ describe("RCON reconnect lifecycle", () => {
   });
 
   it("notifies the channel when socket errors use up every attempt", async () => {
-    const channel = await connected();
+    const channel = await connectAndAuth();
     await dropAndRetry(2000);
     await dropAndRetry(4000);
     await dropAndRetry(8000);
@@ -406,7 +406,7 @@ describe("RCON reconnect lifecycle", () => {
   });
 
   it("a connection re-created while the failure notice is sent stays", async () => {
-    const channel = await connected();
+    const channel = await connectAndAuth();
     await dropAndRetry(2000);
     await dropAndRetry(4000);
     await dropAndRetry(8000);

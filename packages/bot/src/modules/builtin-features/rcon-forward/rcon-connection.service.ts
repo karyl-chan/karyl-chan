@@ -104,10 +104,7 @@ export class RconConnectionService {
       // Resolved and vetted once; the client connects only to these.
       const addresses = await resolveAllowedTarget(host, port);
 
-      if (this.connectionMap[connectionName]) {
-        this.retireClient(connectionName, this.connectionMap[connectionName].conn);
-        delete this.connectionMap[connectionName];
-      }
+      this.dropClient(connectionName);
 
       const rconInstance = new PinnedRcon(host, port, password, addresses);
 
@@ -171,10 +168,7 @@ export class RconConnectionService {
           log.error({ err }, "failed to send connection error embed"),
         );
 
-      if (this.connectionMap[connectionName]) {
-        this.retireClient(connectionName, this.connectionMap[connectionName].conn);
-        delete this.connectionMap[connectionName];
-      }
+      this.dropClient(connectionName);
 
       lockResolver.reject(
         error instanceof Error ? error : new Error("未知錯誤"),
@@ -213,6 +207,19 @@ export class RconConnectionService {
     } catch (error) {
       log.error({ err: error, connectionName }, "關閉連接時發生錯誤");
     }
+  }
+
+  /**
+   * Retire the named connection's client and forget the connection, with
+   * no other cleanup — for `initializeConnection`, which replaces it or
+   * fails while it holds the connection lock (`handleConnectionEnd`
+   * would release that lock).
+   */
+  private static dropClient(connectionName: string) {
+    const connection = this.connectionMap[connectionName];
+    if (!connection) return;
+    this.retireClient(connectionName, connection.conn);
+    delete this.connectionMap[connectionName];
   }
 
   /** Attach the handlers for the connection's current client. */
@@ -319,14 +326,14 @@ export class RconConnectionService {
         }
         this.handleConnectionError(connectionName, host, port, password).catch(
           (e: unknown) =>
-            log.error({ err: e, connectionName }, "RCON reconnect failed"),
+            log.error({ err: e, connectionName }, "處理連接錯誤時發生錯誤"),
         );
       })
       .on("end", () => {
         if (!isCurrent()) return;
         log.info({ connectionName }, "Connection ended");
         this.handleConnectionEnd(connectionName).catch((e: unknown) =>
-          log.error({ err: e, connectionName }, "清理連接時發生錯誤"),
+          log.error({ err: e, connectionName }, "處理連接關閉時發生錯誤"),
         );
       });
   }
