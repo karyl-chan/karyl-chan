@@ -21,13 +21,11 @@ import {
 } from "../behavior/models/behavior-definition.model.js";
 import {
   PluginCommand,
-  parsePluginCommandManifest,
-  pluginCommandScopeTarget,
   rowOfPluginCommand,
   type PluginCommandRow,
 } from "../plugin-system/models/plugin-command.model.js";
 import { findPluginById } from "../plugin-system/models/plugin.model.js";
-import { parsePluginManifest } from "../plugin-system/plugin-dispatch-util.js";
+import { trackThreeRowState } from "../plugin-system/plugin-guild-reach.js";
 import type {
   ManifestCommandOption,
   ManifestPluginCommand,
@@ -257,27 +255,32 @@ export class PluginCommandSource implements DesiredCommandSource {
   }
 
   private async lookupRow(row: PluginCommandRow): Promise<DesiredLookup> {
-    // 軌一指令（guild feature）由 PluginCommandRegistry 管，不由 reconciler 管
-    if (row.featureKey !== null) return { status: "unmanaged" };
-    // OQ-14 守衛：plugin 的 manifest schema_version 必須是 "1"
-    const plugin = await findPluginById(row.pluginId);
-    if (!plugin) return { status: "not_desired", reason: "plugin 不存在" };
-    const manifest = parsePluginManifest(plugin);
-    if (!manifest || manifest.schema_version !== "1") {
-      return { status: "not_desired", reason: 'schema_version 非 "1"' };
+    // 「這列會不會註冊」的判斷只有一份（trackThreeRowState），Guild Reach
+    // 也用它決定軌三指令是否可用（#129）。軌一指令（guild feature）由
+    // PluginCommandRegistry 管，不由 reconciler 管；先判斷，省掉查 plugin。
+    const plugin =
+      row.featureKey === null ? await findPluginById(row.pluginId) : null;
+    const state = trackThreeRowState(row, plugin);
+    switch (state.status) {
+      case "feature_row":
+        return { status: "unmanaged" };
+      case "plugin_missing":
+        return { status: "not_desired", reason: "plugin 不存在" };
+      case "unsupported_manifest":
+        // OQ-14 守衛：plugin 的 manifest schema_version 必須是 "1"
+        return { status: "not_desired", reason: 'schema_version 非 "1"' };
+      case "unparseable_command":
+        return { status: "invalid", reason: "manifestJson 無法解析" };
+      case "disabled":
+        // plugin + command 都要在 enabled 狀態；adminEnabled：admin 可停用個別指令
+        return {
+          status: "not_desired",
+          reason: "plugin 或指令未啟用",
+          name: state.command.name,
+          target: state.target,
+        };
     }
-    const cmd = parsePluginCommandManifest(row.manifestJson);
-    if (!cmd) return { status: "invalid", reason: "manifestJson 無法解析" };
-    const target = pluginCommandScopeTarget(cmd.scope);
-    // 確認 plugin + command 都在 enabled 狀態；adminEnabled：admin 可停用個別指令
-    if (!plugin.enabled || plugin.status !== "active" || !row.adminEnabled) {
-      return {
-        status: "not_desired",
-        reason: "plugin 或指令未啟用",
-        name: cmd.name,
-        target,
-      };
-    }
+    const { command: cmd, target } = state;
     try {
       const spec = deriveRegistrationCall(pluginCommandDefinition(cmd), target);
       return {

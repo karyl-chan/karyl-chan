@@ -47,6 +47,15 @@ vi.mock(
   }),
 );
 
+// Command Reach (#129) reads the plugin's track-3 rows; default none.
+vi.mock(
+  "../src/modules/plugin-system/models/plugin-command.model.js",
+  async (orig) => ({
+    ...((await orig()) as Record<string, unknown>),
+    findTrackThreeCommandsByPlugin: vi.fn(async () => []),
+  }),
+);
+
 vi.mock("../src/modules/bot-events/bot-event-log.js", () => ({
   botEventLog: { record: vi.fn() },
   setBotEventLogMetric: vi.fn(),
@@ -65,6 +74,10 @@ import { findPluginById } from "../src/modules/plugin-system/models/plugin.model
 import { findFeatureRowsByPluginGuild } from "../src/modules/feature-toggle/models/plugin-guild-feature.model.js";
 import { findFeatureDefaultsByPlugin } from "../src/modules/feature-toggle/models/plugin-feature-default.model.js";
 import { featureReachResolver } from "../src/modules/feature-toggle/feature-reach-resolver.js";
+import {
+  findTrackThreeCommandsByPlugin,
+  type PluginCommandRow,
+} from "../src/modules/plugin-system/models/plugin-command.model.js";
 import { botEventLog } from "../src/modules/bot-events/bot-event-log.js";
 import { shouldRecord } from "../src/modules/bot-events/bot-event-dedup.js";
 import type { PluginGuildFeatureRow } from "../src/modules/feature-toggle/models/plugin-guild-feature.model.js";
@@ -230,6 +243,61 @@ describe("messages.send — guild feature gate", () => {
     expect(res.statusCode).toBe(403);
     expect(res.json()).toEqual({ error: "plugin not enabled in this guild" });
     expect(channel._send).not.toHaveBeenCalled();
+  });
+
+  it("allows send into a guild with every feature off when a track-3 command is usable there (#129)", async () => {
+    const channel = fakeGuildChannel();
+    server = await createWebServer({
+      staticRoot: undefined,
+      bot: fakeBot(channel) as never,
+    });
+    await server.ready();
+
+    (findPluginById as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: PLUGIN_ID,
+      pluginKey: PLUGIN_KEY,
+      enabled: true,
+      status: "active",
+      manifestJson: JSON.stringify({
+        schema_version: "1",
+        guild_features: [
+          { key: "my-feature", name: "my-feature", enabled_by_default: false },
+        ],
+      }),
+    });
+    (
+      findFeatureRowsByPluginGuild as ReturnType<typeof vi.fn>
+    ).mockResolvedValue([]);
+    const track3: PluginCommandRow = {
+      id: 1,
+      pluginId: PLUGIN_ID,
+      guildId: null,
+      name: "radio",
+      discordCommandId: null,
+      featureKey: null,
+      manifestJson: JSON.stringify({
+        name: "radio",
+        description: "radio",
+        scope: "guild",
+        contexts: ["Guild"],
+        integration_types: ["guild_install"],
+      }),
+      adminEnabled: true,
+    };
+    (
+      findTrackThreeCommandsByPlugin as ReturnType<typeof vi.fn>
+    ).mockResolvedValue([track3]);
+
+    const res = await server.inject({
+      method: "POST",
+      url: "/api/plugin/messages.send",
+      headers: { authorization: "Bearer fake-token" },
+      payload: { channel_id: CHANNEL_ID, content: "now playing" },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(channel._send).toHaveBeenCalledOnce();
+    expect(findTrackThreeCommandsByPlugin).toHaveBeenCalledWith(PLUGIN_ID);
   });
 
   it("does NOT check features for DM channels — send succeeds", async () => {
