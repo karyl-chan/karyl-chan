@@ -116,4 +116,33 @@ describe.skipIf(!PG_URL)("PR-2.1 Postgres multi-writer", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].description).toMatch(/^desc-\d+$/);
   });
+
+  it("concurrent behavior forward outcomes are all counted (no lost increment)", async () => {
+    // Every relay records its outcome via recordForwardOutcome(); one hot
+    // behavior fired from many shards must count each forward exactly once,
+    // including the first burst that races the stats row's creation.
+    const { seedMessageTrigger } = await import("./behavior-fixtures.js");
+    const { recordForwardOutcome, findStatsBulk } = await import(
+      "../src/modules/behavior/models/behavior-stats.model.js"
+    );
+    const id = await seedMessageTrigger();
+
+    await Promise.all(
+      Array.from({ length: WRITERS }, () => recordForwardOutcome(id, true)),
+    );
+    let st = (await findStatsBulk([id])).get(id)!;
+    expect(st.successCount).toBe(WRITERS);
+    expect(st.consecutiveFailures).toBe(0);
+
+    await Promise.all(
+      Array.from({ length: WRITERS }, () =>
+        recordForwardOutcome(id, false, "boom"),
+      ),
+    );
+    st = (await findStatsBulk([id])).get(id)!;
+    expect(st.successCount).toBe(WRITERS);
+    expect(st.failureCount).toBe(WRITERS);
+    expect(st.consecutiveFailures).toBe(WRITERS);
+    expect(st.lastError).toBe("boom");
+  });
 });

@@ -55,9 +55,29 @@ function rowOf(model: InstanceType<typeof BehaviorStat>): BehaviorStatRow {
   };
 }
 
+type CounterColumn = Extract<
+  keyof BehaviorStatRow,
+  "successCount" | "failureCount" | "consecutiveFailures"
+>;
+
+/**
+ * SQL 遞增 literal：`<db 欄位> + 1`，在 DB 內遞增，不經過讀回的舊值。
+ * DB 欄位名從 model 的 attribute 對應取得，不假設與 attribute 同名。
+ */
+function dbIncrement(column: CounterColumn) {
+  const field = BehaviorStat.getAttributes()[column]?.field ?? column;
+  const quoted = sequelize.getQueryInterface().quoteIdentifier(field);
+  return sequelize.literal(`${quoted} + 1`);
+}
+
 /**
  * 記一次 forward 結果。relay 路徑上呼叫——任何 DB 失敗都不可外洩，
  * caller 不需要 try/catch。
+ *
+ * 兩句各自原子的陳述句，同一 behavior 併發觸發也不會少算：
+ *   1. 行不存在就建一列全 0 的（SQLite `INSERT OR IGNORE` / Postgres
+ *      `ON CONFLICT DO NOTHING`），第一次觸發的併發建行不會互撞；
+ *   2. 計數以 `column + 1` 在 DB 內遞增，而不是讀出來加 1 再寫回。
  */
 export async function recordForwardOutcome(
   behaviorId: number,
@@ -66,26 +86,24 @@ export async function recordForwardOutcome(
 ): Promise<void> {
   try {
     const now = new Date().toISOString();
-    const [row] = await BehaviorStat.findOrCreate({
-      where: { behaviorId },
-      defaults: { behaviorId },
-    });
-    if (ok) {
-      await row.update({
+    await BehaviorStat.bulkCreate([{ behaviorId }], { ignoreDuplicates: true });
+    await BehaviorStat.update(
+      {
         lastFiredAt: now,
-        successCount: (row.getDataValue("successCount") as number) + 1,
-        consecutiveFailures: 0,
-      });
-    } else {
-      await row.update({
-        lastFiredAt: now,
-        failureCount: (row.getDataValue("failureCount") as number) + 1,
-        consecutiveFailures:
-          (row.getDataValue("consecutiveFailures") as number) + 1,
-        lastError: (error ?? "unknown").slice(0, 500),
-        lastErrorAt: now,
-      });
-    }
+        ...(ok
+          ? {
+              successCount: dbIncrement("successCount"),
+              consecutiveFailures: 0,
+            }
+          : {
+              failureCount: dbIncrement("failureCount"),
+              consecutiveFailures: dbIncrement("consecutiveFailures"),
+              lastError: (error ?? "unknown").slice(0, 500),
+              lastErrorAt: now,
+            }),
+      },
+      { where: { behaviorId } },
+    );
   } catch {
     // stats are best-effort; never break the relay path
   }
