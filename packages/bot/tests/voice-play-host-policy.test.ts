@@ -34,6 +34,9 @@ const { registerVoiceCommands } = await import(
 const { FAILED_COLOR, SUCCEEDED_COLOR } = await import(
   "../src/utils/constant.js"
 );
+const { default: en } = await import("../src/i18n/locales/en.json", {
+  with: { type: "json" },
+});
 
 registerVoiceCommands();
 
@@ -63,7 +66,13 @@ async function runPlay(url: string): Promise<Reply> {
   return reply.mock.calls[0][0];
 }
 
-const REFUSED = "This URL can't be played: its host is not on the public internet or could not be resolved.";
+const REFUSED = en.voice["url-not-allowed"];
+
+/** Refused with the localized embed, and playback never reached. */
+function expectRefused(r: Reply): void {
+  expect(play).not.toHaveBeenCalled();
+  expect(r.embeds[0]).toEqual({ description: REFUSED, color: FAILED_COLOR });
+}
 
 beforeEach(() => {
   play.mockReset();
@@ -72,37 +81,26 @@ beforeEach(() => {
 });
 
 describe("/voice play host policy", () => {
-  it("refuses the cloud metadata address without invoking playback", async () => {
-    const r = await runPlay("http://169.254.169.254/latest/meta-data/");
-    expect(play).not.toHaveBeenCalled();
-    expect(r.embeds[0]).toEqual({ description: REFUSED, color: FAILED_COLOR });
-  });
-
   it.each([
+    ["cloud metadata address", "http://169.254.169.254/latest/meta-data/"],
     ["RFC1918", "http://10.0.0.5/a.mp3"],
     ["loopback", "http://127.0.0.1:8080/a.mp3"],
     ["IPv6 link-local", "http://[fe80::1]/a.mp3"],
     ["metadata hostname", "http://metadata.google.internal/computeMetadata/v1/"],
   ])("refuses a %s target without invoking playback", async (_label, url) => {
-    const r = await runPlay(url);
-    expect(play).not.toHaveBeenCalled();
-    expect(r.embeds[0]).toEqual({ description: REFUSED, color: FAILED_COLOR });
+    expectRefused(await runPlay(url));
   });
 
   it("refuses a hostname that resolves to a private address", async () => {
     vi.mocked(lookup).mockResolvedValue([
       { address: "192.168.1.10", family: 4 },
     ] as never);
-    const r = await runPlay("https://sneaky.example.com/a.mp3");
-    expect(play).not.toHaveBeenCalled();
-    expect(r.embeds[0]).toEqual({ description: REFUSED, color: FAILED_COLOR });
+    expectRefused(await runPlay("https://sneaky.example.com/a.mp3"));
   });
 
   it("refuses a hostname that does not resolve", async () => {
     vi.mocked(lookup).mockRejectedValue(new Error("ENOTFOUND"));
-    const r = await runPlay("https://nowhere.example/a.mp3");
-    expect(play).not.toHaveBeenCalled();
-    expect(r.embeds[0]).toEqual({ description: REFUSED, color: FAILED_COLOR });
+    expectRefused(await runPlay("https://nowhere.example/a.mp3"));
   });
 
   it("plays a public URL", async () => {
