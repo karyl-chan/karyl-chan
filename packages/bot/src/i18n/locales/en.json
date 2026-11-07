@@ -146,6 +146,7 @@
     "left": "✓ Left voice channel.",
     "bad-url": "URL format is invalid.",
     "http-only": "Only http(s) URLs are accepted.",
+    "url-not-allowed": "This URL can't be played: its host is not on the public internet or could not be resolved.",
     "playing": "✓ Now playing ``{{url}}`` (player:{{playerStatus}})",
     "not-joined": "Not in a voice channel — use `/voice join` first.",
     "ffmpeg-missing": "ffmpeg is unavailable; voice playback disabled.",

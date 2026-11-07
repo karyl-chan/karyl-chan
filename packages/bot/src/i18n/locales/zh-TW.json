@@ -146,6 +146,7 @@
     "left": "✓ 已離開語音頻道。",
     "bad-url": "URL 格式不正確。",
     "http-only": "僅接受 http(s) URL。",
+    "url-not-allowed": "無法播放這個 URL：主機不在公開網路上，或無法解析。",
     "playing": "✓ 開始播放 ``{{url}}``（player:{{playerStatus}}）",
     "not-joined": "尚未加入語音頻道，請先 `/voice join`。",
     "ffmpeg-missing": "ffmpeg 不可用，語音播放停用。",

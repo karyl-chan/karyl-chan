@@ -9,6 +9,10 @@ import { registerInProcessCommand } from "../in-process-command-registry.service
 import { getVoiceBackend, VoiceCapacityError } from "../../voice/voice-backend.js";
 import { FAILED_COLOR, SUCCEEDED_COLOR } from "../../../utils/constant.js";
 import {
+  assertPublicMediaTarget,
+  HostPolicyError,
+} from "../../../utils/host-policy.js";
+import {
   describeEn,
   localizedDescriptions,
   resolveLocale,
@@ -165,6 +169,27 @@ async function handlePlay(command: ChatInputCommandInteraction): Promise<void> {
       tForInteraction(command, "voice.http-only"),
     );
     return;
+  }
+  // SSRF guard (#162): ffmpeg fetches the URL itself, so refuse anything
+  // that isn't on the public internet (metadata, link-local, loopback,
+  // RFC1918 …) — the same policy the plugin voice.play RPC applies to
+  // arbitrary media URLs. Redirects / HLS segments are not covered (#158).
+  const port = parsed.port
+    ? Number(parsed.port)
+    : parsed.protocol === "https:"
+      ? 443
+      : 80;
+  try {
+    await assertPublicMediaTarget(parsed.hostname, port);
+  } catch (err) {
+    if (err instanceof HostPolicyError) {
+      await ephemeralReplyError(
+        command,
+        tForInteraction(command, "voice.url-not-allowed"),
+      );
+      return;
+    }
+    throw err;
   }
   try {
     const status = await getVoiceBackend().play(command.guildId, url);
