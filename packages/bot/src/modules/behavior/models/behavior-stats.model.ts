@@ -55,14 +55,18 @@ function rowOf(model: InstanceType<typeof BehaviorStat>): BehaviorStatRow {
   };
 }
 
-type CounterColumn = "successCount" | "failureCount" | "consecutiveFailures";
+type CounterColumn = Extract<
+  keyof BehaviorStatRow,
+  "successCount" | "failureCount" | "consecutiveFailures"
+>;
 
 /**
- * `column = column + 1`，在 DB 內遞增，不經過讀回的舊值。欄位名直接當
- * DB 欄位用——這個 model 沒有 `field:` / `underscored` 對應。
+ * SQL 遞增 literal：`<db 欄位> + 1`，在 DB 內遞增，不經過讀回的舊值。
+ * DB 欄位名從 model 的 attribute 對應取得，不假設與 attribute 同名。
  */
-function plusOne(column: CounterColumn) {
-  const quoted = sequelize.getQueryInterface().quoteIdentifier(column);
+function dbIncrement(column: CounterColumn) {
+  const field = BehaviorStat.getAttributes()[column]?.field ?? column;
+  const quoted = sequelize.getQueryInterface().quoteIdentifier(field);
   return sequelize.literal(`${quoted} + 1`);
 }
 
@@ -84,19 +88,20 @@ export async function recordForwardOutcome(
     const now = new Date().toISOString();
     await BehaviorStat.bulkCreate([{ behaviorId }], { ignoreDuplicates: true });
     await BehaviorStat.update(
-      ok
-        ? {
-            lastFiredAt: now,
-            successCount: plusOne("successCount"),
-            consecutiveFailures: 0,
-          }
-        : {
-            lastFiredAt: now,
-            failureCount: plusOne("failureCount"),
-            consecutiveFailures: plusOne("consecutiveFailures"),
-            lastError: (error ?? "unknown").slice(0, 500),
-            lastErrorAt: now,
-          },
+      {
+        lastFiredAt: now,
+        ...(ok
+          ? {
+              successCount: dbIncrement("successCount"),
+              consecutiveFailures: 0,
+            }
+          : {
+              failureCount: dbIncrement("failureCount"),
+              consecutiveFailures: dbIncrement("consecutiveFailures"),
+              lastError: (error ?? "unknown").slice(0, 500),
+              lastErrorAt: now,
+            }),
+      },
       { where: { behaviorId } },
     );
   } catch {
