@@ -11,6 +11,11 @@ import {
   type AddressClass,
 } from "./ip-address.js";
 import {
+  isPublicMediaAddress,
+  legacyAllowPrivate,
+  METADATA_HOSTNAMES,
+} from "@karyl-chan/voice/net";
+import {
   allowlistMatches,
   cidrBounds,
   cidrContains,
@@ -49,12 +54,8 @@ export class HostPolicyError extends Error {
   }
 }
 
-const BLOCKED_HOSTNAMES = new Set([
-  "metadata.google.internal",
-  "metadata",
-  "metadata.goog",
-  "metadata.azure.com",
-]);
+/** Cloud metadata hostnames — one list, shared with the voice media proxy. */
+const BLOCKED_HOSTNAMES = METADATA_HOSTNAMES;
 
 /**
  * Classes no policy ever lets through: link-local (169.254/16, fe80::/10
@@ -177,10 +178,11 @@ function toPinnedAddresses(addresses: readonly string[]): PinnedAddress[] {
  * this check and the connect cannot redirect it — is the caller's job:
  *   - pinned: RCON (`resolveAllowedTarget`) and behavior webhooks
  *     (`resolveWebhookTarget`, its own skeleton);
- *   - deliberately not pinned (#144): plugin targets and voice media,
- *     whose connect re-resolves the host. See `assertPluginTarget` and
- *     `assertPublicMediaTarget` for why and the residual risk; the
- *     voice redirect / HLS hole is #158.
+ *   - deliberately not pinned (#144): plugin targets, whose connect
+ *     re-resolves the host — see `assertPluginTarget` for why;
+ *   - voice media: this check is only the up-front, user-facing one;
+ *     the voice media proxy re-vets and pins every request ffmpeg
+ *     makes (#158) — see `assertPublicMediaTarget`.
  */
 async function checkHost(
   rawHost: string,
@@ -238,16 +240,11 @@ export async function assertAllowedTarget(
   await resolveAllowedTarget(host, port);
 }
 
-/**
- * True when the legacy WEBHOOK_ALLOW_PRIVATE dev hatch is on. Read from
- * process.env per call so tests can flip it per-case without
- * re-importing the frozen `config` module; operators set it once at
- * deploy time, so the boot-frozen value and the runtime read are
- * observationally equivalent in prod.
- */
-function legacyAllowPrivate(): boolean {
-  return process.env.WEBHOOK_ALLOW_PRIVATE === "true";
-}
+// `legacyAllowPrivate` (the WEBHOOK_ALLOW_PRIVATE dev hatch) comes from
+// @karyl-chan/voice/net: read from process.env per call so tests can flip
+// it per case without re-importing the frozen `config` module; operators
+// set it once at deploy time, so the boot-frozen value and the runtime
+// read are observationally equivalent in prod.
 
 /**
  * assertPublicMediaTarget — strict public-internet-only policy for
@@ -256,20 +253,22 @@ function legacyAllowPrivate(): boolean {
  * Only `public` addresses pass: cloud metadata, link-local, loopback,
  * unspecified, RFC1918 / shared / ULA, non-routable ranges (0/8,
  * 198.18/15, 224/4, 240/4, fec0::/10, multicast, ::/96) and the NAT64 /
- * 6to4 transition prefixes are all refused.
+ * 6to4 transition prefixes are all refused. The rule is
+ * `isPublicMediaAddress` in @karyl-chan/voice/net — the same one the
+ * voice media proxy applies.
  *
  * Historical quirk kept as-is: the legacy WEBHOOK_ALLOW_PRIVATE=true dev
  * hatch also lets `private` addresses through here (everything else is
  * still blocked). Never enable it in production.
  *
- * Residual risk (#144, #158): ffmpeg fetches the URL itself — possibly
- * in the separate voice container — and resolves the host again, so the
- * check cannot be pinned; swapping the hostname for the IP would break
- * https SNI and certificate checks. Worse than that window, ffmpeg
- * follows HTTP redirects and an HLS playlist can name segments on any
- * host, and none of those reach this check. Closing it means fetching
- * the media through the bot (pinned, redirects vetted hop by hop) —
- * tracked in #158.
+ * This is the up-front check that gives the user a readable refusal. It
+ * is not what keeps ffmpeg in bounds: ffmpeg fetches the URL itself (in
+ * this process or the standalone voice service), follows redirects and
+ * opens whatever an HLS playlist names. Since #158 every one of those
+ * requests goes through the voice media proxy (`media-proxy.ts` in
+ * @karyl-chan/voice), which re-runs this rule per request, pins the
+ * vetted addresses and terminates TLS itself; ffmpeg's protocol
+ * whitelist leaves it no other way out.
  */
 export async function assertPublicMediaTarget(
   host: string,
@@ -279,12 +278,7 @@ export async function assertPublicMediaTarget(
   await checkHost(
     host,
     port,
-    (address) => {
-      const cls = classOf(address);
-      if (cls === "public") return false;
-      if (cls === "private") return !allowPrivate;
-      return true;
-    },
+    (address) => !isPublicMediaAddress(address, { allowPrivate }),
     "媒體 URL 目標不被允許",
   );
 }

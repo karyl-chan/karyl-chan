@@ -8,39 +8,12 @@
  * 仍以原本的主機名稱進行。
  */
 
-import type { LookupFunction } from "net";
 import { Agent } from "undici";
+import { pinnedLookup, type PinnedAddress } from "@karyl-chan/voice/net";
 
-export interface PinnedAddress {
-  address: string;
-  family: 4 | 6;
-}
-
-/**
- * A `net.connect`-compatible lookup that ignores the hostname and answers
- * with the pinned addresses. Node asks with `all: true` when
- * autoSelectFamily (happy eyeballs) is on — the default — and gets every
- * checked address, so a dual-stack target still falls back from an
- * unroutable AAAA to its A record; otherwise it gets the first one.
- */
-export function pinnedLookup(pinned: readonly PinnedAddress[]): LookupFunction {
-  const [first] = pinned;
-  if (!first) throw new Error("pinnedLookup needs at least one address");
-  return ((
-    _hostname: string,
-    options: { all?: boolean },
-    callback: (...args: unknown[]) => void,
-  ) => {
-    if (options?.all) {
-      callback(
-        null,
-        pinned.map(({ address, family }) => ({ address, family })),
-      );
-    } else {
-      callback(null, first.address, first.family);
-    }
-  }) as LookupFunction;
-}
+// The pinned lookup itself lives in @karyl-chan/voice/net (shared with the
+// voice media proxy, #158); re-exported so bot imports stay put.
+export { pinnedLookup, type PinnedAddress };
 
 /**
  * A one-shot undici Agent whose every connection goes to one of `pinned`.
