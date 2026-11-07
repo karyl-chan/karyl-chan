@@ -1,5 +1,135 @@
 # Changelog
 
+## [2.0.0](https://github.com/karyl-chan/karyl-chan/compare/bot-v1.13.0...bot-v2.0.0) (2026-11-07)
+
+
+### ⚠ BREAKING CHANGES
+
+* **behavior:** a stored regex trigger that uses a backreference, a lookahead or a large repeat count no longer matches; the boot log names each one. Production has no regex triggers.
+* **behavior:** saving a regex message trigger that uses a backreference, a lookahead or a large repeat count (above about 16) is now refused with validation_failed on patternValue. Production has no regex triggers.
+* **command-system:** a receiver that verifies test-fire requests with the real scheme now rejects them. To keep answering the admin's test, verify (and sign the response) under the "test:" prefix in hmac mode, or read X-Plugin-Webhook-Test-Token in token mode; `_meta.user.id` of a test is "0".
+* **command-system:** behavior webhook receivers must sign their responses over the request's X-Karyl-Nonce. The nonce-less form and responses signed over a nonce of the receiver's own are refused, with no transition window: a window would keep the swap open for its whole length, and production had no custom behaviors when this shipped.
+* **command-system:** a webhook that answers 2xx with a body that is not a JSON object (plain text, HTML, an array), or with more than 64 KiB, now fails the action - the user gets the generic failure line - where it used to be treated as "no reply". Answer an empty body to send nothing.
+* **behavior:** behavior route errors are { error: { code, message, field? } } instead of { error: "<message>" }, and group member ids must be 17-20 digit snowflakes.
+* **behavior:** `behaviors` and `behavior_scope_tabs` are replaced by behavior_commands / behavior_definitions / behavior_webhook_actions. POST/PATCH/DELETE /api/behaviors, /api/behaviors/reorder, /api/behaviors/:id/resync and /api/behavior-tabs are removed; GET /api/behaviors has a new shape. Behaviors that Discord cannot express are dropped by the migration (logged to the bot event log), and every copied behavior gets a new id, so a webhook's `_meta.behavior_id` changes. Stored `behavior:<scopeKey>.manage` grants are deleted.
+* **behavior:** slash behaviors on specific user / group / channel scope tabs now run for anyone who can invoke the command. Those tabs cannot be expressed by Discord and are dropped by the behaviors table cutover.
+* **behavior:** `behavior:<scopeKey>.manage` capability tokens are no longer recognised. Roles that relied on them lose behavior access; the boot-time capability audit lists any stranded tokens.
+* **behavior:** behavior webhook URLs whose host resolves to a public address must now use https — a plain http:// public target is refused on save (400, code https_required) and at forward time. Only private targets listed in WEBHOOK_PRIVATE_ALLOWLIST may still use http.
+* **behaviors:** behavior webhooks no longer receive `_meta.session` and the `[BEHAVIOR:END]` sentinel is relayed as plain text; continuous behaviors run as one-time; `!break` / `/break` and `!manual` / `/manual` no longer exist; the /api/behavior-sessions endpoints are removed.
+
+### Features
+
+* **admin:** convert triggers from the card's kind tag ([#172](https://github.com/karyl-chan/karyl-chan/issues/172)) ([d5b0ef8](https://github.com/karyl-chan/karyl-chan/commit/d5b0ef84be5450287f11d63c28c151ab68d506f5))
+* **admin:** list a behavior's recent deliveries on its card ([b757a67](https://github.com/karyl-chan/karyl-chan/commit/b757a679e17eacd1258a55ae0976e0be0136b062))
+* **behavior:** add a private-network allowlist for webhook targets ([cc882a1](https://github.com/karyl-chan/karyl-chan/commit/cc882a11e15d992582f396208e9126df1619f7cc))
+* **behavior:** add the attachment id to webhook _meta.attachments ([ba3e31b](https://github.com/karyl-chan/karyl-chan/commit/ba3e31b0bc79dfaa62fc283300f40e203e7dffcb))
+* **behavior:** add, edit and remove command leaves; convert to subcommands ([afbd7ca](https://github.com/karyl-chan/karyl-chan/commit/afbd7cacaf4fef3e59b3846224d0100750a49842)), closes [#95](https://github.com/karyl-chan/karyl-chan/issues/95) [#98](https://github.com/karyl-chan/karyl-chan/issues/98)
+* **behavior:** convert a behavior between message and command triggers ([b9849d2](https://github.com/karyl-chan/karyl-chan/commit/b9849d23e510032ac8cd4cce15a363b5c47aa8ce))
+* **behavior:** convert a behavior between message and command triggers ([#172](https://github.com/karyl-chan/karyl-chan/issues/172)) ([308fcbb](https://github.com/karyl-chan/karyl-chan/commit/308fcbb69415ba9ef971228f2ef63431d8a76c65))
+* **behavior:** count a refused command deferral as a failed delivery ([07efd30](https://github.com/karyl-chan/karyl-chan/commit/07efd30cb666c9b7effa0c1682e404a3c37d407c))
+* **behavior:** create, edit and delete message triggers ([e512fe0](https://github.com/karyl-chan/karyl-chan/commit/e512fe060e2463b492bf3477dd6c4e943a503109))
+* **behavior:** create, edit, delete and resync behavior commands ([7a8e468](https://github.com/karyl-chan/karyl-chan/commit/7a8e468d67e1742fd5cf4ae194311e2c10f1be7c)), closes [#96](https://github.com/karyl-chan/karyl-chan/issues/96) [#97](https://github.com/karyl-chan/karyl-chan/issues/97)
+* **behavior:** delete member lists left for groups no trigger uses ([3dd3126](https://github.com/karyl-chan/karyl-chan/commit/3dd3126dfbc6a1185d6a3cf11eb040948489e8bb))
+* **behavior:** derive a behavior's admin section from its trigger ([c7e95ef](https://github.com/karyl-chan/karyl-chan/commit/c7e95efe2541136dcfe61209f5224c694c5f766f))
+* **behavior:** drop per-scope-tab behavior capabilities ([d39f08c](https://github.com/karyl-chan/karyl-chan/commit/d39f08cf28f6283318d9e04258ebe2d62351d98e))
+* **behavior:** GET /api/behaviors/:id/deliveries for the delivery log ([29274a9](https://github.com/karyl-chan/karyl-chan/commit/29274a96caf5274d20d632dd3c1a656f70f9a28d))
+* **behavior:** keep a rotated-out webhook secret valid for a grace period ([b640c5e](https://github.com/karyl-chan/karyl-chan/commit/b640c5ea4bafc7c9fe2c80de613cb4be3d135a64)), closes [#99](https://github.com/karyl-chan/karyl-chan/issues/99)
+* **behavior:** keep group member lists only for groups a trigger uses ([21b9608](https://github.com/karyl-chan/karyl-chan/commit/21b96080156ae6611f90d8bb5a02cce535d808cf))
+* **behavior:** leave slash command visibility to Discord ([73cc959](https://github.com/karyl-chan/karyl-chan/commit/73cc959d26c800ea9c230d132ae32940d7d92127))
+* **behavior:** move behaviors to command, leaf and message trigger tables ([33f4e72](https://github.com/karyl-chan/karyl-chan/commit/33f4e72c888a747dbb1d2a98694a83d69dc15f5d))
+* **behavior:** preview a test-fire's reply in the admin UI ([231d942](https://github.com/karyl-chan/karyl-chan/commit/231d942fd63df6c0e018896d9a8335460aad541a))
+* **behavior:** prune the delivery log to 20 per behavior and 7 days ([69b5dd5](https://github.com/karyl-chan/karyl-chan/commit/69b5dd5c5389f8a7cdd96e67ce38f1d7ec60b7c8))
+* **behavior:** record each webhook delivery in behavior_deliveries ([e8765cf](https://github.com/karyl-chan/karyl-chan/commit/e8765cf0c747e62996e995952cf53a9ac676121a))
+* **behavior:** record group member changes in admin_audit_log ([0b2462c](https://github.com/karyl-chan/karyl-chan/commit/0b2462ce6492a0700d38db05e0433c796ce0d82c)), closes [#98](https://github.com/karyl-chan/karyl-chan/issues/98)
+* **behavior:** refuse a command offered in other DMs without user install ([66e7723](https://github.com/karyl-chan/karyl-chan/commit/66e7723b54df835cda1ec2e4bde744a33ebf7c03))
+* **behavior:** reorder message triggers within one location ([0d5dfa4](https://github.com/karyl-chan/karyl-chan/commit/0d5dfa4ae66a4196de603e242dae716ca14c9e98)), closes [#121](https://github.com/karyl-chan/karyl-chan/issues/121)
+* **behavior:** report the HTTP status of a successful forward ([8ccb795](https://github.com/karyl-chan/karyl-chan/commit/8ccb79525906cb6e0c30a4ca0cc4643baa4c2fbe))
+* **behavior:** rotate a behavior's webhook secret ([95f9518](https://github.com/karyl-chan/karyl-chan/commit/95f951849aab8727fab6c9830d9de2aac536ccf1)), closes [#99](https://github.com/karyl-chan/karyl-chan/issues/99)
+* **behavior:** send a command's attachment options as _meta.attachments ([3ce47f7](https://github.com/karyl-chan/karyl-chan/commit/3ce47f7a32e926679a44d2286a7b6eb609efccfa))
+* **behavior:** serve the command write schemas to the admin UI ([1744374](https://github.com/karyl-chan/karyl-chan/commit/1744374ecddc13bade4d8401271b5c73ecaefecd))
+* **behavior:** serve the message trigger write schema to the admin UI ([a73db51](https://github.com/karyl-chan/karyl-chan/commit/a73db5187da77a66f558d219c985e125b90b1833)), closes [#108](https://github.com/karyl-chan/karyl-chan/issues/108)
+* **behavior:** store who sees a behavior's reply, overridable by the response ([def4791](https://github.com/karyl-chan/karyl-chan/commit/def4791f8bb91b7f1dc26fd6943fa771d4dd06fd))
+* **behavior:** strict request schemas and one error body for behavior routes ([f046cdc](https://github.com/karyl-chan/karyl-chan/commit/f046cdc96579fe3d4ab0e058d58ba363fb05cb8d)), closes [#95](https://github.com/karyl-chan/karyl-chan/issues/95)
+* **behavior:** switch the system login's trigger without a lockout window ([96e778e](https://github.com/karyl-chan/karyl-chan/commit/96e778e8338284271647e3e7f3e5383f15d972eb))
+* **behavior:** warn at boot about allowlist entries that cannot apply ([215b628](https://github.com/karyl-chan/karyl-chan/commit/215b628b3dff19b62217ce7bc58a5bcb45dd5be2))
+* **command-system:** add CommandNamespace for command-name checks ([0ec95e9](https://github.com/karyl-chan/karyl-chan/commit/0ec95e918fafe965284882f4fcd1562f7fadd9e0))
+* **command-system:** add registerOne with typed per-target results ([b953caf](https://github.com/karyl-chan/karyl-chan/commit/b953caf5f332698c744ea761ee965cff80b9d565))
+* **command-system:** answer every behavior through one reply model and ReplyRenderer ([eeb2905](https://github.com/karyl-chan/karyl-chan/commit/eeb29052c29901cdf24936b4906b0738a226cddf))
+* **command-system:** bind a webhook response's signature to the request nonce ([bde7adf](https://github.com/karyl-chan/karyl-chan/commit/bde7adfa526023f3176eae839cf395c9165db822))
+* **command-system:** bound behavior replies and fail them with a generic message ([9c295f3](https://github.com/karyl-chan/karyl-chan/commit/9c295f3be436b05f826c67f2e3e8efbce4e16e4a))
+* **command-system:** build subcommand trees from command leaves ([685b716](https://github.com/karyl-chan/karyl-chan/commit/685b716dcba41aa03804d1e51198db0b4cfb8854))
+* **command-system:** diff and register defaultMemberPermissions ([46f4aac](https://github.com/karyl-chan/karyl-chan/commit/46f4aacf5714853b6b816f27cffb2b487cf3a795))
+* **command-system:** hold the reconcile lock across a register-then-store write ([7586a1d](https://github.com/karyl-chan/karyl-chan/commit/7586a1dced89b92f15e66113d8457457879db9df))
+* **command-system:** rate-limit behavior webhooks in bot DMs and slash commands ([75d8d47](https://github.com/karyl-chan/karyl-chan/commit/75d8d477cecc3e3baf19fe9c9e6a0f23ef989c5a))
+* **command-system:** release a behavior command's old registration on demand ([9b20c7c](https://github.com/karyl-chan/karyl-chan/commit/9b20c7c0de149f9e86779630643c11481c7334f8))
+* **command-system:** send a regex trigger's capture groups in _meta.captures ([c7aaff9](https://github.com/karyl-chan/karyl-chan/commit/c7aaff9cbabb975238eaa63a4f2da01941ea7d91))
+* **command-system:** send the invoked subcommand path in a command's _meta ([80be222](https://github.com/karyl-chan/karyl-chan/commit/80be222cb2e7a8e9591752f00f81e68bb5e4a6a7))
+* **command-system:** sign test-fire requests apart from real ones and without a real identity ([0f2c650](https://github.com/karyl-chan/karyl-chan/commit/0f2c6509bdc305b0dea7be008bd171985812cd50))
+* **frontend:** add message triggers from the section's new-behavior dialog ([b6598c5](https://github.com/karyl-chan/karyl-chan/commit/b6598c552597cfa1b05934efc9c9257e9fecc791)), closes [#104](https://github.com/karyl-chan/karyl-chan/issues/104)
+* **frontend:** check behavior drafts against the server's write schema ([b302ceb](https://github.com/karyl-chan/karyl-chan/commit/b302ceb22bec717bcf43015d93bf8565f03a030d)), closes [#108](https://github.com/karyl-chan/karyl-chan/issues/108)
+* **frontend:** clients and types for the behavior write API ([e1f1034](https://github.com/karyl-chan/karyl-chan/commit/e1f1034e90ed6a76c0fa94adb77f134a9775e395))
+* **frontend:** convert a single command to subcommands ([19f7deb](https://github.com/karyl-chan/karyl-chan/commit/19f7debc87b76bc0953ed62b1a5f5b70c5099623))
+* **frontend:** create commands from the section's new-behavior dialog ([c4ae88a](https://github.com/karyl-chan/karyl-chan/commit/c4ae88a9af8e1048264bf8a6391864689f3c1192))
+* **frontend:** edit a command's name and visibility in its card ([06f5a9b](https://github.com/karyl-chan/karyl-chan/commit/06f5a9ba309884e7873f45ad9ae8d32de4cc0a6f)), closes [#106](https://github.com/karyl-chan/karyl-chan/issues/106)
+* **frontend:** edit message triggers in their card ([1f0eb25](https://github.com/karyl-chan/karyl-chan/commit/1f0eb25d43dcea28f8bc48aa1644ac06814a5c4a)), closes [#108](https://github.com/karyl-chan/karyl-chan/issues/108) [#110](https://github.com/karyl-chan/karyl-chan/issues/110) [#111](https://github.com/karyl-chan/karyl-chan/issues/111)
+* **frontend:** edit, add and remove a command's leaves in its card ([8a35b85](https://github.com/karyl-chan/karyl-chan/commit/8a35b85bf185d340592957af57fa3317a4724c3b))
+* **frontend:** keep unsaved edits apart from the saved trigger ([329010f](https://github.com/karyl-chan/karyl-chan/commit/329010fbf08d38272acb08e1369aaf166d1f9b82)), closes [#105](https://github.com/karyl-chan/karyl-chan/issues/105)
+* **frontend:** reorder message triggers within their location ([2ee7773](https://github.com/karyl-chan/karyl-chan/commit/2ee77733fb7d343a9371d47f10ec2cb0f5c1eafa))
+* **frontend:** resync a command and show what Discord answered ([fac3b30](https://github.com/karyl-chan/karyl-chan/commit/fac3b307abc7914df3a2663f10e9016ee495e093)), closes [#107](https://github.com/karyl-chan/karyl-chan/issues/107) [#111](https://github.com/karyl-chan/karyl-chan/issues/111)
+* **frontend:** show behaviors in three derived sections, read-only ([d514cfa](https://github.com/karyl-chan/karyl-chan/commit/d514cfa23833db3fa65cd0fcfba8363f76c2855e)), closes [#109](https://github.com/karyl-chan/karyl-chan/issues/109)
+* **frontend:** show webhook secrets once and rotate them ([06d0b1b](https://github.com/karyl-chan/karyl-chan/commit/06d0b1bafcf2d364f5adecdfacf24baea424d57c))
+* **frontend:** switch the login's trigger from its pinned card ([8cfd1fe](https://github.com/karyl-chan/karyl-chan/commit/8cfd1fe6b9a7dee6de453f55c0b4f3599883f174))
+
+
+### Bug Fixes
+
+* **behavior:** match regex triggers in linear time, once per message ([986a5d0](https://github.com/karyl-chan/karyl-chan/commit/986a5d0ec62f06afeb952fc8f647f68e1e2cb98e))
+* **behavior:** pin webhook connections to the checked addresses ([6e8118b](https://github.com/karyl-chan/karyl-chan/commit/6e8118b116d487a05001fedd568bad4934a2c683)), closes [#103](https://github.com/karyl-chan/karyl-chan/issues/103)
+* **behavior:** refuse regex triggers that cannot run in linear time ([bcd91ce](https://github.com/karyl-chan/karyl-chan/commit/bcd91cec4a530c6432b4a2a276cb170996844d97))
+* **behaviors:** filter removed systemKeys in JS in migration 010 ([f9dcd5e](https://github.com/karyl-chan/karyl-chan/commit/f9dcd5e0fb3791578d536a2748ac479a8e0407f8))
+* **bot:** close an exhausted RCON connection before notifying ([14fdd2e](https://github.com/karyl-chan/karyl-chan/commit/14fdd2e73f0a84e28d0cdea9e0bd3f46f1c1f950)), closes [#163](https://github.com/karyl-chan/karyl-chan/issues/163)
+* **bot:** dedupe the plugin command overlap warn and say whose rows clash ([34740d0](https://github.com/karyl-chan/karyl-chan/commit/34740d0597a15eacc1c86c4dd4d11124fd861e61)), closes [#142](https://github.com/karyl-chan/karyl-chan/issues/142)
+* **bot:** hand ffmpeg the vetted media URL and defer /voice play ([02df2c0](https://github.com/karyl-chan/karyl-chan/commit/02df2c0a6dc10f3ed9a78455284fdc15b1773d01)), closes [#162](https://github.com/karyl-chan/karyl-chan/issues/162)
+* **bot:** increment behavior_stats counters atomically ([86f8015](https://github.com/karyl-chan/karyl-chan/commit/86f801581fe757ad649e634b8587d208ca2516b5))
+* **bot:** increment behavior_stats counters atomically ([d053cbf](https://github.com/karyl-chan/karyl-chan/commit/d053cbf026181e0d4eb7e71fb3a3625f08ad0213)), closes [#159](https://github.com/karyl-chan/karyl-chan/issues/159)
+* **bot:** pin RCON to the vetted addresses and re-vet them on reconnect ([100e15e](https://github.com/karyl-chan/karyl-chan/commit/100e15e8ba2f5fe3129a0e609388410af518a89f)), closes [#144](https://github.com/karyl-chan/karyl-chan/issues/144)
+* **bot:** rebuild the RCON client on every reconnect ([b2825cc](https://github.com/karyl-chan/karyl-chan/commit/b2825cce76fc8c5005dfe5a843dbed3d81efb1ad))
+* **bot:** rebuild the RCON client on every reconnect ([9ae14df](https://github.com/karyl-chan/karyl-chan/commit/9ae14dfdc7c630f2c5b9477229bb071752372a87)), closes [#163](https://github.com/karyl-chan/karyl-chan/issues/163)
+* **bot:** run the public-media host policy on /voice play URLs ([21fdf9d](https://github.com/karyl-chan/karyl-chan/commit/21fdf9d4edcc75908fed39890db65657ea8cb7e6))
+* **bot:** run the public-media host policy on /voice play URLs ([56f9b6d](https://github.com/karyl-chan/karyl-chan/commit/56f9b6d7128b11be2266aa0ff0c10f39e96dae8f)), closes [#162](https://github.com/karyl-chan/karyl-chan/issues/162)
+* **bot:** show the login's current trigger on the admin login page ([72de45f](https://github.com/karyl-chan/karyl-chan/commit/72de45fe9f2c33248c39959558273d93c76eb772))
+* **bot:** stop a failed RCON connect from raising an unhandled rejection ([13c8152](https://github.com/karyl-chan/karyl-chan/commit/13c8152075872910dcb245595a7ee341027f3846))
+* **command-system:** cap a conversation's waiting message triggers at three ([4b6150b](https://github.com/karyl-chan/karyl-chan/commit/4b6150b209d0f64a9557b83b705b49c3a732a158))
+* **command-system:** dispatch slash commands by registration target ([a744958](https://github.com/karyl-chan/karyl-chan/commit/a744958f0caf52453d94a5ba40211097cf8e4b89))
+* **command-system:** honour track-3 default_member_permissions ([44ef62e](https://github.com/karyl-chan/karyl-chan/commit/44ef62e386cea6fdf12229cb097646c7157aaf4d))
+* **command-system:** key the stale sweep by command name + target ([65a3ddf](https://github.com/karyl-chan/karyl-chan/commit/65a3ddfe8d8077fd3f5fb265dbacb63f6af43dbe)), closes [#128](https://github.com/karyl-chan/karyl-chan/issues/128)
+* **command-system:** make CommandNamespace name checks case-insensitive ([f548a64](https://github.com/karyl-chan/karyl-chan/commit/f548a64cfae04fceffc6d7e5180b9253cd651355))
+* **command-system:** match message triggers before taking the lock ([1d8bc1c](https://github.com/karyl-chan/karyl-chan/commit/1d8bc1cea05aac60ed7cc0024a029e6fc39cab71))
+* **command-system:** register specific-guild behaviors only in their guild ([86ffd68](https://github.com/karyl-chan/karyl-chan/commit/86ffd682ae18a9e4bc963b5e5324dcc51b882071)), closes [#128](https://github.com/karyl-chan/karyl-chan/issues/128)
+* **command-system:** registerOne fails when there is nothing to register ([03b97a8](https://github.com/karyl-chan/karyl-chan/commit/03b97a85127f4127f61adda153f8c7522c21a60a))
+* **command-system:** report a command removal that did not happen ([33270e4](https://github.com/karyl-chan/karyl-chan/commit/33270e44141c7aa6fe81ea7cd771fc5960ec26c3)), closes [#136](https://github.com/karyl-chan/karyl-chan/issues/136)
+* **command-system:** serialise message triggers per user and channel ([23c9269](https://github.com/karyl-chan/karyl-chan/commit/23c9269444f53a6b1f4e03e12d80438ae6a50e22))
+* **docker:** install Bullseye packages from archive.debian.org ([a36269d](https://github.com/karyl-chan/karyl-chan/commit/a36269d993ae2ae5bae3aa9d6adc90e573098d44))
+* **docker:** install Bullseye packages from archive.debian.org ([3fa2a98](https://github.com/karyl-chan/karyl-chan/commit/3fa2a98d3ec692733ab288155f3f344f5d6db73d))
+* **frontend:** stop warning about unsaved edits a save just stored ([984f507](https://github.com/karyl-chan/karyl-chan/commit/984f50711d23b9f765b14277b4ebbf05cc4667f0))
+* **frontend:** word a new command's preset from one i18n pair ([8dd53c3](https://github.com/karyl-chan/karyl-chan/commit/8dd53c356756cec6764309e27f44943e08273d1f)), closes [#141](https://github.com/karyl-chan/karyl-chan/issues/141)
+* **host-policy:** block non-routable and IPv6 transition ranges ([9277a0c](https://github.com/karyl-chan/karyl-chan/commit/9277a0c6ae38c4c0d7df9d532a3e52c5bcb3a6da))
+* **host-policy:** refuse hosts whose DNS lookup returns no addresses ([d529eef](https://github.com/karyl-chan/karyl-chan/commit/d529eef089437caac35d0ca8a58bad9e14db8e4a))
+* **plugin-system:** check guild-feature command names through CommandNamespace ([fbfd184](https://github.com/karyl-chan/karyl-chan/commit/fbfd1842ac54304312cd78655b6cf9a3dcecbc78))
+* **plugin-system:** check plugin command names through CommandNamespace ([3be1a08](https://github.com/karyl-chan/karyl-chan/commit/3be1a084ab3d4fd9051ff363784ff2f830d14bf1))
+* **plugin-system:** warn when several plugin commands match one invocation ([4bdf631](https://github.com/karyl-chan/karyl-chan/commit/4bdf631b7e553d4d5dbb659e42830b6169248612))
+* **plugin-wire:** refuse a name shared by a plugin command and a feature command ([75bbd62](https://github.com/karyl-chan/karyl-chan/commit/75bbd62a171b2acefcf3d98f4b6dcf53f8363d26)), closes [#142](https://github.com/karyl-chan/karyl-chan/issues/142)
+* **voice:** address review of the media proxy ([b705586](https://github.com/karyl-chan/karyl-chan/commit/b705586b09c23ff18403fdaf4e091d85cf7af1bf))
+* **voice:** bind decoders to their proxy and sniff ID3-tagged playlists ([9264cd1](https://github.com/karyl-chan/karyl-chan/commit/9264cd1d58f36aa4dfaf7cb963ca27ad23115b44))
+* **voice:** route every ffmpeg fetch through a vetting media proxy ([6f5eeac](https://github.com/karyl-chan/karyl-chan/commit/6f5eeace86b8a2b2c7015d153c7cdff397e64d7d))
+* **voice:** route every ffmpeg fetch through the media proxy ([b58c653](https://github.com/karyl-chan/karyl-chan/commit/b58c653babe909bdecebf9a10c322997cdeda553))
+* **voice:** word a refused media URL as a media check ([855f67f](https://github.com/karyl-chan/karyl-chan/commit/855f67f1d57c682c1f7f013f7a8496582983ea76))
+
+
+### Code Refactoring
+
+* **behaviors:** remove continuous sessions, break and manual ([8d8247d](https://github.com/karyl-chan/karyl-chan/commit/8d8247d3bd85501855f5ee7018312a80d96cec31))
+
 ## [1.13.0](https://github.com/karyl-chan/karyl-chan/compare/bot-v1.12.1...bot-v1.13.0) (2026-10-25)
 
 
