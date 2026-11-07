@@ -90,7 +90,8 @@ voice service alike:
   DASH and concat, which open further URLs of their own, are refused.
 - A plugin playing a URL on its own origin gets the plugin-target rule
   for exactly that host and port; everything else in that play stays
-  public-only.
+  public-only. The bot decides this (`trustedOrigin`); the standalone
+  voice service takes it from the HMAC-signed play request as given.
 
 Behaviour that follows from this:
 

@@ -571,7 +571,7 @@ New modules created on a whim
 | `src/db.ts` | Sequelize singleton | Imported directly by any module. |
 | `src/config.ts` | Typed config (frozen) | Imported by any module; environment variables are documented in `.env.example`. |
 | `src/logger.ts` | pino logger | Call `moduleLogger("name")` for a module-tagged logger. |
-| `src/utils/` | Pure-function utilities | **No dependency on any business module.** Importable from anywhere. |
+| `src/utils/` | Pure-function utilities | **No dependency on any business module.** Importable from anywhere. The host policies build on `@karyl-chan/voice/net` (side-effect-free address rules shared with the voice media proxy). |
 | `src/types/` | Ambient `.d.ts` | Included by tsconfig; no import needed. |
 | `src/bootstrap-events.ts` | Discord event registration | Every `events/X.events.ts` is wired here. |
 | `src/bootstrap-in-process.ts` | In-process slash command registration | Same pattern as events. |

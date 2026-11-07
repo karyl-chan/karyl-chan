@@ -14,10 +14,13 @@
  *      wraps those), so `tcp://` / `tls://` segments are refused by
  *      ffmpeg itself; `httpproxy://` would pass that check, which is why
  *      it is not whitelisted (verified on 8.1; same check in 4.3 hls.c).
- *   2. `-http_proxy <media proxy>` with `no_proxy` (and the other proxy
- *      variables) removed from the child's environment. ffmpeg's http
- *      protocol consults `getenv("no_proxy")` even when the option is
- *      set, so an inherited `no_proxy` would make it connect directly.
+ *   2. `-http_proxy <media proxy>`, and the same proxy as the child's only
+ *      proxy variable: `no_proxy` (and the rest) removed, `http_proxy`
+ *      set. ffmpeg's http protocol consults `getenv("no_proxy")` even
+ *      when the option is set, so an inherited `no_proxy` would make it
+ *      connect directly; and it falls back to `getenv("http_proxy")`
+ *      when the option is absent, so a nested open that ever failed to
+ *      inherit the option would still use the proxy rather than dial out.
  *      With both, every http request ffmpeg makes — including each
  *      redirect hop and each HLS variant / segment / key, which inherit
  *      `http_proxy` through the hls demuxer's saved avio options — goes
@@ -63,16 +66,18 @@ const PROXY_ENV = new Set(["no_proxy", "http_proxy", "https_proxy", "all_proxy"]
 
 /**
  * The child's environment: the parent's minus every proxy variable (any
- * case — Windows env names are case-insensitive). The parent's
- * process.env is not touched.
+ * case — Windows env names are case-insensitive), plus `http_proxy` =
+ * the media proxy. The parent's process.env is not touched.
  */
 export function ffmpegChildEnv(
+  proxyUrl: string,
   parent: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [name, value] of Object.entries(parent)) {
     if (!PROXY_ENV.has(name.toLowerCase())) env[name] = value;
   }
+  env.http_proxy = proxyUrl;
   return env;
 }
 
@@ -136,7 +141,7 @@ export function spawnFfmpegDecoder({
   env,
 }: SpawnDecoderOptions): ChildProcess {
   return spawn(command, ffmpegDecodeArgs(url, proxyUrl), {
-    env: ffmpegChildEnv(env),
+    env: ffmpegChildEnv(proxyUrl, env),
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });

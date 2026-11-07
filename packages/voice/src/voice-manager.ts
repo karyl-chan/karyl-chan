@@ -31,8 +31,8 @@ import {
   type AudioPlayer,
   type DiscordGatewayAdapterCreator,
 } from "@discordjs/voice";
-import { execSync } from "node:child_process";
-import { PassThrough, pipeline } from "node:stream";
+import { execSync, type ChildProcess } from "node:child_process";
+import { PassThrough, pipeline, type Readable } from "node:stream";
 import { spawnFfmpegDecoder } from "./ffmpeg-decoder.js";
 import { startMediaProxy, type MediaProxy } from "./media-proxy.js";
 import { mediaPolicyFor } from "./net/media-target.js";
@@ -90,6 +90,8 @@ const proxyLog = { warn: (obj: unknown, msg: string) => log.warn(obj, msg) };
 // and reused; closed by shutdownAllVoice. A failed start is not cached, so
 // the next play retries.
 let mediaProxy: Promise<MediaProxy> | null = null;
+// Per-play proxies (plays with a trustedOrigin), open while their ffmpeg runs.
+const playProxies = new Set<MediaProxy>();
 
 function getMediaProxy(): Promise<MediaProxy> {
   mediaProxy ??= startMediaProxy({ log: proxyLog }).catch((err: unknown) => {
@@ -315,10 +317,12 @@ export async function playUrl(
         log: proxyLog,
       })
     : null;
+  if (ownProxy) playProxies.add(ownProxy);
   const proxy = ownProxy ?? (await getMediaProxy());
   const closeOwnProxy = (): void => {
+    if (!ownProxy || !playProxies.delete(ownProxy)) return;
     ownProxy
-      ?.close()
+      .close()
       .catch((err: unknown) => log.warn({ err }, "media proxy close failed"));
   };
   // Re-read: a leave may have landed while the proxy was starting.
@@ -330,7 +334,7 @@ export async function playUrl(
   // Spawn ffmpeg: input from URL (through the media proxy only), resampled
   // to 48kHz stereo PCM (Discord's native rate) on stdout. The protocol /
   // format whitelists and the proxy wiring live in ffmpeg-decoder.ts.
-  let child;
+  let child: ChildProcess;
   try {
     child = spawnFfmpegDecoder({
       command: ffmpegCommand,
@@ -358,7 +362,8 @@ export async function playUrl(
     log.error({ err, url, guildId }, "ffmpeg failed to start");
     buffered.destroy(err);
   });
-  pipeline(child.stdout!, buffered, (err) => {
+  // stdio is ["ignore", "pipe", "pipe"], so stdout is always a stream.
+  pipeline(child.stdout as Readable, buffered, (err) => {
     if (err) child.kill("SIGKILL");
     // ERR_STREAM_PREMATURE_CLOSE just means the player swapped this track out
     // (skip / stop / leave) and destroyed the buffer — expected.
@@ -443,9 +448,14 @@ export function getStatus(guildId: string): VoiceStatus {
 export function shutdownAllVoice(): void {
   const proxy = mediaProxy;
   mediaProxy = null;
-  proxy
-    ?.then((p) => p.close())
-    .catch((err: unknown) => log.warn({ err }, "media proxy shutdown failed"));
+  const closing = [
+    ...(proxy ? [proxy.then((p) => p.close())] : []),
+    ...[...playProxies].map((p) => p.close()),
+  ];
+  playProxies.clear();
+  for (const c of closing) {
+    c.catch((err: unknown) => log.warn({ err }, "media proxy shutdown failed"));
+  }
   for (const [guildId, state] of states.entries()) {
     try {
       state.player.stop(true);

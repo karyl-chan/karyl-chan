@@ -13,18 +13,20 @@
  *     (`allowed.test`, `other.test`); only the proxy's stub policy maps
  *     them to 127.0.0.1. A decode that succeeds therefore went through
  *     the proxy.
- *   - the child gets `no_proxy=*` in its base env, which would send
- *     ffmpeg around the proxy if the decoder did not strip it.
+ *   - the child gets `no_proxy=*` and an `http_proxy` naming the refused
+ *     counter in its base env, which would send ffmpeg around the media
+ *     proxy if the decoder did not strip / replace them.
  */
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
+import { createCipheriv, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import http from "node:http";
 import https from "node:https";
 import net, { type AddressInfo } from "node:net";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { spawnFfmpegDecoder } from "../src/ffmpeg-decoder.js";
+import { ffmpegChildEnv, spawnFfmpegDecoder } from "../src/ffmpeg-decoder.js";
 import { startMediaProxy, type MediaProxy } from "../src/media-proxy.js";
 import type { PinnedAddress } from "../src/net/index.js";
 
@@ -63,6 +65,20 @@ function toneWav(): Buffer {
 /** PCM bytes per second of the decoder's output (48 kHz, stereo, s16). */
 const PCM_PER_SECOND = 48_000 * 2 * 2;
 
+describe("ffmpegChildEnv", () => {
+  it("drops every proxy variable and points http_proxy at the media proxy", () => {
+    const env = ffmpegChildEnv("http://127.0.0.1:9", {
+      PATH: "/bin",
+      no_proxy: "*",
+      NO_PROXY: "*",
+      HTTP_PROXY: "http://evil:1",
+      https_proxy: "http://evil:2",
+      All_Proxy: "socks5://evil:3",
+    });
+    assert.deepEqual(env, { PATH: "/bin", http_proxy: "http://127.0.0.1:9" });
+  });
+});
+
 interface Decoded {
   code: number | null;
   pcmBytes: number;
@@ -82,6 +98,9 @@ describe("ffmpeg through the media proxy", { skip: !hasFfmpeg && "ffmpeg not on 
   const secureHits: string[] = [];
   let wav: Buffer;
   let segment: Buffer;
+  const aesKey = randomBytes(16);
+  const aesIv = randomBytes(16);
+  let encryptedSegment: Buffer;
 
   const playlist = (...uris: string[]): string =>
     "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n" +
@@ -93,7 +112,12 @@ describe("ffmpeg through the media proxy", { skip: !hasFfmpeg && "ffmpeg not on 
       const child = spawnFfmpegDecoder({
         url,
         proxyUrl: proxy.url,
-        env: { ...process.env, no_proxy: "*", NO_PROXY: "*" },
+        env: {
+          ...process.env,
+          no_proxy: "*",
+          NO_PROXY: "*",
+          http_proxy: `http://127.0.0.1:${refusedPort}`,
+        },
       });
       let pcmBytes = 0;
       let stderr = "";
@@ -116,6 +140,8 @@ describe("ffmpeg through the media proxy", { skip: !hasFfmpeg && "ffmpeg not on 
     );
     assert.equal(ts.status, 0, ts.stderr?.toString());
     segment = ts.stdout;
+    const cipher = createCipheriv("aes-128-cbc", aesKey, aesIv); // PKCS7, as HLS
+    encryptedSegment = Buffer.concat([cipher.update(segment), cipher.final()]);
 
     refusedServer = net.createServer((socket) => {
       refusedConnections++;
@@ -167,10 +193,26 @@ describe("ffmpeg through the media proxy", { skip: !hasFfmpeg && "ffmpeg not on 
         secureHits.push(url);
         if (url === "/tone.wav") {
           res.end(wav);
+        } else if (url === "/seg-enc.ts") {
+          res.end(encryptedSegment);
         } else if (url.startsWith("/seg")) {
           res.end(segment);
         } else if (url === "/list.m3u8") {
           res.end(playlist("seg0.ts", `https://other.test:${tlsPort}/seg1.ts`));
+        } else if (url === "/key.bin") {
+          res.end(aesKey);
+        } else if (url === "/aes.m3u8" || url === "/aes-lan-key.m3u8") {
+          const keyUri =
+            url === "/aes.m3u8"
+              ? `https://other.test:${tlsPort}/key.bin`
+              : `http://127.0.0.1:${refusedPort}/key.bin`;
+          res.end(
+            playlist("seg-enc.ts").replace(
+              "#EXTINF",
+              `#EXT-X-KEY:METHOD=AES-128,URI="${keyUri}",IV=0x${aesIv.toString("hex")}
+#EXTINF`,
+            ),
+          );
         } else if (url === "/hop.wav") {
           res.writeHead(302, { location: `https://other.test:${tlsPort}/tone.wav` });
           res.end();
@@ -263,6 +305,22 @@ describe("ffmpeg through the media proxy", { skip: !hasFfmpeg && "ffmpeg not on 
     assert.equal(r.code, 0, r.stderr);
     assert.ok(r.pcmBytes >= PCM_PER_SECOND * 0.9, `pcm ${r.pcmBytes}`);
     assert.deepEqual(secureHits, ["/hop.wav", "/tone.wav"]);
+  });
+
+  it("(h) AES-128 HLS with an https key decodes (crypto over the proxy)", async () => {
+    secureHits.length = 0;
+    const r = await decode(`https://allowed.test:${tlsPort}/aes.m3u8`);
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(r.pcmBytes >= PCM_PER_SECOND * 0.9, `pcm ${r.pcmBytes}`);
+    assert.ok(secureHits.includes("/key.bin"), "key fetched");
+    assert.ok(secureHits.includes("/seg-enc.ts"), "encrypted segment fetched");
+  });
+
+  it("(i) an AES-128 key on a refused host never reaches it", async () => {
+    const before = refusedConnections;
+    const r = await decode(`https://allowed.test:${tlsPort}/aes-lan-key.m3u8`);
+    assert.equal(r.pcmBytes, 0);
+    assert.equal(refusedConnections, before);
   });
 
   it("a DASH manifest is refused by the format whitelist", async () => {

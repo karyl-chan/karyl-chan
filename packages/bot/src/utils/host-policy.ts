@@ -241,12 +241,6 @@ export async function assertAllowedTarget(
   await resolveAllowedTarget(host, port);
 }
 
-// `legacyAllowPrivate` (the WEBHOOK_ALLOW_PRIVATE dev hatch) comes from
-// @karyl-chan/voice/net: read from process.env per call so tests can flip
-// it per case without re-importing the frozen `config` module; operators
-// set it once at deploy time, so the boot-frozen value and the runtime
-// read are observationally equivalent in prod.
-
 /**
  * assertPublicMediaTarget — strict public-internet-only policy for
  * arbitrary user / plugin-supplied media URLs (voice playback).
@@ -275,6 +269,11 @@ export async function assertPublicMediaTarget(
   host: string,
   port: number,
 ): Promise<void> {
+  // `legacyAllowPrivate` (@karyl-chan/voice/net) reads the
+  // WEBHOOK_ALLOW_PRIVATE dev hatch from process.env per call, so tests can
+  // flip it per case without re-importing the frozen `config` module;
+  // operators set it once at deploy time, so the boot-frozen value and the
+  // runtime read are observationally equivalent in prod.
   const allowPrivate = legacyAllowPrivate();
   await checkHost(
     host,

@@ -54,10 +54,11 @@ import http, {
 import https from "node:https";
 import type { AddressInfo } from "node:net";
 import { isIP } from "node:net";
-import type { Duplex, Readable } from "node:stream";
+import { pipeline, type Duplex, type Readable } from "node:stream";
 import zlib from "node:zlib";
 import { resolvePublicMediaTarget } from "./net/media-target.js";
 import { pinnedLookup, type PinnedAddress } from "./net/pinned-lookup.js";
+import type { VoiceLogger } from "./voice-manager.js";
 
 /**
  * Reserved authority suffix marking "this http URL is really https". The
@@ -111,7 +112,10 @@ interface UpstreamTarget {
  * Decode an absolute-form request target (`http://authority/path`).
  * The authority is read verbatim (not through WHATWG URL, which would
  * drop a `:80` that means "https on port 80" for a marker host). Null
- * for anything else: origin-form, another scheme, userinfo.
+ * for anything else: origin-form, another scheme, userinfo (ffmpeg
+ * never puts userinfo in the request line — it rebuilds it from host
+ * and port and sends credentials as an Authorization header, which is
+ * why `toProxyUrl` may keep them).
  */
 function decodeTarget(target: string): UpstreamTarget | null {
   const m = /^http:\/\/([^/?#]*)([^#]*)/i.exec(target);
@@ -225,9 +229,7 @@ function endToEndHeaders(
   return out;
 }
 
-export interface MediaProxyLogger {
-  warn(obj: unknown, msg: string): void;
-}
+export type MediaProxyLogger = Pick<VoiceLogger, "warn">;
 
 export interface MediaProxyOptions {
   /**
@@ -272,25 +274,26 @@ function sendStatus(res: ServerResponse, status: number, text: string): void {
   res.end(text);
 }
 
-/** Undo a Content-Encoding so the playlist sniff sees the real bytes. */
+/**
+ * Undo a Content-Encoding so the playlist sniff sees the real bytes.
+ * pipeline(), not pipe(): an upstream error mid-body must reach the
+ * decoder (whose error the caller handles), not crash the process.
+ */
 function decodedBody(
   upstream: IncomingMessage,
   encoding: string,
 ): Readable | null {
-  switch (encoding) {
-    case "":
-    case "identity":
-      return upstream;
-    case "gzip":
-    case "x-gzip":
-      return upstream.pipe(zlib.createGunzip());
-    case "deflate":
-      return upstream.pipe(zlib.createInflate());
-    case "br":
-      return upstream.pipe(zlib.createBrotliDecompress());
-    default:
-      return null;
-  }
+  const decoder =
+    encoding === "gzip" || encoding === "x-gzip"
+      ? zlib.createGunzip()
+      : encoding === "deflate"
+        ? zlib.createInflate()
+        : encoding === "br"
+          ? zlib.createBrotliDecompress()
+          : null;
+  if (encoding === "" || encoding === "identity") return upstream;
+  if (!decoder) return null;
+  return pipeline(upstream, decoder, () => {});
 }
 
 /**
