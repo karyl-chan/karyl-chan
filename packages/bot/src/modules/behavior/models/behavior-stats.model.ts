@@ -55,8 +55,13 @@ function rowOf(model: InstanceType<typeof BehaviorStat>): BehaviorStatRow {
   };
 }
 
-/** `column = column + 1`，在 DB 內遞增，不經過讀回的舊值。 */
-function plusOne(column: string) {
+type CounterColumn = "successCount" | "failureCount" | "consecutiveFailures";
+
+/**
+ * `column = column + 1`，在 DB 內遞增，不經過讀回的舊值。欄位名直接當
+ * DB 欄位用——這個 model 沒有 `field:` / `underscored` 對應。
+ */
+function plusOne(column: CounterColumn) {
   const quoted = sequelize.getQueryInterface().quoteIdentifier(column);
   return sequelize.literal(`${quoted} + 1`);
 }
