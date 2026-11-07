@@ -11,6 +11,7 @@
  */
 
 import { Op } from "sequelize";
+import { isSupportedSchemaVersion } from "@karyl-chan/plugin-wire";
 import {
   loadBehaviorCatalog,
   type CatalogCommand,
@@ -259,12 +260,20 @@ export class PluginCommandSource implements DesiredCommandSource {
   private async lookupRow(row: PluginCommandRow): Promise<DesiredLookup> {
     // 軌一指令（guild feature）由 PluginCommandRegistry 管，不由 reconciler 管
     if (row.featureKey !== null) return { status: "unmanaged" };
-    // OQ-14 守衛：plugin 的 manifest schema_version 必須是 "1"
+    // OQ-14 守衛：manifest 的 schema_version 必須是這個 build 看得懂的值。
+    // 規則與 plugin-wire 註冊時的 V-01 共用同一個判斷：沒有、null 或舊版
+    // "1" 都接受（SDK 1.x 不再輸出這個欄位，#187），其他值才擋。
     const plugin = await findPluginById(row.pluginId);
     if (!plugin) return { status: "not_desired", reason: "plugin 不存在" };
     const manifest = parsePluginManifest(plugin);
-    if (!manifest || manifest.schema_version !== "1") {
-      return { status: "not_desired", reason: 'schema_version 非 "1"' };
+    if (!manifest) {
+      return { status: "not_desired", reason: "plugin manifest 無法解析" };
+    }
+    if (!isSupportedSchemaVersion(manifest.schema_version)) {
+      return {
+        status: "not_desired",
+        reason: `不支援的 schema_version（${JSON.stringify(manifest.schema_version)}）`,
+      };
     }
     const cmd = parsePluginCommandManifest(row.manifestJson);
     if (!cmd) return { status: "invalid", reason: "manifestJson 無法解析" };
