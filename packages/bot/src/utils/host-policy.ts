@@ -1,5 +1,4 @@
 import { lookup } from "dns/promises";
-import { isIP } from "net";
 import { moduleLogger } from "../logger.js";
 import type { PinnedAddress } from "./pinned-dispatcher.js";
 import {
@@ -11,10 +10,15 @@ import {
   type AddressClass,
 } from "./ip-address.js";
 import {
+  effectivePort,
   isPluginTargetAddress,
   isPublicMediaAddress,
   legacyAllowPrivate,
+  lookupHostAddresses,
   METADATA_HOSTNAMES,
+  TargetRefusedError,
+  toPinnedAddresses,
+  vetHostAndPort,
 } from "@karyl-chan/voice/net";
 import {
   allowlistMatches,
@@ -55,9 +59,6 @@ export class HostPolicyError extends Error {
   }
 }
 
-/** Cloud metadata hostnames — one list, shared with the voice media proxy. */
-const BLOCKED_HOSTNAMES = METADATA_HOSTNAMES;
-
 /**
  * Classes no policy ever lets through: link-local (169.254/16, fe80::/10
  * — where most cloud metadata lives) and the known metadata endpoints
@@ -67,27 +68,6 @@ const NEVER_REACHABLE: ReadonlySet<AddressClass> = new Set([
   "linkLocal",
   "metadata",
 ]);
-
-/**
- * URL.hostname returns IPv6 literals wrapped in `[...]`; strip them so
- * the rest of host-policy can treat the address uniformly.
- */
-function stripIPv6Brackets(host: string): string {
-  if (host.length >= 2 && host.startsWith("[") && host.endsWith("]")) {
-    return host.slice(1, -1);
-  }
-  return host;
-}
-
-function isValidHostnameFormat(host: string): boolean {
-  return (
-    /^[a-zA-Z0-9]([a-zA-Z0-9\-\.]*[a-zA-Z0-9])?$/.test(host) || isIP(host) !== 0
-  );
-}
-
-function isValidPort(port: number): boolean {
-  return Number.isInteger(port) && port > 0 && port < 65536;
-}
 
 /**
  * Classify `ip`; a non-literal (should not happen — DNS answers and
@@ -116,59 +96,63 @@ type Refuse = (code: HostPolicyCode, message: string) => HostPolicyError;
 const refuseCoded: Refuse = (code, message) => new HostPolicyError(message, code);
 const refuseGeneric: Refuse = (_code, message) => new HostPolicyError(message);
 
+/** How one policy words the shared gate's refusals. */
+interface GateWording {
+  refuse: Refuse;
+  blockedHost: (host: string) => string;
+  dnsFailed: (host: string) => string;
+}
+
 /**
- * Normalise + validate a host and port and refuse the metadata
- * hostnames (worded per policy by `blockedHostMessage`). Returns the
- * bracket-stripped host.
+ * Turn a refusal of the shared host gate (`vetHostAndPort` /
+ * `lookupHostAddresses` in @karyl-chan/voice/net, also what the voice
+ * media proxy runs) into this policy's HostPolicyError. Anything else is
+ * rethrown untouched.
  */
-function vetHost(
-  rawHost: string,
-  port: number,
-  refuse: Refuse,
-  blockedHostMessage: (host: string) => string,
-): string {
-  const host = stripIPv6Brackets(rawHost);
-  if (!isValidHostnameFormat(host)) {
-    throw refuse("invalid_host", "無效的主機名稱");
+function gateRefusal(err: unknown, wording: GateWording): unknown {
+  if (!(err instanceof TargetRefusedError)) return err;
+  switch (err.reason) {
+    case "invalid_host":
+      return wording.refuse("invalid_host", "無效的主機名稱");
+    case "invalid_port":
+      return wording.refuse("invalid_port", "無效的端口號碼");
+    case "blocked_metadata":
+      return wording.refuse("blocked_metadata", wording.blockedHost(err.host));
+    case "dns_failed":
+      if (err.cause !== undefined) {
+        log.error({ err: err.cause, host: err.host }, "DNS lookup failed");
+      }
+      return wording.refuse("dns_failed", wording.dnsFailed(err.host));
+    case "blocked_address":
+      // The gate's own address rule is not used here — each policy
+      // judges addresses itself — so this cannot happen; refuse anyway.
+      return wording.refuse("blocked", "主機目標不被允許");
   }
-  if (!isValidPort(port)) {
-    throw refuse("invalid_port", "無效的端口號碼");
+}
+
+/**
+ * Validate a host and port and refuse the metadata hostnames (shared
+ * gate). Returns the bracket-stripped host.
+ */
+function vetHost(rawHost: string, port: number, wording: GateWording): string {
+  try {
+    return vetHostAndPort(rawHost, port);
+  } catch (err) {
+    throw gateRefusal(err, wording);
   }
-  if (BLOCKED_HOSTNAMES.has(normalizeHostname(host))) {
-    throw refuse("blocked_metadata", blockedHostMessage(host));
-  }
-  return host;
 }
 
 /**
  * Every address a vetted host stands for: the literal itself, or every
- * DNS answer (resolved once). A failed lookup — or one with no answers,
- * which would otherwise pass every per-address check vacuously — is
- * refused as `dns_failed` with `dnsFailedMessage`.
+ * DNS answer (resolved once). A failed or empty lookup is refused as
+ * `dns_failed` (shared gate).
  */
-async function hostAddresses(
-  host: string,
-  refuse: Refuse,
-  dnsFailedMessage: string,
-): Promise<string[]> {
-  if (isIP(host) !== 0) return [host];
-  let answers: Array<{ address: string }>;
+async function hostAddresses(host: string, wording: GateWording): Promise<string[]> {
   try {
-    answers = await lookup(host, { all: true });
-  } catch (error) {
-    log.error({ err: error, host }, "DNS lookup failed");
-    throw refuse("dns_failed", dnsFailedMessage);
+    return await lookupHostAddresses(host, lookup);
+  } catch (err) {
+    throw gateRefusal(err, wording);
   }
-  if (answers.length === 0) throw refuse("dns_failed", dnsFailedMessage);
-  return answers.map(({ address }) => address);
-}
-
-/** Vetted address literals in the shape the connecting side pins to. */
-function toPinnedAddresses(addresses: readonly string[]): PinnedAddress[] {
-  return addresses.map((address) => ({
-    address,
-    family: isIP(address) === 6 ? 6 : 4,
-  }));
 }
 
 /**
@@ -191,8 +175,13 @@ async function checkHost(
   isDenied: (address: string) => boolean,
   denyMessage: string,
 ): Promise<PinnedAddress[]> {
-  const host = vetHost(rawHost, port, refuseGeneric, () => denyMessage);
-  const addresses = await hostAddresses(host, refuseGeneric, "無法解析主機名稱");
+  const wording: GateWording = {
+    refuse: refuseGeneric,
+    blockedHost: () => denyMessage,
+    dnsFailed: () => "無法解析主機名稱",
+  };
+  const host = vetHost(rawHost, port, wording);
+  const addresses = await hostAddresses(host, wording);
   for (const address of addresses) {
     if (isDenied(address)) throw new HostPolicyError(denyMessage);
   }
@@ -295,12 +284,7 @@ export async function assertPublicMediaTarget(
  * URL that was vetted.
  */
 export async function assertPublicMediaUrl(url: URL): Promise<void> {
-  const port = url.port
-    ? Number(url.port)
-    : url.protocol === "https:"
-      ? 443
-      : 80;
-  await assertPublicMediaTarget(url.hostname, port);
+  await assertPublicMediaTarget(url.hostname, effectivePort(url));
 }
 
 /**
@@ -389,7 +373,7 @@ export function ineffectiveAllowlistEntries(
     const label = `WEBHOOK_PRIVATE_ALLOWLIST entry "${e.source}"`;
     if (e.kind === "host") {
       if (
-        BLOCKED_HOSTNAMES.has(e.host) ||
+        METADATA_HOSTNAMES.has(e.host) ||
         e.host === "localhost" ||
         e.host.endsWith(".localhost")
       ) {
@@ -500,18 +484,13 @@ export async function resolveWebhookTarget(
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new HostPolicyError("Webhook URL 必須使用 http 或 https", "invalid_scheme");
   }
-  const port = url.port ? Number(url.port) : url.protocol === "https:" ? 443 : 80;
-  const host = vetHost(
-    url.hostname,
-    port,
-    refuseCoded,
-    (h) => `目標 ${h} 是雲端 metadata 端點，一律禁止（無法加入允許清單）`,
-  );
-  const addresses = await hostAddresses(
-    host,
-    refuseCoded,
-    `無法解析主機名稱 ${host}`,
-  );
+  const wording: GateWording = {
+    refuse: refuseCoded,
+    blockedHost: (h) => `目標 ${h} 是雲端 metadata 端點，一律禁止（無法加入允許清單）`,
+    dnsFailed: (h) => `無法解析主機名稱 ${h}`,
+  };
+  const host = vetHost(url.hostname, effectivePort(url), wording);
+  const addresses = await hostAddresses(host, wording);
 
   let needsHttps = false;
   for (const address of addresses) {

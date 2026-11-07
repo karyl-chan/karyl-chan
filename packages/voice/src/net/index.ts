@@ -7,5 +7,6 @@
  * Keep it that way — node built-ins only.
  */
 export * from "./ip-address.js";
+export * from "./host-vetting.js";
 export * from "./media-target.js";
 export * from "./pinned-lookup.js";

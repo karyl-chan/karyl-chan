@@ -5,7 +5,7 @@
 import { strict as assert } from "node:assert";
 import { afterEach, describe, it } from "node:test";
 import {
-  MediaTargetRefusedError,
+  TargetRefusedError,
   isPluginTargetAddress,
   isPublicMediaAddress,
   mediaPolicyFor,
@@ -86,7 +86,7 @@ describe("resolvePublicMediaTarget", () => {
           { address: "10.0.0.5", family: 4 },
         ]),
       }),
-      MediaTargetRefusedError,
+      TargetRefusedError,
     );
   });
 
@@ -94,7 +94,7 @@ describe("resolvePublicMediaTarget", () => {
     for (const host of ["127.0.0.1", "10.0.0.5", "169.254.169.254", "::1"]) {
       await assert.rejects(
         resolvePublicMediaTarget(host, 80),
-        MediaTargetRefusedError,
+        TargetRefusedError,
         host,
       );
     }
@@ -107,7 +107,7 @@ describe("resolvePublicMediaTarget", () => {
     ]);
     await assert.rejects(
       resolvePublicMediaTarget("127.0.0.1", 80),
-      MediaTargetRefusedError,
+      TargetRefusedError,
     );
   });
 
@@ -120,26 +120,26 @@ describe("resolvePublicMediaTarget", () => {
           return [{ address: "8.8.8.8", family: 4 }];
         },
       }),
-      MediaTargetRefusedError,
+      TargetRefusedError,
     );
     assert.equal(asked, false);
   });
 
   it("refuses an invalid host, an invalid port, and a DNS failure", async () => {
-    await assert.rejects(resolvePublicMediaTarget("bad host", 80), MediaTargetRefusedError);
-    await assert.rejects(resolvePublicMediaTarget("8.8.8.8", 0), MediaTargetRefusedError);
-    await assert.rejects(resolvePublicMediaTarget("8.8.8.8", 65536), MediaTargetRefusedError);
+    await assert.rejects(resolvePublicMediaTarget("bad host", 80), TargetRefusedError);
+    await assert.rejects(resolvePublicMediaTarget("8.8.8.8", 0), TargetRefusedError);
+    await assert.rejects(resolvePublicMediaTarget("8.8.8.8", 65536), TargetRefusedError);
     await assert.rejects(
       resolvePublicMediaTarget("gone.example.com", 80, {
         lookup: async () => {
           throw new Error("ENOTFOUND");
         },
       }),
-      MediaTargetRefusedError,
+      TargetRefusedError,
     );
     await assert.rejects(
       resolvePublicMediaTarget("empty.example.com", 80, { lookup: fakeLookup([]) }),
-      MediaTargetRefusedError,
+      TargetRefusedError,
     );
   });
 });
@@ -173,7 +173,7 @@ describe("mediaPolicyFor", () => {
 
   it("is the public-media rule without a trusted origin", async () => {
     const policy = mediaPolicyFor();
-    await assert.rejects(policy("172.18.0.5", 3000), MediaTargetRefusedError);
+    await assert.rejects(policy("172.18.0.5", 3000), TargetRefusedError);
     assert.deepEqual(await policy("8.8.8.8", 443), [{ address: "8.8.8.8", family: 4 }]);
   });
 
@@ -183,8 +183,8 @@ describe("mediaPolicyFor", () => {
       { address: "172.18.0.5", family: 4 },
     ]);
     // Another port, or another private host, is just a media URL again.
-    await assert.rejects(policy("172.18.0.5", 3001), MediaTargetRefusedError);
-    await assert.rejects(policy("172.18.0.6", 3000), MediaTargetRefusedError);
+    await assert.rejects(policy("172.18.0.5", 3001), TargetRefusedError);
+    await assert.rejects(policy("172.18.0.6", 3000), TargetRefusedError);
   });
 
   it("uses the scheme's default port for an origin without one", async () => {
@@ -198,7 +198,7 @@ describe("mediaPolicyFor", () => {
     process.env.NODE_ENV = "production";
     await assert.rejects(
       mediaPolicyFor("http://127.0.0.1:3000")("127.0.0.1", 3000),
-      MediaTargetRefusedError,
+      TargetRefusedError,
     );
     process.env.NODE_ENV = "development";
     assert.deepEqual(await mediaPolicyFor("http://127.0.0.1:3000")("127.0.0.1", 3000), [
@@ -209,7 +209,7 @@ describe("mediaPolicyFor", () => {
   it("ignores a malformed trusted origin", async () => {
     await assert.rejects(
       mediaPolicyFor("not a url")("172.18.0.5", 80),
-      MediaTargetRefusedError,
+      TargetRefusedError,
     );
   });
 });
