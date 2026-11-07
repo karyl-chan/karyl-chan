@@ -23,7 +23,9 @@
  * `none` on purpose: feature-keyed commands are gated at registration
  * time (plugin-command-registry syncs a command into a guild iff the
  * feature resolves on via the Precedence Tiers), so a disabled
- * feature's command is not visible to invoke.
+ * feature's command is not visible to invoke. Component/modal is
+ * `guild-reach` (plugin-guild-reach.ts): Feature Reach for any feature,
+ * or a usable track-3 command (#129).
  *
  * Tests inject fakes through `createPluginDispatcher(deps)`; prod code
  * uses the `pluginDispatcher` singleton whose pool is also the target
@@ -37,6 +39,7 @@ import type { EventScope } from "./plugin-event-index.js";
 import type { PluginEventBus } from "../../adapters/plugin-event-bus.js";
 import { getPluginEventBus } from "../../adapters/registry.js";
 import { featureReachResolver } from "../feature-toggle/feature-reach-resolver.js";
+import { hasGuildReach } from "./plugin-guild-reach.js";
 import { buildOutboundSignatureHeaders } from "../../utils/hmac.js";
 import {
   TRACEPARENT_HEADER,
@@ -90,7 +93,7 @@ interface KindSpec {
    *  kind resolves manifest needs per-transport instead (the bus needs
    *  none; the HTTP path skips silently — pre-existing semantics). */
   requireManifest: boolean;
-  reach: "none" | "any-feature" | "per-scope";
+  reach: "none" | "guild-reach" | "per-scope";
   /** Whether the gate refuses on a missing dispatch key. The event
    *  kind defers this to deliver so the bus transport (which never
    *  signs) can run without one. */
@@ -135,7 +138,7 @@ const KIND_SPECS: Record<DispatchKind, KindSpec> = {
   component: {
     source: "component",
     requireManifest: true,
-    reach: "any-feature",
+    reach: "guild-reach",
     requireKey: true,
     endpointTemplate: (m) => m.endpoints?.plugin_component ?? "/components",
     readBody: false,
@@ -146,7 +149,7 @@ const KIND_SPECS: Record<DispatchKind, KindSpec> = {
   modal: {
     source: "modal",
     requireManifest: true,
-    reach: "any-feature",
+    reach: "guild-reach",
     requireKey: true,
     endpointTemplate: (m) => m.endpoints?.plugin_modal ?? "/modals/{modal_id}",
     readBody: false,
@@ -261,15 +264,18 @@ export type PluginDispatchOutcome =
       reason: "plugin_offline" | "plugin_not_ready" | "reach_denied";
     };
 
-/** The reach queries the gate needs — satisfied by featureReachResolver. */
+/** The reach queries the gate needs. Prod: Guild Reach
+ *  (plugin-guild-reach.ts) + featureReachResolver. */
 export interface DispatchReachResolver {
-  hasAnyFeatureEnabledInGuild(
-    pluginId: number,
+  /** Guild Reach — component/modal kinds. */
+  reachesGuild(
+    plugin: PluginRow,
     guildId: string,
     manifest: PluginManifest,
   ): Promise<boolean>;
+  /** Feature Reach for one feature — the event kind's per-scope routes. */
   isFeatureEnabledInGuild(
-    pluginId: number,
+    plugin: PluginRow,
     guildId: string,
     featureKey: string,
     manifest: PluginManifest,
@@ -351,7 +357,16 @@ export function createPluginDispatcher(
       requestTimeoutMs: config.plugin.dispatchTimeoutMs,
     });
   const getEventBus = deps.getEventBus ?? getPluginEventBus;
-  const reach: DispatchReachResolver = deps.reach ?? featureReachResolver;
+  const reach: DispatchReachResolver = deps.reach ?? {
+    reachesGuild: hasGuildReach,
+    isFeatureEnabledInGuild: (plugin, guildId, featureKey, manifest) =>
+      featureReachResolver.isFeatureEnabledInGuild(
+        plugin.id,
+        guildId,
+        featureKey,
+        manifest,
+      ),
+  };
   const resolveReadyEndpoint =
     deps.resolveReadyEndpoint ??
     ((pluginKey: string, preferredUrl: string) =>
@@ -371,19 +386,12 @@ export function createPluginDispatcher(
       manifest = parsePluginManifest(plugin);
       if (!manifest) return { ok: false, reason: "manifest_invalid" };
     }
-    if (spec.reach === "any-feature" && req.guildId && manifest) {
+    if (spec.reach === "guild-reach" && req.guildId && manifest) {
       // Once an admin disables every feature of this plugin in guild G,
       // older buttons/modals on existing messages must stop dispatching
-      // into the plugin. 3-tier resolution (Precedence Tiers) so a
-      // manifest defaulting its features to enabled isn't falsely
-      // blocked before any row is materialized.
-      if (
-        !(await reach.hasAnyFeatureEnabledInGuild(
-          plugin.id,
-          req.guildId,
-          manifest,
-        ))
-      ) {
+      // into the plugin — unless a track-3 command of the plugin is
+      // usable there: its follow-ups follow the command (#129).
+      if (!(await reach.reachesGuild(plugin, req.guildId, manifest))) {
         return { ok: false, reason: "reach_denied" };
       }
     } else if (spec.reach === "per-scope") {
@@ -407,7 +415,7 @@ export function createPluginDispatcher(
         if (!m) continue;
         if (
           await reach.isFeatureEnabledInGuild(
-            plugin.id,
+            plugin,
             req.guildId,
             scope.featureKey,
             m,

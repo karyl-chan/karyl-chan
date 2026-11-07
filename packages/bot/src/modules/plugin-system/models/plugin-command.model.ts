@@ -2,8 +2,11 @@ import { DataTypes, Op } from "sequelize";
 import { sequelize } from "../../../db.js";
 import { shouldRecord } from "../../bot-events/bot-event-dedup.js";
 import { botEventLog } from "../../bot-events/bot-event-log.js";
+import { isSupportedSchemaVersion } from "@karyl-chan/plugin-wire";
 import type { CommandTarget } from "../../command-system/command-target.js";
+import { parsePluginManifest } from "../plugin-dispatch-util.js";
 import type { ManifestPluginCommand } from "../plugin-registry.service.js";
+import type { PluginRow } from "./plugin.model.js";
 
 export const PluginCommand = sequelize.define(
   "PluginCommand",
@@ -98,6 +101,16 @@ export const findPluginCommandsByPlugin = async (
   return rows.map(rowOfPluginCommand);
 };
 
+/** 一個 plugin 的軌三列（featureKey IS NULL；軌一 guild feature 列不在內）。 */
+export const findTrackThreeCommandsByPlugin = async (
+  pluginId: number,
+): Promise<PluginCommandRow[]> => {
+  const rows = await PluginCommand.findAll({
+    where: { pluginId, featureKey: { [Op.is]: null } },
+  });
+  return rows.map(rowOfPluginCommand);
+};
+
 // ── 註冊目標 ─────────────────────────────────────────────────────────────────
 // CommandTarget 是 command-system 的型別；這裡只做 type import，不形成
 // plugin-system → command-system 的 runtime 依賴。
@@ -130,6 +143,55 @@ export function pluginCommandRowTarget(row: PluginCommandRow): CommandTarget {
   return pluginCommandScopeTarget(
     parsePluginCommandManifest(row.manifestJson)?.scope,
   );
+}
+
+// ── 軌三列的註冊狀態 ─────────────────────────────────────────────────────────
+
+/**
+ * 軌三列會不會被 reconciler 註冊到 Discord——這個判斷只有這一份，
+ * PluginCommandSource（desired set）與 Command Reach（#129）共用。
+ * 唯一不在這裡的是三軸合法性：reconciler 組 Discord payload 時才檢查
+ * （deriveRegistrationCall）；register 本來就會擋非法三軸（validateManifest
+ * V-05..V-C3），所以這裡是 live、那裡被拒的列只會是驗證上線前留下的舊列。
+ */
+export type TrackThreeRowState =
+  | { status: "live"; command: ManifestPluginCommand; target: CommandTarget }
+  /** 軌一 guild feature 列——歸 PluginCommandRegistry 管，不是軌三。 */
+  | { status: "feature_row" }
+  | { status: "plugin_missing" }
+  | { status: "manifest_unparseable" }
+  /** OQ-14 守衛：schema_version 不是這個 build 看得懂的值（plugin-wire V-01）。 */
+  | { status: "unsupported_schema_version"; schemaVersion: unknown }
+  | { status: "unparseable_command" }
+  /** plugin 停用／非 active，或 admin 關掉了這個指令。 */
+  | {
+      status: "disabled";
+      command: ManifestPluginCommand;
+      target: CommandTarget;
+    };
+
+export function trackThreeRowState(
+  row: PluginCommandRow,
+  plugin: PluginRow | null,
+): TrackThreeRowState {
+  if (row.featureKey !== null) return { status: "feature_row" };
+  if (!plugin) return { status: "plugin_missing" };
+  // parsePluginManifest 依 row 實例 memoize，同一個 plugin 的多列只解析一次
+  const manifest = parsePluginManifest(plugin);
+  if (!manifest) return { status: "manifest_unparseable" };
+  if (!isSupportedSchemaVersion(manifest.schema_version)) {
+    return {
+      status: "unsupported_schema_version",
+      schemaVersion: manifest.schema_version,
+    };
+  }
+  const command = parsePluginCommandManifest(row.manifestJson);
+  if (!command) return { status: "unparseable_command" };
+  const target = pluginCommandScopeTarget(command.scope);
+  if (!plugin.enabled || plugin.status !== "active" || !row.adminEnabled) {
+    return { status: "disabled", command, target };
+  }
+  return { status: "live", command, target };
 }
 
 /**

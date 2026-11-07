@@ -5,8 +5,16 @@ The Discord bot host: runs the gateway connection, serves the admin UI, and oper
 ## Language
 
 **Feature Reach**:
-Whether a plugin's declared guild feature is effectively enabled in a specific guild — the answer that gates event dispatch, RPC calls, and interaction delivery.
+Whether a plugin's declared guild feature is effectively enabled in a specific guild — the answer that gates feature-scoped event dispatch, and one of the two grounds of Guild Reach.
 _Avoid_: feature gate check, guild feature check (as loose synonyms)
+
+**Command Reach**:
+Whether a plugin has a track-3 command (`plugin_commands[]`) that the reconciler registers and that is usable in guilds. A track-3 command's follow-ups — its buttons, modals, and replies into the guild — follow the command, not the features (#129). Track 1 feature commands never confer it.
+_Avoid_: command gate
+
+**Guild Reach**:
+Whether a plugin may serve a guild outside event delivery — component and modal dispatch, and every guild-targeted RPC: Feature Reach for any declared feature, or Command Reach. Plugin-level, because neither a `kc:` custom_id nor an RPC call carries the command it came from. The accepted cost: a plugin with both Track 1 features and a usable track-3 command is no longer fenced off by its feature toggles. Its old Track 1 buttons and its background RPC (e.g. proactive `messages.send`) reach a feature-off guild too.
+_Avoid_: guild gate
 
 **Precedence Tiers**:
 The fixed 3-tier resolution order for Feature Reach: per-guild row → operator default → manifest default. There is exactly one implementation of this rule — `resolvePrecedenceTiers`, inside the Feature Reach module. Callers supply the tiers from whatever source suits them (cached read, fresh admin query, bulk prefetch for command registration) but never re-apply the order themselves.
@@ -24,7 +32,7 @@ _Avoid_: global default
 The `enabled_by_default` value a plugin's manifest declares for a feature — the bottom of the Precedence Tiers.
 
 **Plugin Dispatch**:
-The act of safely delivering one payload to one plugin: liveness check, Feature Reach, signing, delivery, health recording — one shared path regardless of what triggered it.
+The act of safely delivering one payload to one plugin: liveness check, the kind's reach policy (Feature Reach per scope for events, Guild Reach for components and modals), signing, delivery, health recording — one shared path regardless of what triggered it.
 _Avoid_: forward, post to plugin (as loose synonyms)
 
 **Dispatch Kind**:

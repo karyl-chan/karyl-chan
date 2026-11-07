@@ -68,11 +68,11 @@ function makePlugin(overrides: Partial<PluginRow> = {}): PluginRow {
 }
 
 const reachYes = {
-  hasAnyFeatureEnabledInGuild: vi.fn(async () => true),
+  reachesGuild: vi.fn(async () => true),
   isFeatureEnabledInGuild: vi.fn(async () => true),
 };
 const reachNo = {
-  hasAnyFeatureEnabledInGuild: vi.fn(async () => false),
+  reachesGuild: vi.fn(async () => false),
   isFeatureEnabledInGuild: vi.fn(async () => false),
 };
 
@@ -142,14 +142,30 @@ describe("gate", () => {
     expect(res).toEqual({ ok: false, reason: "manifest_invalid" });
   });
 
-  it("component/modal any-feature reach: denied only when a guild is present and reach says no", async () => {
+  it("component/modal Guild Reach: denied only when a guild is present and Guild Reach says no", async () => {
     const denied = makeDispatcher({ reach: reachNo });
+    const plugin = makePlugin();
     const inGuild = await denied.gate({
       kind: "component",
-      plugin: makePlugin(),
+      plugin,
       guildId: "g1",
     });
     expect(inGuild).toEqual({ ok: false, reason: "reach_denied" });
+    // Guild Reach is asked about the plugin itself (Command Reach reads
+    // its track-3 rows), not just its feature map.
+    expect(reachNo.reachesGuild).toHaveBeenCalledWith(
+      plugin,
+      "g1",
+      expect.objectContaining({ plugin: expect.anything() }),
+    );
+    const modal = await denied.gate({ kind: "modal", plugin, guildId: "g1" });
+    expect(modal).toEqual({ ok: false, reason: "reach_denied" });
+    const granted = await makeDispatcher({ reach: reachYes }).gate({
+      kind: "modal",
+      plugin,
+      guildId: "g1",
+    });
+    expect(granted.ok).toBe(true);
     // No guild (DM) → the gate does not consult reach at all.
     const dm = await denied.gate({
       kind: "component",
