@@ -9,6 +9,10 @@ import { registerInProcessCommand } from "../in-process-command-registry.service
 import { getVoiceBackend, VoiceCapacityError } from "../../voice/voice-backend.js";
 import { FAILED_COLOR, SUCCEEDED_COLOR } from "../../../utils/constant.js";
 import {
+  assertPublicMediaUrl,
+  HostPolicyError,
+} from "../../../utils/host-policy.js";
+import {
   describeEn,
   localizedDescriptions,
   resolveLocale,
@@ -66,6 +70,15 @@ function ephemeralReplyOk(
     embeds: [{ description: msg, color: SUCCEEDED_COLOR }],
     flags: "Ephemeral",
   });
+}
+
+/** Fill a deferred (ephemeral) reply with one embed. */
+function editReplyEmbed(
+  command: ChatInputCommandInteraction,
+  msg: string,
+  color: number,
+): Promise<unknown> {
+  return command.editReply({ embeds: [{ description: msg, color }] });
 }
 
 async function handleJoin(command: ChatInputCommandInteraction): Promise<void> {
@@ -166,27 +179,53 @@ async function handlePlay(command: ChatInputCommandInteraction): Promise<void> {
     );
     return;
   }
+  // Everything below waits on the network (DNS, the voice backend), so
+  // defer first to stay inside Discord's 3-second interaction deadline.
+  await command.deferReply({ flags: "Ephemeral" });
+  // SSRF guard (#162): ffmpeg fetches the URL itself, so refuse anything
+  // that isn't on the public internet (metadata, link-local, loopback,
+  // RFC1918 …) — the same policy the plugin voice.play RPC applies to
+  // arbitrary media URLs. Redirects / HLS segments are not covered (#158).
   try {
-    const status = await getVoiceBackend().play(command.guildId, url);
-    await ephemeralReplyOk(
+    await assertPublicMediaUrl(parsed);
+  } catch (err) {
+    if (err instanceof HostPolicyError) {
+      await editReplyEmbed(
+        command,
+        tForInteraction(command, "voice.url-not-allowed"),
+        FAILED_COLOR,
+      );
+      return;
+    }
+    throw err;
+  }
+  // The vetted, normalized URL — never the raw string (see
+  // assertPublicMediaUrl for the parser differential).
+  const mediaUrl = parsed.href;
+  try {
+    const status = await getVoiceBackend().play(command.guildId, mediaUrl);
+    await editReplyEmbed(
       command,
       tForInteraction(command, "voice.playing", {
-        url,
+        url: mediaUrl,
         playerStatus: localizePlayerState(command, status.playerStatus),
       }),
+      SUCCEEDED_COLOR,
     );
   } catch (err) {
     if (err instanceof Error && err.message === "not_joined") {
-      await ephemeralReplyError(
+      await editReplyEmbed(
         command,
         tForInteraction(command, "voice.not-joined"),
+        FAILED_COLOR,
       );
       return;
     }
     if (err instanceof Error && err.message === "ffmpeg_not_available") {
-      await ephemeralReplyError(
+      await editReplyEmbed(
         command,
         tForInteraction(command, "voice.ffmpeg-missing"),
+        FAILED_COLOR,
       );
       return;
     }

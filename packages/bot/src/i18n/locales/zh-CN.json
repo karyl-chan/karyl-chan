@@ -146,6 +146,7 @@
     "left": "✓ 已离开语音频道。",
     "bad-url": "URL 格式不正确。",
     "http-only": "仅接受 http(s) URL。",
+    "url-not-allowed": "无法播放这个 URL：主机不在公开网络上，或无法解析。",
     "playing": "✓ 开始播放 ``{{url}}``（player:{{playerStatus}}）",
     "not-joined": "尚未加入语音频道，请先 `/voice join`。",
     "ffmpeg-missing": "ffmpeg 不可用，语音播放停用。",

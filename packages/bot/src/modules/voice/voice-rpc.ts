@@ -26,7 +26,7 @@ import { ChannelType } from "discord.js";
 import { getVoiceBackend, VoiceCapacityError } from "./voice-backend.js";
 import { findPluginById } from "../plugin-system/models/plugin.model.js";
 import {
-  assertPublicMediaTarget,
+  assertPublicMediaUrl,
   assertPluginTarget,
   HostPolicyError,
 } from "../../utils/host-policy.js";
@@ -219,11 +219,6 @@ export async function registerVoiceRpcRoutes(
       // plugin-target policy. Anything else is treated as an arbitrary
       // user-supplied media URL and gets the strict public-media policy
       // (blocks RFC1918 / loopback / link-local / cloud metadata).
-      const port = parsed.port
-        ? Number(parsed.port)
-        : parsed.protocol === "https:"
-          ? 443
-          : 80;
       let pluginOrigin: string | null = null;
       try {
         pluginOrigin = new URL(ctx.pluginUrl).origin;
@@ -232,9 +227,14 @@ export async function registerVoiceRpcRoutes(
       }
       try {
         if (pluginOrigin && parsed.origin === pluginOrigin) {
+          const port = parsed.port
+            ? Number(parsed.port)
+            : parsed.protocol === "https:"
+              ? 443
+              : 80;
           await assertPluginTarget(parsed.hostname, port);
         } else {
-          await assertPublicMediaTarget(parsed.hostname, port);
+          await assertPublicMediaUrl(parsed);
         }
       } catch (err) {
         if (err instanceof HostPolicyError) {
@@ -247,7 +247,9 @@ export async function registerVoiceRpcRoutes(
         return;
       }
       try {
-        return await getVoiceBackend().play(body.guild_id, body.url);
+        // The vetted, normalized URL — never the raw body string (see
+        // assertPublicMediaUrl for the parser differential).
+        return await getVoiceBackend().play(body.guild_id, parsed.href);
       } catch (err) {
         if (err instanceof Error && err.message === "not_joined") {
           reply
