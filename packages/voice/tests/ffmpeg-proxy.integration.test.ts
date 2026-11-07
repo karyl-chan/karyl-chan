@@ -395,7 +395,10 @@ describe("ffmpeg through the media proxy", { skip: skipWithoutFfmpeg }, () => {
     // sniffBody unit tests). ffmpeg 8.1 itself refuses an ID3-prefixed
     // playlist even from a local file (its hls probe skips the tag, but
     // parse_playlist does not), so this can only prove the refused host
-    // stays unreached, not that such a playlist plays.
+    // stays unreached, not that such a playlist plays. On 8.1 this case
+    // would pass without the ID3 skip too; the rewrite itself is proven
+    // by the sniffBody unit test. Older ffmpeg (production 4.3) may parse
+    // such playlists, which is where the skip matters — unverified.
     const before = refusedConnections;
     secureHits.length = 0;
     const r = await decode(`https://allowed.test:${tlsPort}/id3.m3u8`);
