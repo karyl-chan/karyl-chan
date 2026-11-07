@@ -8,6 +8,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
+import { isSupportedSchemaVersion } from "@karyl-chan/plugin-wire";
+
 import { buildManifest } from "../src/manifest-builder.js";
 import type { PluginConfig } from "../src/plugin.js";
 
@@ -130,6 +132,37 @@ describe("buildManifest: wire protocol validation", () => {
           URL_,
         ),
       /guild_features\[x\]\.commands: command\.name 'foo' is also declared in plugin_commands/,
+    );
+  });
+});
+
+// #187: the bot registers a plugin's track-3 commands (`plugin_commands`)
+// only when `isSupportedSchemaVersion(manifest.schema_version)` holds —
+// the same plugin-wire predicate the register-time validation uses. This
+// pins that what buildManifest emits for a plugin declaring pluginCommands
+// satisfies it, so an SDK change to the field can't silently drop every
+// plugin's track-3 commands again.
+describe("buildManifest: pluginCommands pass the bot's track-3 schema_version guard", () => {
+  it("emits plugin_commands under a schema_version the bot accepts", () => {
+    const m = buildManifest(
+      cfg({
+        pluginCommands: [
+          {
+            name: "remind-add",
+            description: "Schedule a reminder.",
+            scope: "guild",
+            integrationTypes: ["guild_install"],
+            contexts: ["Guild"],
+            handler: async () => ({ content: "ok" }),
+          },
+        ],
+      } as Partial<PluginConfig>),
+      URL_,
+    );
+    assert.equal(isSupportedSchemaVersion(m.schema_version), true);
+    assert.deepEqual(
+      m.plugin_commands?.map((c) => c.name),
+      ["remind-add"],
     );
   });
 });
