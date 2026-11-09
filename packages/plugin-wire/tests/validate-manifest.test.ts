@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   MAX_PLUGIN_CAPABILITIES,
+  isSupportedSchemaVersion,
   validateManifestProtocol,
   type ManifestValidation,
 } from "../src/index.js";
@@ -51,6 +52,29 @@ test("schema_version: absent and legacy \"1\" tolerated, anything else rejected"
   pass({ ...base(), schema_version: "1" });
   pass({ ...base(), schema_version: null });
   assert.match(fail({ ...base(), schema_version: "2" }), /unsupported schema_version/);
+});
+
+test("isSupportedSchemaVersion agrees with validateManifestProtocol's V-01 verdict", () => {
+  // The bot's track-3 command guard reads this predicate (#187), so it can
+  // never drift from the register-time V-01 rule again.
+  const cases: Array<[unknown, boolean]> = [
+    [undefined, true],
+    [null, true],
+    ["1", true],
+    ["2", false],
+    ["", false],
+    [1, false],
+    ["1.0", false],
+  ];
+  for (const [v, expected] of cases) {
+    const label = JSON.stringify(v) ?? "undefined";
+    assert.equal(isSupportedSchemaVersion(v), expected, label);
+    assert.equal(
+      validateManifestProtocol({ ...base(), schema_version: v }).ok,
+      isSupportedSchemaVersion(v),
+      label,
+    );
+  }
 });
 
 test("sdk_version must be semver-ish when present", () => {
