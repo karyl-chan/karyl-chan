@@ -52,6 +52,7 @@ export type {
 // of the wire enforce (the bot at register, the SDK at build).
 export {
   validateManifestProtocol,
+  isSupportedSchemaVersion,
   MAX_PLUGIN_CAPABILITIES,
 } from "./validate-manifest.js";
 export type { ManifestValidation } from "./validate-manifest.js";
