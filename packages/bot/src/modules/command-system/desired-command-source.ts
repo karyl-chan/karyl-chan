@@ -11,7 +11,6 @@
  */
 
 import { Op } from "sequelize";
-import { isSupportedSchemaVersion } from "@karyl-chan/plugin-wire";
 import {
   loadBehaviorCatalog,
   type CatalogCommand,
@@ -22,13 +21,11 @@ import {
 } from "../behavior/models/behavior-definition.model.js";
 import {
   PluginCommand,
-  parsePluginCommandManifest,
-  pluginCommandScopeTarget,
   rowOfPluginCommand,
+  trackThreeRowState,
   type PluginCommandRow,
 } from "../plugin-system/models/plugin-command.model.js";
 import { findPluginById } from "../plugin-system/models/plugin.model.js";
-import { parsePluginManifest } from "../plugin-system/plugin-dispatch-util.js";
 import type {
   ManifestCommandOption,
   ManifestPluginCommand,
@@ -258,35 +255,38 @@ export class PluginCommandSource implements DesiredCommandSource {
   }
 
   private async lookupRow(row: PluginCommandRow): Promise<DesiredLookup> {
-    // 軌一指令（guild feature）由 PluginCommandRegistry 管，不由 reconciler 管
-    if (row.featureKey !== null) return { status: "unmanaged" };
-    // OQ-14 守衛：manifest 的 schema_version 必須是這個 build 看得懂的值。
-    // 規則與 plugin-wire 註冊時的 V-01 共用同一個判斷：沒有、null 或舊版
-    // "1" 都接受（SDK 1.x 不再輸出這個欄位，#187），其他值才擋。
-    const plugin = await findPluginById(row.pluginId);
-    if (!plugin) return { status: "not_desired", reason: "plugin 不存在" };
-    const manifest = parsePluginManifest(plugin);
-    if (!manifest) {
-      return { status: "not_desired", reason: "plugin manifest 無法解析" };
+    // 「這列會不會註冊」的判斷只有一份（trackThreeRowState），Guild Reach
+    // 也用它決定軌三指令是否可用（#129）。軌一指令（guild feature）由
+    // PluginCommandRegistry 管，不由 reconciler 管；先判斷，省掉查 plugin。
+    const plugin =
+      row.featureKey === null ? await findPluginById(row.pluginId) : null;
+    const state = trackThreeRowState(row, plugin);
+    switch (state.status) {
+      case "feature_row":
+        return { status: "unmanaged" };
+      case "plugin_missing":
+        return { status: "not_desired", reason: "plugin 不存在" };
+      case "manifest_unparseable":
+        return { status: "not_desired", reason: "plugin manifest 無法解析" };
+      case "unsupported_schema_version":
+        // OQ-14 守衛：與 plugin-wire 註冊時的 V-01 同一個判斷——沒有、null
+        // 或舊版 "1" 都接受（SDK 1.x 不再輸出這個欄位，#187），其他值才擋
+        return {
+          status: "not_desired",
+          reason: `不支援的 schema_version（${JSON.stringify(state.schemaVersion)}）`,
+        };
+      case "unparseable_command":
+        return { status: "invalid", reason: "manifestJson 無法解析" };
+      case "disabled":
+        // plugin + command 都要在 enabled 狀態；adminEnabled：admin 可停用個別指令
+        return {
+          status: "not_desired",
+          reason: "plugin 或指令未啟用",
+          name: state.command.name,
+          target: state.target,
+        };
     }
-    if (!isSupportedSchemaVersion(manifest.schema_version)) {
-      return {
-        status: "not_desired",
-        reason: `不支援的 schema_version（${JSON.stringify(manifest.schema_version)}）`,
-      };
-    }
-    const cmd = parsePluginCommandManifest(row.manifestJson);
-    if (!cmd) return { status: "invalid", reason: "manifestJson 無法解析" };
-    const target = pluginCommandScopeTarget(cmd.scope);
-    // 確認 plugin + command 都在 enabled 狀態；adminEnabled：admin 可停用個別指令
-    if (!plugin.enabled || plugin.status !== "active" || !row.adminEnabled) {
-      return {
-        status: "not_desired",
-        reason: "plugin 或指令未啟用",
-        name: cmd.name,
-        target,
-      };
-    }
+    const { command: cmd, target } = state;
     try {
       const spec = deriveRegistrationCall(pluginCommandDefinition(cmd), target);
       return {
