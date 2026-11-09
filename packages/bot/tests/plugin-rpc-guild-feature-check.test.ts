@@ -56,6 +56,15 @@ vi.mock(
   }),
 );
 
+// …and the reconciler roster for where those commands are registered.
+vi.mock(
+  "../src/modules/command-system/reconcile.service.js",
+  async (orig) => ({
+    ...((await orig()) as Record<string, unknown>),
+    isAnyCommandOwned: vi.fn(async () => false),
+  }),
+);
+
 vi.mock("../src/modules/bot-events/bot-event-log.js", () => ({
   botEventLog: { record: vi.fn() },
   setBotEventLogMetric: vi.fn(),
@@ -78,6 +87,7 @@ import {
   findTrackThreeCommandsByPlugin,
   type PluginCommandRow,
 } from "../src/modules/plugin-system/models/plugin-command.model.js";
+import { isAnyCommandOwned } from "../src/modules/command-system/reconcile.service.js";
 import { botEventLog } from "../src/modules/bot-events/bot-event-log.js";
 import { shouldRecord } from "../src/modules/bot-events/bot-event-dedup.js";
 import type { PluginGuildFeatureRow } from "../src/modules/feature-toggle/models/plugin-guild-feature.model.js";
@@ -176,7 +186,7 @@ function fakeFeatureRow(
 
 // ── tests ────────────────────────────────────────────────────────────────────
 
-describe("messages.send — guild feature gate", () => {
+describe("messages.send — Guild Reach", () => {
   let server: FastifyInstance;
 
   beforeEach(() => {
@@ -190,6 +200,7 @@ describe("messages.send — guild feature gate", () => {
     (
       findTrackThreeCommandsByPlugin as ReturnType<typeof vi.fn>
     ).mockResolvedValue([]);
+    (isAnyCommandOwned as ReturnType<typeof vi.fn>).mockResolvedValue(false);
     stubPluginAuth();
     stubActivePlugin();
   });
@@ -291,6 +302,7 @@ describe("messages.send — guild feature gate", () => {
     (
       findTrackThreeCommandsByPlugin as ReturnType<typeof vi.fn>
     ).mockResolvedValue([track3]);
+    (isAnyCommandOwned as ReturnType<typeof vi.fn>).mockResolvedValue(true);
 
     const res = await server.inject({
       method: "POST",
@@ -302,6 +314,9 @@ describe("messages.send — guild feature gate", () => {
     expect(res.statusCode).toBe(200);
     expect(channel._send).toHaveBeenCalledOnce();
     expect(findTrackThreeCommandsByPlugin).toHaveBeenCalledWith(PLUGIN_ID);
+    expect(isAnyCommandOwned).toHaveBeenCalledWith([
+      { name: "radio", target: `guild:${GUILD_ID}` },
+    ]);
   });
 
   it("does NOT check features for DM channels — send succeeds", async () => {

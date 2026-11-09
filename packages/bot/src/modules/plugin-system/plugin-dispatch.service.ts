@@ -268,7 +268,7 @@ export type PluginDispatchOutcome =
  *  (plugin-guild-reach.ts) + featureReachResolver. */
 export interface DispatchReachResolver {
   /** Guild Reach — component/modal kinds. */
-  reachesGuild(
+  hasGuildReach(
     plugin: PluginRow,
     guildId: string,
     manifest: PluginManifest,
@@ -358,7 +358,7 @@ export function createPluginDispatcher(
     });
   const getEventBus = deps.getEventBus ?? getPluginEventBus;
   const reach: DispatchReachResolver = deps.reach ?? {
-    reachesGuild: hasGuildReach,
+    hasGuildReach,
     isFeatureEnabledInGuild: (plugin, guildId, featureKey, manifest) =>
       featureReachResolver.isFeatureEnabledInGuild(
         plugin.id,
@@ -391,7 +391,7 @@ export function createPluginDispatcher(
       // older buttons/modals on existing messages must stop dispatching
       // into the plugin — unless a track-3 command of the plugin is
       // usable there: its follow-ups follow the command (#129).
-      if (!(await reach.reachesGuild(plugin, req.guildId, manifest))) {
+      if (!(await reach.hasGuildReach(plugin, req.guildId, manifest))) {
         return { ok: false, reason: "reach_denied" };
       }
     } else if (spec.reach === "per-scope") {

@@ -14,6 +14,7 @@ vi.hoisted(() => {
 
 import { sequelize } from "../src/db.js";
 import { PluginCommand } from "../src/modules/plugin-system/models/plugin-command.model.js";
+import { ReconcilerOwnedCommand } from "../src/modules/command-system/models/reconciler-owned-command.model.js";
 import {
   PluginGuildFeature,
   upsertFeatureRow,
@@ -72,12 +73,27 @@ function pluginRow(
   } as PluginRow;
 }
 
-/** Seed the plugin_commands rows registration would write for this manifest. */
+/**
+ * Seed the plugin_commands rows registration would write for this
+ * manifest, plus the reconciler roster rows a successful reconcile would
+ * leave: by default the guild copy in GUILD (scope guild) or the global
+ * command. `registeredIn: []` = not reconciled yet / Discord refused it.
+ */
 async function seedTrack3(
   commands: Track3[],
-  opts: { adminEnabled?: boolean } = {},
+  opts: { adminEnabled?: boolean; registeredIn?: string[] } = {},
 ): Promise<void> {
   for (const c of commands) {
+    const guildIds =
+      opts.registeredIn ?? (c.scope === "guild" ? [GUILD] : [null]);
+    for (const guildId of guildIds) {
+      await ReconcilerOwnedCommand.create({
+        name: c.name,
+        scope: guildId === null ? "global" : "guild",
+        guildId,
+        ownedAt: new Date(),
+      });
+    }
     await PluginCommand.create({
       pluginId: PLUGIN_ID,
       guildId: null,
@@ -103,6 +119,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   featureReachResolver.clear();
   await PluginCommand.destroy({ where: {} });
+  await ReconcilerOwnedCommand.destroy({ where: {} });
   await PluginGuildFeature.destroy({ where: {} });
   await PluginFeatureDefault.destroy({ where: {} });
 });
@@ -116,6 +133,27 @@ describe("hasGuildReach", () => {
     await seedTrack3(cmds);
 
     expect(await hasGuildReach(pluginRow(m), GUILD, m)).toBe(true);
+  });
+
+  it("a track-3 command not registered in this guild grants nothing", async () => {
+    const cmds: Track3[] = [
+      { name: "radio", scope: "guild", contexts: ["Guild"] },
+    ];
+    const m = manifest({ features: allFeaturesOff, pluginCommands: cmds });
+
+    // Not reconciled yet, or Discord refused it.
+    await seedTrack3(cmds, { registeredIn: [] });
+    expect(await hasGuildReach(pluginRow(m), GUILD, m)).toBe(false);
+
+    // Registered, but only in another guild.
+    await ReconcilerOwnedCommand.create({
+      name: "radio",
+      scope: "guild",
+      guildId: "g2",
+      ownedAt: new Date(),
+    });
+    expect(await hasGuildReach(pluginRow(m), GUILD, m)).toBe(false);
+    expect(await hasGuildReach(pluginRow(m), "g2", m)).toBe(true);
   });
 
   it("without a track-3 command, every feature off still denies reach", async () => {
@@ -240,6 +278,12 @@ describe("hasGuildReach", () => {
         integration_types: ["guild_install"],
       }),
       adminEnabled: true,
+    });
+    await ReconcilerOwnedCommand.create({
+      name: "other",
+      scope: "guild",
+      guildId: GUILD,
+      ownedAt: new Date(),
     });
     const m = manifest({ features: allFeaturesOff });
 

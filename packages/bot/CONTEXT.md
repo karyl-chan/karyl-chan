@@ -9,7 +9,7 @@ Whether a plugin's declared guild feature is effectively enabled in a specific g
 _Avoid_: feature gate check, guild feature check (as loose synonyms)
 
 **Command Reach**:
-Whether a plugin has a track-3 command (`plugin_commands[]`) that the reconciler registers and that is usable in guilds. A track-3 command's follow-ups — its buttons, modals, and replies into the guild — follow the command, not the features (#129). Track 1 feature commands never confer it.
+Whether a plugin has a track-3 command (`plugin_commands[]`) that the reconciler has actually registered where a given guild can invoke it — the guild's own copy, or the global command with the Guild context. A track-3 command's follow-ups — its buttons, modals, and replies into the guild — follow the command, not the features (#129). Track 1 feature commands never confer it.
 _Avoid_: command gate
 
 **Guild Reach**:

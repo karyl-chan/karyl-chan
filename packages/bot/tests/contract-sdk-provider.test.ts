@@ -594,7 +594,7 @@ describe("contract: event/lifecycle dispatch envelope", () => {
   }
 
   const reachOpen = {
-    reachesGuild: vi.fn(async () => true),
+    hasGuildReach: vi.fn(async () => true),
     isFeatureEnabledInGuild: vi.fn(async () => true),
   };
 

@@ -7,21 +7,30 @@
  *     in the guild (a featureless plugin always passes — the always-on
  *     contract of FeatureReachResolver.hasAnyFeatureEnabledInGuild);
  *   - Command Reach: the plugin has a track-3 `plugin_commands[]`
- *     command the reconciler registers and that is usable in guilds.
+ *     command registered where this guild can invoke it.
  *
  * Owner ruling on #129: a track-3 command's follow-ups (buttons, modals,
  * replies into the guild) are authorized by the command being usable,
  * not by features. Neither a `kc:` custom_id nor an RPC call carries the
  * command it came from, so the narrowest attributable unit is the
- * plugin: a plugin with a usable track-3 command may follow up in any
- * guild that command is usable in. Track 1 feature commands never confer
+ * plugin: a plugin with a usable track-3 command may follow up in each
+ * guild where that command is registered. Track 1 feature commands never confer
  * Command Reach, and event delivery keeps its per-scope Feature Reach.
  *
- * Feature Reach is checked first (cached); the plugin_commands read only
- * runs when no feature reaches the guild, and fails closed.
+ * Feature Reach is checked first (cached); the plugin_commands and roster
+ * reads only run when no feature reaches the guild, and fail closed.
  */
 
-import type { CommandTarget } from "../command-system/command-target.js";
+import {
+  guildTarget,
+  targetCovers,
+  type CommandTarget,
+  type ConcreteTarget,
+} from "../command-system/command-target.js";
+import {
+  isAnyCommandOwned,
+  type OwnedCommand,
+} from "../command-system/reconcile.service.js";
 import { featureReachResolver } from "../feature-toggle/feature-reach-resolver.js";
 import {
   findTrackThreeCommandsByPlugin,
@@ -34,31 +43,55 @@ import type {
   PluginManifest,
 } from "./plugin-registry.service.js";
 
-/** A registered command is usable in guilds when it is registered per
- *  guild, or is global and allows the Guild interaction context. */
-function usableInGuilds(
+/**
+ * Where a track-3 command would have to be registered to be usable in
+ * this guild: its own guild copy (scope guild), or the global command
+ * when it allows the Guild interaction context. Null when no
+ * registration of it can be invoked there.
+ */
+function registrationServing(
   command: ManifestPluginCommand,
   target: CommandTarget,
-): boolean {
-  return target === "all_guilds" || (command.contexts ?? []).includes("Guild");
+  guildId: string,
+): ConcreteTarget | null {
+  if (target === "global") {
+    return (command.contexts ?? []).includes("Guild") ? "global" : null;
+  }
+  const here = guildTarget(guildId);
+  return targetCovers(target, here) ? here : null;
 }
 
-/** Command Reach — the plugin has a registered track-3 command usable in
- *  guilds. Uncached (only consulted once Feature Reach said no); fails
- *  closed on a read error. */
-export async function hasCommandReach(plugin: PluginRow): Promise<boolean> {
-  let rows: PluginCommandRow[];
+/**
+ * Command Reach — one of the plugin's live track-3 commands is
+ * registered where this guild can invoke it. "Live" is the reconciler's
+ * own decision (trackThreeRowState); "registered" is its roster
+ * (reconciler_owned_commands), so a command Discord rejected or one not
+ * yet reconciled into this guild grants nothing. The roster is keyed by
+ * name and target, not by source, so a same-named command another source
+ * (a behavior) owns there would also count; the reconciler registers one
+ * command per name and target, so that takes a name clash between
+ * sources. Uncached (only consulted once Feature Reach said no); fails
+ * closed on a read error.
+ */
+async function hasCommandReach(
+  plugin: PluginRow,
+  guildId: string,
+): Promise<boolean> {
   try {
-    rows = await findTrackThreeCommandsByPlugin(plugin.id);
+    const rows: PluginCommandRow[] = await findTrackThreeCommandsByPlugin(
+      plugin.id,
+    );
+    const candidates: OwnedCommand[] = [];
+    for (const row of rows) {
+      const state = trackThreeRowState(row, plugin);
+      if (state.status !== "live") continue;
+      const target = registrationServing(state.command, state.target, guildId);
+      if (target) candidates.push({ name: state.command.name, target });
+    }
+    return await isAnyCommandOwned(candidates);
   } catch {
     return false;
   }
-  return rows.some((row) => {
-    const state = trackThreeRowState(row, plugin);
-    return (
-      state.status === "live" && usableInGuilds(state.command, state.target)
-    );
-  });
 }
 
 /** Guild Reach — Feature Reach for any declared feature, else Command Reach. */
@@ -76,5 +109,5 @@ export async function hasGuildReach(
   ) {
     return true;
   }
-  return hasCommandReach(plugin);
+  return hasCommandReach(plugin, guildId);
 }

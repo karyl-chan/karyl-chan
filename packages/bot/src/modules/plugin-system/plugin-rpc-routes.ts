@@ -303,7 +303,7 @@ async function fetchChannelOr404(
 }
 
 /**
- * PM-8: the ONE reach check every guild-targeted RPC gate goes through —
+ * PM-8: the ONE reach check every guild-targeted RPC goes through —
  * Guild Reach (plugin-guild-reach.ts). Feature Reach: "effectively
  * enabled" means the full 3-tier chain (per-guild row → operator default
  * → manifest default), cached in FeatureReachResolver; a plugin that
@@ -329,12 +329,24 @@ async function hasGuildReachById(
   return hasGuildReach(plugin, guildId, manifest);
 }
 
+/** Guild Reach check for an RPC whose body names the guild. Writes the
+ *  403 and returns false when the plugin does not reach it. */
+async function enforceGuildReach(
+  pluginId: number,
+  guildId: string,
+  reply: FastifyReply,
+): Promise<boolean> {
+  if (await hasGuildReachById(pluginId, guildId)) return true;
+  reply.code(403).send({ error: "plugin not enabled in this guild" });
+  return false;
+}
+
 /**
- * Per-guild reach gate shared by every channel-targeted message RPC: the
+ * Guild Reach check shared by every channel-targeted message RPC: the
  * plugin must have Guild Reach in the channel's guild (an
- * effectively-enabled feature, or a usable track-3 command). DM and
- * group-DM channels are exempt (no guildId); threads inherit guildId
- * from their parent and go through the gate, which is the intended
+ * effectively-enabled feature, or a track-3 command registered there).
+ * DM and group-DM channels are exempt (no guildId); threads inherit
+ * guildId from their parent and are checked, which is the intended
  * behaviour. Writes the 403 and returns false when
  * blocked. `warnVerb` additionally records a deduped warn event
  * (messages.send's historical behavior).
@@ -2115,13 +2127,9 @@ function registerRpcRoutes(
         .send({ error: `at most ${MEMBERS_GET_MAX} user_ids per call` });
       return;
     }
-    // Per-guild feature gate — identical to messages.send. The plugin
-    // must not be able to enumerate members of a guild it isn't
-    // enabled in.
-    if (!(await hasGuildReachById(ctx.pluginId, guildId))) {
-      reply.code(403).send({ error: "plugin not enabled in this guild" });
-      return;
-    }
+    // Guild Reach, as for messages.send: the plugin must not be able to
+    // enumerate members of a guild it does not reach.
+    if (!(await enforceGuildReach(ctx.pluginId, guildId, reply))) return;
     let guild;
     try {
       guild = await bot.guilds.fetch(guildId);
@@ -2336,10 +2344,7 @@ function registerRpcRoutes(
         return;
       }
       const body = request.body;
-      if (!(await hasGuildReachById(ctx.pluginId, body.guild_id))) {
-        reply.code(403).send({ error: "plugin not enabled in this guild" });
-        return;
-      }
+      if (!(await enforceGuildReach(ctx.pluginId, body.guild_id, reply))) return;
       try {
         const channel = (await bot.rest.get(
           Routes.channel(body.channel_id),
@@ -2400,10 +2405,7 @@ function registerRpcRoutes(
         return;
       }
       const body = request.body;
-      if (!(await hasGuildReachById(ctx.pluginId, body.guild_id))) {
-        reply.code(403).send({ error: "plugin not enabled in this guild" });
-        return;
-      }
+      if (!(await enforceGuildReach(ctx.pluginId, body.guild_id, reply))) return;
       const typeFilter =
         body.types !== undefined && body.types.length > 0
           ? new Set(body.types.filter((v): v is number => typeof v === "number"))
@@ -2452,10 +2454,7 @@ function registerRpcRoutes(
         return;
       }
       const body = request.body;
-      if (!(await hasGuildReachById(ctx.pluginId, body.guild_id))) {
-        reply.code(403).send({ error: "plugin not enabled in this guild" });
-        return;
-      }
+      if (!(await enforceGuildReach(ctx.pluginId, body.guild_id, reply))) return;
       try {
         const roles = await bot.rest.get(Routes.guildRoles(body.guild_id));
         return { roles };
@@ -2500,10 +2499,7 @@ function registerRpcRoutes(
         return;
       }
       const body = request.body;
-      if (!(await hasGuildReachById(ctx.pluginId, body.guild_id))) {
-        reply.code(403).send({ error: "plugin not enabled in this guild" });
-        return;
-      }
+      if (!(await enforceGuildReach(ctx.pluginId, body.guild_id, reply))) return;
       try {
         const roles = (await bot.rest.get(
           Routes.guildRoles(body.guild_id),
@@ -2563,10 +2559,7 @@ function registerRpcRoutes(
       return;
     }
     const body = request.body;
-    if (!(await hasGuildReachById(ctx.pluginId, body.guild_id))) {
-      reply.code(403).send({ error: "plugin not enabled in this guild" });
-      return;
-    }
+    if (!(await enforceGuildReach(ctx.pluginId, body.guild_id, reply))) return;
     try {
       await bot.rest.put(
         Routes.guildMemberRole(body.guild_id, body.user_id, body.role_id),
@@ -2607,10 +2600,7 @@ function registerRpcRoutes(
       return;
     }
     const body = request.body;
-    if (!(await hasGuildReachById(ctx.pluginId, body.guild_id))) {
-      reply.code(403).send({ error: "plugin not enabled in this guild" });
-      return;
-    }
+    if (!(await enforceGuildReach(ctx.pluginId, body.guild_id, reply))) return;
     try {
       await bot.rest.delete(
         Routes.guildMemberRole(body.guild_id, body.user_id, body.role_id),
@@ -2663,10 +2653,7 @@ function registerRpcRoutes(
         return;
       }
       const body = request.body;
-      if (!(await hasGuildReachById(ctx.pluginId, body.guild_id))) {
-        reply.code(403).send({ error: "plugin not enabled in this guild" });
-        return;
-      }
+      if (!(await enforceGuildReach(ctx.pluginId, body.guild_id, reply))) return;
       if (!(await assertChannelInGuild(bot, body.channel_id, body.guild_id))) {
         reply
           .code(403)
@@ -2739,10 +2726,7 @@ function registerRpcRoutes(
         return;
       }
       const body = request.body;
-      if (!(await hasGuildReachById(ctx.pluginId, body.guild_id))) {
-        reply.code(403).send({ error: "plugin not enabled in this guild" });
-        return;
-      }
+      if (!(await enforceGuildReach(ctx.pluginId, body.guild_id, reply))) return;
       if (!(await assertChannelInGuild(bot, body.channel_id, body.guild_id))) {
         reply
           .code(403)
@@ -2824,10 +2808,7 @@ function registerRpcRoutes(
       const body = request.body;
       // Absent user_id = remove the bot's own reaction.
       const userId = body.user_id ?? null;
-      if (!(await hasGuildReachById(ctx.pluginId, body.guild_id))) {
-        reply.code(403).send({ error: "plugin not enabled in this guild" });
-        return;
-      }
+      if (!(await enforceGuildReach(ctx.pluginId, body.guild_id, reply))) return;
       if (!(await assertChannelInGuild(bot, body.channel_id, body.guild_id))) {
         reply
           .code(403)
@@ -2889,10 +2870,7 @@ function registerRpcRoutes(
         return;
       }
       const body = request.body;
-      if (!(await hasGuildReachById(ctx.pluginId, body.guild_id))) {
-        reply.code(403).send({ error: "plugin not enabled in this guild" });
-        return;
-      }
+      if (!(await enforceGuildReach(ctx.pluginId, body.guild_id, reply))) return;
       try {
         const guild = await bot.rest.get(Routes.guild(body.guild_id));
         return { guild };

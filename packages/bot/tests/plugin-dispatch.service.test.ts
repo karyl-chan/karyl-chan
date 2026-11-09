@@ -68,11 +68,11 @@ function makePlugin(overrides: Partial<PluginRow> = {}): PluginRow {
 }
 
 const reachYes = {
-  reachesGuild: vi.fn(async () => true),
+  hasGuildReach: vi.fn(async () => true),
   isFeatureEnabledInGuild: vi.fn(async () => true),
 };
 const reachNo = {
-  reachesGuild: vi.fn(async () => false),
+  hasGuildReach: vi.fn(async () => false),
   isFeatureEnabledInGuild: vi.fn(async () => false),
 };
 
@@ -153,7 +153,7 @@ describe("gate", () => {
     expect(inGuild).toEqual({ ok: false, reason: "reach_denied" });
     // Guild Reach is asked about the plugin itself (Command Reach reads
     // its track-3 rows), not just its feature map.
-    expect(reachNo.reachesGuild).toHaveBeenCalledWith(
+    expect(reachNo.hasGuildReach).toHaveBeenCalledWith(
       plugin,
       "g1",
       expect.objectContaining({ plugin: expect.anything() }),
