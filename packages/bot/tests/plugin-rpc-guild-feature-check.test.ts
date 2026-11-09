@@ -196,7 +196,7 @@ describe("messages.send — Guild Reach", () => {
       findFeatureDefaultsByPlugin as ReturnType<typeof vi.fn>
     ).mockResolvedValue([]);
     // clearAllMocks keeps implementations; a test that grants Command
-    // Reach must not leak it into the feature-gate cases after it.
+    // Reach must not leak it into the Feature Reach cases after it.
     (
       findTrackThreeCommandsByPlugin as ReturnType<typeof vi.fn>
     ).mockResolvedValue([]);

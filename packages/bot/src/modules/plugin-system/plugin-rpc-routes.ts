@@ -360,7 +360,7 @@ async function enforceChannelGuildReach(
   const channelGuildId =
     "guildId" in channel && typeof channel.guildId === "string" ? channel.guildId : null;
   if (!channelGuildId || channel.isDMBased()) return true;
-  if (await hasGuildReachById(ctx.pluginId, channelGuildId)) return true;
+  if (await enforceGuildReach(ctx.pluginId, channelGuildId, reply)) return true;
   if (opts.warnVerb && shouldRecord(`plugin-rpc-feature-block:${ctx.pluginId}:${channelGuildId}`)) {
     botEventLog.record(
       "warn",
@@ -369,7 +369,6 @@ async function enforceChannelGuildReach(
       { pluginId: ctx.pluginId, guildId: channelGuildId },
     );
   }
-  reply.code(403).send({ error: "plugin not enabled in this guild" });
   return false;
 }
 

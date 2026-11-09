@@ -35,7 +35,6 @@ import { featureReachResolver } from "../feature-toggle/feature-reach-resolver.j
 import {
   findTrackThreeCommandsByPlugin,
   trackThreeRowState,
-  type PluginCommandRow,
 } from "./models/plugin-command.model.js";
 import type { PluginRow } from "./models/plugin.model.js";
 import type {
@@ -65,8 +64,10 @@ function registrationServing(
  * Command Reach — one of the plugin's live track-3 commands is
  * registered where this guild can invoke it. "Live" is the reconciler's
  * own decision (trackThreeRowState); "registered" is its roster
- * (reconciler_owned_commands), so a command Discord rejected or one not
- * yet reconciled into this guild grants nothing. The roster is keyed by
+ * (reconciler_owned_commands), so a command not yet reconciled into
+ * this guild grants nothing. The roster also keeps a row when Discord
+ * refused the create (so stale cleanup can find it); such a command
+ * still grants reach there until the reconciler drops the row. The roster is keyed by
  * name and target, not by source, so a same-named command another source
  * (a behavior) owns there would also count; the reconciler registers one
  * command per name and target, so that takes a name clash between
@@ -78,9 +79,7 @@ async function hasCommandReach(
   guildId: string,
 ): Promise<boolean> {
   try {
-    const rows: PluginCommandRow[] = await findTrackThreeCommandsByPlugin(
-      plugin.id,
-    );
+    const rows = await findTrackThreeCommandsByPlugin(plugin.id);
     const candidates: OwnedCommand[] = [];
     for (const row of rows) {
       const state = trackThreeRowState(row, plugin);

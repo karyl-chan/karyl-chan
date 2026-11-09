@@ -77,7 +77,7 @@ function pluginRow(
  * Seed the plugin_commands rows registration would write for this
  * manifest, plus the reconciler roster rows a successful reconcile would
  * leave: by default the guild copy in GUILD (scope guild) or the global
- * command. `registeredIn: []` = not reconciled yet / Discord refused it.
+ * command. `registeredIn: []` = not reconciled into any guild yet.
  */
 async function seedTrack3(
   commands: Track3[],
@@ -141,7 +141,7 @@ describe("hasGuildReach", () => {
     ];
     const m = manifest({ features: allFeaturesOff, pluginCommands: cmds });
 
-    // Not reconciled yet, or Discord refused it.
+    // Not reconciled yet.
     await seedTrack3(cmds, { registeredIn: [] });
     expect(await hasGuildReach(pluginRow(m), GUILD, m)).toBe(false);
 
