@@ -131,6 +131,20 @@ async function loadOwnedCommands(): Promise<OwnedCommand[]> {
   return out;
 }
 
+/**
+ * 名冊裡是否至少有其中一筆——也就是這些指令有沒有任何一個目前確實由
+ * reconciler 註冊在對應的具體目標上（Command Reach 用，#129）。
+ */
+export async function isAnyCommandOwned(
+  candidates: readonly OwnedCommand[],
+): Promise<boolean> {
+  if (candidates.length === 0) return false;
+  const count = await ReconcilerOwnedCommand.count({
+    where: { [Op.or]: candidates.map(ownedWhere) },
+  });
+  return count > 0;
+}
+
 async function upsertOwnedCommand(owned: OwnedCommand): Promise<void> {
   // 先刪再建：partial unique index 下不能用 upsert，且每次 reconcile 都要
   // 刷新 ownedAt。create() 會觸發 model 的 scopeGuildShape validate。

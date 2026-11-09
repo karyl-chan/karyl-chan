@@ -14,8 +14,9 @@ import { pluginDispatcher } from "./plugin-dispatch.service.js";
  * (`kc` = "karyl plugin component" — a reserved prefix so the bot knows
  * to route it; `<rest>` is the plugin's own action id, optionally with a
  * `:<tail>`). On such a click the bot:
- *   1. resolves the plugin (must be installed + enabled, with any
- *      feature reaching the guild — the module's gate)
+ *   1. resolves the plugin (must be installed + enabled, with Guild
+ *      Reach — any feature enabled, or a usable track-3 command — the
+ *      module's gate)
  *   2. `deferUpdate()`s — acks within Discord's 3 s budget, no visible
  *      change to the message
  *   3. HMAC-signs and POSTs the click to the plugin's component endpoint
@@ -131,9 +132,10 @@ export async function dispatchComponentToPlugin(
       plugin_offline: "⚠ 此按鈕所屬的 plugin 目前離線或已被停用。",
       plugin_not_ready: "⚠ 此按鈕所屬的 plugin 正在初始化，請稍後再試。",
       manifest_invalid: "⚠ 此 plugin 的 manifest 損壞,無法派送。",
-      // Feature Reach — once an admin disables every feature of this
+      // Guild Reach — once an admin disables every feature of this
       // plugin in guild G, older buttons on existing messages must
-      // stop dispatching click events into the plugin.
+      // stop dispatching click events into the plugin, unless a
+      // track-3 command of the plugin is usable there (#129).
       reach_denied: "⚠ 此功能在本伺服器已停用。",
       no_dispatch_key: "⚠ Plugin 尚未完成 re-register,dispatch key 不存在。",
     }[gate.reason];

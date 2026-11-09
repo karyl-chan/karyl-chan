@@ -137,9 +137,10 @@ export async function dispatchModalToPlugin(
       plugin_offline: "⚠ 此 modal 所屬的 plugin 目前離線或已被停用。",
       plugin_not_ready: "⚠ 此 modal 所屬的 plugin 正在初始化，請稍後再試。",
       manifest_invalid: "⚠ 此 plugin 的 manifest 損壞,無法派送。",
-      // Feature Reach. Precedence Tiers resolution (row → operator default
-      // → manifest enabled_by_default) so manifests defaulting features to
-      // enabled aren't falsely blocked before any row is materialized.
+      // Guild Reach: Feature Reach (Precedence Tiers — row → operator
+      // default → manifest enabled_by_default — so manifests defaulting
+      // features to enabled aren't falsely blocked before any row is
+      // materialized), or a usable track-3 command (#129).
       reach_denied: "⚠ 此功能在本伺服器已停用。",
       no_dispatch_key: "⚠ Plugin 尚未完成 re-register,dispatch key 不存在。",
     }[gate.reason];
