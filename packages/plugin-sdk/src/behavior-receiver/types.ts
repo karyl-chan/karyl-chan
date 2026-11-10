@@ -150,4 +150,18 @@ export interface BehaviorReply {
    * fields are not shown.
    */
   defer?: true;
+  /**
+   * Files to attach: the bot GETs each `path` from your webhook URL's
+   * origin (at most 5 files of 8 MiB, no redirects, no credentials sent).
+   * A file it can't get fails the reply. A reply of only attachments is a
+   * reply.
+   */
+  attachments?: BehaviorReplyAttachment[];
+}
+
+/** A file a reply attaches: its name in Discord, and a path on your webhook's origin. */
+export interface BehaviorReplyAttachment {
+  name: string;
+  /** A plain path (`/files/chart.png`), never `//host` or a full URL. */
+  path: string;
 }

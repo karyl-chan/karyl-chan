@@ -14,6 +14,7 @@ import {
   verifyRequest,
   type BehaviorCallback,
   type BehaviorReply,
+  type BehaviorReplyAttachment,
   type BehaviorReplyEmbed,
   type BehaviorWebhookAttachment,
   type BehaviorWebhookPayload,
@@ -94,6 +95,8 @@ const embed: Required<BehaviorReplyEmbed> = {
   fields: [],
 };
 
+const replyAttachment: Required<BehaviorReplyAttachment> = { name: "", path: "" };
+
 const reply: Required<BehaviorReply> = {
   content: "",
   embeds: [embed],
@@ -101,6 +104,7 @@ const reply: Required<BehaviorReply> = {
   ephemeral: true,
   flags: 0,
   defer: true,
+  attachments: [replyAttachment],
 };
 
 describe("behavior-receiver types, against the fixtures", () => {
@@ -115,9 +119,10 @@ describe("behavior-receiver types, against the fixtures", () => {
     assert.deepEqual(keys(callback), sorted(request.callbackKeys));
   });
 
-  it("type the reply's fields and embed whitelist", () => {
+  it("type the reply's fields, embed whitelist and attachment keys", () => {
     assert.deepEqual(keys(reply), sorted(response.fields));
     assert.deepEqual(keys(embed), sorted(response.embedWhitelist));
+    assert.deepEqual(keys(replyAttachment), sorted(response.attachmentKeys));
   });
 });
 

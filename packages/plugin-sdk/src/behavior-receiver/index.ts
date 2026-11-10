@@ -38,6 +38,7 @@ export type {
   BehaviorCallback,
   BehaviorReply,
   BehaviorReplyActionRow,
+  BehaviorReplyAttachment,
   BehaviorReplyEmbed,
   BehaviorReplyLinkButton,
   BehaviorWebhookAttachment,
