@@ -1,12 +1,21 @@
 import type { BehaviorCommandOption, BehaviorPatch, CommandLeafView, ReplyVisibility } from '../../../api/behavior';
 import type { DraftModel } from './draft-rebase';
-import { NEW_WEBHOOK, savedWebhookBody, webhookBody, webhookDraftOf, type WebhookDraft } from './webhook-draft';
+import {
+    NEW_ACTION,
+    actionBody,
+    actionChanged,
+    actionDraftOf,
+    actionPartOf,
+    savedActionBody,
+    type ActionBody,
+    type ActionDraft,
+} from './webhook-draft';
 
 /**
  * The edit draft of a Command Leaf (board 5 「子指令」): its subcommand
  * name and Discord description (subcommands only — the root leaf is the
  * command itself), its title and admin note, its options, and its
- * webhook action. A leaf never changes its place in the tree here: the
+ * action (a webhook or a plugin action). A leaf never changes its place in the tree here: the
  * root leaf stays the root (convert-to-subcommands is the one way out).
  */
 export type OptionType = BehaviorCommandOption['type'];
@@ -18,7 +27,7 @@ export interface OptionDraft {
     required: boolean;
 }
 
-export interface LeafDraft extends WebhookDraft {
+export interface LeafDraft extends ActionDraft {
     /** '' = the root leaf. */
     subcommand: string;
     /** Discord's description of a subcommand; '' = the title stands in. */
@@ -51,7 +60,7 @@ export function draftFromLeaf(leaf: CommandLeafView): LeafDraft {
         description: leaf.description,
         options: leaf.options.map((o) => ({ ...o })),
         replyVisibility: leaf.replyVisibility,
-        ...webhookDraftOf(leaf.webhook),
+        ...actionDraftOf(leaf),
     };
 }
 
@@ -64,7 +73,7 @@ export function emptyLeafDraft(): LeafDraft {
         description: '',
         options: [],
         replyVisibility: null,
-        ...NEW_WEBHOOK,
+        ...NEW_ACTION,
     };
 }
 
@@ -72,15 +81,14 @@ export function emptyOption(): OptionDraft {
     return { type: 'string', name: '', description: '', required: false };
 }
 
-export interface LeafBody {
+export type LeafBody = {
     subcommand: string;
     title: string;
     description: string;
     leafDescription: string | null;
     options: BehaviorCommandOption[];
     replyVisibility: ReplyVisibility | null;
-    webhook: { url: string; authMode: 'token' | 'hmac' | null };
-}
+} & ActionBody;
 
 /** The request body of a leaf (POST …/leaves, or a command's `leaves[i]`). */
 export function leafBody(d: LeafDraft): LeafBody {
@@ -96,7 +104,7 @@ export function leafBody(d: LeafDraft): LeafBody {
             required: o.required,
         })),
         replyVisibility: d.replyVisibility,
-        webhook: webhookBody(d),
+        ...actionBody(d),
     };
 }
 
@@ -108,13 +116,14 @@ function savedBody(leaf: CommandLeafView): LeafBody {
         leafDescription: leaf.leafDescription,
         options: leaf.options,
         replyVisibility: leaf.replyVisibility,
-        webhook: savedWebhookBody(leaf.webhook),
+        ...savedActionBody(leaf),
     };
 }
 
 /**
  * The PATCH (PATCH /api/behaviors/:id) for saving `draft` over the saved
- * leaf: the changed fields, the whole webhook when it changed, and the
+ * leaf: the changed fields, the whole action when it changed (a change of
+ * source converts the leaf, #203), and the
  * version the edit is based on. The root leaf sends neither a path nor a
  * subcommand description. Null when the draft changes nothing.
  */
@@ -123,12 +132,13 @@ export function leafPatch(saved: CommandLeafView, draft: LeafDraft): BehaviorPat
     const after = leafBody(draft);
     const keys: Array<keyof LeafBody> =
         saved.subcommand === ''
-            ? ['title', 'description', 'options', 'replyVisibility', 'webhook']
-            : ['subcommand', 'leafDescription', 'title', 'description', 'options', 'replyVisibility', 'webhook'];
+            ? ['title', 'description', 'options', 'replyVisibility']
+            : ['subcommand', 'leafDescription', 'title', 'description', 'options', 'replyVisibility'];
     const patch: Record<string, unknown> = {};
     for (const key of keys) {
         if (JSON.stringify(after[key]) !== JSON.stringify(before[key])) patch[key] = after[key];
     }
+    if (actionChanged(actionPartOf(after), actionPartOf(before))) Object.assign(patch, actionPartOf(after));
     if (Object.keys(patch).length === 0) return null;
     return { ...(patch as BehaviorPatch), ifUpdatedAt: saved.updatedAt };
 }

@@ -35,13 +35,8 @@
 
 import type { BehaviorWebhookActionRow } from "../behavior/models/behavior-webhook-action.model.js";
 import type { ReplyVisibility } from "../behavior/models/behavior-definition.model.js";
-import { recordForwardOutcome } from "../behavior/models/behavior-stats.model.js";
-import {
-  recordDelivery,
-  type DeliveryErrorCode,
-} from "../behavior/behavior-deliveries.js";
-import { botEventLog } from "../bot-events/bot-event-log.js";
-import { renderFailure, renderReply, type ReplyTarget } from "./reply-renderer.js";
+import type { DeliveryErrorCode } from "../behavior/behavior-deliveries.js";
+import { renderReply, type ReplyTarget } from "./reply-renderer.js";
 import {
   behaviorCallbackTokens,
   callbackMetaOf,
@@ -49,10 +44,11 @@ import {
   type BehaviorCallbackPrincipal,
   type CallbackMeta,
 } from "./behavior-callback-token.js";
+import { failRun, recordRun, showDeferred } from "./behavior-run.js";
 import type { BehaviorReply, DirectMessage } from "./behavior-reply.js";
 import { sendDirectMessages } from "./behavior-direct-messages.js";
 import { readyToRender, type ReplyFileFetcher } from "./reply-files.js";
-import { sendTypingFor, type RenderOutcome } from "./reply-renderer.js";
+import type { RenderOutcome } from "./reply-renderer.js";
 import type { ForwardResult } from "./types.js";
 import type { WebhookForwarder } from "./webhook-forwarder.service.js";
 
@@ -144,7 +140,7 @@ export async function runWebhookAction(run: WebhookActionRun): Promise<void> {
     // stays, a message trigger shows typing
     if (result.ok && result.reply.defer) {
       deferred = true;
-      if (target.kind === "message") await sendTypingFor(target.message, run.visibility);
+      await showDeferred(target, run.visibility, principal);
     } else if (result.ok) {
       const rendered = await renderAnswer(run, principal, result.reply);
       // its direct messages go once the reply itself was shown (#157)
@@ -171,17 +167,10 @@ export async function runWebhookAction(run: WebhookActionRun): Promise<void> {
   }
   const durationMs = Math.round(performance.now() - started);
 
-  // A failed run: in the run's turn, either a callback respond already
-  // answered — the user saw a reply, so the
-  // delivery is ok and marked deferred — or the token is revoked and the
-  // user told, before any later callback call can get in.
+  // a failed run: ok after all when a callback respond already answered
+  // (behavior-run.ts); an author who can't be DMed is not told again
   if (!ok) {
-    const answered = await serializeReply(principal, async () => {
-      if (principal.answeredByCallback) return true;
-      behaviorCallbackTokens.revoke(issued.token);
-      if (!unreachable) await renderFailure(target);
-      return false;
-    });
+    const answered = await failRun(issued.token, principal, target, !unreachable);
     if (answered) {
       ok = true;
       deferred = true;
@@ -191,26 +180,19 @@ export async function runWebhookAction(run: WebhookActionRun): Promise<void> {
   }
 
   // the detail goes to the log, the stats and the delivery log only (#114)
-  await recordForwardOutcome(behaviorId, ok, error);
-  await recordDelivery({
+  await recordRun({
     behaviorId,
     firedAt,
-    via: target.kind === "interaction" ? "command" : "message",
+    target,
     ok,
+    deferred,
     httpStatus,
     durationMs,
     errorCode,
-    error: ok ? null : (error ?? "unknown"),
+    error,
     verified,
-    deferred,
+    what: "webhook action",
   });
   // after the delivery is logged: a DM's outcome is its own, never the run's
   await sendDirectMessages({ behaviorId, target, fetchFiles }, directMessages);
-  if (ok) return;
-  botEventLog.record(
-    "warn",
-    "bot",
-    `webhook action of behavior ${behaviorId} failed (${target.kind}): ${error ?? "unknown"}`,
-    { behaviorId, via: target.kind },
-  );
 }

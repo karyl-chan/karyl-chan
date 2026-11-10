@@ -66,11 +66,15 @@ import {
 } from "./command-writes.js";
 import { BehaviorCommand } from "./models/behavior-command.model.js";
 import { BehaviorDefinition } from "./models/behavior-definition.model.js";
+import { webhookInputSchema } from "./webhook-action-input.js";
 import {
-  prepareWebhookWrite,
-  webhookInputSchema,
-  type WebhookWrite,
-} from "./webhook-action-input.js";
+  actionAuditOf,
+  issuedSecretOf,
+  pluginActionInputSchema,
+  prepareActionWrite,
+  type ActionWrite,
+  type PluginActionCatalog,
+} from "./behavior-action-input.js";
 
 export interface BehaviorCommandDeps {
   /** Registers behavior commands with Discord; without it registration is deferred. */
@@ -79,6 +83,8 @@ export interface BehaviorCommandDeps {
   namespace?: CommandNamespaceChecker;
   /** Bot owners (tests); production reads BOT_OWNER_IDS. */
   ownerIds?: readonly string[];
+  /** The installed plugins' behavior actions; required to bind a plugin action (#203). */
+  plugins?: PluginActionCatalog;
 }
 
 // ── shapes ──────────────────────────────────────────────────────────────────
@@ -99,6 +105,7 @@ interface CommandCreate extends CommandInput {
 
 type CommandPatch = Partial<CommandInput> & { ifUpdatedAt?: string };
 
+/** A leaf: its fields and its action, `webhook` or `pluginAction` — exactly one, checked by the handler (#203). */
 const leafInputSchema = {
   type: "object",
   properties: {
@@ -106,8 +113,9 @@ const leafInputSchema = {
     ...behaviorCommonFields,
     ...commandLeafFields,
     webhook: webhookInputSchema,
+    pluginAction: pluginActionInputSchema,
   },
-  required: ["title", "webhook"],
+  required: ["title"],
   additionalProperties: false,
 } as const;
 
@@ -129,7 +137,7 @@ export const createCommandSchema = {
 export const addLeafSchema = {
   ...leafInputSchema,
   properties: { ...leafInputSchema.properties, subcommand: commandNameSchema },
-  required: ["subcommand", "title", "webhook"],
+  required: ["subcommand", "title"],
 } as const;
 
 const convertSchema = {
@@ -177,8 +185,11 @@ export function registerBehaviorCommandRoutes(
       };
       checkCommandSettings(settings);
       checkCommandTree(settings, body.leaves.map(leafShapeOf));
-      const webhooks = await Promise.all(
-        body.leaves.map((leaf, i) => prepareWebhookWrite(leaf.webhook, null, `leaves.${i}.webhook`)),
+      const actions = await Promise.all(
+        body.leaves.map(
+          async (leaf, i) =>
+            (await prepareActionWrite(leaf, { behaviorId: null, plugins: deps.plugins, path: `leaves.${i}` }, true))!,
+        ),
       );
       const at = registeredNameOf(settings);
 
@@ -194,7 +205,7 @@ export function registerBehaviorCommandRoutes(
           subcommand: leaf.subcommand ?? "",
           title: leaf.title.trim(),
           replyVisibility: leaf.replyVisibility ?? null,
-          webhook: webhooks[i]!.audit,
+          ...actionAuditOf(actions[i]!),
         })),
       });
 
@@ -217,7 +228,7 @@ export function registerBehaviorCommandRoutes(
           const id = command.getDataValue("id") as number;
           const ids: number[] = [];
           for (const [i, leaf] of body.leaves.entries()) {
-            ids.push(await insertLeaf(id, leaf, webhooks[i]!, i, transaction));
+            ids.push(await insertLeaf(id, leaf, actions[i]!, i, transaction));
           }
           return { commandId: id, leafIds: ids };
         });
@@ -241,11 +252,10 @@ export function registerBehaviorCommandRoutes(
         ...auditContext(leafIds),
         registration: registration.status,
       });
-      const secrets = body.leaves.flatMap((leaf, i) =>
-        webhooks[i]!.issuedSecret !== null
-          ? [{ behaviorId: leafIds[i]!, subcommand: leaf.subcommand ?? "", secret: webhooks[i]!.issuedSecret }]
-          : [],
-      );
+      const secrets = body.leaves.flatMap((leaf, i) => {
+        const secret = issuedSecretOf(actions[i]!);
+        return secret !== null ? [{ behaviorId: leafIds[i]!, subcommand: leaf.subcommand ?? "", secret }] : [];
+      });
       return reply.code(201).send({
         command: await commandViewOf(commandId),
         registration,
@@ -353,13 +363,13 @@ export function registerBehaviorCommandRoutes(
     async (request, reply) => {
       const commandId = parseRowId(request.params);
       const body = request.body as LeafInput;
-      const auditContext = (webhook: WebhookWrite["audit"]) => ({
+      const auditContext = (action: ActionWrite) => ({
         kind: "command_leaf",
         commandId,
         subcommand: body.subcommand,
         title: body.title.trim(),
         replyVisibility: body.replyVisibility ?? null,
-        webhook,
+        ...actionAuditOf(action),
       });
       const result = await withBehaviorWriteLock(async () => {
         const command = await loadCommandRow(commandId);
@@ -369,7 +379,7 @@ export function registerBehaviorCommandRoutes(
         checkCommandTree(command, [...stored, shape], (i) =>
           i === stored.length ? "" : "leaves",
         );
-        const webhook = await prepareWebhookWrite(body.webhook, null);
+        const action = (await prepareActionWrite(body, { behaviorId: null, plugins: deps.plugins }, true))!;
         const { value: behaviorId, registration } = await rewriteCommand(
           deps.reconciler,
           command,
@@ -381,7 +391,7 @@ export function registerBehaviorCommandRoutes(
             return insertLeaf(
               commandId,
               body,
-              webhook,
+              action,
               Number.isFinite(max) ? (max as number) + 1 : 0,
               transaction,
             );
@@ -390,14 +400,14 @@ export function registerBehaviorCommandRoutes(
             request,
             action: "behavior.create",
             target: `behavior:${id}`,
-            context: auditContext(webhook.audit),
+            context: auditContext(action),
           }),
         );
-        return { behaviorId, webhook, registration };
+        return { behaviorId, action, registration };
       });
 
       await auditBehaviorWrite(request, "behavior.create", `behavior:${result.behaviorId}`, {
-        ...auditContext(result.webhook.audit),
+        ...auditContext(result.action),
         registration: result.registration.status,
       });
       const command = await commandViewOf(commandId);
@@ -405,7 +415,7 @@ export function registerBehaviorCommandRoutes(
         behavior: command.leaves.find((l) => l.id === result.behaviorId),
         command,
         registration: result.registration,
-        ...(result.webhook.issuedSecret !== null ? { secret: result.webhook.issuedSecret } : {}),
+        ...(issuedSecretOf(result.action) !== null ? { secret: issuedSecretOf(result.action) } : {}),
       });
     },
   );

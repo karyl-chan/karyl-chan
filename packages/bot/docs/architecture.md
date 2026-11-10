@@ -105,12 +105,14 @@ voice (voice RPC backend).
 **What it does.** A Behavior is one trigger bound to one action
 (ADR 0003). Triggers are a Command Leaf (a command or one of its
 subcommands) or a Message Trigger (bot DMs, or guilds: all / one guild /
-one channel); actions are a webhook, or the built-in login action that
-only the System Behavior uses. Three tables: `behavior_commands` (a
-Command and its visibility settings), `behavior_definitions` (one
-Behavior: its trigger, action source and `systemKey`) and
-`behavior_webhook_actions` (encrypted URL / secret, auth mode, and the
-previous secret during a rotation's 24 h grace period). The admin UI
+one channel); actions are a webhook, a Plugin Action (one a plugin's
+manifest declares, run as a `behavior_action` Plugin Dispatch — #203),
+or the built-in login action that only the System Behavior uses. Core
+tables: `behavior_commands` (a Command and its visibility settings),
+`behavior_definitions` (one Behavior: its trigger, action source and
+`systemKey`), `behavior_webhook_actions` (encrypted URL / secret, auth
+mode, and the previous secret during a rotation's 24 h grace period) and
+`behavior_plugin_actions` (pluginKey + actionKey). The admin UI
 groups behaviors by a derived Behavior Section; nothing about sections
 is stored.
 
@@ -192,8 +194,12 @@ is stored.
   deferral), `findRecentDeliveries`, and the pruner started at boot
   (`startDeliveryPruner`: the last 20 per behavior, at most 7 days, every
   10 minutes).
+- `behavior-action-input.ts` — a write's action, `webhook` XOR
+  `pluginAction`: checked (a plugin action against the plugin's current
+  manifest, through the injected PluginActionCatalog — behavior does not
+  import plugin-system) and stored, converting between sources.
 - `models/` — behavior-command, behavior-definition,
-  behavior-webhook-action, behavior-stats, behavior-delivery,
+  behavior-webhook-action, behavior-plugin-action, behavior-stats, behavior-delivery,
   behavior-group-member (an
   Audience Group's list: settable only for a group a message trigger
   uses, dropped when the last such trigger leaves it).

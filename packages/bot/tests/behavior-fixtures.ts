@@ -8,6 +8,7 @@ import { BehaviorCommand } from "../src/modules/behavior/models/behavior-command
 import { BehaviorDefinition } from "../src/modules/behavior/models/behavior-definition.model.js";
 import { BehaviorWebhookAction } from "../src/modules/behavior/models/behavior-webhook-action.model.js";
 import { BehaviorGroupMember } from "../src/modules/behavior/models/behavior-group-member.model.js";
+import { BehaviorPluginAction } from "../src/modules/behavior/models/behavior-plugin-action.model.js";
 import { encryptSecret } from "../src/utils/crypto.js";
 
 export const TEST_WEBHOOK_URL = "https://hooks.example/behavior";
@@ -124,12 +125,22 @@ export async function seedLeaf(
   return id;
 }
 
+/** Bind `behaviorId` (seeded with `actionSource: "plugin"`, webhook null) to a plugin action (#203). */
+export async function bindPluginAction(
+  behaviorId: number,
+  pluginKey: string,
+  actionKey: string,
+): Promise<void> {
+  await BehaviorPluginAction.create({ behaviorId, pluginKey, actionKey });
+}
+
 /** Remove every behavior row (cascades leaves, webhook actions, stats), group list, DM allowlist and DM log. */
 export async function clearBehaviors(): Promise<void> {
   await BehaviorGroupMember.destroy({ where: {} });
   await BehaviorDmAllowlist.destroy({ where: {} });
   await BehaviorDmLog.destroy({ where: {} });
   await BehaviorWebhookAction.destroy({ where: {} });
+  await BehaviorPluginAction.destroy({ where: {} });
   await BehaviorDefinition.destroy({ where: {} });
   await BehaviorCommand.destroy({ where: {} });
 }

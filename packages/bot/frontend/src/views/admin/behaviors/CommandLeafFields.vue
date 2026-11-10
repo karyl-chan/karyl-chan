@@ -11,7 +11,7 @@ import type { LeafDraft } from './leaf-draft';
  * The fields of one Command Leaf (board 5, inside a subcommand row): the
  * subcommand's name and Discord description (not for the root leaf — the
  * command itself is that), the title and admin note, the options, and
- * the webhook action. Shared by a saved leaf's editor and the "add a
+ * the action (a webhook or a plugin action). Shared by a saved leaf's editor and the "add a
  * subcommand" form.
  */
 defineProps<{

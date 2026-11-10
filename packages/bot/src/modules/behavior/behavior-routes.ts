@@ -4,6 +4,7 @@
  * 路由表：
  *   GET  /api/behaviors                          — { system, commands, messageTriggers }
  *   GET  /api/behaviors/schema                   — the write schemas, for the admin UI's form checks
+ *   GET  /api/behaviors/plugin-actions           — 已安裝 plugin 宣告的 behavior action（#203，動作選單）
  *   POST /api/behaviors/:id/test                 — 對 behavior 的 webhook 動作試發
  *   GET  /api/behaviors/:id/deliveries           — behavior 最近的投遞紀錄（#120）
  *   POST / PATCH / DELETE /api/behaviors[/:id]   — 訊息觸發的寫入（behavior-write-routes.ts）
@@ -98,7 +99,7 @@ export async function registerBehaviorRoutes(
       if (!requireBehaviorAdmin(request, reply)) return reply;
     });
     registerReadAndTestRoutes(scope, options);
-    registerBehaviorWriteRoutes(scope, options.reconciler);
+    registerBehaviorWriteRoutes(scope, options.reconciler, options.plugins);
     registerMessageTriggerReorderRoute(scope);
     registerWebhookSecretRotateRoute(scope);
     registerBehaviorCommandRoutes(scope, options);
@@ -144,6 +145,17 @@ function registerReadAndTestRoutes(
     });
   });
 
+  // ── GET /api/behaviors/plugin-actions（#203）────────────────────────────────
+  // 動作選單：已安裝、manifest 宣告了 behavior_actions 的 plugin 與它們的
+  // action。停用或離線的 plugin 也列出（綁定照樣可存，執行時才回失敗），
+  // 由 UI 標示狀態。寫入時以同一份清單驗證綁定（behavior-action-input.ts）。
+
+  server.get("/api/behaviors/plugin-actions", async (_request, reply) => {
+    const plugins = options.plugins;
+    if (!plugins) throw new Error("PluginActionCatalog not provided to behavior routes");
+    return reply.send({ plugins: await plugins.list() });
+  });
+
   // ── 投遞紀錄（#120）─────────────────────────────────────────────────────────
   // 最近 20 筆，最新的在前。系統登入沒有 webhook 動作，所以永遠是空的。
   // 只是讀取，不放進 /api/behaviors/schema。
@@ -180,7 +192,9 @@ function registerReadAndTestRoutes(
       if (behavior.actionSource !== "webhook" || !action) {
         throw new BehaviorApiError(
           "validation_failed",
-          "this behavior has no webhook action to test (the system behavior runs a built-in action)",
+          behavior.actionSource === "plugin"
+            ? "this behavior runs a plugin action, which has no test-fire; only a webhook action can be tested"
+            : "this behavior has no webhook action to test (the system behavior runs a built-in action)",
         );
       }
       // injected (runtime.ts builds the one WebhookForwarder): behavior

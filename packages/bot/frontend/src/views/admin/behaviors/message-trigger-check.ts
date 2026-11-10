@@ -3,6 +3,7 @@ import { errorsFromIssues, type FormErrors } from './behavior-errors';
 import { checkAgainstSchema } from './form-schema';
 import { previewMatch, toCreateBody, type MessageTriggerBody, type MessageTriggerDraft } from './message-trigger-draft';
 import { kindHasGuild, type LocationKind } from './message-trigger-location';
+import { ACTION_ERROR_FIELDS } from './webhook-draft';
 import type { Translate } from './translate';
 
 /**
@@ -19,7 +20,9 @@ export interface TriggerFormLayout {
 }
 
 /** A request field a form can show an error on (the server's `error.field` paths). */
-export type FormField = Exclude<keyof MessageTriggerBody, 'webhook'> | 'webhook.url' | 'webhook.authMode';
+export type FormField =
+    | Exclude<keyof MessageTriggerBody, 'webhook' | 'pluginAction'>
+    | (typeof ACTION_ERROR_FIELDS)[number];
 
 /**
  * The fields that have an error line on screen right now. An error for any
@@ -27,7 +30,7 @@ export type FormField = Exclude<keyof MessageTriggerBody, 'webhook'> | 'webhook.
  * nobody sees: the form shows it as a general error instead.
  */
 export function fieldsWithErrorLine(draft: MessageTriggerDraft, layout: TriggerFormLayout): FormField[] {
-    const fields: FormField[] = ['title', 'patternValue', 'webhook.url', 'webhook.authMode'];
+    const fields: FormField[] = ['title', 'patternValue', ...ACTION_ERROR_FIELDS];
     if (layout.description) fields.push('description');
     if (layout.kinds.length > 1) fields.push('surface');
     if (kindHasGuild(draft.locationKind) && !layout.lockGuild) fields.push('guildId');

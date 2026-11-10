@@ -40,7 +40,7 @@ import {
   resolveWebhookTarget,
   type WebhookTarget,
 } from "../../utils/host-policy.js";
-import { createPinnedAgent } from "../../utils/pinned-dispatcher.js";
+import { createPinnedAgent, type PinnedAddress } from "../../utils/pinned-dispatcher.js";
 import { webhookAllowlist } from "../../config.js";
 import type { AllowlistEntry } from "../../utils/webhook-allowlist.js";
 import { decryptSecret } from "../../utils/crypto.js";
@@ -304,39 +304,13 @@ export class WebhookForwarder {
         error: `the webhook URL is unusable: ${errorText(err)}`,
       };
     }
-    const signal = AbortSignal.timeout(this.timeoutMs);
-    const release = await takeDownloadTurn(action.behaviorId, signal);
-    if (!release) {
-      return { ok: false, error: "timed out waiting for a download slot (the bot is downloading other replies' files)" };
-    }
-    try {
-      let target: WebhookTarget;
-      try {
-        // a lookup that hangs must not keep the turn past the timeout
-        target = await untilAborted(resolveWebhookTarget(origin, this.allowlist), signal);
-      } catch (err) {
-        return { ok: false, error: errorText(err) };
-      }
-      const agent = createPinnedAgent(target.addresses);
-      const files: ReplyFile[] = [];
-      let total = 0;
-      try {
-        for (const [i, attachment] of attachments.entries()) {
-          const got = await fetchReplyFile(origin, attachment, agent, signal, MAX_REPLY_ATTACHMENT_TOTAL_BYTES - total);
-          if (!got.ok) {
-            return { ok: false, error: `attachment ${i + 1} (${JSON.stringify(attachment.name)}): ${got.error}` };
-          }
-          total += got.file.data.byteLength;
-          files.push(got.file);
-        }
-      } finally {
-        // one-shot agent, as for the POST
-        void agent.destroy().catch(() => {});
-      }
-      return { ok: true, files };
-    } finally {
-      release();
-    }
+    return downloadReplyFiles({
+      behaviorId: action.behaviorId,
+      base: origin,
+      attachments,
+      timeoutMs: this.timeoutMs,
+      resolveAddresses: async (o) => (await resolveWebhookTarget(o, this.allowlist)).addresses,
+    });
   }
 
   // ── 私有：HTTP POST ───────────────────────────────────────────────────────
@@ -638,6 +612,68 @@ async function takeDownloadTurn(behaviorId: number, signal: AbortSignal): Promis
   };
 }
 
+/** One batch of a reply's attachments to download from one base URL. */
+export interface ReplyFilesDownload {
+  behaviorId: number;
+  /**
+   * What every path is appended to: a webhook URL's origin, or a plugin's
+   * registered URL with its path prefix (#203), as the plugin RPC's own
+   * attachments are (`<plugin.url><path>`). A file must stay under it.
+   */
+  base: URL;
+  attachments: readonly ReplyAttachment[];
+  timeoutMs: number;
+  /** The target policy of the base's host: the addresses to connect to, or a throw. */
+  resolveAddresses: (base: URL) => Promise<PinnedAddress[]>;
+}
+
+/**
+ * Download a reply's attachments from under `base` (#156) under the rules
+ * of fetchReplyFiles — a download turn, the base's target policy, a
+ * connection pinned to the vetted addresses, no redirects, the caps, one
+ * timeout for the batch. Shared by a webhook's run and a plugin action's
+ * (#203), which differ only in the base and its policy. Never throws.
+ */
+export async function downloadReplyFiles(batch: ReplyFilesDownload): Promise<ReplyFilesResult> {
+  const { base, attachments } = batch;
+  const problem = attachmentsProblem(attachments);
+  if (problem) return { ok: false, error: problem };
+  if (attachments.length === 0) return { ok: true, files: [] };
+  const signal = AbortSignal.timeout(batch.timeoutMs);
+  const release = await takeDownloadTurn(batch.behaviorId, signal);
+  if (!release) {
+    return { ok: false, error: "timed out waiting for a download slot (the bot is downloading other replies' files)" };
+  }
+  try {
+    let addresses: PinnedAddress[];
+    try {
+      // a lookup that hangs must not keep the turn past the timeout
+      addresses = await untilAborted(batch.resolveAddresses(base), signal);
+    } catch (err) {
+      return { ok: false, error: errorText(err) };
+    }
+    const agent = createPinnedAgent(addresses);
+    const files: ReplyFile[] = [];
+    let total = 0;
+    try {
+      for (const [i, attachment] of attachments.entries()) {
+        const got = await fetchReplyFile(base, attachment, agent, signal, MAX_REPLY_ATTACHMENT_TOTAL_BYTES - total);
+        if (!got.ok) {
+          return { ok: false, error: `attachment ${i + 1} (${JSON.stringify(attachment.name)}): ${got.error}` };
+        }
+        total += got.file.data.byteLength;
+        files.push(got.file);
+      }
+    } finally {
+      // one-shot agent, as for the POST
+      void agent.destroy().catch(() => {});
+    }
+    return { ok: true, files };
+  } finally {
+    release();
+  }
+}
+
 /** `promise`, or a rejection with the signal's reason once it aborts. */
 function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) return Promise.reject(signal.reason);
@@ -660,19 +696,39 @@ function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
 const MiB = 1024 * 1024;
 
 /**
+ * `path` (a single leading `/`, checked by attachmentsProblem) appended to
+ * `base` — `<base without trailing slashes><path>` — or null when the
+ * result is not under the base: another origin, or `..` segments that
+ * climb out of its path prefix. For an origin base this is `path` on the
+ * origin.
+ */
+export function fileUrl(base: URL, path: string): URL | null {
+  const prefix = base.pathname.replace(/\/+$/, "");
+  let url: URL;
+  try {
+    url = new URL(`${base.origin}${prefix}${path}`);
+  } catch {
+    return null;
+  }
+  if (url.origin !== base.origin) return null;
+  if (prefix !== "" && url.pathname !== prefix && !url.pathname.startsWith(`${prefix}/`)) return null;
+  return url;
+}
+
+/**
  * GET one attachment over the pinned connection, cut off past the per-file
  * cap or past `budget`, what is left of the batch's total.
  */
 async function fetchReplyFile(
-  origin: URL,
+  base: URL,
   { name, path }: ReplyAttachment,
   agent: ReturnType<typeof createPinnedAgent>,
   signal: AbortSignal,
   budget: number,
 ): Promise<{ ok: true; file: ReplyFile } | { ok: false; error: string }> {
-  const url = new URL(path, origin);
+  const url = fileUrl(base, path);
   // attachmentsProblem lets only a plain path through; this is the backstop
-  if (url.origin !== origin.origin) return { ok: false, error: "the path leaves the webhook's origin" };
+  if (!url) return { ok: false, error: "the path leaves the base URL" };
   let res: Response;
   try {
     res = await fetch(url, {

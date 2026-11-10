@@ -32,11 +32,11 @@ _Avoid_: global default
 The `enabled_by_default` value a plugin's manifest declares for a feature — the bottom of the Precedence Tiers.
 
 **Plugin Dispatch**:
-The act of safely delivering one payload to one plugin: liveness check, the kind's reach policy (Feature Reach per scope for events, Guild Reach for components and modals), signing, delivery, health recording — one shared path regardless of what triggered it.
+The act of safely delivering one payload to one plugin: liveness check, the kind's reach policy (Feature Reach per scope for events, Guild Reach for components and modals, none for commands and behavior actions), signing, delivery, health recording — one shared path regardless of what triggered it.
 _Avoid_: forward, post to plugin (as loose synonyms)
 
 **Dispatch Kind**:
-The variety of a Plugin Dispatch (command, autocomplete, component, modal, lifecycle, event). A kind determines the payload shape, the endpoint, and which reach policy applies.
+The variety of a Plugin Dispatch (command, autocomplete, component, modal, lifecycle, event, behavior_action). A kind determines the payload shape, the endpoint, and which reach policy applies.
 _Avoid_: dispatch type, channel
 
 **Dispatch Transport**:
@@ -136,16 +136,16 @@ behavior 每一則私訊的結果（收件人、觸發者、`sent` / `not_allowe
 指令葉節點與伺服器訊息觸發儲存的回覆預設：`private`（指令只有執行的人；伺服器訊息私訊作者）、`public`（貼在頻道），null 沿用觸發本身的預設。回應的 `ephemeral` 可覆蓋；與 bot 的私訊與 System Behavior 不適用。
 
 **Delivery（投遞）**:
-一次 webhook 動作的呼叫與它的結果：成功或失敗、HTTP 狀態、延遲、錯誤碼、簽章驗證。每個 behavior 留最近 20 筆、最多 7 天（delivery log，投遞紀錄）；不存 URL、密鑰、內容或使用者 id。測試 webhook 不算投遞；指令的 defer 被 Discord 拒絕時 webhook 沒被呼叫，仍記成一次失敗的投遞（`defer_failed`）。receiver 回 `{"defer": true}` 的投遞算成功並標為延後（deferred）；之後用 Callback Token 的呼叫失敗時，另記一筆失敗的投遞（`callback_invalid` / `callback_failed`）。回覆的附件下載失敗記成 `attachment_failed`。
+一次 webhook 動作的呼叫（或 Plugin Action 的派送）與它的結果：成功或失敗、HTTP 狀態、延遲、錯誤碼、簽章驗證。每個 behavior 留最近 20 筆、最多 7 天（delivery log，投遞紀錄）；不存 URL、密鑰、內容或使用者 id。測試 webhook 不算投遞；指令的 defer 被 Discord 拒絕時 webhook 沒被呼叫，仍記成一次失敗的投遞（`defer_failed`）。receiver 回 `{"defer": true}` 的投遞算成功並標為延後（deferred）；之後用 Callback Token 的呼叫失敗時，另記一筆失敗的投遞（`callback_invalid` / `callback_failed`）。回覆的附件下載失敗記成 `attachment_failed`。Plugin Action 派送成功即算成功並標為延後；plugin 無法接手（`plugin_unavailable`）或 manifest 已不再宣告該 action（`action_undeclared`）時不派送，記成失敗。
 _Avoid_: 事件（那是 bot event log）、forward（只是投遞的一部分）
 
 **Callback Token**:
-bot 每次觸發簽發、只對該次觸發有效的不透明 token，15 分鐘到期，放在 webhook 請求的 `_meta.callback`。receiver 拿它呼叫 `/api/plugin/interactions.respond`／`followup`／`edit_followup`／`delete_followup`，補發、修改或刪除這次的回覆；其他 `/api/plugin/*` 一律 403。它代替 Discord interaction token，後者不離開 bot。指令觸發與訊息觸發都有；訊息觸發沒有 interaction，bot 以自己送出、修改的訊息模擬回覆。
+bot 每次觸發簽發、只對該次觸發有效的不透明 token，15 分鐘到期，放在 webhook 請求的 `_meta.callback`（Plugin Action 的派送則是 `callback`）。receiver 拿它呼叫 `/api/plugin/interactions.respond`／`followup`／`edit_followup`／`delete_followup`，補發、修改或刪除這次的回覆；其他 `/api/plugin/*` 一律 403。它代替 Discord interaction token，後者不離開 bot。指令觸發與訊息觸發都有；訊息觸發沒有 interaction，bot 以自己送出、修改的訊息模擬回覆。
 _Avoid_: interaction token（那是 Discord 的，從不交給 receiver）、plugin token
 
 **Reply Renderer**:
 把 Behavior Reply 送到 Discord 的唯一入口，目標是一個互動（指令觸發）或一則訊息（訊息觸發）。
 
 **Plugin Action**:
-Plugin 宣告、與觸發面無關的動作，由管理員綁到觸發上。
-_Avoid_: dm_behavior（已移除的前身，綁死在私訊上）
+Plugin 在 manifest 宣告（`behavior_actions: [{ key, name, description }]`）、與觸發面無關的動作，由管理員綁到觸發上（`actionSource: plugin`，綁定存在 behavior_plugin_actions，以 pluginKey 為鍵）。執行時以 `behavior_action` 這種 Dispatch Kind 派送給 plugin，帶該次觸發的 Callback Token，plugin 憑它回覆；綁定本身就是授權，不經過 Feature Reach 或 Guild Reach。第一版綁定沒有可設定的值。
+_Avoid_: dm_behavior（已移除的前身，綁死在私訊上）、plugin 指令（那是 Track 3 `plugin_commands`，plugin 自己註冊的指令）

@@ -284,7 +284,7 @@ const savedGroup = computed(() =>
                             <Icon icon="material-symbols:more-vert" width="16" height="16" />
                         </button>
                     </template>
-                    <AppMenuItem data-test="test-fire" @click="testFire">
+                    <AppMenuItem v-if="trigger.actionSource === 'webhook'" data-test="test-fire" @click="testFire">
                         <Icon icon="material-symbols:send-outline-rounded" width="16" height="16" />
                         {{ t('behaviors.card.test') }}
                     </AppMenuItem>

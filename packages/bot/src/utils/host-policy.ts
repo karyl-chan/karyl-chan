@@ -301,7 +301,7 @@ export async function assertPublicMediaUrl(url: URL): Promise<void> {
  * (127.x.x.x / ::1) to prevent a manifest from self-referencing the
  * host process. In development loopback is allowed for local plugin testing.
  *
- * Not pinned, on purpose (#144): a plugin registers its own URL with a
+ * Dispatch is not pinned, on purpose (#144): a plugin registers its own URL with a
  * per-plugin setup secret, and the host resolves through Docker's
  * internal DNS. Changing the answer between check and connect needs
  * control of that DNS, and an attacker who has it can impersonate the
@@ -316,12 +316,25 @@ export async function assertPluginTarget(
   host: string,
   port: number,
 ): Promise<void> {
+  await resolvePluginTarget(host, port);
+}
+
+/**
+ * `assertPluginTarget` that also returns the addresses it vetted (never
+ * empty, resolver order), for a one-shot request that pins them: a
+ * behavior action's reply attachments, downloaded from under the
+ * plugin's registered URL (#203).
+ */
+export async function resolvePluginTarget(
+  host: string,
+  port: number,
+): Promise<PinnedAddress[]> {
   // Same per-call read rationale as `legacyAllowPrivate` — tests
   // toggle NODE_ENV per-case to assert the prod vs dev branch. The rule
   // is `isPluginTargetAddress` in @karyl-chan/voice/net, shared with the
   // voice media proxy (a plugin playing a URL on its own origin, #158).
   const allowLoopback = process.env.NODE_ENV !== "production";
-  await checkHost(
+  return checkHost(
     host,
     port,
     (address) => !isPluginTargetAddress(address, { allowLoopback }),

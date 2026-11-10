@@ -3,7 +3,8 @@
  * read a behavior's recent ones, prune the rest.
  *
  * Every webhook delivery of a behavior (runWebhookAction, and a command
- * whose deferral Discord refused) leaves one row in behavior_deliveries.
+ * whose deferral Discord refused) and every plugin action dispatch
+ * (runPluginAction, #203) leaves one row in behavior_deliveries.
  * A test-fire does not: its result goes straight back to the admin. A
  * deferred delivery (#113) is ok and marked `deferred`; a later callback
  * call that fails leaves a row of its own (`callback_*`), a callback that
@@ -47,6 +48,12 @@ export const DELIVERY_ERROR_MAX = 300;
  *   attachment_failed a reply's attachments could not be had (#156): too
  *                     many, an unsafe path or name, too large, a redirect,
  *                     a non-2xx, or the download failed
+ *   plugin_unavailable a plugin action's plugin could not take the run
+ *                     (#203): not installed, disabled or inactive, not
+ *                     ready, no dispatch key, or its address refused;
+ *                     nothing was dispatched
+ *   action_undeclared a plugin action the plugin's manifest no longer
+ *                     declares (#203); nothing was dispatched
  */
 export type DeliveryErrorCode =
   | ForwardErrorCode
@@ -58,7 +65,9 @@ export type DeliveryErrorCode =
   | "defer_failed"
   | "callback_invalid"
   | "callback_failed"
-  | "attachment_failed";
+  | "attachment_failed"
+  | "plugin_unavailable"
+  | "action_undeclared";
 
 export interface DeliveryInput {
   behaviorId: number;

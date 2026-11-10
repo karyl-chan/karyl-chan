@@ -163,6 +163,7 @@ export interface PluginDispatchAttempt {
     | "modal"
     | "event"
     | "lifecycle"
+    | "behavior_action"
     | "probe";
   status?: number;
   failureClass?: PluginDispatchFailureClass;

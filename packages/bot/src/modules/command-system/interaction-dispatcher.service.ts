@@ -7,7 +7,7 @@
  *
  * 對齊 C-runtime §4.1 派發路徑（first-claim-wins）：
  *   [1]   behaviors（Command Trigger）── 指令（名稱 + 註冊目標）→ 葉節點（子指令）
- *         → 動作（builtin：系統登入；webhook）
+ *         → 動作（builtin：系統登入；webhook；plugin action）
  *   [2]   plugin_commands（軌三）── 走 plugin-interaction-dispatch.service.ts
  *   [2.5] plugin components（按鈕 + select menu）── 走 plugin-component-dispatch.service.ts
  *         custom_id 必須是 `kc:<pluginKey>:<componentId>[:<tail>]`
@@ -42,7 +42,8 @@ import { dispatchModalToPlugin } from "../plugin-system/plugin-modal-dispatch.se
 import { dispatchInProcessInteraction } from "../builtin-features/in-process-command-registry.service.js";
 import { runLoginAction } from "./builtin-login-action.js";
 import { renderFailure } from "./reply-renderer.js";
-import { runWebhookAction } from "./webhook-action.js";
+import { actionToRun, runBehaviorAction } from "./behavior-action.js";
+import { defaultPluginActionDeps, type PluginActionDeps } from "./plugin-action.js";
 import { takeBehaviorRun } from "./behavior-rate-limits.js";
 import { toWebhookAttachment } from "./webhook-attachment.js";
 import type { DispatchOutcome } from "./types.js";
@@ -124,7 +125,11 @@ function buildWebhookPayload(
 // ── InteractionDispatcher ────────────────────────────────────────────────────
 
 export class InteractionDispatcher {
-  constructor(private readonly forwarder: WebhookForwarder) {}
+  constructor(
+    private readonly forwarder: WebhookForwarder,
+    /** Plugin actions' dispatch (#203); tests inject their own. */
+    private readonly pluginActions: PluginActionDeps = defaultPluginActionDeps,
+  ) {}
 
   /**
    * 統一 interactionCreate 入口。
@@ -278,7 +283,7 @@ export class InteractionDispatcher {
     if (leaf.actionSource === "builtin") {
       return this.dispatchSystemBehavior(interaction, leaf);
     }
-    return this.dispatchWebhookBehavior(interaction, leaf, subcommandGroup, subcommand);
+    return this.dispatchCustomBehavior(interaction, leaf, subcommandGroup, subcommand);
   }
 
   // ── source=system dispatch ────────────────────────────────────────────────
@@ -345,25 +350,21 @@ export class InteractionDispatcher {
     }
   }
 
-  // ── webhook 動作 ────────────────────────────────────────────────────────
+  // ── webhook / plugin action ─────────────────────────────────────────────
 
   /**
-   * webhook 動作：建構 payload 後呼叫 WebhookForwarder。
+   * 管理員設定的動作：webhook（建構 payload 後呼叫 WebhookForwarder）或
+   * plugin action（#203，同一份 `_meta` 派送給 plugin）。兩者都先 defer，
+   * 共用速率限制與 callback token。
    */
-  private async dispatchWebhookBehavior(
+  private async dispatchCustomBehavior(
     interaction: ChatInputCommandInteraction,
     leaf: CatalogBehavior,
     subcommandGroup: string,
     subcommand: string,
   ): Promise<DispatchOutcome> {
-    const webhook = leaf.webhook;
-    if (!webhook) {
-      botEventLog.record(
-        "warn",
-        "bot",
-        `interaction-dispatcher: behavior ${leaf.id} 沒有 webhook 動作`,
-        { behaviorId: leaf.id },
-      );
+    const action = actionToRun(leaf, "interaction-dispatcher");
+    if (!action) {
       await renderFailure({ kind: "interaction", interaction });
       return { claimed: true, claimedBy: "behavior_custom" };
     }
@@ -395,14 +396,14 @@ export class InteractionDispatcher {
       return { claimed: true, claimedBy: "behavior_custom" };
     }
 
-    // 回覆模型（#140）與失敗處理（#114）：webhook-action.ts
-    await runWebhookAction({
-      forwarder: this.forwarder,
-      behaviorId: leaf.id,
-      webhook,
+    // 回覆模型（#140）與失敗處理（#114）：behavior-action.ts
+    await runBehaviorAction({
+      behavior: leaf,
+      action,
       payload,
       target: { kind: "interaction", interaction },
-      visibility: leaf.replyVisibility,
+      forwarder: this.forwarder,
+      plugins: this.pluginActions,
     });
 
     return { claimed: true, claimedBy: "behavior_custom" };
