@@ -152,7 +152,8 @@ export interface BehaviorReply {
   defer?: true;
   /**
    * Files to attach: the bot GETs each `path` from your webhook URL's
-   * origin (at most 5 files of 8 MiB, no redirects, no credentials sent).
+   * origin (at most 5 files of 8 MiB, 25 MiB together; no redirects, no
+   * credentials sent).
    * A file it can't get fails the reply. A reply of only attachments is a
    * reply.
    */
