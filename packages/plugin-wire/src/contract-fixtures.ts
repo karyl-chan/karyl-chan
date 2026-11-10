@@ -233,7 +233,10 @@ export interface ContractFixtures {
        */
       readonly directMessageKeys: readonly string[];
       readonly maxDirectMessages: number;
+      /** Defaults; the operator may change them. */
       readonly directMessagesPerMinute: number;
+      readonly directMessagesPerRecipient: number;
+      readonly directMessagesPerRecipientWindowSeconds: number;
       readonly directMessageOutcomes: readonly string[];
     };
   };
@@ -719,8 +722,11 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
       maxAttachmentTotalBytes: 26214400,
       directMessageKeys: ["user_id", "content", "embeds", "components", "attachments"],
       maxDirectMessages: 5,
-      // per behavior
+      // per behavior, every DM asked for counted
       directMessagesPerMinute: 10,
+      // per (behavior, recipient)
+      directMessagesPerRecipient: 3,
+      directMessagesPerRecipientWindowSeconds: 600,
       directMessageOutcomes: ["sent", "not_allowed", "rate_limited", "attachment_failed", "failed"],
     },
   },
