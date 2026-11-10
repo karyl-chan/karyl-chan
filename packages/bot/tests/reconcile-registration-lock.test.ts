@@ -107,8 +107,10 @@ function loginCommand(name = "login"): CatalogCommand {
         audienceUserId: null,
         audienceGroupName: null,
         replyVisibility: null,
+        serviceId: null,
         updatedAt: now,
         webhook: null,
+        service: null,
       },
     ],
   };

@@ -108,7 +108,7 @@ beforeEach(async () => {
 });
 
 function dm(content: string, userId = "222222222222222222") {
-  const send = vi.fn(async () => ({}));
+  const send = vi.fn(async (_body: unknown) => ({}));
   const message = {
     id: "M1",
     content,
