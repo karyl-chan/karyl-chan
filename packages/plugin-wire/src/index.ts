@@ -44,6 +44,7 @@ export type {
   ManifestCommand,
   ManifestPluginCommand,
   ManifestCapability,
+  ManifestBehaviorAction,
   ManifestGuildFeature,
   PluginManifest,
 } from "./manifest.js";
@@ -54,6 +55,11 @@ export {
   validateManifestProtocol,
   isSupportedSchemaVersion,
   MAX_PLUGIN_CAPABILITIES,
+  BEHAVIOR_ACTION_KEY_PATTERN,
+  behaviorActionTextProblem,
+  MAX_BEHAVIOR_ACTIONS,
+  MAX_BEHAVIOR_ACTION_NAME,
+  MAX_BEHAVIOR_ACTION_DESCRIPTION,
 } from "./validate-manifest.js";
 export type { ManifestValidation } from "./validate-manifest.js";
 

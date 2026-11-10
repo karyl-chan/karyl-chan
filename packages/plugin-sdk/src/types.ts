@@ -13,6 +13,11 @@ import type { Voice } from "./rpc/voice.js";
 import type { Me } from "./rpc/me.js";
 import type { Kv } from "./rpc/kv.js";
 import type { Auth } from "./rpc/auth.js";
+import type {
+  BehaviorReply,
+  CommandTriggerMeta,
+  MessageTriggerMeta,
+} from "./behavior-receiver/types.js";
 
 // Re-exported so plugin authors can type their handler bodies against
 // the typed RPC facade without reaching into the `./rpc` subpath.
@@ -572,4 +577,77 @@ export interface AutocompleteContext {
   locale: string | null;
   /** BCP-47 server locale; null in DM. */
   guildLocale: string | null;
+}
+
+// ── Behavior actions (#127) ──────────────────────────────────────────────
+
+/**
+ * The body the bot POSTs to `/behavior-actions/{action_key}` when a
+ * behavior bound to one of this plugin's actions fires: the trigger's
+ * behavior-webhook `_meta`, plus `action_key`. A command's carries
+ * `interaction_id`, a message trigger's `message_id`; both carry the
+ * run's `callback` token (never the Discord interaction token).
+ */
+export type BehaviorActionPayload = (CommandTriggerMeta | MessageTriggerMeta) & {
+  action_key: string;
+};
+
+/**
+ * What a behavior action answers with: the behavior reply model — the
+ * same as a webhook's (link buttons only; `ephemeral` decides who sees
+ * it) — without `defer`, which only a webhook's synchronous answer has.
+ */
+export type BehaviorActionReply = Omit<BehaviorReply, "defer">;
+
+/** What a behavior action handler may return: a reply (sent with `ctx.reply`), or nothing. */
+export type BehaviorActionResult = BehaviorActionReply | void | null;
+
+/**
+ * A behavior action handler's context. `trigger` tells what fired it — a
+ * command (already showing "thinking…") or a message — and narrows
+ * `payload`, the whole dispatch body: that trigger's details (a
+ * command's `options`, a message's `captures`, both `attachments`).
+ */
+export type BehaviorActionContext = BehaviorActionContextBase &
+  (
+    | { trigger: "command"; payload: CommandTriggerMeta & { action_key: string } }
+    | { trigger: "message"; payload: MessageTriggerMeta & { action_key: string } }
+  );
+
+export interface BehaviorActionContextBase {
+  /** Plugin key (= manifest.plugin.id). */
+  pluginKey: string;
+  /** The action that was bound and fired. */
+  actionKey: string;
+  /** The behavior that fired. */
+  behaviorId: number;
+  /** Discord user id of whoever triggered it. */
+  userId: string;
+  /** Global display name → username → id. */
+  userDisplayName: string;
+  /** Null in a DM. */
+  guildId: string | null;
+  channelId: string;
+  /**
+   * The run's reply (`interactions.respond` with the callback token):
+   * fills a command's "thinking…", or sends a message trigger's reply;
+   * called again, edits it. Who sees it: the reply's `ephemeral`, then
+   * the behavior's stored visibility, then the trigger's default.
+   */
+  reply(reply: BehaviorActionReply): Promise<void>;
+  /** A new message (`interactions.followup`); resolves its message id. */
+  followup(reply: BehaviorActionReply): Promise<string | null>;
+  log: Logger;
+  /** Browser-reachable base URL for this plugin's HTTP surface, if the bot exposes one. */
+  publicBaseUrl?: string;
+  /**
+   * The plugin's own bot RPC (its plugin token and manifest scopes), for
+   * anything beyond answering this run. `reply` / `followup` do not use it.
+   */
+  botRpc(path: string, body?: unknown): Promise<unknown>;
+  discord: Discord;
+  voice: Voice;
+  me: Me;
+  kv: Kv;
+  auth: Auth;
 }

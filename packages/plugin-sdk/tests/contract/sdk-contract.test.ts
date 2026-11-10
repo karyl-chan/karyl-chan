@@ -46,6 +46,7 @@ import type {
   AutocompletePayload,
   ComponentPayload,
   ModalPayload,
+  BehaviorActionPayload,
 } from "../../src/index.js";
 
 describe("contract: hmac headers + window", () => {
@@ -263,6 +264,29 @@ const samplePayloads: Record<
       guild_locale: null,
     };
     return { top, user, member };
+  })(),
+  behavior_action: (() => {
+    // A union (command | message trigger): `keyof` it is the keys both
+    // share — what the fixture lists; the rest is pinned per trigger by
+    // behavior-receiver-types.test.ts.
+    const user: Required<BehaviorActionPayload["user"]> = {
+      id: "1",
+      username: "u",
+      global_name: null,
+      discriminator: "0",
+      avatar: null,
+    };
+    const top: Required<Pick<BehaviorActionPayload, keyof BehaviorActionPayload>> = {
+      action_key: "go",
+      behavior_id: 1,
+      user,
+      guild_id: null,
+      channel_id: "c",
+      attachments: [],
+      callback: { token: "t", expires_at: "2026-11-10T00:15:00.000Z", api_base: "https://karyl.example" },
+    };
+    // A behavior-webhook `_meta` carries no member object.
+    return { top, user, member: null };
   })(),
 };
 
