@@ -45,6 +45,15 @@ export interface WebhookActionView {
   previousSecretExpiresAt: string | null;
 }
 
+/**
+ * A plugin action binding (#203). Whether the plugin still declares the
+ * action, and its name, come from GET /api/behaviors/plugin-actions.
+ */
+export interface PluginActionView {
+  pluginKey: string;
+  actionKey: string;
+}
+
 interface BehaviorViewBase {
   id: number;
   title: string;
@@ -54,6 +63,8 @@ interface BehaviorViewBase {
   systemKey: BehaviorSystemKey | null;
   actionSource: BehaviorActionSource;
   webhook: WebhookActionView | null;
+  /** actionSource 'plugin' 的綁定；其他來源為 null */
+  pluginAction: PluginActionView | null;
   stats: BehaviorStatRow | null;
   /** who the reply is for when the response does not say; null = the trigger's default */
   replyVisibility: ReplyVisibility | null;
@@ -142,6 +153,9 @@ function baseView(
     systemKey: b.systemKey,
     actionSource: b.actionSource,
     webhook: webhookView(b),
+    pluginAction: b.pluginAction
+      ? { pluginKey: b.pluginAction.pluginKey, actionKey: b.pluginAction.actionKey }
+      : null,
     stats: stats.get(b.id) ?? null,
     replyVisibility: b.replyVisibility,
     updatedAt: b.updatedAt.toISOString(),

@@ -109,6 +109,7 @@ function loginCommand(name = "login"): CatalogCommand {
         replyVisibility: null,
         updatedAt: now,
         webhook: null,
+        pluginAction: null,
       },
     ],
   };

@@ -18,6 +18,9 @@ import { BehaviorCommand } from "./behavior-command.model.js";
  * 動作來源（actionSource）：
  *   - `builtin`：系統動作，只給 System Behavior（systemKey 必填）
  *   - `webhook`：behavior_webhook_actions 的一列
+ *   - `plugin`：behavior_plugin_actions 的一列 —— 某個 plugin 在 manifest
+ *     宣告的 behavior action（#127 第二階段）
+ *   STRING + isIn，DB 端沒有 enum / CHECK，加值不需要 migration。
  *
  * 回覆給誰看（replyVisibility，#140）：回應沒帶 `ephemeral` 時的預設 ——
  * `private`（指令：只有執行的人；伺服器訊息：私訊作者）、`public`（指令：
@@ -33,7 +36,8 @@ import { BehaviorCommand } from "./behavior-command.model.js";
  */
 
 export type BehaviorTriggerKind = "command" | "message";
-export type BehaviorActionSource = "builtin" | "webhook";
+export type BehaviorActionSource = "builtin" | "webhook" | "plugin";
+export const ACTION_SOURCES: readonly BehaviorActionSource[] = ["builtin", "webhook", "plugin"];
 export type BehaviorMessageSurface = "bot_dm" | "guild";
 export type BehaviorPatternKind = "startswith" | "endswith" | "regex";
 export type BehaviorAudienceKind = "all" | "user" | "group";
@@ -111,7 +115,7 @@ export const BehaviorDefinition = sequelize.define(
     actionSource: {
       type: DataTypes.STRING,
       allowNull: false,
-      validate: { isIn: [["builtin", "webhook"]] },
+      validate: { isIn: [[...ACTION_SOURCES]] },
     },
     // ── command leaf ──
     commandId: {

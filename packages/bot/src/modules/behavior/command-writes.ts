@@ -28,9 +28,8 @@ import {
   type BehaviorCommandOption,
   type ReplyVisibility,
 } from "./models/behavior-definition.model.js";
-import { BehaviorWebhookAction } from "./models/behavior-webhook-action.model.js";
 import { findStatsBulk } from "./models/behavior-stats.model.js";
-import type { WebhookInput, WebhookWrite } from "./webhook-action-input.js";
+import { storeActionWrite, type ActionInput, type ActionWrite } from "./behavior-action-input.js";
 
 export interface OptionInput {
   type: BehaviorCommandOption["type"];
@@ -39,7 +38,8 @@ export interface OptionInput {
   required?: boolean;
 }
 
-export interface LeafInput {
+/** A leaf's body: its own fields and its action — `webhook` or `pluginAction` (#203). */
+export interface LeafInput extends ActionInput {
   subcommand?: string;
   title: string;
   description?: string;
@@ -47,7 +47,6 @@ export interface LeafInput {
   leafDescription?: string | null;
   options?: OptionInput[];
   replyVisibility?: ReplyVisibility | null;
-  webhook: WebhookInput;
 }
 
 export function normalizeOptions(options: OptionInput[] | undefined): BehaviorCommandOption[] {
@@ -175,11 +174,11 @@ export async function commandViewOf(id: number): Promise<CommandView> {
   return commandView(command, await findStatsBulk(command.leaves.map((l) => l.id)));
 }
 
-/** Insert one leaf (with its webhook action) under `commandId`. */
+/** Insert one leaf (with its action) under `commandId`. */
 export async function insertLeaf(
   commandId: number,
   input: LeafInput,
-  webhook: WebhookWrite,
+  action: ActionWrite,
   sortOrder: number,
   transaction: Transaction,
 ): Promise<number> {
@@ -192,7 +191,7 @@ export async function insertLeaf(
       sortOrder,
       systemKey: null,
       triggerKind: "command",
-      actionSource: "webhook",
+      actionSource: action.source,
       commandId,
       subcommandGroup: "",
       subcommand: shape.subcommand,
@@ -211,6 +210,6 @@ export async function insertLeaf(
     { transaction },
   );
   const behaviorId = row.getDataValue("id") as number;
-  await BehaviorWebhookAction.create({ behaviorId, ...webhook.values }, { transaction });
+  await storeActionWrite(behaviorId, action, transaction);
   return behaviorId;
 }

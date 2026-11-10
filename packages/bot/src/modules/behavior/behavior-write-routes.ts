@@ -42,22 +42,25 @@ import {
   type BehaviorDefinitionRow,
   type ReplyVisibility,
 } from "./models/behavior-definition.model.js";
-import {
-  BehaviorWebhookAction,
-  rowOfBehaviorWebhookAction,
-} from "./models/behavior-webhook-action.model.js";
+import { BehaviorWebhookAction } from "./models/behavior-webhook-action.model.js";
+import { destroyPluginActions } from "./models/behavior-plugin-action.model.js";
 import { pruneUnusedGroupMembers } from "./models/behavior-group-member.model.js";
 import { destroyDmAllowlists } from "./models/behavior-dm-allowlist.model.js";
 import { destroyDmLog } from "./behavior-dm-log.js";
+import { webhookInputSchema } from "./webhook-action-input.js";
 import {
-  prepareWebhookWrite,
-  webhookInputSchema,
-  type WebhookInput,
-} from "./webhook-action-input.js";
+  actionAuditOf,
+  issuedSecretOf,
+  pluginActionInputSchema,
+  prepareActionWrite,
+  storeActionWrite,
+  type ActionInput,
+  type PluginActionCatalog,
+} from "./behavior-action-input.js";
 
 // ── shapes ──────────────────────────────────────────────────────────────────
 
-interface MessageTriggerCreate extends Partial<MessageTriggerState> {
+interface MessageTriggerCreate extends Partial<MessageTriggerState>, ActionInput {
   title: string;
   description?: string;
   enabled?: boolean;
@@ -66,18 +69,19 @@ interface MessageTriggerCreate extends Partial<MessageTriggerState> {
   patternValue: string;
   stopOnMatch?: boolean;
   replyVisibility?: ReplyVisibility | null;
-  webhook: WebhookInput;
 }
 
-type BehaviorPatch = Partial<Omit<MessageTriggerCreate, "webhook">> &
+type BehaviorPatch = Partial<MessageTriggerCreate> &
   LeafPatch & {
-    webhook?: WebhookInput;
     ifUpdatedAt?: string;
   };
 
 /**
  * The create body — also served to the admin UI by GET /api/behaviors/schema,
  * so the form checks a draft against the very rules this route enforces (#108).
+ * The action is `webhook` or `pluginAction`, exactly one (#203): the handler
+ * refuses neither or both (behavior-action-input.ts), so the schema
+ * requires neither.
  */
 export const createMessageTriggerSchema = {
   type: "object",
@@ -85,8 +89,9 @@ export const createMessageTriggerSchema = {
     ...behaviorCommonFields,
     ...messageTriggerFields,
     webhook: webhookInputSchema,
+    pluginAction: pluginActionInputSchema,
   },
-  required: ["title", "surface", "patternKind", "patternValue", "webhook"],
+  required: ["title", "surface", "patternKind", "patternValue"],
   additionalProperties: false,
 } as const;
 
@@ -99,13 +104,14 @@ const patchBehaviorSchema = {
     subcommand: subcommandSchema,
     ...commandLeafFields,
     webhook: webhookInputSchema,
+    pluginAction: pluginActionInputSchema,
     ifUpdatedAt: ifUpdatedAtSchema,
   },
   minProperties: 1,
   additionalProperties: false,
 } as const;
 
-/** Fields a message trigger PATCH may change (besides webhook). */
+/** Fields a message trigger PATCH may change (besides its action). */
 const MESSAGE_PATCH_KEYS = [
   "title",
   "description",
@@ -157,6 +163,7 @@ function trimmed<T extends { title?: string; description?: string }>(body: T): T
 export function registerBehaviorWriteRoutes(
   server: FastifyInstance,
   reconciler: BehaviorCommandRegistrar | undefined,
+  plugins: PluginActionCatalog | undefined,
 ): void {
   server.post(
     "/api/behaviors",
@@ -175,7 +182,7 @@ export function registerBehaviorWriteRoutes(
         audienceGroupName: body.audienceGroupName ?? null,
       };
       checkMessageTrigger(state);
-      const webhook = await prepareWebhookWrite(body.webhook, null);
+      const action = (await prepareActionWrite(body, { behaviorId: null, plugins }, true))!;
 
       const id = await withBehaviorWriteLock(() =>
         behaviorTransaction(async (transaction) => {
@@ -187,7 +194,7 @@ export function registerBehaviorWriteRoutes(
               sortOrder: await nextMessageSortOrder(transaction),
               systemKey: null,
               triggerKind: "message",
-              actionSource: "webhook",
+              actionSource: action.source,
               commandId: null,
               subcommandGroup: null,
               subcommand: null,
@@ -198,10 +205,7 @@ export function registerBehaviorWriteRoutes(
             { transaction },
           );
           const behaviorId = row.getDataValue("id") as number;
-          await BehaviorWebhookAction.create(
-            { behaviorId, ...webhook.values },
-            { transaction },
-          );
+          await storeActionWrite(behaviorId, action, transaction);
           return behaviorId;
         }),
       );
@@ -213,11 +217,12 @@ export function registerBehaviorWriteRoutes(
         stopOnMatch: body.stopOnMatch ?? false,
         replyVisibility: body.replyVisibility ?? null,
         ...state,
-        webhook: webhook.audit,
+        ...actionAuditOf(action),
       });
+      const secret = issuedSecretOf(action);
       return reply.code(201).send({
         behavior: await messageTriggerViewOf(id),
-        ...(webhook.issuedSecret !== null ? { secret: webhook.issuedSecret } : {}),
+        ...(secret !== null ? { secret } : {}),
       });
     },
   );
@@ -234,11 +239,11 @@ export function registerBehaviorWriteRoutes(
         checkNotStale(row, body.ifUpdatedAt, `behavior ${id}`);
         if (row.triggerKind === "command") {
           refuseForeignFields(body, Object.keys(messageTriggerFields), "command leaf");
-          const { audit, ...response } = await patchCommandLeaf(reconciler, request, row, body);
+          const { audit, ...response } = await patchCommandLeaf(reconciler, plugins, request, row, body);
           return { audit, response };
         }
         refuseForeignFields(body, LEAF_ONLY_KEYS, "message trigger");
-        const { audit, issuedSecret } = await patchMessageTrigger(row, body);
+        const { audit, issuedSecret } = await patchMessageTrigger(row, body, plugins);
         return {
           audit,
           response: {
@@ -266,6 +271,9 @@ export function registerBehaviorWriteRoutes(
         await behaviorTransaction(async (transaction) => {
           await destroyDmAllowlists(id, transaction);
           await destroyDmLog(id, transaction);
+          // explicit, not via FK cascade: SQLite may run without FK enforcement
+          await BehaviorWebhookAction.destroy({ where: { behaviorId: id }, transaction });
+          await destroyPluginActions(id, transaction);
           await BehaviorDefinition.destroy({ where: { id }, transaction });
           await pruneUnusedGroupMembers(transaction);
         });
@@ -283,6 +291,7 @@ export function registerBehaviorWriteRoutes(
 async function patchMessageTrigger(
   row: BehaviorDefinitionRow,
   body: BehaviorPatch,
+  plugins: PluginActionCatalog | undefined,
 ): Promise<{ issuedSecret: string | null; audit: Record<string, unknown> }> {
   const before: Record<string, unknown> = {
     title: row.title,
@@ -298,24 +307,13 @@ async function patchMessageTrigger(
   }
   checkMessageTrigger(after as unknown as MessageTriggerState);
 
-  const existingAction = await BehaviorWebhookAction.findByPk(row.id);
-  const webhook = body.webhook
-    ? await prepareWebhookWrite(
-        body.webhook,
-        existingAction ? rowOfBehaviorWebhookAction(existingAction) : null,
-      )
-    : null;
+  const action = await prepareActionWrite(body, { behaviorId: row.id, plugins }, false);
 
   await behaviorTransaction(async (transaction) => {
     const model = await BehaviorDefinition.findByPk(row.id, { transaction });
-    model!.set(after);
+    model!.set(action ? { ...after, actionSource: action.source } : after);
     await model!.save({ transaction });
-    if (webhook) {
-      await BehaviorWebhookAction.upsert(
-        { behaviorId: row.id, ...webhook.values },
-        { transaction },
-      );
-    }
+    if (action) await storeActionWrite(row.id, action, transaction);
     // the last trigger leaving a group takes its member list along (#137)
     if (after.audienceGroupName !== before.audienceGroupName) {
       await pruneUnusedGroupMembers(transaction);
@@ -323,11 +321,14 @@ async function patchMessageTrigger(
   });
 
   return {
-    issuedSecret: webhook?.issuedSecret ?? null,
+    issuedSecret: issuedSecretOf(action),
     audit: {
       kind: "message",
       changed: changedFields(before, after),
-      ...(webhook ? { webhook: webhook.audit } : {}),
+      ...(action ? actionAuditOf(action) : {}),
+      ...(action && action.source !== row.actionSource
+        ? { actionSource: { from: row.actionSource, to: action.source } }
+        : {}),
     },
   };
 }

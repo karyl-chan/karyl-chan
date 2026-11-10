@@ -26,6 +26,10 @@
  * feature's command is not visible to invoke. Component/modal is
  * `guild-reach` (plugin-guild-reach.ts): Feature Reach for any feature,
  * or a usable track-3 command (#129).
+ * Behavior action (#203) is `none` too: an admin bound the action to
+ * a behavior, and that binding is the authorization — not Feature or
+ * Guild Reach (ADR 0003 addendum). Like command it is async: the plugin
+ * answers through the run's callback token, never in the response body.
  *
  * Tests inject fakes through `createPluginDispatcher(deps)`; prod code
  * uses the `pluginDispatcher` singleton whose pool is also the target
@@ -79,7 +83,8 @@ export type DispatchKind =
   | "component"
   | "modal"
   | "lifecycle"
-  | "event";
+  | "event"
+  | "behavior_action";
 
 /**
  * Per-kind shape: what payload the endpoint template expects, which
@@ -168,6 +173,18 @@ const KIND_SPECS: Record<DispatchKind, KindSpec> = {
     transport: "direct",
     traceparent: false,
     timeoutMs: config.plugin.dispatchTimeoutMs,
+  },
+  behavior_action: {
+    source: "behavior_action",
+    requireManifest: true,
+    reach: "none",
+    requireKey: true,
+    endpointTemplate: (m) =>
+      m.endpoints?.behavior_action ?? "/behavior-actions/{action_key}",
+    readBody: false,
+    transport: "direct",
+    traceparent: false,
+    timeoutMs: config.plugin.commandDispatchTimeoutMs,
   },
   event: {
     source: "event",

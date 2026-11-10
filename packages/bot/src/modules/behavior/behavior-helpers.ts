@@ -28,6 +28,12 @@ export interface BehaviorRoutesOptions {
   ownerIds?: readonly string[];
   /** 指令名稱衝突檢查（CommandNamespace）；指令寫入必填。 */
   namespace?: import("./command-registration-sync.js").CommandNamespaceChecker;
+  /**
+   * 已安裝 plugin 宣告的 behavior action（#203）：綁定 plugin action 時驗證、
+   * 動作選單列出。由 route wiring 注入（behavior 不 import plugin-system）；
+   * 綁定 plugin action 時必填。
+   */
+  plugins?: import("./behavior-action-input.js").PluginActionCatalog;
 }
 
 /**

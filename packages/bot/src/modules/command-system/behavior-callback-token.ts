@@ -3,7 +3,8 @@
  *
  * Behavior callback tokens (#113): each time a behavior's webhook action
  * runs, the bot issues one opaque token for that run and sends it to the
- * receiver in `_meta.callback`. With it the receiver may answer later,
+ * receiver in `_meta.callback` — and to a plugin action's plugin in the
+ * dispatch's `callback` (#203). With it the receiver may answer later,
  * through `/api/plugin/interactions.respond` / `followup` /
  * `edit_followup` / `delete_followup` — for that run's reply only.
  *
@@ -43,7 +44,8 @@ export interface CallbackIssue {
   visibility: ReplyVisibility | null;
   /**
    * Downloads a reply's attachments for this run (#156): a webhook run's
-   * come from its webhook URL's origin. Unset: a reply with attachments is
+   * come from its webhook URL's origin, a plugin action's from the
+   * plugin's registered origin (#203). Unset: a reply with attachments is
    * refused.
    */
   fetchFiles?: ReplyFileFetcher;

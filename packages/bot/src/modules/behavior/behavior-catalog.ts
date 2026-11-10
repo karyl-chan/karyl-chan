@@ -1,6 +1,6 @@
 /**
  * BehaviorCatalog：behaviors 的唯讀模型 —— 指令（含葉節點）、訊息觸發、
- * 各 behavior 的 webhook 動作、群組名單 —— 一次讀齊。
+ * 各 behavior 的 webhook / plugin 動作、群組名單 —— 一次讀齊。
  *
  *   - loadBehaviorCatalog()：直接讀 DB（admin API 用）
  *   - getBehaviorCatalog()：記憶體快照（每則訊息 / 每次 interaction 的熱
@@ -25,12 +25,18 @@ import {
   rowOfBehaviorWebhookAction,
   type BehaviorWebhookActionRow,
 } from "./models/behavior-webhook-action.model.js";
+import {
+  BehaviorPluginAction,
+  rowOfBehaviorPluginAction,
+  type BehaviorPluginActionRow,
+} from "./models/behavior-plugin-action.model.js";
 import { BehaviorGroupMember } from "./models/behavior-group-member.model.js";
 import { SYSTEM_BEHAVIOR_KEY_LOGIN } from "./models/behavior-definition.model.js";
 
-/** 一個 behavior 與它的 webhook 動作（actionSource='webhook' 時）。 */
+/** 一個 behavior 與它的動作：webhook（actionSource='webhook'）或 plugin action（'plugin'）。 */
 export interface CatalogBehavior extends BehaviorDefinitionRow {
   webhook: BehaviorWebhookActionRow | null;
+  pluginAction: BehaviorPluginActionRow | null;
 }
 
 /** 一個指令與它的葉節點（依 sortOrder、子指令名排序）。 */
@@ -47,7 +53,7 @@ export interface BehaviorCatalog {
 }
 
 export async function loadBehaviorCatalog(): Promise<BehaviorCatalog> {
-  const [commandModels, definitionModels, webhookModels, memberModels] =
+  const [commandModels, definitionModels, webhookModels, pluginActionModels, memberModels] =
     await Promise.all([
       BehaviorCommand.findAll({ order: [["id", "ASC"]] }),
       BehaviorDefinition.findAll({
@@ -57,6 +63,7 @@ export async function loadBehaviorCatalog(): Promise<BehaviorCatalog> {
         ],
       }),
       BehaviorWebhookAction.findAll(),
+      BehaviorPluginAction.findAll(),
       BehaviorGroupMember.findAll(),
     ]);
 
@@ -66,9 +73,19 @@ export async function loadBehaviorCatalog(): Promise<BehaviorCatalog> {
       return [row.behaviorId, row] as const;
     }),
   );
+  const pluginActions = new Map(
+    pluginActionModels.map((m) => {
+      const row = rowOfBehaviorPluginAction(m);
+      return [row.behaviorId, row] as const;
+    }),
+  );
   const behaviors: CatalogBehavior[] = definitionModels.map((m) => {
     const row = rowOfBehaviorDefinition(m);
-    return { ...row, webhook: webhooks.get(row.id) ?? null };
+    return {
+      ...row,
+      webhook: webhooks.get(row.id) ?? null,
+      pluginAction: pluginActions.get(row.id) ?? null,
+    };
   });
 
   const leavesByCommand = new Map<number, CatalogBehavior[]>();
@@ -173,6 +190,7 @@ for (const model of [
   BehaviorCommand,
   BehaviorDefinition,
   BehaviorWebhookAction,
+  BehaviorPluginAction,
   BehaviorGroupMember,
 ]) {
   for (const hook of WRITE_HOOKS) {

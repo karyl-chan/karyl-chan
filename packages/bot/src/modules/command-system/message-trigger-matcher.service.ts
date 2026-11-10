@@ -8,7 +8,8 @@
  *      （全部 / 指定伺服器 / 指定頻道），再依 ignoreBots 過濾 bot 作者
  *   3. 對誰：audience（所有人 / 使用者 / 群組）只在與 bot 的私訊
  *   4. matchTrigger（startswith/endswith/regex），依 sortOrder 走訪
- *   5. 內建動作（系統登入）→ 內建 handler；webhook → WebhookForwarder
+ *   5. 內建動作（系統登入）→ 內建 handler；webhook → WebhookForwarder；
+ *      plugin action → Plugin Dispatch（#203）
  *
  * onMessage(djsMessage) 暴露給 testing。
  */
@@ -29,6 +30,7 @@ import type { MessageMatchOutcome } from "./types.js";
 import type { WebhookForwarder } from "./webhook-forwarder.service.js";
 import { runLoginAction } from "./builtin-login-action.js";
 import { runWebhookAction } from "./webhook-action.js";
+import { defaultPluginActionDeps, runPluginAction, type PluginActionDeps } from "./plugin-action.js";
 import { takeBehaviorRun } from "./behavior-rate-limits.js";
 import { toWebhookAttachment } from "./webhook-attachment.js";
 
@@ -73,7 +75,11 @@ export class MessageTriggerMatcher {
    */
   private readonly conversations = new Map<string, ConversationQueue>();
 
-  constructor(private readonly forwarder: WebhookForwarder) {}
+  constructor(
+    private readonly forwarder: WebhookForwarder,
+    /** Plugin actions' dispatch (#203); tests inject their own. */
+    private readonly pluginActions: PluginActionDeps = defaultPluginActionDeps,
+  ) {}
 
   /** 測試用：目前有訊息在跑的對話數。 */
   __conversationCountForTests(): number {
@@ -231,26 +237,40 @@ export class MessageTriggerMatcher {
         : { kind: "dm_user", userId },
     );
     if (!allowed) return { handled: false };
-    if (!behavior.webhook) {
+    const { webhook, pluginAction } = behavior;
+    if (behavior.actionSource === "plugin" ? !pluginAction : !webhook) {
       botEventLog.record(
         "warn",
         "bot",
-        `message-trigger-matcher: behavior ${behavior.id} 沒有 webhook 動作，略過`,
+        `message-trigger-matcher: behavior ${behavior.id} 沒有 ${behavior.actionSource} 動作，略過`,
         { behaviorId: behavior.id },
       );
       return { handled: false };
     }
 
-    // 回覆模型（#140）與失敗處理（#114）：webhook-action.ts。私訊照常回；
-    // 伺服器預設貼頻道，ephemeral=true 改私訊作者；失敗從不貼頻道。
-    await runWebhookAction({
-      forwarder: this.forwarder,
-      behaviorId: behavior.id,
-      webhook: behavior.webhook,
-      payload: this.buildPayload(djsMessage, behavior, match),
-      target: { kind: "message", message: djsMessage },
-      visibility: behavior.replyVisibility,
-    });
+    // 回覆模型（#140）與失敗處理（#114）：webhook-action.ts / plugin-action.ts。
+    // 私訊照常回；伺服器預設貼頻道，ephemeral=true 改私訊作者；失敗從不貼頻道。
+    const payload = this.buildPayload(djsMessage, behavior, match);
+    const target = { kind: "message", message: djsMessage } as const;
+    if (behavior.actionSource === "plugin") {
+      await runPluginAction({
+        deps: this.pluginActions,
+        behaviorId: behavior.id,
+        binding: pluginAction!,
+        meta: payload._meta as Record<string, unknown>,
+        target,
+        visibility: behavior.replyVisibility,
+      });
+    } else {
+      await runWebhookAction({
+        forwarder: this.forwarder,
+        behaviorId: behavior.id,
+        webhook: webhook!,
+        payload,
+        target,
+        visibility: behavior.replyVisibility,
+      });
+    }
 
     return { handled: true, behaviorId: behavior.id };
   }
@@ -332,7 +352,7 @@ interface MatchedTrigger {
 }
 
 interface TriggersToRun {
-  /** 依 sortOrder 命中的 webhook 觸發 */
+  /** 依 sortOrder 命中的 webhook / plugin action 觸發 */
   webhooks: MatchedTrigger[];
   /** 命中的內建動作（系統登入）；它一定收尾 */
   builtin: CatalogBehavior | null;
