@@ -46,6 +46,10 @@ import {
 } from "./plugin-defer-state.js";
 import { maybeForwardGuildRpc } from "./shard-forward-routes.js";
 import {
+  runBehaviorCallback,
+  type BehaviorCallbackMethod,
+} from "../command-system/behavior-callback.js";
+import {
   formatPluginRpcSchemaError,
   installPluginRpcSchemaErrors,
   SNOWFLAKE_PATTERN,
@@ -377,6 +381,13 @@ async function requireScope(
   reply: FastifyReply,
   scope: string,
 ): Promise<{ pluginId: number; pluginKey: string } | null> {
+  // A behavior callback principal (#113) is no plugin: the auth hook
+  // already keeps it to the four interaction replies, which answer it
+  // before reaching here. Anything else it reaches is refused.
+  if (request.behaviorCallback) {
+    rejectForbidden(reply, scope);
+    return null;
+  }
   const auth = request.pluginAuth;
   if (!auth) {
     reply.code(401).send({ error: "plugin auth missing" });
@@ -396,6 +407,39 @@ async function requireScope(
     return null;
   }
   return { pluginId: auth.pluginId, pluginKey: auth.pluginKey };
+}
+
+/**
+ * The four interaction replies, for a behavior callback principal (#113):
+ * true when the request was one and has been answered. Its rules live in
+ * command-system/behavior-callback.ts; `interaction_token` is optional for
+ * it (and ignored), which is why the routes' schemas no longer require
+ * the field and plugins get the same refusal from `requirePluginToken`.
+ */
+async function answeredBehaviorCallback(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  method: BehaviorCallbackMethod,
+): Promise<boolean> {
+  const principal = request.behaviorCallback;
+  if (!principal) return false;
+  const answer = await runBehaviorCallback(
+    method,
+    principal,
+    (request.body ?? {}) as Record<string, unknown>,
+  );
+  reply.code(answer.status).send(answer.body);
+  return true;
+}
+
+/** A plugin's interaction reply still names its interaction: the schema's old `required`. */
+function requirePluginToken<B extends { interaction_token?: string }>(
+  body: B,
+  reply: FastifyReply,
+): body is B & { interaction_token: string } {
+  if (body.interaction_token !== undefined) return true;
+  reply.code(400).send({ error: "interaction_token required" });
+  return false;
 }
 
 /**
@@ -1430,7 +1474,7 @@ function registerRpcRoutes(
    */
   server.post<{
     Body: {
-      interaction_token: string;
+      interaction_token?: string;
       content?: string;
       embeds?: unknown[];
       components?: unknown[];
@@ -1459,11 +1503,12 @@ function registerRpcRoutes(
             // see messages.send.
             attachments: unconstrainedField,
           },
-          required: ["interaction_token"],
         },
       },
     },
     async (request, reply) => {
+    if (await answeredBehaviorCallback(request, reply, "interactions.respond")) return;
+    if (!requirePluginToken(request.body, reply)) return;
     const ctx = await requireScope(request, reply, "interactions.respond");
     if (!ctx) return;
     if (!bot || !bot.application) {
@@ -1600,7 +1645,7 @@ function registerRpcRoutes(
    */
   server.post<{
     Body: {
-      interaction_token: string;
+      interaction_token?: string;
       content?: string;
       embeds?: unknown[];
       components?: unknown[];
@@ -1628,11 +1673,12 @@ function registerRpcRoutes(
             // see messages.send.
             attachments: unconstrainedField,
           },
-          required: ["interaction_token"],
         },
       },
     },
     async (request, reply) => {
+    if (await answeredBehaviorCallback(request, reply, "interactions.followup")) return;
+    if (!requirePluginToken(request.body, reply)) return;
     const ctx = await requireScope(request, reply, "interactions.followup");
     if (!ctx) return;
     if (!bot || !bot.application) {
@@ -1716,7 +1762,7 @@ function registerRpcRoutes(
    */
   server.post<{
     Body: {
-      interaction_token: string;
+      interaction_token?: string;
       message_id: string;
     };
   }>(
@@ -1733,11 +1779,13 @@ function registerRpcRoutes(
             interaction_token: nonEmptyStringField,
             message_id: nonEmptyStringField,
           },
-          required: ["interaction_token", "message_id"],
+          required: ["message_id"],
         },
       },
     },
     async (request, reply) => {
+    if (await answeredBehaviorCallback(request, reply, "interactions.delete_followup")) return;
+    if (!requirePluginToken(request.body, reply)) return;
     const ctx = await requireScope(
       request,
       reply,
@@ -1778,7 +1826,7 @@ function registerRpcRoutes(
    */
   server.post<{
     Body: {
-      interaction_token: string;
+      interaction_token?: string;
       message_id: string;
       content?: string;
       embeds?: unknown[];
@@ -1803,11 +1851,13 @@ function registerRpcRoutes(
             components: arrayField,
             allowed_mentions: objectField,
           },
-          required: ["interaction_token", "message_id"],
+          required: ["message_id"],
         },
       },
     },
     async (request, reply) => {
+    if (await answeredBehaviorCallback(request, reply, "interactions.edit_followup")) return;
+    if (!requirePluginToken(request.body, reply)) return;
     const ctx = await requireScope(
       request,
       reply,

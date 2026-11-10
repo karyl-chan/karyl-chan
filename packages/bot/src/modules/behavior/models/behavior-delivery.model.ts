@@ -52,6 +52,11 @@ export const BehaviorDelivery = sequelize.define(
       allowNull: true,
       validate: { isIn: [["hmac", "token"]] },
     },
+    /**
+     * The receiver answered `{"defer": true}` (#113): the run succeeded and
+     * its reply comes later, through the callback token. Migration 015.
+     */
+    deferred: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
   },
   {
     tableName: "behavior_deliveries",

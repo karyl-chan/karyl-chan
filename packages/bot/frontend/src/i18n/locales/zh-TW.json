@@ -1629,6 +1629,8 @@
             "empty": "還沒有投遞紀錄。",
             "ok": "成功",
             "failed": "失敗",
+            "deferred": "延後回覆",
+            "deferredHint": "receiver 之後會用 callback token 補上回覆。",
             "verified": {
                 "hmac": "簽章已驗證（HMAC）",
                 "token": "簽章已驗證（token）"

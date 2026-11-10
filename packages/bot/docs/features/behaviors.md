@@ -398,8 +398,11 @@ shows them and flags a behavior that keeps failing.
 (`behavior_deliveries`): when it fired, the trigger kind (`command` or
 `message`), ok or failed, the receiver's HTTP status, the time from the
 forward to the rendered reply, an error code, the first 300 characters
-of the error, and which key verified the response signature. A failure
-gets one of these codes:
+of the error, which key verified the response signature, and whether the
+receiver deferred its reply (`{"defer": true}`, answered later with the
+run's callback token, [protocol](behavior-webhook-protocol.md#answering-later)):
+a deferred delivery is ok and shows 「延後回覆」. A failure gets one of
+these codes:
 
 | Code | Meaning |
 |------|---------|
@@ -410,6 +413,8 @@ gets one of these codes:
 | `render_failed` | Discord refused the reply. |
 | `dm_failed` | A private reply to a server message's author could not be sent as a DM. |
 | `defer_failed` | Discord refused a command's deferral (the interaction had expired): the webhook was never called, and the user sees "interaction failed". It counts as a failure in the statistics too, and is warned about once per leaf in the event log. |
+| `callback_invalid` | A callback call (#113) the bot refused: a component that is not an https link button, nothing to show, or a `message_id` the token did not send. A row of its own, not counted in the statistics. |
+| `callback_failed` | Discord refused a callback call's reply. A row of its own, not counted in the statistics. |
 
 A row never holds the webhook URL, a secret, the payload, the message or
 the reply, a user id or a message id. Each behavior keeps its last 20

@@ -170,6 +170,18 @@ export interface ContractFixtures {
       readonly slashMetaKeys: readonly string[];
       readonly userKeys: readonly string[];
       readonly attachmentKeys: readonly string[];
+      /** `_meta.callback` on a command (#113): the run's callback token. */
+      readonly callbackKeys: readonly string[];
+    };
+    /**
+     * The behavior callback token (#113): one per command run, valid for
+     * `ttlSeconds`, sent as `Authorization: Bearer <token>` to
+     * `<api_base>/api/plugin/<method>` for `methods` only (any other
+     * /api/plugin/* path is 403; an unknown or expired token is 401).
+     */
+    readonly callback: {
+      readonly ttlSeconds: number;
+      readonly methods: readonly string[];
     };
     readonly response: {
       readonly fields: readonly string[];
@@ -580,10 +592,23 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
         // the invoked leaf's attachment options' files, in option order;
         // no message_id: an interaction has no message
         "attachments",
+        // the run's callback token (#113); never the interaction token
+        "callback",
       ],
       userKeys: ["id", "username", "global_name", "discriminator", "avatar"],
       // `id` maps a command's attachment option (its `value`) to its file
       attachmentKeys: ["id", "url", "filename", "content_type", "size"],
+      // expires_at is ISO 8601; api_base is the bot's public base URL
+      callbackKeys: ["token", "expires_at", "api_base"],
+    },
+    callback: {
+      ttlSeconds: 900,
+      methods: [
+        "interactions.respond",
+        "interactions.followup",
+        "interactions.edit_followup",
+        "interactions.delete_followup",
+      ],
     },
     /**
      * The reply model (#140) — the plugin `interactions.respond` body
@@ -594,7 +619,8 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
      * with the bot.
      */
     response: {
-      fields: ["content", "embeds", "components", "ephemeral", "flags"],
+      // `defer: true` (#113): answer later with the callback token
+      fields: ["content", "embeds", "components", "ephemeral", "flags", "defer"],
       embedWhitelist: [
         "title",
         "description",

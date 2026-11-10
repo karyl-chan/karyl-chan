@@ -1629,6 +1629,8 @@
             "empty": "No deliveries yet.",
             "ok": "OK",
             "failed": "Failed",
+            "deferred": "Deferred",
+            "deferredHint": "The receiver answers later with its callback token.",
             "verified": {
                 "hmac": "signature verified (HMAC)",
                 "token": "signature verified (token)"

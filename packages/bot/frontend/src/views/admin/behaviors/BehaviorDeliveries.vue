@@ -11,7 +11,8 @@ import { describeBehaviorError } from './behavior-errors';
  * A behavior's recent webhook deliveries (#120): GET
  * /api/behaviors/:id/deliveries, loaded each time the list is opened, not
  * before. One row per delivery: when, ok or failed, the HTTP status, the
- * latency, the error code and its message, and the verified signature.
+ * latency, the error code and its message, the verified signature, and
+ * whether the receiver deferred its reply to the callback token (#113).
  */
 const props = defineProps<{ behaviorId: number }>();
 
@@ -76,6 +77,9 @@ function absolute(iso: string): string {
                                 <time :datetime="d.firedAt" :title="absolute(d.firedAt)" class="muted">{{ relativeTime(d.firedAt) }}</time>
                                 <AppBadge size="sm" :tone="d.ok ? 'success' : 'danger'">
                                     {{ d.ok ? t('behaviors.deliveries.ok') : t('behaviors.deliveries.failed') }}
+                                </AppBadge>
+                                <AppBadge v-if="d.deferred" size="sm" tone="accent" :title="t('behaviors.deliveries.deferredHint')" data-test="delivery-deferred">
+                                    {{ t('behaviors.deliveries.deferred') }}
                                 </AppBadge>
                                 <code v-if="d.httpStatus !== null" data-test="delivery-status">HTTP {{ d.httpStatus }}</code>
                                 <span v-if="d.durationMs !== null" class="muted" data-test="delivery-duration">{{ d.durationMs }} ms</span>

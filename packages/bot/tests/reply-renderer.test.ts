@@ -47,7 +47,11 @@ describe("renderReply — interaction target", () => {
   it("answers an un-acked command ephemerally by default", async () => {
     const ix = fakeInteraction();
     const out = await renderReply({ content: "hi", components: [link] }, { kind: "interaction", interaction: ix as never });
-    expect(out).toEqual({ ok: true, via: "interaction" });
+    expect(out).toEqual({
+      ok: true,
+      via: "interaction",
+      replyMessage: { messageId: "@original", ephemeral: true },
+    });
     expect(ix.reply).toHaveBeenCalledWith({
       content: "hi",
       components: [link],
@@ -69,7 +73,11 @@ describe("renderReply — interaction target", () => {
   it("fills an ephemeral deferral in place when the reply stays private", async () => {
     const ix = fakeInteraction({ deferred: true, ephemeral: true });
     const out = await renderReply({ embeds: [{ title: "t" }], flags: 4 | 4096 }, { kind: "interaction", interaction: ix as never });
-    expect(out).toEqual({ ok: true, via: "interaction" });
+    expect(out).toEqual({
+      ok: true,
+      via: "interaction",
+      replyMessage: { messageId: "@original", ephemeral: true },
+    });
     // an edit can only carry SuppressEmbeds
     expect(ix.editReply).toHaveBeenCalledWith({
       embeds: [{ title: "t" }],
@@ -90,7 +98,7 @@ describe("renderReply — interaction target", () => {
   it("an empty reply removes the placeholder", async () => {
     const ix = fakeInteraction({ deferred: true, ephemeral: true });
     const out = await renderReply({}, { kind: "interaction", interaction: ix as never });
-    expect(out).toEqual({ ok: true, via: "none" });
+    expect(out).toEqual({ ok: true, via: "none", replyMessage: null });
     expect(ix.deleteReply).toHaveBeenCalledTimes(1);
   });
 

@@ -1,7 +1,7 @@
 import { jwtService } from "../web-core/jwt.service.js";
 import { resolveLoginRole } from "./authorized-user.service.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
-import { config } from "../../config.js";
+import { publicBaseUrl } from "../web-core/public-base-url.js";
 
 /**
  * Admin login link issuance: resolve the caller's role, sign a one-time
@@ -9,11 +9,6 @@ import { config } from "../../config.js";
  * (command-system/builtin-login-action.ts) turns the result into a
  * behavior reply; the ReplyRenderer delivers it like any other reply.
  */
-
-function buildBaseUrl(): string {
-  if (config.web.baseUrl) return config.web.baseUrl.replace(/\/+$/, "");
-  return `http://localhost:${config.web.port}`;
-}
 
 export type LoginLinkResult =
   | { ok: false; reason: string }
@@ -49,7 +44,7 @@ export async function mintLoginLink(
     // so the audit trail still has SOMETHING the verify side accepts.
     messageId: ctx.messageId ?? `slash:${ctx.channelId}:${userId}`,
   });
-  const url = `${buildBaseUrl()}/admin/auth?token=${encodeURIComponent(token)}`;
+  const url = `${publicBaseUrl()}/admin/auth?token=${encodeURIComponent(token)}`;
   const minutesUntilExpiry = Math.max(
     1,
     Math.round((expiresAt - Date.now()) / 60_000),

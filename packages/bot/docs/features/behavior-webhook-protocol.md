@@ -27,6 +27,7 @@ wiring examples are not tested.
 - [Test-fires](#test-fires)
 - [Secret rotation](#secret-rotation)
 - [The reply (contract v1)](#the-reply-contract-v1)
+- [Answering later](#answering-later)
 - [Failures](#failures)
 - [Reference receiver](#reference-receiver)
 - [Changes in bot 2.0.0](#changes-in-bot-200)
@@ -39,7 +40,9 @@ wiring examples are not tested.
   and per command user; over that it sends nothing
   ([behaviors.md](behaviors.md#matching-order)).
 - The answer's body is the **reply**: what the bot shows the user. An empty
-  body means "say nothing".
+  body means "say nothing". A command's receiver may also answer
+  `{"defer": true}` and reply later with the run's
+  [callback token](#answering-later).
 - With authentication on, every request is signed (`hmac`) or carries a
   shared token (`token`). In `hmac` mode **your response must be signed too**,
   over the request's nonce.
@@ -118,9 +121,10 @@ A command fires when a user runs one of the behavior's Discord commands.
 | `_meta.options` | The invoked command's or subcommand's options, `[{ name, type, value }]`. `type` is Discord's numeric option type. An `attachment` option's (type 11) `value` is the attachment id: its file is the `_meta.attachments` entry with that `id`. |
 | `_meta.behavior_id` | The behavior (command leaf) that fired. |
 | `_meta.attachments` | The files of the invoked command's or subcommand's `attachment` options, in option order: `[{ id, url, filename, content_type, size }]`, the same shape as a message trigger's. Empty when it has none. |
+| `_meta.callback` | This run's callback token, `{ token, expires_at, api_base }`, to answer later ([Answering later](#answering-later)). |
 
 The interaction token is **not** sent: the bot answers the interaction
-itself, with your reply. A command's payload has no `message_id`, not
+itself, with your reply, and `_meta.callback` stands in for it. A command's payload has no `message_id`, not
 even a `null` one: an interaction has no message. To tell one invocation
 from another, use `_meta.interaction_id`.
 
@@ -308,6 +312,7 @@ subset of this shape, so there is no version field.
 | `components` | array | Action rows (`type: 1`) of **link buttons only** (`type: 2`, `style: 5`, a non-empty `label` cut to 80 characters, an `https://` `url` of at most 512 characters). At most 5 rows of 5 buttons. Anything else is dropped. |
 | `ephemeral` | boolean | Who sees the reply. See below. |
 | `flags` | integer | Only `SuppressEmbeds` (4) and `SuppressNotifications` (4096) are kept. Who sees the reply is never a flag. |
+| `defer` | boolean | `true`: answer later with the callback token. The command keeps its "thinking…" placeholder and the other fields are not shown. A command only. See [Answering later](#answering-later). |
 
 - A field of the wrong type is ignored. Any other top-level field is
   ignored too. The bot logs either once per behavior, so you can see it.
@@ -343,6 +348,62 @@ command whose stored visibility is `public` gets a public placeholder, and
 any other command a private one. When your `ephemeral` differs from the
 placeholder, the bot sends your reply as a new message and deletes the
 placeholder.
+
+## Answering later
+
+A receiver that needs longer than 10 seconds, or wants to follow up, uses
+the run's **callback token**. Every command run gets one in
+`_meta.callback`:
+
+| Key | Value |
+|-----|-------|
+| `token` | An opaque token for this run only. Not the Discord interaction token, which never leaves the bot. |
+| `expires_at` | When it stops working (ISO 8601): **15 minutes** after the command was used, when Discord's own interaction token ends. |
+| `api_base` | The bot's public base URL. |
+
+1. Answer the request within 10 seconds with `{"defer": true}`. The user
+   keeps seeing "thinking…", and the delivery log marks the delivery
+   *deferred*.
+2. Then call the bot with `Authorization: Bearer <token>`, a JSON body and
+   `POST <api_base>/api/plugin/<method>`:
+
+| Method | Body | Does |
+|--------|------|------|
+| `interactions.respond` | a reply | The run's reply: fills the "thinking…" placeholder, or edits the reply already shown (your synchronous answer or an earlier `respond`). When the reply's visibility changes, or an empty answer removed it, a new message takes its place. |
+| `interactions.followup` | a reply | Sends a new message. Answers `{ ok: true, id }`. |
+| `interactions.edit_followup` | `message_id` and a reply | Edits a message this token sent with `followup`. |
+| `interactions.delete_followup` | `message_id` | Deletes a message this token sent with `followup`. |
+
+The body is a [reply](#the-reply-contract-v1) under the same rules as your
+synchronous answer, with three differences: a component that is not a
+link button is refused with `400` instead of dropped; a reply with nothing
+to show is refused with `400`; and `defer` means nothing. Who sees it
+follows [the same order](#who-sees-the-reply): a `public` command's
+`respond` fills its public placeholder. `interaction_token`, which the
+plugin form of these methods takes, may be left out and is ignored.
+Each `respond` decides who sees it afresh — its own `ephemeral` first,
+then the behavior's stored visibility — so a `respond` without
+`ephemeral` after a public one goes back to the stored visibility (and
+stays where the reply is when none is stored).
+
+- An unknown, revoked or expired token gets `401`. Any other
+  `/api/plugin/*` path gets `403`: the token answers this run and nothing
+  else.
+- The token is revoked when the run fails (the user has already seen the
+  failure line). Answering synchronously does not revoke it: you may still
+  follow up.
+- Once a `respond` has landed, the synchronous answer of the same run is
+  not shown, even if it arrives later, and a late failure of that request
+  shows no failure line: the user already has a reply, so the delivery is
+  ok and marked deferred.
+- Calls are rate-limited per token, that is per run (60 a minute); over
+  it, `429`.
+- A call the bot refuses (`callback_invalid`) or Discord refuses
+  (`callback_failed`) is a failed delivery of the behavior. A call that
+  works is not logged.
+- The token lives in the bot's memory: after a restart it is unknown.
+
+Message triggers do not get a callback token yet.
 
 ## Failures
 
@@ -573,5 +634,7 @@ changes the protocol. Update a receiver **before** the bot is upgraded:
 - New: secret rotation with the `-Previous` headers (#99).
 - New: `id` on each `_meta.attachments` entry, and `_meta.attachments` on
   commands, with the files of the `attachment` options (#152).
+- New: `_meta.callback` on commands and the `defer` reply field, to answer
+  later (#113).
 - Removed: conversation sessions and the `[BEHAVIOR:END]` marker. A reply
   never starts or ends a session.
