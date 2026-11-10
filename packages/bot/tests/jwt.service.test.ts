@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createHash,
   createHmac,
+  createPrivateKey,
   createPublicKey,
   generateKeyPairSync,
   sign as cryptoSign,
@@ -314,6 +315,24 @@ describe("JwtService (Ed25519)", () => {
           Buffer.from(s, "base64url"),
         ),
       ).toBe(true);
+    });
+
+    it("use the RFC 8037 A.3 thumbprint for the RFC 8037 A.1 example key", () => {
+      // Published vector, independent of thumbprintOf() above.
+      const key = createPrivateKey({
+        key: {
+          kty: "OKP",
+          crv: "Ed25519",
+          d: "nWGxne_9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A",
+          x: "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo",
+        },
+        format: "jwk",
+      });
+      const svc = new JwtService(key);
+      expect(svc.keyId()).toBe("kPrK_qmxVWaYVA9wwBF6Iuo3vVzz7TxHCTwXBygrS4k");
+      expect(svc.publicJwk().x).toBe(
+        "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo",
+      );
     });
 
     it("follow the key on setKey", () => {

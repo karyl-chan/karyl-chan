@@ -211,11 +211,12 @@ function assertEd25519(key: KeyObject): void {
 }
 
 export class JwtService {
-  private privateKey: KeyObject;
-  private publicKey: KeyObject;
-  private publicKeyPemCache: string;
+  // Set by installKey(), which the constructor calls.
+  private privateKey!: KeyObject;
+  private publicKey!: KeyObject;
+  private publicKeyPemCache!: string;
   /** The signing key as a JWKS entry; its `kid` goes on service tokens. */
-  private publicJwkCache: PublicJwk;
+  private publicJwkCache!: PublicJwk;
   /**
    * Memoized per-plugin session-signing keys, keyed by pluginKey. Cleared
    * by {@link setKey} so a master-key rotation re-derives every plugin's
@@ -227,6 +228,11 @@ export class JwtService {
   >();
 
   constructor(privateKey: KeyObject) {
+    this.installKey(privateKey);
+  }
+
+  /** Take `privateKey` as the signing key and derive its public forms. */
+  private installKey(privateKey: KeyObject): void {
     assertEd25519(privateKey);
     this.privateKey = privateKey;
     this.publicKey = createPublicKey(privateKey);
@@ -242,13 +248,7 @@ export class JwtService {
    * public key.
    */
   setKey(privateKey: KeyObject): void {
-    assertEd25519(privateKey);
-    this.privateKey = privateKey;
-    this.publicKey = createPublicKey(privateKey);
-    this.publicKeyPemCache = this.publicKey
-      .export({ type: "spki", format: "pem" })
-      .toString();
-    this.publicJwkCache = publicJwkOf(this.publicKey);
+    this.installKey(privateKey);
     // Per-plugin keys are derived from the master key — drop the cache so
     // the next access re-derives against the new key.
     this.pluginSessionKeys.clear();
@@ -272,8 +272,9 @@ export class JwtService {
   /**
    * Sign a service token: header `{alg: EdDSA, typ: karyl-service+jwt,
    * kid}`, the claims plus a fresh `jti`, `iat` and `exp = iat + 120`.
-   * The bot never verifies these itself — the service does, against the JWKS — and karyl does not track
-   * `jti`: rejecting a reused one is the service's job.
+   * The bot never verifies these itself — the service does, against the
+   * JWKS — and karyl does not track `jti`: rejecting a reused one is the
+   * service's job.
    */
   signService(
     claims: ServiceTokenClaims,
@@ -668,7 +669,8 @@ export async function getJwks(options: { now?: number } = {}): Promise<Jwks> {
     history.forEach((row, i) => {
       const successor = history[i + 1];
       if (row.active || !successor) return;
-      if (now - successor.createdAt.getTime() > JWKS_RETIRED_KEY_GRACE_MS) return;
+      const retiredFor = now - successor.createdAt.getTime();
+      if (retiredFor > JWKS_RETIRED_KEY_GRACE_MS) return;
       const jwk = publicJwkOf(createPublicKey(row.publicKeyPem));
       if (keys.some((k) => k.kid === jwk.kid)) return;
       keys.push(jwk);
