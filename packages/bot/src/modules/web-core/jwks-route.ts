@@ -1,7 +1,7 @@
 /**
  * GET /.well-known/jwks.json (#126) — the public keys self-hosted services
  * verify service tokens with (see service-token.ts): the active signing
- * key and keys retired within the last 24 h, `kid` = key row id.
+ * key and keys retired within the last 24 h, `kid` = RFC 7638 thumbprint.
  *
  * Public by nature, so it lives outside /api (the auth hook never sees
  * it). Registered explicitly — the SPA not-found handler would otherwise
@@ -13,7 +13,7 @@ import type { FastifyInstance } from "fastify";
 import { RateLimiter } from "../../utils/rate-limiter.js";
 import { recordAuthThrottled } from "../bot-events/auth-throttle-log.js";
 import { refuseIfThrottled, type ClientThrottle } from "./client-throttle.js";
-import { getJwks, type Jwks } from "./jwt.service.js";
+import { getJwks } from "./jwt.service.js";
 
 export const JWKS_PATH = "/.well-known/jwks.json";
 
@@ -23,10 +23,9 @@ const jwksRateLimiter = new RateLimiter({ windowMs: 60_000, max: 60 });
 
 export function registerJwksRoute(
   server: FastifyInstance,
-  options: { limiter?: ClientThrottle; jwks?: () => Promise<Jwks> } = {},
+  options: { limiter?: ClientThrottle } = {},
 ): void {
   const limiter = options.limiter ?? jwksRateLimiter;
-  const load = options.jwks ?? (() => getJwks());
   server.get(JWKS_PATH, async (request, reply) => {
     if (
       refuseIfThrottled(limiter, request, reply, {
@@ -42,6 +41,6 @@ export function registerJwksRoute(
       // Short, so a service that caches by header picks up a rotation
       // within a minute even before it sees the new `kid`.
       .header("Cache-Control", "public, max-age=60")
-      .send(JSON.stringify(await load()));
+      .send(JSON.stringify(await getJwks()));
   });
 }

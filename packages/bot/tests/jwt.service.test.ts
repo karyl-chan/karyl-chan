@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  createHash,
   createHmac,
   createPublicKey,
   generateKeyPairSync,
+  sign as cryptoSign,
   verify as cryptoVerify,
+  type KeyObject,
 } from "crypto";
 import {
   JwtService,
@@ -283,12 +286,25 @@ describe("JwtService (Ed25519)", () => {
       );
     }
 
-    it("carry the key's kid and verify against its JWK", () => {
-      const svc = new JwtService(newKey(), "7");
+    function thumbprintOf(key: KeyObject): string {
+      const { crv, kty, x } = createPublicKey(key).export({ format: "jwk" });
+      return createHash("sha256")
+        .update(JSON.stringify({ crv, kty, x }))
+        .digest("base64url");
+    }
+
+    it("carry the key's RFC 7638 thumbprint as kid and verify against its JWK", () => {
+      const key = newKey();
+      const svc = new JwtService(key);
       const { token } = svc.signService(serviceClaims);
-      expect(segment(token, 0)).toEqual({ alg: "EdDSA", typ: "JWT", kid: "7" });
+      const kid = thumbprintOf(key);
+      expect(segment(token, 0)).toEqual({
+        alg: "EdDSA",
+        typ: "karyl-service+jwt",
+        kid,
+      });
       const jwk = svc.publicJwk();
-      expect(jwk).toMatchObject({ kty: "OKP", crv: "Ed25519", kid: "7" });
+      expect(jwk).toMatchObject({ kty: "OKP", crv: "Ed25519", kid });
       const [h, b, s] = token.split(".");
       expect(
         cryptoVerify(
@@ -301,9 +317,12 @@ describe("JwtService (Ed25519)", () => {
     });
 
     it("follow the key on setKey", () => {
-      const svc = new JwtService(newKey(), "1");
-      svc.setKey(newKey(), "2");
-      expect(segment(svc.signService(serviceClaims).token, 0).kid).toBe("2");
+      const svc = new JwtService(newKey());
+      const next = newKey();
+      svc.setKey(next);
+      expect(segment(svc.signService(serviceClaims).token, 0).kid).toBe(
+        thumbprintOf(next),
+      );
     });
 
     it("live 120 s", () => {
@@ -330,6 +349,23 @@ describe("JwtService (Ed25519)", () => {
       const { token } = svc.signService(serviceClaims);
       expect(svc.verify(token)).toBeNull();
       expect(svc.verify(token, { purpose: "login" })).toBeNull();
+    });
+
+    it("verify() refuses the service typ on its own, even with login claims", () => {
+      const key = newKey();
+      const svc = new JwtService(key);
+      const header = b64u(
+        JSON.stringify({ alg: "EdDSA", typ: "karyl-service+jwt", kid: svc.keyId() }),
+      );
+      const body = b64u(
+        JSON.stringify({
+          ...loginClaims,
+          iat: Math.floor(Date.now() / 1000),
+          exp: Math.floor(Date.now() / 1000) + 60,
+        }),
+      );
+      const sig = b64u(cryptoSign(null, Buffer.from(`${header}.${body}`), key));
+      expect(svc.verify(`${header}.${body}.${sig}`, { purpose: "login" })).toBeNull();
     });
 
     it("verify() refuses any token carrying aud, even with login claims", () => {

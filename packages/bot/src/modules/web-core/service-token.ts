@@ -1,11 +1,12 @@
-import { jwtService, type JwtService } from "./jwt.service.js";
+import { jwtService, type SignedServiceToken } from "./jwt.service.js";
 import { publicBaseUrl } from "./public-base-url.js";
 
 /**
  * Service token issuance (#126): the token a self-hosted service receives
  * when a user logs in to it through karyl. The service verifies it against
- * `/.well-known/jwks.json` — signature by `kid`, then `aud`, `iss`, `exp`,
- * and refuses a `jti` it has seen before (karyl does not track them).
+ * `/.well-known/jwks.json` — header `typ: karyl-service+jwt`, signature by
+ * `kid`, then `aud`, `iss`, `exp` — and refuses a `jti` it has seen before
+ * (karyl does not track them).
  */
 
 /** The user the token vouches for. */
@@ -21,10 +22,9 @@ export interface ServiceTokenUser {
 export function mintServiceToken(
   user: ServiceTokenUser,
   audience: string,
-  options: { now?: number; signer?: JwtService } = {},
-): { token: string; jti: string; expiresAt: number } {
-  const signer = options.signer ?? jwtService;
-  return signer.signService(
+  options: { now?: number } = {},
+): SignedServiceToken {
+  return jwtService.signService(
     {
       sub: user.id,
       name: user.name,

@@ -1,9 +1,10 @@
 /**
  * #126 / #199 — service tokens and the JWKS. A self-hosted service fetches
- * GET /.well-known/jwks.json, picks the key by the token's `kid`, verifies
- * the EdDSA signature with plain Node crypto, then checks `aud`, `iss` and
- * `exp`. Service tokens and login tokens share the master key but never
- * pass for each other.
+ * GET /.well-known/jwks.json, checks the header `typ`, picks the key by the
+ * token's `kid` (the key's RFC 7638 thumbprint), verifies the EdDSA
+ * signature with plain Node crypto, then checks `aud`, `iss` and `exp`.
+ * Service tokens and login tokens share the master key but never pass for
+ * each other.
  */
 import { vi, describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 
@@ -18,7 +19,8 @@ vi.mock("../src/modules/bot-events/bot-event-log.js", () => ({
   botEventLog: { record: vi.fn() },
 }));
 
-import { createPublicKey, verify as cryptoVerify } from "crypto";
+import { createHash, createPublicKey, verify as cryptoVerify } from "crypto";
+import { verifyPluginSession } from "@karyl-chan/plugin-sdk";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -57,27 +59,59 @@ function decodeSegment(seg: string): Record<string, unknown> {
   return JSON.parse(Buffer.from(seg, "base64url").toString("utf-8"));
 }
 
-/** What a service does with a token, per the verification steps (#126). */
+/** RFC 7638 thumbprint of an Ed25519 SPKI PEM, computed independently. */
+function thumbprintOf(pem: string): string {
+  const { crv, kty, x } = createPublicKey(pem).export({ format: "jwk" });
+  return createHash("sha256").update(JSON.stringify({ crv, kty, x })).digest("base64url");
+}
+
+function signatureVerifies(token: string, jwk: Jwks["keys"][number]): boolean {
+  const [h, b, s] = token.split(".");
+  const key = createPublicKey({ key: { ...jwk }, format: "jwk" });
+  return cryptoVerify(null, Buffer.from(`${h}.${b}`), key, Buffer.from(s, "base64url"));
+}
+
+type ServiceCheck = { ok: true; claims: Record<string, unknown> } | { ok: false; reason: string };
+
+/**
+ * What a service does with a token, per the verification steps (#126).
+ * `lenientKid` mimics libraries that fall back to the only key in the set
+ * when the token names none — so the `typ` check, not this helper's
+ * strictness about `kid`, is what keeps a login token out.
+ */
+function checkAsService(
+  token: string,
+  jwks: Jwks,
+  expected: { aud: string; iss: string; now?: number; lenientKid?: boolean },
+): ServiceCheck {
+  const [h, b] = token.split(".");
+  const header = decodeSegment(h);
+  if (header.alg !== "EdDSA") return { ok: false, reason: "alg" };
+  const jwk =
+    typeof header.kid === "string"
+      ? jwks.keys.find((k) => k.kid === header.kid)
+      : expected.lenientKid && jwks.keys.length === 1
+        ? jwks.keys[0]
+        : undefined;
+  if (!jwk) return { ok: false, reason: "kid" };
+  if (!signatureVerifies(token, jwk)) return { ok: false, reason: "signature" };
+  if (header.typ !== "karyl-service+jwt") return { ok: false, reason: "typ" };
+  const claims = decodeSegment(b);
+  if (claims.aud !== expected.aud) return { ok: false, reason: "aud" };
+  if (claims.iss !== expected.iss) return { ok: false, reason: "iss" };
+  if (typeof claims.exp !== "number" || claims.exp * 1000 <= (expected.now ?? Date.now())) {
+    return { ok: false, reason: "exp" };
+  }
+  return { ok: true, claims };
+}
+
 function verifyAsService(
   token: string,
   jwks: Jwks,
   expected: { aud: string; iss: string; now?: number },
 ): Record<string, unknown> | null {
-  const [h, b, s] = token.split(".");
-  const header = decodeSegment(h);
-  if (header.alg !== "EdDSA" || typeof header.kid !== "string") return null;
-  const jwk = jwks.keys.find((k) => k.kid === header.kid);
-  if (!jwk) return null;
-  const key = createPublicKey({ key: { ...jwk }, format: "jwk" });
-  if (!cryptoVerify(null, Buffer.from(`${h}.${b}`), key, Buffer.from(s, "base64url"))) {
-    return null;
-  }
-  const claims = decodeSegment(b);
-  if (claims.aud !== expected.aud || claims.iss !== expected.iss) return null;
-  if (typeof claims.exp !== "number" || claims.exp * 1000 <= (expected.now ?? Date.now())) {
-    return null;
-  }
-  return claims;
+  const result = checkAsService(token, jwks, expected);
+  return result.ok ? result.claims : null;
 }
 
 let web: FastifyInstance;
@@ -128,7 +162,7 @@ describe("GET /.well-known/jwks.json", () => {
           kty: "OKP",
           crv: "Ed25519",
           x: expect.any(String),
-          kid: String(active!.id),
+          kid: thumbprintOf(active!.publicKeyPem),
           alg: "EdDSA",
           use: "sig",
         },
@@ -161,7 +195,11 @@ describe("service tokens", () => {
     const { token, jti, expiresAt } = mintServiceToken(USER, "wiki", { now });
     const header = decodeSegment(token.split(".")[0]);
     const active = await getActiveJwtSigningKey();
-    expect(header).toEqual({ alg: "EdDSA", typ: "JWT", kid: String(active!.id) });
+    expect(header).toEqual({
+      alg: "EdDSA",
+      typ: "karyl-service+jwt",
+      kid: thumbprintOf(active!.publicKeyPem),
+    });
 
     const claims = verifyAsService(token, await fetchJwks(), { aud: "wiki", iss: publicBaseUrl() });
     const iat = Math.floor(now / 1000);
@@ -201,7 +239,7 @@ describe("service tokens", () => {
     await rotateJwtSigningKey();
     const newKid = jwtService.keyId();
     expect(newKid).not.toBe(oldKid);
-    expect(newKid).toBe(String((await getActiveJwtSigningKey())!.id));
+    expect(newKid).toBe(thumbprintOf((await getActiveJwtSigningKey())!.publicKeyPem));
 
     const jwks = await fetchJwks();
     expect(jwks.keys.map((k) => k.kid).sort()).toEqual([oldKid, newKid].sort());
@@ -247,7 +285,7 @@ describe("service tokens and login tokens do not cross", () => {
     expect(typeof res.json().accessToken).toBe("string");
   });
 
-  it("a login token does not pass a service's checks", async () => {
+  it("a login token fails a service's typ check, even when the JWKS has a single key", async () => {
     const { token } = jwtService.sign({
       purpose: "login",
       userId: USER.id,
@@ -255,6 +293,19 @@ describe("service tokens and login tokens do not cross", () => {
       channelId: "dm",
       messageId: "m1",
     });
-    expect(verifyAsService(token, await fetchJwks(), { aud: "wiki", iss: publicBaseUrl() })).toBeNull();
+    const jwks = await fetchJwks();
+    expect(jwks.keys).toHaveLength(1);
+    // Same key, so the signature alone would pass …
+    expect(signatureVerifies(token, jwks.keys[0])).toBe(true);
+    // … and a lenient key lookup finds it; the explicit typ refuses it.
+    expect(
+      checkAsService(token, jwks, { aud: "wiki", iss: publicBaseUrl(), lenientKid: true }),
+    ).toEqual({ ok: false, reason: "typ" });
+    expect(verifyAsService(token, jwks, { aud: "wiki", iss: publicBaseUrl() })).toBeNull();
+  });
+
+  it("the SDK's plugin-session verifier refuses a service token, even against the master key", () => {
+    const { token } = mintServiceToken(USER, "wiki");
+    expect(verifyPluginSession(token, jwtService.publicKeyPem())).toBeNull();
   });
 });
