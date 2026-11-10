@@ -139,15 +139,16 @@ const note = computed(() => {
                 />
             </div>
 
-            <!-- 服務列（#126）：比對在登入之前，鎖定，只改觸發 -->
+            <!-- 服務列（#126）：鎖定，只換觸發；訊息觸發比對在登入之前 -->
             <template v-if="items.services.length > 0">
                 <h3 class="group-title">{{ t('behaviors.workspace.services') }}</h3>
                 <div class="card-list" data-test="service-behaviors">
                     <ServiceBehaviorCard
                         v-for="s in items.services"
-                        :key="s.id"
+                        :key="s.service.id"
                         :behavior="s"
                         :expand="expandKey === itemKey(s)"
+                        :guild-names="guildNames"
                         :group-names="groupNames"
                         :group-use="groupUse"
                         @updated="emit('serviceUpdated', $event)"

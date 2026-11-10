@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { RouterLink } from 'vue-router';
 import { Icon } from '@iconify/vue';
 import { AppButton, Stack, useConfirm, useToastStore } from '@karyl-chan/ui';
+import { isStale } from '../behaviors/behavior-errors';
 import {
     createService,
     deleteService,
@@ -30,7 +31,9 @@ import {
  * in through karyl. Each has a name, an audience (the token's `aud`) and
  * a redirect URL; adding one also adds its Service Behavior — a bot DM
  * trigger on `!login-<audience>` — whose trigger (who may log in) is set on
- * the behaviors page. Removing a service removes that behavior too.
+ * the behaviors page. Removing a service removes that behavior too. Owner
+ * only (router meta and the API): whoever sets a redirect URL receives the
+ * tokens of everyone who logs in there.
  */
 
 const { t } = useI18n();
@@ -115,7 +118,14 @@ async function submitEdit(service: ServiceView) {
         services.value = services.value.map((s) => (s.id === saved.id ? saved : s));
         editingId.value = null;
     } catch (err) {
-        editErrors.value = serviceErrorsFromRefusal(err);
+        if (isStale(err)) {
+            // someone changed it since the list was loaded: show theirs, keep nothing stale
+            editingId.value = null;
+            toast.show(t('services.stale'), 'warn');
+            await load();
+        } else {
+            editErrors.value = serviceErrorsFromRefusal(err);
+        }
     } finally {
         editSaving.value = false;
     }
@@ -142,7 +152,9 @@ async function remove(service: ServiceView) {
 
 function triggerText(service: ServiceView): string {
     const trigger = service.trigger;
-    if (!trigger || !trigger.patternKind) return '—';
+    if (!trigger) return t('services.noTrigger');
+    if (trigger.kind === 'command') return `/${trigger.name}`;
+    if (!trigger.patternKind) return t('services.noTrigger');
     return t(`behaviors.card.pattern.${trigger.patternKind}`, { value: trigger.patternValue ?? '' });
 }
 </script>
@@ -168,7 +180,7 @@ function triggerText(service: ServiceView): string {
             <Stack gap="3">
                 <h2 class="panel-title">{{ t('services.addTitle') }}</h2>
                 <ServiceFields :draft="addDraft" :errors="addErrors.fields" @patch="addDraft = { ...addDraft, ...$event }" />
-                <p class="hint">{{ t('services.addHint', { trigger: `!login-${addDraft.audience.trim() || 'audience'}` }) }}</p>
+                <p class="hint">{{ t('services.addHint', { trigger: `!login-${addDraft.audience.trim() || t('services.field.audiencePlaceholder')}` }) }}</p>
                 <p v-if="addErrors.general" class="error" role="alert">{{ addErrors.general }}</p>
                 <footer class="footer">
                     <AppButton variant="secondary" @click="adding = false">{{ t('common.cancel') }}</AppButton>

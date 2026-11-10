@@ -1686,11 +1686,16 @@
             "tag": "服務登入：比對在後台登入之前，動作固定",
             "tagShort": "服務",
             "toggleProtected": "服務存在時，服務登入一律啟用",
-            "notice": "這個觸發用來登入服務：能觸發的人會收到一次性連結（120 秒）。這裡只能改比對方式與誰能用；服務的改名或刪除在服務頁。",
+            "notice": "這個觸發用來登入服務：能觸發的人會收到一次性連結（120 秒）。只能換觸發：與 bot 私訊的比對方式與誰能用，或一個指令；服務的改名或刪除在服務頁。",
             "manage": "管理服務",
             "action": "私下傳送 {name} 的登入連結（服務 token）給觸發的人",
             "audience": "Audience",
-            "redirectUrl": "導向網址"
+            "redirectUrl": "導向網址",
+            "ownerOnly": "只有 bot owner 能改服務的觸發：它決定誰拿得到這個服務的登入 token。",
+            "commandNote": "全域指令；回覆（登入連結）只有執行的人看得到。",
+            "patternRequired": "請輸入比對內容",
+            "commandName": "小寫英文、數字、- 與 _，最多 32 字",
+            "descriptionRequired": "請輸入指令說明"
         }
     },
     "services": {
@@ -1714,13 +1719,16 @@
             "audience": "Audience",
             "audienceHint": "token 的 aud：小寫英文、數字與 -",
             "redirectUrl": "導向網址",
-            "redirectUrlHint": "https；連結會加上 ?token=…"
+            "redirectUrlHint": "https；連結會加上 ?token=…",
+            "audiencePlaceholder": "audience"
         },
         "error": {
             "nameRequired": "請輸入服務名稱",
             "audience": "小寫英文、數字與 -，不能以 - 開頭或結尾",
             "https": "請輸入 https 網址"
-        }
+        },
+        "stale": "這個服務剛被別人改過，已重新載入清單。",
+        "noTrigger": "（無）"
     },
     "config": {
         "bot": {

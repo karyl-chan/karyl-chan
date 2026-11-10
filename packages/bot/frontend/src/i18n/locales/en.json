@@ -1686,11 +1686,16 @@
             "tag": "Service login: matched before the admin login, its action is fixed",
             "tagShort": "Service",
             "toggleProtected": "A service login is on while its service exists",
-            "notice": "This trigger logs people in to a service: whoever can trigger it gets a one-time link (120 seconds). Only the pattern and who may use it can be changed here; rename or remove the service on the services page.",
+            "notice": "This trigger logs people in to a service: whoever can trigger it gets a one-time link (120 seconds). Only the trigger can change — a bot DM pattern with who may use it, or a command; rename or remove the service on the services page.",
             "manage": "Manage services",
             "action": "Send a {name} login link (service token) to whoever triggered it",
             "audience": "Audience",
-            "redirectUrl": "Redirect URL"
+            "redirectUrl": "Redirect URL",
+            "ownerOnly": "Only a bot owner can change a service's trigger: it decides who receives the service's login tokens.",
+            "commandNote": "A global command; its reply (the login link) is only shown to whoever ran it.",
+            "patternRequired": "Enter a pattern",
+            "commandName": "Lower-case letters, digits, - and _, at most 32",
+            "descriptionRequired": "Describe the command"
         }
     },
     "services": {
@@ -1714,13 +1719,16 @@
             "audience": "Audience",
             "audienceHint": "The token's aud: lower-case letters, digits and -",
             "redirectUrl": "Redirect URL",
-            "redirectUrlHint": "https; the link adds ?token=…"
+            "redirectUrlHint": "https; the link adds ?token=…",
+            "audiencePlaceholder": "audience"
         },
         "error": {
             "nameRequired": "Give the service a name",
             "audience": "Lower-case letters, digits and -, not starting or ending with -",
             "https": "An https URL"
-        }
+        },
+        "stale": "Someone changed this service in the meantime; the list was reloaded.",
+        "noTrigger": "(none)"
     },
     "config": {
         "bot": {

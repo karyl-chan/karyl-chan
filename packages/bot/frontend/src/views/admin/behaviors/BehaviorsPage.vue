@@ -129,7 +129,7 @@ async function onSelect(section: BehaviorSection) {
             @updated="applyTrigger($event, mayDropDrafts)"
             @command-updated="applyCommand($event, mayDropDrafts)"
             @system-updated="applySystem($event, mayDropDrafts)"
-            @service-updated="applyService"
+            @service-updated="applyService($event, mayDropDrafts)"
             @deleted="load"
             @converted="showCreated($event, mayDropDrafts)"
             @add="adding = true"

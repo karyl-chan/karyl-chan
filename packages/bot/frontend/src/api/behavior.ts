@@ -142,13 +142,14 @@ export interface ServiceSummaryView {
 }
 
 /**
- * A Service Behavior (#126): a bot DM message trigger whose action — the
- * service's login — is fixed; only its trigger (pattern, audience) can be
- * edited, and it comes and goes with its service.
+ * A Service Behavior (#126): a bot DM message trigger, or the command
+ * whose root leaf it is, with the service whose login it runs. Its action
+ * is fixed; only its trigger switches (switchServiceTrigger), and it
+ * comes and goes with its service.
  */
-export interface ServiceBehaviorView extends MessageTriggerView {
+export type ServiceBehaviorView = (CommandView | MessageTriggerView) & {
   service: ServiceSummaryView;
-}
+};
 
 export interface BehaviorListView {
   /** The System Behavior (login), pinned at the top of its section. */
@@ -254,7 +255,8 @@ export type CommandPatch = Partial<CommandInput> & { ifUpdatedAt?: string };
  */
 export type MessageTriggerLocation = Exclude<BehaviorSection, "app">;
 
-function send(method: string, path: string, body?: unknown): Promise<Response> {
+/** A JSON request to the admin API (the services API uses it too). */
+export function send(method: string, path: string, body?: unknown): Promise<Response> {
   return authedFetch(path, {
     method,
     ...(body !== undefined
@@ -267,21 +269,6 @@ export async function createMessageTrigger(
   input: MessageTriggerInput,
 ): Promise<{ behavior: MessageTriggerView; secret?: string }> {
   return jsonOrThrow(await send("POST", "/api/behaviors", input));
-}
-
-/** A Service Behavior's trigger edit: anything else is refused (system_immutable). */
-export type ServiceTriggerPatch = Partial<
-  Pick<
-    MessageTriggerInput,
-    "patternKind" | "patternValue" | "audienceKind" | "audienceUserId" | "audienceGroupName"
-  >
-> & { ifUpdatedAt?: string };
-
-export async function updateServiceTrigger(
-  id: number,
-  patch: ServiceTriggerPatch,
-): Promise<{ behavior: ServiceBehaviorView }> {
-  return jsonOrThrow(await send("PATCH", `/api/behaviors/${id}`, patch));
 }
 
 export async function updateBehavior(
@@ -486,6 +473,39 @@ export async function switchLoginTrigger(
   input: LoginTriggerInput & { ifUpdatedAt?: string },
 ): Promise<{ system: BehaviorItemView; registration: RegistrationReport | null }> {
   return jsonOrThrow(await send("PUT", "/api/behaviors/system/login/trigger", input));
+}
+
+/**
+ * A Service Behavior's trigger (#126): a bot DM pattern with an audience,
+ * or a global command (no default member permissions).
+ */
+export type ServiceTriggerInput =
+  | {
+      kind: "message";
+      patternKind: BehaviorPatternKind;
+      patternValue: string;
+      audienceKind: BehaviorAudienceKind;
+      audienceUserId: string | null;
+      audienceGroupName: string | null;
+    }
+  | {
+      kind: "command";
+      name: string;
+      description: string;
+      integrationTypes: DiscordIntegrationType[];
+      contexts: DiscordContext[];
+    };
+
+/**
+ * PUT /api/services/:id/trigger (owner only) — the login's switch, for a
+ * service: the new trigger takes effect first, the old one goes after;
+ * `registration_failed` (502) changes nothing.
+ */
+export async function switchServiceTrigger(
+  serviceId: number,
+  input: ServiceTriggerInput & { ifUpdatedAt?: string },
+): Promise<{ behavior: ServiceBehaviorView; registration: RegistrationReport | null }> {
+  return jsonOrThrow(await send("PUT", `/api/services/${serviceId}/trigger`, input));
 }
 
 /**

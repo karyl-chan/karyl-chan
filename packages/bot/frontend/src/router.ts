@@ -91,13 +91,9 @@ const routes: RouteRecordRaw[] = [
     path: "/admin/services",
     name: "services",
     component: () => import("./views/admin/services/ServicesPage.vue"),
-    meta: {
-      requiresAuth: true,
-      requiresCapability: [
-        "admin",
-        "behavior.manage",
-      ] satisfies RouteCapability[],
-    },
+    // owner only, like the login's trigger: a service's redirect URL
+    // receives its users' tokens
+    meta: { requiresAuth: true, requiresOwner: true },
   },
   {
     path: "/admin/plugins",
@@ -155,7 +151,8 @@ router.beforeEach(async (to) => {
   }
 
   const required = to.meta.requiresCapability as RouteCapability[] | undefined;
-  if (!required || required.length === 0) return;
+  const ownerOnly = to.meta.requiresOwner === true;
+  if (!ownerOnly && (!required || required.length === 0)) return;
 
   // Lazily fetch the current user's capability set. The store is
   // refreshed on auth transitions in App.vue, but a cold deep-link
@@ -166,9 +163,10 @@ router.beforeEach(async (to) => {
   if (!currentUser.user && isAuthenticated.value) {
     await currentUser.refresh();
   }
+  if (ownerOnly) return currentUser.user?.isOwner === true ? undefined : { name: "dashboard" };
   const caps = currentUser.user?.capabilities ?? [];
 
-  const satisfied = required.some((req) => {
+  const satisfied = required!.some((req) => {
     if (req === "guild-any") {
       const access = accessibleGuildIds(caps);
       return access === "all" || access.size > 0;

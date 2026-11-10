@@ -40,7 +40,7 @@ function service(overrides: Partial<ServiceView> = {}): ServiceView {
         audience: 'nas',
         redirectUrl: 'https://nas.example/cb',
         behaviorId: 40,
-        trigger: { patternKind: 'regex', patternValue: '^!login-nas$', audienceKind: 'all' },
+        trigger: { kind: 'message', patternKind: 'regex', patternValue: '^!login-nas$', audienceKind: 'all' },
         createdAt: '2026-11-10T00:00:00.000Z',
         updatedAt: '2026-11-10T00:00:00.000Z',
         ...overrides,

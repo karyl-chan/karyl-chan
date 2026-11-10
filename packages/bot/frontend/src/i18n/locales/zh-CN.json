@@ -1686,11 +1686,16 @@
             "tag": "服务登录：匹配在后台登录之前，动作固定",
             "tagShort": "服务",
             "toggleProtected": "服务存在时，服务登录始终启用",
-            "notice": "这个触发用来登录服务：能触发的人会收到一次性链接（120 秒）。这里只能改匹配方式与谁能用；服务的改名或删除在服务页。",
+            "notice": "这个触发用来登录服务：能触发的人会收到一次性链接（120 秒）。只能换触发：与 bot 私信的匹配方式与谁能用，或一个指令；服务的改名或删除在服务页。",
             "manage": "管理服务",
             "action": "私下发送 {name} 的登录链接（服务 token）给触发的人",
             "audience": "Audience",
-            "redirectUrl": "跳转网址"
+            "redirectUrl": "跳转网址",
+            "ownerOnly": "只有 bot owner 能改服务的触发：它决定谁拿得到这个服务的登录 token。",
+            "commandNote": "全局指令；回复（登录链接）只有执行的人看得到。",
+            "patternRequired": "请输入匹配内容",
+            "commandName": "小写英文、数字、- 与 _，最多 32 字",
+            "descriptionRequired": "请输入指令说明"
         }
     },
     "services": {
@@ -1714,13 +1719,16 @@
             "audience": "Audience",
             "audienceHint": "token 的 aud：小写英文、数字与 -",
             "redirectUrl": "跳转网址",
-            "redirectUrlHint": "https；链接会加上 ?token=…"
+            "redirectUrlHint": "https；链接会加上 ?token=…",
+            "audiencePlaceholder": "audience"
         },
         "error": {
             "nameRequired": "请输入服务名称",
             "audience": "小写英文、数字与 -，不能以 - 开头或结尾",
             "https": "请输入 https 网址"
-        }
+        },
+        "stale": "这个服务刚被别人改过，已重新加载列表。",
+        "noTrigger": "（无）"
     },
     "config": {
         "bot": {

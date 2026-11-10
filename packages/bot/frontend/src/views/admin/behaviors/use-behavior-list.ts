@@ -104,14 +104,20 @@ export function useBehaviorList() {
         if (before && before.section !== system.section) await follow(system, mayLeave);
     }
 
-    /** A Service Behavior's trigger was saved: take the server's version (it never moves: always a bot DM). */
-    function applyService(behavior: ServiceBehaviorView): void {
+    /**
+     * A Service Behavior's trigger was switched: take the server's version
+     * (by service — a switch to a command changes the item's id); follow
+     * it when the switch moved it to another section.
+     */
+    async function applyService(behavior: ServiceBehaviorView, mayLeave: MayLeave = allowLeave): Promise<void> {
         const current = view.value;
         if (!current) return;
+        const before = current.services.find((s) => s.service.id === behavior.service.id);
         view.value = {
             ...current,
-            services: current.services.map((s) => (s.id === behavior.id ? behavior : s)),
+            services: current.services.map((s) => (s.service.id === behavior.service.id ? behavior : s)),
         };
+        if (before && before.section !== behavior.section) await follow(behavior, mayLeave);
     }
 
     /** An item was created (or converted to the other kind, #172): reload so it is listed, then open it where it lives (#104). */
@@ -149,7 +155,10 @@ export function useBehaviorList() {
     /** Audience Groups in use, with how many message triggers (Service Behaviors included) use each. */
     const groupUse = computed(() => {
         const use = new Map<string, number>();
-        const triggers = [...(view.value?.messageTriggers ?? []), ...(view.value?.services ?? [])];
+        const triggers = [
+            ...(view.value?.messageTriggers ?? []),
+            ...(view.value?.services ?? []).filter((s): s is MessageTriggerView & ServiceBehaviorView => s.kind === 'message'),
+        ];
         for (const m of triggers) {
             if (m.audienceKind === 'group' && m.audienceGroupName) {
                 use.set(m.audienceGroupName, (use.get(m.audienceGroupName) ?? 0) + 1);
