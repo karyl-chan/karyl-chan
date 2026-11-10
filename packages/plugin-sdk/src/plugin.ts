@@ -26,8 +26,7 @@ import {
 } from "./lifecycle.js";
 import {
   BEHAVIOR_ACTION_KEY_PATTERN,
-  MAX_BEHAVIOR_ACTION_DESCRIPTION,
-  MAX_BEHAVIOR_ACTION_NAME,
+  behaviorActionTextProblem,
 } from "@karyl-chan/plugin-wire";
 
 /**
@@ -242,13 +241,6 @@ export interface PluginComponentDefinition {
 }
 
 /**
- * Plugin 自訂 Modal（彈窗表單）handler 定義。
- *
- * Plugin 透過 `ctx.sendModal(modal)` 從 command handler 開 modal；使用者
- * 送出後 bot 收到 `MODAL_SUBMIT` interaction，依 `custom_id` 派送到此
- * 對應 id 的 handler。Modal `custom_id` 形如 `kc:<pluginKey>:<id>[:<tail>]`。
- */
-/**
  * A behavior action (#127): something this plugin does when a behavior
  * fires. The plugin declares it (`behavior_actions` in the manifest); an
  * admin binds it to any trigger — a command or a message — in the bot's
@@ -268,6 +260,13 @@ export interface PluginBehaviorActionDefinition {
   handler: (ctx: BehaviorActionContext) => BehaviorActionResult | Promise<BehaviorActionResult>;
 }
 
+/**
+ * Plugin 自訂 Modal（彈窗表單）handler 定義。
+ *
+ * Plugin 透過 `ctx.sendModal(modal)` 從 command handler 開 modal；使用者
+ * 送出後 bot 收到 `MODAL_SUBMIT` interaction，依 `custom_id` 派送到此
+ * 對應 id 的 handler。Modal `custom_id` 形如 `kc:<pluginKey>:<id>[:<tail>]`。
+ */
 export interface PluginModalDefinition {
   /** Modal id（plugin 內唯一），同 component id 規則。 */
   id: string;
@@ -584,15 +583,10 @@ export function definePluginBehaviorAction(
       `definePluginBehaviorAction: key "${String(def.key)}" must match ${BEHAVIOR_ACTION_KEY_PATTERN.source} (V-09)`,
     );
   }
-  for (const [field, max] of [
-    ["name", MAX_BEHAVIOR_ACTION_NAME],
-    ["description", MAX_BEHAVIOR_ACTION_DESCRIPTION],
-  ] as const) {
-    const value = def[field];
-    if (typeof value !== "string" || value.trim() === "" || value.length > max) {
-      throw new Error(
-        `definePluginBehaviorAction: '${def.key}'.${field} must be a non-empty string of at most ${max} characters (V-10)`,
-      );
+  for (const field of ["name", "description"] as const) {
+    const problem = behaviorActionTextProblem(field, def[field]);
+    if (problem) {
+      throw new Error(`definePluginBehaviorAction: '${def.key}'.${field} ${problem} (V-10)`);
     }
   }
   if (typeof def.handler !== "function") {

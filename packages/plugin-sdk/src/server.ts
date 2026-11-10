@@ -353,6 +353,11 @@ export async function callBotRpc(
   token: string,
   path: string,
   body: unknown,
+  /**
+   * What to add to a refusal's message for this kind of call, by HTTP
+   * status; unset: the plugin-token hints (rpcMethodsUsed, KV quota).
+   */
+  hintFor?: (status: number) => string,
 ): Promise<unknown> {
   const serialized = JSON.stringify(body ?? {});
   let lastNetworkErr: unknown = null;
@@ -415,8 +420,9 @@ export async function callBotRpc(
       "bot rpc call failed",
     );
     const reason = classifyHttpStatus(res.status);
-    const hint =
-      reason === "forbidden"
+    const hint = hintFor
+      ? hintFor(res.status)
+      : reason === "forbidden"
         ? " (check manifest rpcMethodsUsed / per-guild feature enablement)"
         : reason === "quota_exceeded"
           ? " (per-guild KV quota would be exceeded)"
@@ -463,6 +469,24 @@ export async function callBotRpc(
     "network",
     `bot rpc network error after ${MAX_RPC_RETRIES + 1} attempts: ${msg}`,
   );
+}
+
+/**
+ * The bot RPC paths a behavior action answers its run on, with the
+ * run's callback token (#127). Bound to
+ * CONTRACT_FIXTURES.rpc.behaviorActionPathsCalledBySdk by a test.
+ */
+export const BEHAVIOR_ACTION_RPC_PATHS = {
+  reply: "/api/plugin/interactions.respond",
+  followup: "/api/plugin/interactions.followup",
+} as const;
+
+/** Why the bot refused a behavior action's callback-token call. */
+function callbackHint(status: number): string {
+  if (status === 401) return " (the run's callback token expired — 15 minutes — or its run failed)";
+  if (status === 403) return " (a callback token only answers its own run: interactions.respond / followup / edit_followup / delete_followup)";
+  if (status === 429) return " (callback calls are limited per run)";
+  return "";
 }
 
 async function respondToInteraction(
@@ -1227,14 +1251,23 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
 
       // the run's own answers: the callback token, never the plugin token
       let replied = false;
-      const answer = (path: string, body: BehaviorActionReply) =>
-        callBotRpc(server.log, opts.botUrl, callbackToken, path, body);
+      // a refused answer is not the handler's bug: no fallback line
+      // (it would be refused too) and not logged as a throw
+      let answerFailed = false;
+      const answer = async (path: string, body: BehaviorActionReply) => {
+        try {
+          return await callBotRpc(server.log, opts.botUrl, callbackToken, path, body, callbackHint);
+        } catch (err) {
+          answerFailed = true;
+          throw err;
+        }
+      };
       const ctxReply = async (body: BehaviorActionReply): Promise<void> => {
-        await answer("/api/plugin/interactions.respond", body);
+        await answer(BEHAVIOR_ACTION_RPC_PATHS.reply, body);
         replied = true;
       };
       const ctxFollowup = async (body: BehaviorActionReply): Promise<string | null> => {
-        const res = (await answer("/api/plugin/interactions.followup", body)) as { id?: unknown };
+        const res = (await answer(BEHAVIOR_ACTION_RPC_PATHS.followup, body)) as { id?: unknown };
         return typeof res?.id === "string" ? res.id : null;
       };
       // anything else: the plugin's own token and scopes
@@ -1277,6 +1310,10 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
         const result = await handler(ctx);
         if (result && typeof result === "object") await ctxReply(result);
       } catch (err) {
+        if (answerFailed) {
+          server.log.warn({ err, actionKey }, "behavior action reply refused by the bot");
+          return;
+        }
         server.log.error({ err, actionKey }, "behavior action handler threw");
         // the user would otherwise wait on "thinking…" until it expires
         if (!replied) {

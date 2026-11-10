@@ -476,11 +476,15 @@ A reply is the behavior reply model, the same as a webhook's: `content`,
 `embeds`, link-button `components`, `flags`, and `ephemeral` for who sees
 it (else the behavior's stored visibility, else the trigger's default).
 Returning a reply from the handler sends it with `reply`. If the handler
-throws before replying, the user gets a generic private line.
+throws before replying, the user gets a generic private line. A command
+handler that neither replies nor throws leaves the user looking at
+"thinking…" until the token expires, 15 minutes later — always answer.
+A reply the bot refuses (an expired token, say) is only logged.
 
-`reply` and `followup` do not use your plugin token: they carry the run's
-**callback token** from `ctx.payload.callback`, which the bot lets answer
-that one run for 15 minutes and nothing else. They call the bot at your
+Only `reply` and `followup` use the run's **callback token** (from
+`ctx.payload.callback`), which the bot lets answer that one run for 15
+minutes and nothing else. `botRpc` and the typed facades use your plugin
+token and need your `rpcMethodsUsed`, as anywhere else. They call the bot at your
 plugin's usual bot URL; `callback.api_base` is for webhook receivers
 outside the bot's network.
 

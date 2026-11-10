@@ -22,7 +22,7 @@ import { buildManifest } from "../src/manifest-builder.js";
 import { definePluginBehaviorAction, type PluginConfig } from "../src/plugin.js";
 import type { PluginBehaviorActionDefinition } from "../src/plugin.js";
 import type { BehaviorActionContext } from "../src/types.js";
-import { createPluginServer } from "../src/server.js";
+import { BEHAVIOR_ACTION_RPC_PATHS, createPluginServer } from "../src/server.js";
 import { NONCE_HEADER, SIGNATURE_HEADER, TIMESTAMP_HEADER, generateNonce, sign } from "../src/hmac.js";
 
 const SECRET = "dispatch-secret";
@@ -322,6 +322,43 @@ describe("POST /behavior-actions/:actionKey", () => {
       assert.equal(calls[0]!.authorization, `Bearer ${CALLBACK_TOKEN}`);
       assert.equal(calls[0]!.body.ephemeral, true);
       assert.doesNotMatch(String(calls[0]!.body.content), /boom/);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("calls exactly the paths the contract lists for behavior actions", () => {
+    assert.deepEqual(
+      Object.values(BEHAVIOR_ACTION_RPC_PATHS).sort(),
+      [...CONTRACT_FIXTURES.rpc.behaviorActionPathsCalledBySdk].sort(),
+    );
+  });
+
+  it("a refused reply is logged as such: no fallback line, not a handler error", async () => {
+    let threw: unknown = null;
+    const server = serverWith([
+      action({
+        handler: async (ctx) => {
+          try {
+            await ctx.reply({ content: "too late" });
+          } catch (err) {
+            threw = err;
+            throw err;
+          }
+        },
+      }),
+    ]);
+    (globalThis as unknown as { fetch: typeof fetch }).fetch = (async (url: string | URL, init?: RequestInit) => {
+      calls.push({ path: new URL(String(url)).pathname, authorization: null, body: JSON.parse(String(init?.body ?? "{}")) });
+      return new Response("plugin token invalid or expired", { status: 401 });
+    }) as typeof fetch;
+    try {
+      await post(server, "/behavior-actions/weather", commandPayload());
+      for (let i = 0; i < 50 && threw === null; i++) await new Promise((r) => setTimeout(r, 10));
+      await new Promise((r) => setTimeout(r, 30));
+      assert.match(String(threw), /callback token expired/);
+      // the refused reply only — no fallback attempt after it
+      assert.equal(calls.length, 1);
     } finally {
       await server.close();
     }
