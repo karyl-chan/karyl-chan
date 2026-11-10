@@ -3,7 +3,8 @@
 A **behavior** is one trigger bound to one action
 ([ADR 0003](../adr/0003-behavior-trigger-action-split.md)): when a user
 runs one of the bot's commands, or sends a message that matches a
-pattern, the bot calls a webhook and shows its answer.
+pattern, the bot calls a webhook and shows its answer — or hands the run
+to an action an installed plugin declares.
 
 This page is the admin's and operator's view. If you are writing the
 service a webhook calls, read the
@@ -20,6 +21,7 @@ defined in the bot's [CONTEXT.md](../../CONTEXT.md#behaviors).
 - [Converting a trigger](#converting-a-trigger)
 - [The system login](#the-system-login)
 - [Webhook actions](#webhook-actions)
+- [Plugin actions](#plugin-actions)
 - [Who sees the reply](#who-sees-the-reply)
 - [Admin UI](#admin-ui)
 - [Write API](#write-api)
@@ -31,7 +33,7 @@ defined in the bot's [CONTEXT.md](../../CONTEXT.md#behaviors).
 | Part | What it is |
 |------|------------|
 | **Trigger** | How the behavior starts. A **command trigger** is one leaf of a Discord command; a **message trigger** matches messages the bot can read. |
-| **Action** | What the behavior does. Admins choose a **webhook**. The system login runs a login action of the bot's own, which is not on offer to admins (stored as `actionSource: builtin`). Plugin actions are planned (phase 2), not available yet. |
+| **Action** | What the behavior does. Admins choose a **webhook** or a **[plugin action](#plugin-actions)** — one an installed plugin declares in its manifest. The system login runs a login action of the bot's own, which is not on offer to admins (stored as `actionSource: builtin`). |
 | **Reply** | The action's answer, shown to the user: text, embeds and link buttons. One reply model serves every trigger. |
 
 A behavior has a title (at most 100 characters), an optional admin note
@@ -415,7 +417,9 @@ these codes:
 | `defer_failed` | Discord refused a command's deferral (the interaction had expired): the webhook was never called, and the user sees "interaction failed". It counts as a failure in the statistics too, and is warned about once per leaf in the event log. |
 | `callback_invalid` | A callback call (#113) the bot refused: a component that is not an https link button, nothing to show, or a `message_id` the token did not send. A row of its own, not counted in the statistics. |
 | `callback_failed` | Discord refused a callback call's reply. A row of its own, not counted in the statistics. |
-| `attachment_failed` | The reply's [attachments](behavior-webhook-protocol.md#attachments) could not be downloaded from the webhook's origin: more than 5, a refused path or name, over 8 MiB (25 MiB together), a redirect, a non-2xx answer, or no answer in time (including a wait for a download turn). The user gets the failure line, never the reply without its files (by the synchronous answer or a callback call). |
+| `attachment_failed` | The reply's [attachments](behavior-webhook-protocol.md#attachments) could not be downloaded from the webhook's origin (a plugin action's: the plugin's): more than 5, a refused path or name, over 8 MiB (25 MiB together), a redirect, a non-2xx answer, or no answer in time (including a wait for a download turn). The user gets the failure line, never the reply without its files (by the synchronous answer or a callback call). |
+| `plugin_unavailable` | A [plugin action](#plugin-actions)'s plugin could not take the run: not installed, disabled or inactive, not ready, without a dispatch key, or its address refused. Nothing was dispatched; the user gets the failure line. |
+| `action_undeclared` | The plugin's current manifest no longer declares the bound [plugin action](#plugin-actions). Nothing was dispatched; the user gets the failure line. |
 
 A row never holds the webhook URL, a secret, the payload, the message or
 the reply, a user id or a message id. Each behavior keeps its last 20
@@ -449,6 +453,52 @@ deleted command leaf's age out, so a refused command write can restore
 the leaf with its log), listed on the card (`GET /api/behaviors/:id/dm-log`,
 the last 50). Unlike the delivery log, it holds user ids: who a behavior
 DMed is what it answers. It never holds the message.
+
+## Plugin actions
+
+A plugin may declare **behavior actions** in its manifest
+(`behavior_actions: [{ key, name, description }]`; with the SDK,
+`definePluginBehaviorAction`). An admin binds one to any behavior — a
+command leaf or a message trigger — by picking the plugin and the action
+in the action form (「動作來源」 → Plugin 動作). The binding has no
+settings of its own: a command's options, a message's text and captures
+reach the plugin as they are.
+
+When the behavior fires, the bot:
+
+1. checks the plugin can take the run — installed, enabled and active,
+   ready, with a dispatch key — and that its **current** manifest still
+   declares the action. If not, nothing is sent: the user gets the
+   failure line and the delivery logs `plugin_unavailable` or
+   `action_undeclared`.
+2. defers a command (the user sees "thinking…"), as for a webhook.
+3. issues the run's [callback token](behavior-webhook-protocol.md#answering-later)
+   and sends a signed Plugin Dispatch of kind `behavior_action` to the
+   plugin's `endpoints.behavior_action` (default
+   `/behavior-actions/{action_key}`): the trigger's webhook `_meta`, plus
+   `action_key` and `callback`
+   ([protocol](behavior-webhook-protocol.md#plugin-actions)).
+4. records an ok delivery marked deferred once the plugin accepts (2xx);
+   a message trigger shows typing. The plugin replies with the token,
+   like a webhook that deferred: the same reply model, visibility rules,
+   attachments (downloaded from the plugin's registered origin) and
+   direct messages. A dispatch the plugin refuses or does not answer
+   fails the run (`http_error` / `request_failed`), revokes the token and
+   shows the failure line.
+
+**The binding is the authorization.** A plugin action runs wherever its
+trigger fires: no Feature Reach or Guild Reach applies, unlike a
+plugin's own commands and buttons
+([ADR 0003 addendum](../adr/0003-behavior-trigger-action-split.md#addendum-2026-11-10-plugin-action-dispatch)).
+Who can fire it is the trigger's business, as for a webhook.
+
+On save, the binding must name an action the plugin's current manifest
+declares (`400 validation_failed` on `pluginAction.pluginKey` /
+`pluginAction.actionKey` otherwise). A disabled or offline plugin's
+actions can still be bound — the runs fail until it is back — and the
+admin UI says so. Bindings are keyed by the plugin's key, so they survive
+a plugin re-registering or being reinstalled. A plugin action has no test
+webhook.
 
 ### Webhook targets
 
@@ -549,6 +599,11 @@ grant: per-section or per-behavior capabilities do not exist.
   lost or changed, and nothing changes before it is confirmed. The
   system login's card uses the same tag for its
   [trigger switch](#changing-the-logins-trigger).
+- A behavior's action form switches between a webhook and a
+  [plugin action](#plugin-actions); the plugin side lists the installed
+  plugins' declared actions, and flags a disabled or offline plugin and
+  a binding its plugin no longer declares. Saving the other kind
+  converts the behavior.
 - Forms are checked against the write API's own schemas
   (`GET /api/behaviors/schema`), so the UI and the API agree.
 
@@ -563,8 +618,9 @@ silently dropped.
 |-------|------|
 | `GET /api/behaviors` | `{ system, commands, messageTriggers }`, each with its derived `section`, its statistics and its `updatedAt`. Secrets appear only as `secretSet`. |
 | `GET /api/behaviors/schema` | The write routes' JSON schemas. |
-| `POST /api/behaviors` | Create a message trigger with its webhook. |
-| `PATCH /api/behaviors/:id` | Edit a message trigger or a command leaf. |
+| `GET /api/behaviors/plugin-actions` | `{ plugins }`: each installed plugin whose manifest declares [behavior actions](#plugin-actions) — `pluginKey`, `pluginName`, `enabled`, `status`, `actions: [{ key, name, description }]`. |
+| `POST /api/behaviors` | Create a message trigger with its action. |
+| `PATCH /api/behaviors/:id` | Edit a message trigger or a command leaf; naming the other kind of action converts it. |
 | `DELETE /api/behaviors/:id` | Delete a message trigger or a command leaf. |
 | `PUT /api/behaviors/reorder` | `{ location, ids }`: the full new order of one location's message triggers (`bot_dm`, `guild:all`, `guild:<id>`, `channel:<guildId>:<channelId>`). |
 | `POST /api/behaviors/:id/test` | Test-fire the saved webhook action. |
@@ -580,6 +636,13 @@ silently dropped.
 | `PUT /api/behaviors/system/login/trigger` | Change the system login's trigger (owner only). |
 | `GET` / `PUT /api/behavior-groups/:groupName/members` | Read or replace an audience group's members (at most 1000). |
 
+- **Actions:** a body that sets an action gives `webhook: { url, authMode? }`
+  or `pluginAction: { pluginKey, actionKey }` — one of them (a create
+  needs one; neither or both is `400 validation_failed`). In a `PATCH`,
+  the other kind replaces the stored action: its row goes and
+  `actionSource` follows; a webhook given after a plugin action has no
+  secret yet, so turning authentication on issues one. Reads carry
+  `actionSource`, `webhook` and `pluginAction` (null unless bound).
 - **Errors** have one shape, `{ error: { code, message, field?, details? } }`,
   with `code` one of `validation_failed` (400), `not_found` (404),
   `name_conflict`, `invalid_tree`, `system_immutable` (409) and
@@ -600,7 +663,9 @@ silently dropped.
   `behavior.command.create` / `update` / `delete` / `convert` / `resync`,
   `behavior.group_members.replace`, `behavior.system.trigger`,
   `behavior.trigger.convert`), never with
-  a secret or a webhook URL (a short URL fingerprint instead).
+  a secret or a webhook URL (a short URL fingerprint instead). A plugin
+  action is recorded as its `pluginAction`; a change of source also as
+  `actionSource: { from, to }`.
 - **Secrets** generated by a write come back once, as `secret` (a command
   create returns one per leaf).
 
@@ -609,11 +674,12 @@ silently dropped.
 | Table | Purpose |
 |-------|---------|
 | `behavior_commands` | A command: name, description, registration target, install types, contexts, default member permissions, `isSystem` (the login's command). |
-| `behavior_definitions` | A behavior: title, note, on/off, position, its trigger (command leaf or message trigger fields), action source (`webhook`, or `builtin` for the system login, keyed by `systemKey`) and reply visibility. |
+| `behavior_definitions` | A behavior: title, note, on/off, position, its trigger (command leaf or message trigger fields), action source (`webhook`, `plugin`, or `builtin` for the system login, keyed by `systemKey`) and reply visibility. |
 | `behavior_webhook_actions` | A behavior's webhook: URL and secret (encrypted), auth mode, the previous secret and its expiry during a rotation. |
+| `behavior_plugin_actions` | A behavior's plugin action: `pluginKey` and `actionKey`. |
 | `behavior_group_members` | Audience group members, by group name. |
 | `behavior_stats` | Per-behavior statistics. |
-| `behavior_deliveries` | The delivery log: one row per webhook delivery, the last 20 per behavior for at most 7 days. |
+| `behavior_deliveries` | The delivery log: one row per webhook delivery or plugin action dispatch, the last 20 per behavior for at most 7 days. |
 
 The runtime reads all of this from an in-memory snapshot, rebuilt after
 every write (and at most 30 seconds old for writes from another process).
@@ -624,7 +690,7 @@ Schema changes and the 2.0 upgrade are in
 
 | File | Purpose |
 |------|---------|
-| `src/modules/behavior/models/` | The five tables. |
+| `src/modules/behavior/models/` | The tables. |
 | `src/modules/behavior/behavior-catalog.ts` | The in-memory snapshot the runtime reads. |
 | `src/modules/behavior/behavior-section.ts` | The section rule. |
 | `src/modules/behavior/behavior-routes.ts` | Mounts every route; list, schema, test-fire, group members. |
@@ -632,13 +698,15 @@ Schema changes and the 2.0 upgrade are in
 | `src/modules/behavior/behavior-command-routes.ts`, `command-leaf-writes.ts`, `command-tree-rules.ts`, `command-registration-sync.ts` | Command writes, Discord's rules, registration. |
 | `src/modules/behavior/message-trigger-reorder.ts` | Reorder. |
 | `src/modules/behavior/behavior-trigger-convert.ts`, `command-register-first.ts` | Converting a behavior between a message trigger and a command leaf; the register-first flow it shares with the login's trigger switch. |
-| `src/modules/behavior/webhook-action-input.ts`, `webhook-secret-rotate.ts` | Webhook intake and rotation. |
+| `src/modules/behavior/behavior-action-input.ts`, `webhook-action-input.ts`, `webhook-secret-rotate.ts` | Action intake (webhook XOR plugin action), webhook intake and rotation. |
+| `src/modules/plugin-system/plugin-behavior-actions.ts` | The installed plugins' declared behavior actions (picker, save-time check). |
 | `src/modules/behavior/system-seed.service.ts`, `system-login-trigger.ts`, `system-login-trigger-route.ts`, `login-trigger-hint-route.ts` | The system login. |
 | `src/modules/behavior/behavior-trigger.ts`, `regex-trigger-boot-check.ts`, `src/utils/linear-regex.ts` | Pattern matching; the linear-time regex engine and its startup check. |
 | `src/modules/command-system/behavior-rate-limits.ts` | Rate limits. |
 | `src/modules/command-system/interaction-dispatcher.service.ts` | Runs command triggers. |
 | `src/modules/command-system/message-trigger-matcher.service.ts` | Runs message triggers. |
 | `src/modules/command-system/webhook-action.ts`, `webhook-forwarder.service.ts` | Calls the webhook, signs and verifies. |
+| `src/modules/command-system/plugin-action.ts`, `src/modules/plugin-system/plugin-dispatch.service.ts` | Runs a plugin action: the `behavior_action` Plugin Dispatch. |
 | `src/modules/command-system/behavior-reply.ts`, `reply-renderer.ts` | The reply model and its delivery. |
 | `src/modules/command-system/reconcile.service.ts` | Registers commands with Discord. |
 | `frontend/src/views/admin/behaviors/` | Admin UI. |

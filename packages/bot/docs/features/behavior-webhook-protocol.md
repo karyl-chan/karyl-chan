@@ -28,6 +28,7 @@ wiring examples are not tested.
 - [Secret rotation](#secret-rotation)
 - [The reply (contract v1)](#the-reply-contract-v1)
 - [Answering later](#answering-later)
+- [Plugin actions](#plugin-actions)
 - [Failures](#failures)
 - [Reference receiver](#reference-receiver)
 - [Changes in bot 2.0.0](#changes-in-bot-200)
@@ -526,9 +527,47 @@ and an empty one (`""`, `[]`) counts as left out.
   to the author as a DM) is a failed delivery of the behavior, and so is
   a call whose [attachments](#attachments) the bot can't get
   (`attachment_failed`, `400`, nothing shown). Attachments come from the
-  run's webhook URL origin, as for the synchronous answer. A call that
+  run's webhook URL origin, as for the synchronous answer (a
+  [plugin action](#plugin-actions)'s from the plugin's). A call that
   works is not logged.
 - The token lives in the bot's memory: after a restart it is unknown.
+
+## Plugin actions
+
+A behavior's action may be a **plugin action** instead of a webhook: an
+action a plugin declares in its manifest (`behavior_actions`), bound by
+an admin ([behaviors.md](behaviors.md#plugin-actions)). The plugin is
+not a webhook receiver — it gets a Plugin Dispatch — but it answers the
+run exactly as a receiver answers later:
+
+- The bot `POST`s to the plugin's `endpoints.behavior_action` (default
+  `/behavior-actions/{action_key}`), signed with the plugin's dispatch
+  key like every Plugin Dispatch (not with a webhook secret). The body is
+  the trigger's [`_meta`](#the-request) at the top level — `behavior_id`,
+  `user`, `channel_id`, `guild_id`, `attachments`, and a command's
+  `options` or a message's `captures` — plus `action_key` and `callback`
+  (the run's callback token, as above). It carries no `content`,
+  `username` or `avatar_url`, and never the Discord interaction token.
+- The plugin answers `2xx` at once; the body is not read. A command is
+  already deferred ("thinking…"), a message trigger shows typing, and
+  the delivery is ok and marked *deferred*.
+- It replies with `Authorization: Bearer <callback.token>` on
+  `interactions.respond` / `followup` / `edit_followup` /
+  `delete_followup`, under every rule of
+  [answering later](#answering-later). A reply's attachments are
+  downloaded from the **plugin's registered URL's origin**.
+- A dispatch the plugin refuses (non-2xx) or does not answer in time
+  fails the run: the user gets the failure line and the token is
+  revoked. A plugin that is offline, or that no longer declares the
+  action, gets nothing at all (`plugin_unavailable`,
+  `action_undeclared` in the delivery log).
+- No Feature or Guild Reach applies: the admin's binding is the
+  authorization.
+
+With the SDK, declare one with `definePluginBehaviorAction`; its
+`ctx.reply` / `ctx.followup` use the callback token for you
+([SDK README](../../../plugin-sdk/README.md#behavior-actions)). The
+dispatch's shape is `CONTRACT_FIXTURES.dispatchEnvelope.payloads.behavior_action`.
 
 ## Failures
 
