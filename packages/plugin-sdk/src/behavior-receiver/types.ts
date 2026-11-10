@@ -36,6 +36,7 @@ export interface MessageTriggerMeta {
   attachments: BehaviorWebhookAttachment[];
   /** A regex trigger's groups, group 1 first (null: took no part); [] otherwise. */
   captures: (string | null)[];
+  callback: BehaviorCallback;
 }
 
 /** One `_meta.options` entry. `type` is Discord's numeric option type. */
@@ -46,14 +47,14 @@ export interface CommandTriggerOption {
 }
 
 /**
- * `_meta.callback`: this run's callback token. Send it as
+ * `_meta.callback` (both triggers): this run's callback token. Send it as
  * `Authorization: Bearer <token>` to `<api_base>/api/plugin/interactions.respond`,
  * `.followup`, `.edit_followup` or `.delete_followup` to answer later
  * (after `{ defer: true }`, or to follow up). Only this run's reply.
  */
 export interface BehaviorCallback {
   token: string;
-  /** ISO 8601; 15 minutes after the run. */
+  /** ISO 8601; 15 minutes after the command was used or the message sent. */
   expires_at: string;
   /** The bot's public base URL. */
   api_base: string;
@@ -144,8 +145,9 @@ export interface BehaviorReply {
   /** Only SuppressEmbeds (4) and SuppressNotifications (4096) are kept. */
   flags?: number;
   /**
-   * "Answer later": the command keeps its "thinking…" placeholder and you
-   * reply with `_meta.callback`. The other fields are not shown.
+   * "Answer later": a command keeps its "thinking…" placeholder, a message
+   * trigger shows typing, and you reply with `_meta.callback`. The other
+   * fields are not shown.
    */
   defer?: true;
 }

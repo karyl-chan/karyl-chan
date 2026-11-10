@@ -41,6 +41,12 @@ const attachment: Required<BehaviorWebhookAttachment> = {
   size: 1,
 };
 
+const callback: Required<BehaviorCallback> = {
+  token: "t",
+  expires_at: "2026-11-10T00:15:00.000Z",
+  api_base: "https://karyl.example",
+};
+
 const messageMeta: Required<MessageTriggerMeta> = {
   user,
   message_id: "3",
@@ -49,12 +55,7 @@ const messageMeta: Required<MessageTriggerMeta> = {
   behavior_id: 5,
   attachments: [attachment],
   captures: [],
-};
-
-const callback: Required<BehaviorCallback> = {
-  token: "t",
-  expires_at: "2026-11-10T00:15:00.000Z",
-  api_base: "https://karyl.example",
+  callback,
 };
 
 const commandMeta: Required<CommandTriggerMeta> = {
