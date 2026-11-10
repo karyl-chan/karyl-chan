@@ -23,7 +23,7 @@ export type BehaviorSection =
   | `guild:${string}`
   | `channel:${string}:${string}`;
 
-export type BehaviorActionSource = "builtin" | "webhook";
+export type BehaviorActionSource = "builtin" | "webhook" | "service";
 export type BehaviorMessageSurface = "bot_dm" | "guild";
 export type BehaviorPatternKind = "startswith" | "endswith" | "regex";
 export type BehaviorAudienceKind = "all" | "user" | "group";
@@ -133,9 +133,28 @@ export interface MessageTriggerView extends BehaviorViewBase {
 
 export type BehaviorItemView = CommandView | MessageTriggerView;
 
+/** What a Service Behavior shows of its service (services.ts has the full view). */
+export interface ServiceSummaryView {
+  id: number;
+  name: string;
+  audience: string;
+  redirectUrl: string;
+}
+
+/**
+ * A Service Behavior (#126): a bot DM message trigger whose action — the
+ * service's login — is fixed; only its trigger (pattern, audience) can be
+ * edited, and it comes and goes with its service.
+ */
+export interface ServiceBehaviorView extends MessageTriggerView {
+  service: ServiceSummaryView;
+}
+
 export interface BehaviorListView {
   /** The System Behavior (login), pinned at the top of its section. */
   system: BehaviorItemView | null;
+  /** The Service Behaviors, listed apart from the custom triggers. */
+  services: ServiceBehaviorView[];
   commands: CommandView[];
   messageTriggers: MessageTriggerView[];
 }
@@ -248,6 +267,21 @@ export async function createMessageTrigger(
   input: MessageTriggerInput,
 ): Promise<{ behavior: MessageTriggerView; secret?: string }> {
   return jsonOrThrow(await send("POST", "/api/behaviors", input));
+}
+
+/** A Service Behavior's trigger edit: anything else is refused (system_immutable). */
+export type ServiceTriggerPatch = Partial<
+  Pick<
+    MessageTriggerInput,
+    "patternKind" | "patternValue" | "audienceKind" | "audienceUserId" | "audienceGroupName"
+  >
+> & { ifUpdatedAt?: string };
+
+export async function updateServiceTrigger(
+  id: number,
+  patch: ServiceTriggerPatch,
+): Promise<{ behavior: ServiceBehaviorView }> {
+  return jsonOrThrow(await send("PATCH", `/api/behaviors/${id}`, patch));
 }
 
 export async function updateBehavior(

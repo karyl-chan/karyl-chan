@@ -4,7 +4,7 @@ import type {
     CommandView,
     MessageTriggerView,
 } from '../../../api/behavior';
-import { itemsInSection, parseSection, sidebarSections } from './behavior-sections';
+import { countInSection, itemsInSection, parseSection, sidebarSections } from './behavior-sections';
 
 function command(id: number, section: CommandView['section'], name = `cmd${id}`): CommandView {
     return {
@@ -54,8 +54,15 @@ function trigger(id: number, section: MessageTriggerView['section']): MessageTri
 
 const login = { ...trigger(100, 'bot_dm'), systemKey: 'admin-login', actionSource: 'builtin' as const };
 
+const nas = {
+    ...trigger(200, 'bot_dm'),
+    actionSource: 'service' as const,
+    service: { id: 1, name: 'NAS', audience: 'nas', redirectUrl: 'https://nas.example/cb' },
+};
+
 const view: BehaviorListView = {
     system: login,
+    services: [nas],
     commands: [command(1, 'app'), command(2, 'guild:G2'), command(3, 'guild:all')],
     messageTriggers: [
         trigger(10, 'bot_dm'),
@@ -95,6 +102,7 @@ describe('sidebarSections', () => {
     it('lists a channel section even when its guild has no own items', () => {
         const only: BehaviorListView = {
             system: null,
+            services: [],
             commands: [],
             messageTriggers: [trigger(1, 'channel:G9:C9')],
         };
@@ -114,6 +122,15 @@ describe('itemsInSection', () => {
         expect(dm.system?.id).toBe(100);
         expect(dm.messageTriggers.map((t) => t.id)).toEqual([10]);
         expect(dm.commands).toEqual([]);
+    });
+
+    it('lists the Service Behaviors in their section, apart from the custom triggers (#126)', () => {
+        const dm = itemsInSection(view, 'bot_dm');
+        expect(dm.services.map((s) => s.id)).toEqual([200]);
+        expect(dm.messageTriggers.map((t) => t.id)).not.toContain(200);
+        expect(itemsInSection(view, 'guild:G1').services).toEqual([]);
+        // the login, the service row and the custom trigger
+        expect(countInSection(view, 'bot_dm')).toBe(3);
     });
 
     it('keeps the system behavior out of other sections', () => {

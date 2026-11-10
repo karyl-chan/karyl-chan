@@ -4,6 +4,7 @@ import type {
     BehaviorSection,
     CommandView,
     MessageTriggerView,
+    ServiceBehaviorView,
 } from '../../../api/behavior';
 
 /**
@@ -42,6 +43,7 @@ const FIXED: BehaviorSection[] = ['app', 'bot_dm', 'guild:all'];
 function allItems(view: BehaviorListView): BehaviorItemView[] {
     return [
         ...(view.system ? [view.system] : []),
+        ...view.services,
         ...view.commands,
         ...view.messageTriggers,
     ];
@@ -77,6 +79,8 @@ export function sidebarSections(view: BehaviorListView): BehaviorSection[] {
 export interface SectionItems {
     /** The System Behavior when it lives in this section — pinned on top. */
     system: BehaviorItemView | null;
+    /** The Service Behaviors here (#126) — under the login, apart from the custom triggers. */
+    services: ServiceBehaviorView[];
     commands: CommandView[];
     messageTriggers: MessageTriggerView[];
 }
@@ -84,6 +88,7 @@ export interface SectionItems {
 export function itemsInSection(view: BehaviorListView, key: BehaviorSection): SectionItems {
     return {
         system: view.system && view.system.section === key ? view.system : null,
+        services: view.services.filter((s) => s.section === key),
         commands: view.commands.filter((c) => c.section === key),
         messageTriggers: view.messageTriggers.filter((t) => t.section === key),
     };
@@ -94,6 +99,7 @@ export function countInSection(view: BehaviorListView, key: BehaviorSection): nu
     const items = itemsInSection(view, key);
     return (
         (items.system ? 1 : 0) +
+        items.services.length +
         items.commands.reduce((n, c) => n + c.leaves.length, 0) +
         items.messageTriggers.length
     );

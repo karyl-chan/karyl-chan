@@ -6,6 +6,7 @@
             "messages": "消息",
             "guilds": "服务器",
             "behaviors": "行为",
+            "services": "服务",
             "plugins": "插件",
             "admin": "权限",
             "profile": "个人资料",
@@ -1206,6 +1207,7 @@
             },
             "loadError": "无法加载行为：{error}",
             "empty": "这里还没有行为。",
+            "services": "服务",
             "commands": "指令",
             "messageTriggers": "消息触发",
             "note": {
@@ -1678,6 +1680,46 @@
                 "commandRemoved": "这是 /{command} 最后一个叶节点：指令会被删除，并从 Discord 移除。",
                 "subcommandRemoved": "/{command} {subcommand} 会从 Discord 上的指令移除。"
             }
+        },
+        "service": {
+            "locked": "服务登录：只能改触发",
+            "tag": "服务登录：匹配在后台登录之前，动作固定",
+            "tagShort": "服务",
+            "toggleProtected": "服务存在时，服务登录始终启用",
+            "notice": "这个触发用来登录服务：能触发的人会收到一次性链接（120 秒）。这里只能改匹配方式与谁能用；服务的改名或删除在服务页。",
+            "manage": "管理服务",
+            "action": "私下发送 {name} 的登录链接（服务 token）给触发的人",
+            "audience": "Audience",
+            "redirectUrl": "跳转网址"
+        }
+    },
+    "services": {
+        "title": "服务",
+        "subtitle": "通过 karyl 登录的自建服务。每个服务有一个与 bot 私信的触发；能触发的人会收到带有该服务签名 token 的链接。",
+        "jwks": "服务用这里的公钥验证 token：",
+        "add": "新增服务",
+        "addTitle": "新服务",
+        "addHint": "新增时会一并创建与 bot 私信的触发 {trigger}；谁能使用到 behaviors 页设置。",
+        "empty": "还没有服务。",
+        "edit": "编辑",
+        "delete": "删除",
+        "deleteTitle": "删除服务",
+        "deleteMessage": "删除「{name}」与它的登录触发？已发出的链接在到期前仍然有效。",
+        "created": "已新增 {name}",
+        "trigger": "触发",
+        "editTrigger": "到 behaviors 页修改",
+        "audienceChange": "token 会带新的 audience，服务端必须跟着改。仍是默认值的触发会改成新名称。",
+        "field": {
+            "name": "名称",
+            "audience": "Audience",
+            "audienceHint": "token 的 aud：小写英文、数字与 -",
+            "redirectUrl": "跳转网址",
+            "redirectUrlHint": "https；链接会加上 ?token=…"
+        },
+        "error": {
+            "nameRequired": "请输入服务名称",
+            "audience": "小写英文、数字与 -，不能以 - 开头或结尾",
+            "https": "请输入 https 网址"
         }
     },
     "config": {

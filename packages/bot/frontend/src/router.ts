@@ -88,6 +88,18 @@ const routes: RouteRecordRaw[] = [
     },
   },
   {
+    path: "/admin/services",
+    name: "services",
+    component: () => import("./views/admin/services/ServicesPage.vue"),
+    meta: {
+      requiresAuth: true,
+      requiresCapability: [
+        "admin",
+        "behavior.manage",
+      ] satisfies RouteCapability[],
+    },
+  },
+  {
     path: "/admin/plugins",
     name: "plugins",
     component: () => import("./views/admin/plugins/PluginsPage.vue"),

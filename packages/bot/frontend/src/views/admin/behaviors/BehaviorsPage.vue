@@ -35,6 +35,7 @@ const {
     applyTrigger,
     applyCommand,
     applySystem,
+    applyService,
     showCreated,
     reorder,
 } = useBehaviorList();
@@ -128,6 +129,7 @@ async function onSelect(section: BehaviorSection) {
             @updated="applyTrigger($event, mayDropDrafts)"
             @command-updated="applyCommand($event, mayDropDrafts)"
             @system-updated="applySystem($event, mayDropDrafts)"
+            @service-updated="applyService"
             @deleted="load"
             @converted="showCreated($event, mayDropDrafts)"
             @add="adding = true"

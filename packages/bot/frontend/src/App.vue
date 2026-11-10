@@ -167,6 +167,7 @@ function navigate() {
                     </RouterLink>
                     <RouterLink v-if="canSeeGuilds" to="/admin/guilds">{{ $t('app.nav.guilds') }}</RouterLink>
                     <RouterLink v-if="canManageBehaviors || canOpenAdminPanel" to="/admin/behaviors">{{ $t('app.nav.behaviors') }}</RouterLink>
+                    <RouterLink v-if="canManageBehaviors || canOpenAdminPanel" to="/admin/services">{{ $t('app.nav.services') }}</RouterLink>
                     <RouterLink v-if="canOpenAdminPanel" to="/admin/plugins">{{ $t('app.nav.plugins') }}</RouterLink>
                     <RouterLink v-if="canOpenAdminPanel" to="/admin/users">{{ $t('app.nav.admin') }}</RouterLink>
                     <RouterLink v-if="canOpenAdminPanel" to="/admin/system-settings">{{ $t('app.nav.systemSettings') }}</RouterLink>
@@ -258,6 +259,7 @@ function navigate() {
                         </RouterLink>
                         <RouterLink v-if="canSeeGuilds" to="/admin/guilds" @click="navigate">{{ $t('app.nav.guilds') }}</RouterLink>
                         <RouterLink v-if="canManageBehaviors || canOpenAdminPanel" to="/admin/behaviors" @click="navigate">{{ $t('app.nav.behaviors') }}</RouterLink>
+                        <RouterLink v-if="canManageBehaviors || canOpenAdminPanel" to="/admin/services" @click="navigate">{{ $t('app.nav.services') }}</RouterLink>
                         <RouterLink v-if="canOpenAdminPanel" to="/admin/plugins" @click="navigate">{{ $t('app.nav.plugins') }}</RouterLink>
                         <RouterLink v-if="canOpenAdminPanel" to="/admin/users" @click="navigate">{{ $t('app.nav.admin') }}</RouterLink>
                         <RouterLink v-if="canOpenAdminPanel" to="/admin/system-settings" @click="navigate">{{ $t('app.nav.systemSettings') }}</RouterLink>

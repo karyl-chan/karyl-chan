@@ -7,7 +7,14 @@ import { AppButton, Spacer } from '@karyl-chan/ui';
 import MessageTriggerCard from './MessageTriggerCard.vue';
 import CommandCard from './CommandCard.vue';
 import SystemLoginCard from './SystemLoginCard.vue';
-import type { BehaviorItemView, BehaviorSection, CommandView, MessageTriggerView } from '../../../api/behavior';
+import ServiceBehaviorCard from './ServiceBehaviorCard.vue';
+import type {
+    BehaviorItemView,
+    BehaviorSection,
+    CommandView,
+    MessageTriggerView,
+    ServiceBehaviorView,
+} from '../../../api/behavior';
 import { itemKey, type SectionItems } from './behavior-sections';
 import { locationOfSection } from './message-trigger-location';
 import { sectionKind, sectionLabel } from './section-labels';
@@ -36,6 +43,8 @@ const emit = defineEmits<{
     (e: 'commandUpdated', command: CommandView): void;
     /** The login's trigger changed (or its command was resynced). */
     (e: 'systemUpdated', system: BehaviorItemView): void;
+    /** A Service Behavior's trigger was saved (#126). */
+    (e: 'serviceUpdated', behavior: ServiceBehaviorView): void;
     (e: 'deleted', id: number): void;
     /** A behavior changed its kind of trigger (#172): it is listed elsewhere now. */
     (e: 'converted', item: BehaviorItemView): void;
@@ -48,6 +57,7 @@ const isEmpty = computed(
     () =>
         !props.items ||
         (!props.items.system &&
+            props.items.services.length === 0 &&
             props.items.commands.length === 0 &&
             props.items.messageTriggers.length === 0)
 );
@@ -128,6 +138,23 @@ const note = computed(() => {
                     @reload="emit('reload')"
                 />
             </div>
+
+            <!-- 服務列（#126）：比對在登入之前，鎖定，只改觸發 -->
+            <template v-if="items.services.length > 0">
+                <h3 class="group-title">{{ t('behaviors.workspace.services') }}</h3>
+                <div class="card-list" data-test="service-behaviors">
+                    <ServiceBehaviorCard
+                        v-for="s in items.services"
+                        :key="s.id"
+                        :behavior="s"
+                        :expand="expandKey === itemKey(s)"
+                        :group-names="groupNames"
+                        :group-use="groupUse"
+                        @updated="emit('serviceUpdated', $event)"
+                        @reload="emit('reload')"
+                    />
+                </div>
+            </template>
 
             <template v-if="items.commands.length > 0">
                 <h3 class="group-title">{{ t('behaviors.workspace.commands') }}</h3>
