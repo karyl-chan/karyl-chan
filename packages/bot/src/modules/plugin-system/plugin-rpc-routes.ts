@@ -49,6 +49,12 @@ import {
   runBehaviorCallback,
   type BehaviorCallbackMethod,
 } from "../command-system/behavior-callback.js";
+// max attachments per message and per-file byte cap: one set with the
+// behavior reply's (#156)
+import {
+  MAX_REPLY_ATTACHMENT_BYTES as MAX_ATTACHMENT_BYTES,
+  MAX_REPLY_ATTACHMENTS as MAX_ATTACHMENTS,
+} from "../command-system/behavior-reply.js";
 import {
   formatPluginRpcSchemaError,
   installPluginRpcSchemaErrors,
@@ -219,10 +225,6 @@ function rejectForbidden(reply: FastifyReply, scope: string): void {
 
 /** Max user ids resolvable in one members.get batch. */
 const MEMBERS_GET_MAX = 25;
-
-/** Max attachments per message, and per-file byte cap. */
-const MAX_ATTACHMENTS = 5;
-const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024; // Discord's non-boosted limit
 
 /**
  * Resolve plugin-supplied attachment descriptors into Discord-ready

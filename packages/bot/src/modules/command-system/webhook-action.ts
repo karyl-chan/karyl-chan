@@ -23,8 +23,9 @@
  * token), even when the synchronous request itself failed.
  *
  * A reply with attachments (#156) is shown only with its files, which the
- * forwarder downloads from the webhook URL's origin first; when they can't
- * be had the run fails (`attachment_failed`) and the user gets the failure
+ * forwarder downloads from the webhook URL's origin in the run's turn, once
+ * the answer is known to be shown (not superseded); when they can't be
+ * had the run fails (`attachment_failed`) and the user gets the failure
  * line — never the reply without them.
  */
 
@@ -44,7 +45,8 @@ import {
   type BehaviorCallbackPrincipal,
   type CallbackMeta,
 } from "./behavior-callback-token.js";
-import { withFiles, type BehaviorReply, type ReplyFileFetcher } from "./behavior-reply.js";
+import type { BehaviorReply } from "./behavior-reply.js";
+import { readyToRender, type ReplyFileFetcher } from "./reply-files.js";
 import { sendTypingFor, type RenderOutcome } from "./reply-renderer.js";
 import type { ForwardResult } from "./types.js";
 import type { WebhookForwarder } from "./webhook-forwarder.service.js";
@@ -75,18 +77,25 @@ function withCallback(
   return { ...payload, _meta: { ...meta, callback } };
 }
 
+/** The synchronous answer's attachments could not be had (#156). */
+type AttachmentFailure = Extract<Awaited<ReturnType<typeof readyToRender>>, { ok: false }>;
+
 /**
  * Show the synchronous answer in the run's current reply message, or not
- * at all ("superseded") when a callback `respond` already answered.
+ * at all ("superseded") when a callback `respond` already answered. Its
+ * attachments are downloaded in the run's turn, once it is known to be
+ * shown: a superseded answer downloads nothing.
  */
 async function renderAnswer(
   run: WebhookActionRun,
   principal: BehaviorCallbackPrincipal,
   reply: BehaviorReply,
-): Promise<RenderOutcome | "superseded"> {
+): Promise<RenderOutcome | AttachmentFailure | "superseded"> {
   return serializeReply(principal, async () => {
     if (principal.answeredByCallback) return "superseded" as const;
-    const rendered = await renderReply(reply, run.target, {
+    const ready = await readyToRender(reply, principal.fetchFiles);
+    if (!ready.ok) return ready;
+    const rendered = await renderReply(ready.reply, run.target, {
       visibility: run.visibility,
       replyMessage: principal.replyMessage,
     });
@@ -102,12 +111,7 @@ export async function runWebhookAction(run: WebhookActionRun): Promise<void> {
   // the synchronous answer and the callback calls alike
   const fetchFiles: ReplyFileFetcher = (attachments) =>
     run.forwarder.fetchReplyFiles(run.webhook, attachments);
-  const issued = behaviorCallbackTokens.issue({
-    behaviorId,
-    target,
-    visibility: run.visibility,
-    fetchFiles,
-  });
+  const issued = behaviorCallbackTokens.issue({ behaviorId, target, visibility: run.visibility, fetchFiles });
   const { principal } = issued;
   const payload = withCallback(run.payload, callbackMetaOf(issued));
   let deferred = false;
@@ -133,23 +137,20 @@ export async function runWebhookAction(run: WebhookActionRun): Promise<void> {
       deferred = true;
       if (target.kind === "message") await sendTypingFor(target.message, run.visibility);
     } else if (result.ok) {
-      // its files first (#156): a reply is never shown without them
-      const answer = await withFiles(result.reply, fetchFiles);
-      if (!answer.ok) {
+      const rendered = await renderAnswer(run, principal, result.reply);
+      if (rendered === "superseded") deferred = true;
+      else if (!rendered.ok && "errorCode" in rendered) {
+        // a reply is never shown without its files (#156)
         ok = false;
-        errorCode = "attachment_failed";
-        error = answer.error;
-      } else {
-        const rendered = await renderAnswer(run, principal, answer.reply);
-        if (rendered === "superseded") deferred = true;
-        else if (!rendered.ok) {
-          ok = false;
-          unreachable = rendered.dmFailed === true;
-          errorCode = unreachable ? "dm_failed" : "render_failed";
-          error = unreachable
-            ? `could not DM the author: ${rendered.error}`
-            : `Discord refused the reply: ${rendered.error}`;
-        }
+        errorCode = rendered.errorCode;
+        error = rendered.error;
+      } else if (!rendered.ok) {
+        ok = false;
+        unreachable = rendered.dmFailed === true;
+        errorCode = unreachable ? "dm_failed" : "render_failed";
+        error = unreachable
+          ? `could not DM the author: ${rendered.error}`
+          : `Discord refused the reply: ${rendered.error}`;
       }
     }
   } catch (err) {

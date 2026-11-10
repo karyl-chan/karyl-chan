@@ -25,7 +25,7 @@ import { createHash, randomBytes } from "crypto";
 import type { ReplyVisibility } from "../behavior/models/behavior-definition.model.js";
 import { publicBaseUrl } from "../web-core/public-base-url.js";
 import type { ReplySlot, ReplyTarget } from "./reply-renderer.js";
-import type { ReplyFileFetcher } from "./behavior-reply.js";
+import type { ReplyFileFetcher } from "./reply-files.js";
 
 /** How long a callback token is good for: Discord's interaction token lifetime. */
 export const CALLBACK_TOKEN_TTL_MS = 15 * 60 * 1000;

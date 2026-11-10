@@ -346,8 +346,8 @@ downloads each file with a `GET`, before it shows the reply:
 With the webhook URL `https://hooks.example/weather`, the bot fetches
 `https://hooks.example/files/chart.png`.
 
-- At most 5 files of at most **8 MiB** each. A larger file is cut
-  off as it streams in.
+- At most 5 files of at most **8 MiB** each, and **25 MiB** together.
+  A file past either limit is cut off as it streams in.
 - `path` is a plain path starting with a single `/`. `//host`, a full URL,
   a relative path, a backslash, a space or control character, and an
   encoded slash (`%2F`, `%5C`) are refused. `name` must not be empty or
@@ -356,9 +356,19 @@ With the webhook URL `https://hooks.example/weather`, the bot fetches
 - The download follows the webhook URL's rules: the same target rules
   (a private address only when the operator's allowlist has it), the
   checked address only, and no redirects — a 3xx is a failure.
+- **Anything on that origin can be fetched.** The bot does not limit
+  `path` to the webhook URL's own path, so whoever holds a run's callback
+  token can have any path of your origin attached to a reply (a `respond`
+  with `attachments`). Serve on that origin only what you mean to share
+  — for example, put the webhook on a host or port of its own rather than
+  beside an admin panel or internal API.
 - The bot sends no credentials with the `GET`: use paths nobody can
   guess, or files that may be public.
-- The 10-second limit covers all the files of a reply together.
+- One 10-second limit covers the whole download of a reply — all its
+  files together, not each one.
+- The bot downloads at most 2 replies' files at a time. Another reply
+  waits for its turn within its own 10 seconds, and fails if they run
+  out first.
 - A reply of only attachments is a reply, not "no reply".
 - An `attachments` that is not an array of `{ name, path }` strings fails
   the action as a bad reply. A file the bot can't get — too many, a
@@ -367,7 +377,8 @@ With the webhook URL `https://hooks.example/weather`, the bot fetches
   delivery log): the user gets the failure line, never the reply without
   its files.
 - An edit that has files (a `respond` that edits the reply, or
-  `edit_followup`) replaces the message's earlier files.
+  `edit_followup`) replaces **all** the message's earlier files with
+  its own; an edit without `attachments` keeps them.
 - A test-fire does not download the files.
 
 ### Who sees the reply

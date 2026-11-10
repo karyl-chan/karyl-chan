@@ -14,6 +14,9 @@
  *   - a file that can't be had (missing, too many, a redirect, an unsafe
  *     path) fails the run: the failure line, an `attachment_failed`
  *     delivery, and never the reply without its files
+ *   - nothing is downloaded for an answer that won't be shown: a
+ *     synchronous answer a callback respond superseded, or a call whose
+ *     token was revoked while it waited
  */
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -57,7 +60,7 @@ import { InteractionDispatcher } from "../src/modules/command-system/interaction
 import { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
 import { runWebhookAction } from "../src/modules/command-system/webhook-action.js";
 import { __resetBehaviorRateLimitsForTests } from "../src/modules/command-system/behavior-rate-limits.js";
-import { behaviorCallbackTokens } from "../src/modules/command-system/behavior-callback-token.js";
+import { behaviorCallbackTokens, serializeReply } from "../src/modules/command-system/behavior-callback-token.js";
 import { findRecentDeliveries } from "../src/modules/behavior/behavior-deliveries.js";
 import { BehaviorWebhookAction } from "../src/modules/behavior/models/behavior-webhook-action.model.js";
 import type { ReplyVisibility } from "../src/modules/behavior/models/behavior-definition.model.js";
@@ -73,15 +76,19 @@ let receiverUrl: string;
 let answer = "";
 let posts: string[] = [];
 let gets: string[] = [];
+/** Runs before the receiver answers the POST: a receiver calling back early. */
+let beforeAnswer: ((body: string) => Promise<void>) | null = null;
 
 beforeAll(async () => {
   await sequelize.sync({ force: true });
   receiver = createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on("data", (c: Buffer) => chunks.push(c));
-    req.on("end", () => {
+    req.on("end", async () => {
       if (req.method === "POST") {
-        posts.push(Buffer.concat(chunks).toString("utf8"));
+        const body = Buffer.concat(chunks).toString("utf8");
+        posts.push(body);
+        if (beforeAnswer) await beforeAnswer(body);
         res.writeHead(200, { "content-type": "application/json" });
         res.end(answer);
         return;
@@ -212,6 +219,7 @@ beforeEach(async () => {
   answer = "";
   posts = [];
   gets = [];
+  beforeAnswer = null;
   server = await createWebServer({ staticRoot: undefined, bot: fakeBot as never });
   await server.ready();
 });
@@ -464,6 +472,51 @@ describe("callback calls with attachments", () => {
     const res = await call("interactions.respond", token, { attachments: CHART });
     expect(res.statusCode).toBe(400);
     expect(res.json()).toEqual({ error: "respond failed: attachments: not available for this reply" });
+    expect(raw.editReply).not.toHaveBeenCalled();
+  });
+});
+
+// ── no download for an answer that won't be shown ────────────────────────────
+
+describe("an answer that won't be shown downloads nothing", () => {
+  it("a synchronous answer superseded by a callback respond", async () => {
+    const id = await seedChartLeaf();
+    answer = JSON.stringify({ content: "late", attachments: CHART });
+    beforeAnswer = async (body) => {
+      const res = await call("interactions.respond", tokenOf(body), { content: "early" });
+      expect(res.statusCode).toBe(200);
+    };
+    const raw = fakeSlash();
+    await dispatch(raw);
+
+    expect(gets).toEqual([]);
+    expect(raw.editReply).toHaveBeenCalledTimes(1);
+    expect(raw.editReply).toHaveBeenCalledWith({ content: "early", allowedMentions: { parse: [] } });
+    expect((await findRecentDeliveries(id))[0]).toMatchObject({ ok: true, deferred: true });
+  });
+
+  it("a callback call whose token was revoked while it waited", async () => {
+    const id = await seedChartLeaf();
+    const raw = fakeSlash();
+    await raw.deferReply({ flags: MessageFlags.Ephemeral });
+    const fetchFiles = vi.fn(async () => ({ ok: true as const, files: [] }));
+    const { token, principal } = behaviorCallbackTokens.issue({
+      behaviorId: id,
+      target: { kind: "interaction", interaction: raw as never },
+      visibility: null,
+      fetchFiles,
+    });
+    // the failed run's turn (revoke + failure line) holds the reply
+    let release!: () => void;
+    const held = serializeReply(principal, () => new Promise<void>((r) => (release = r)));
+    const respond = call("interactions.respond", token, { attachments: CHART });
+    await new Promise((r) => setTimeout(r, 50));
+    behaviorCallbackTokens.revoke(token);
+    release();
+    await held;
+
+    expect((await respond).statusCode).toBe(401);
+    expect(fetchFiles).not.toHaveBeenCalled();
     expect(raw.editReply).not.toHaveBeenCalled();
   });
 });

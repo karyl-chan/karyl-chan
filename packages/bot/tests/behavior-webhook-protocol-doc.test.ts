@@ -195,6 +195,7 @@ describe("the protocol document, against the contract fixtures", () => {
     expect(section).toContain(
       `At most ${r.maxAttachments} files of at most **${r.maxAttachmentBytes / 1024 / 1024} MiB** each`,
     );
+    expect(section).toContain(`**${r.maxAttachmentTotalBytes / 1024 / 1024} MiB** together`);
   });
 });
 

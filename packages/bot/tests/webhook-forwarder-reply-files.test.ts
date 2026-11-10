@@ -6,8 +6,11 @@
  *     over the connection pinned to the address the target policy checked
  *     (the host is `rebind.invalid`, which never resolves), with no
  *     credentials
- *   - at most 5 files of at most 8 MiB each: a declared Content-Length over
- *     the cap and a body that streams past it are both cut off
+ *   - at most 5 files of at most 8 MiB each and 25 MiB together: a
+ *     declared Content-Length over the cap and a body that streams past it
+ *     are both cut off
+ *   - at most 2 batches download at a time across the process; another
+ *     waits its turn within its timeout
  *   - a redirect is never followed; a non-2xx, a hang (the timeout) and an
  *     unsafe path fail the whole set
  *   - the real target policy still applies: loopback and metadata never
@@ -34,7 +37,11 @@ vi.mock("../src/utils/host-policy.js", async (importOriginal) => ({
 
 import * as hostPolicy from "../src/utils/host-policy.js";
 import { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
-import { MAX_REPLY_ATTACHMENT_BYTES } from "../src/modules/command-system/behavior-reply.js";
+import {
+  MAX_REPLY_ATTACHMENT_BYTES,
+  MAX_REPLY_ATTACHMENT_TOTAL_BYTES,
+} from "../src/modules/command-system/behavior-reply.js";
+import { MAX_DOWNLOAD_BATCHES } from "../src/modules/command-system/webhook-forwarder.service.js";
 import type { BehaviorWebhookActionRow } from "../src/modules/behavior/models/behavior-webhook-action.model.js";
 import { encryptSecret } from "../src/utils/crypto.js";
 import { parseAllowlistEntries } from "../src/utils/webhook-allowlist.js";
@@ -48,6 +55,10 @@ const MiB = 1024 * 1024;
 let server: Server;
 let port: number;
 const received: Array<{ method?: string; url?: string; headers: IncomingMessage["headers"] }> = [];
+/** Answers to /hold requests, sent when a test releases them; and how many were open at most. */
+let held: Array<() => void> = [];
+let holding = 0;
+let maxHolding = 0;
 
 beforeAll(async () => {
   server = createServer((req, res) => {
@@ -93,6 +104,22 @@ beforeAll(async () => {
         return;
       case "/hang":
         return; // never answers
+      case "/seven": {
+        // 7 MiB, streamed without a Content-Length
+        res.writeHead(200, { "transfer-encoding": "chunked" });
+        res.on("error", () => {});
+        res.end(Buffer.alloc(7 * MiB, 3));
+        return;
+      }
+      case "/hold":
+        holding += 1;
+        maxHolding = Math.max(maxHolding, holding);
+        held.push(() => {
+          holding -= 1;
+          res.writeHead(200);
+          res.end("held");
+        });
+        return;
       default:
         res.writeHead(404);
         res.end("not found");
@@ -109,7 +136,22 @@ afterAll(async () => {
 
 beforeEach(() => {
   received.length = 0;
+  held = [];
+  holding = 0;
+  maxHolding = 0;
 });
+
+/** Wait until `n` /hold requests are open. */
+async function untilHolding(n: number) {
+  for (let i = 0; i < 200 && holding < n; i += 1) await new Promise((r) => setTimeout(r, 5));
+  expect(holding).toBe(n);
+}
+
+function releaseHeld() {
+  const all = held;
+  held = [];
+  for (const answer of all) answer();
+}
 
 function action(url = `http://rebind.invalid:${port}/hooks/weather?x=1`): BehaviorWebhookActionRow {
   return {
@@ -176,6 +218,19 @@ describe("fetchReplyFiles — limits and failures", () => {
   it("cuts off a body that streams past 8 MiB", async () => {
     const result = await forwarder().fetchReplyFiles(action(), [{ name: "x.bin", path: "/streamed-big" }]);
     expect(result).toEqual({ ok: false, error: 'attachment 1 ("x.bin"): larger than 8 MiB' });
+  });
+
+  it("cuts off files that together pass 25 MiB", async () => {
+    expect(MAX_REPLY_ATTACHMENT_TOTAL_BYTES).toBe(25 * MiB);
+    const four = Array.from({ length: 4 }, (_, i) => ({ name: `${i}.bin`, path: "/seven" }));
+    const result = await forwarder().fetchReplyFiles(action(), four);
+    expect(result).toEqual({
+      ok: false,
+      error: 'attachment 4 ("3.bin"): the files together are larger than 25 MiB',
+    });
+    // three of 7 MiB fit
+    const three = await forwarder().fetchReplyFiles(action(), four.slice(0, 3));
+    expect(three.ok && three.files.length).toBe(3);
   });
 
   it("never follows a redirect", async () => {
@@ -248,5 +303,47 @@ describe("fetchReplyFiles — the real target policy", () => {
     ]);
     expect(result.ok).toBe(false);
     expect(!result.ok && result.error).toContain("WEBHOOK_PRIVATE_ALLOWLIST");
+  });
+});
+
+describe("fetchReplyFiles — downloads in flight, process-wide", () => {
+  it("runs at most 2 batches at a time; the next waits its turn", async () => {
+    expect(MAX_DOWNLOAD_BATCHES).toBe(2);
+    const batch = () =>
+      new WebhookForwarder(parseAllowlistEntries([]), 3000).fetchReplyFiles(action(), [
+        { name: "h.bin", path: "/hold" },
+      ]);
+    const runs = [batch(), batch(), batch()];
+    await untilHolding(2);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(holding).toBe(2); // the third has not started
+    releaseHeld();
+    await untilHolding(1);
+    releaseHeld();
+    const results = await Promise.all(runs);
+    expect(results.map((r) => r.ok)).toEqual([true, true, true]);
+    expect(maxHolding).toBe(2);
+  });
+
+  it("fails a batch whose timeout ends while it waits", async () => {
+    const long = () =>
+      new WebhookForwarder(parseAllowlistEntries([]), 3000).fetchReplyFiles(action(), [
+        { name: "h.bin", path: "/hold" },
+      ]);
+    const busy = [long(), long()];
+    await untilHolding(2);
+    const waited = await new WebhookForwarder(parseAllowlistEntries([]), 100).fetchReplyFiles(action(), [
+      { name: "a.png", path: "/files/a.png" },
+    ]);
+    expect(waited).toEqual({
+      ok: false,
+      error: "timed out waiting for a download slot (the bot is downloading other replies' files)",
+    });
+    expect(received.filter((r) => r.url === "/files/a.png")).toHaveLength(0);
+    releaseHeld();
+    expect((await Promise.all(busy)).map((r) => r.ok)).toEqual([true, true]);
+    // the turns came back: a new batch runs at once
+    const after = await forwarder().fetchReplyFiles(action(), [{ name: "a.png", path: "/files/a.png" }]);
+    expect(after.ok).toBe(true);
   });
 });

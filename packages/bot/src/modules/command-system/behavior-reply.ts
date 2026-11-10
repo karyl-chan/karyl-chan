@@ -24,14 +24,14 @@
  *   - defer: `true` only (#113); it means "answer later", so the renderer
  *     never sees it — runWebhookAction does
  *   - attachments (#156): `{ name, path }` entries, files the bot downloads
- *     from the receiver's origin (WebhookForwarder.fetchReplyFiles, which
- *     applies attachmentsProblem first). Never dropped: a malformed list
- *     fails the reply, and a file that cannot be had fails the action
+ *     from the receiver's origin (reply-files.ts, through
+ *     WebhookForwarder.fetchReplyFiles, which applies attachmentsProblem
+ *     first). Never dropped: a malformed list fails the reply, and a file
+ *     that cannot be had fails the action
  *   - any other top-level field is ignored (and named in a note)
  *   - the body itself is capped at MAX_REPLY_BODY_BYTES by the forwarder
  *
- * Pure: no discord.js runtime, no I/O (withFiles downloads through the
- * fetcher it is given).
+ * Pure: no discord.js runtime, no I/O.
  */
 
 import type { SanitizedEmbed } from "./types.js";
@@ -71,52 +71,16 @@ export interface BehaviorReply {
   defer?: true;
   /**
    * Files to attach (#156): `path` is resolved against the webhook URL's
-   * origin and downloaded by the bot. An attachments-only reply is a
-   * visible reply.
+   * origin and downloaded by the bot before the reply is rendered
+   * (reply-files.ts). An attachments-only reply is a visible reply.
    */
   attachments?: ReplyAttachment[];
-  /**
-   * The bot's own, never parsed from a body: the downloaded `attachments`,
-   * set before the reply is rendered. A reply with `attachments` and no
-   * `files` is not rendered.
-   */
-  files?: ReplyFile[];
 }
 
 /** One file a reply asks for: its name in Discord, and where on the receiver it is. */
 export interface ReplyAttachment {
   name: string;
   path: string;
-}
-
-/** A downloaded attachment. */
-export interface ReplyFile {
-  name: string;
-  data: Buffer;
-}
-
-/** The downloaded attachments of a reply, or why they could not be had. */
-export type ReplyFilesResult = { ok: true; files: ReplyFile[] } | { ok: false; error: string };
-
-/** Downloads a reply's attachments, from where its run says they are. */
-export type ReplyFileFetcher = (attachments: readonly ReplyAttachment[]) => Promise<ReplyFilesResult>;
-
-/**
- * The reply with its attachments downloaded into `files`, or why they
- * could not be (the error starts with `attachments: `). A reply without
- * attachments comes back as is; without a fetcher, attachments can't be
- * had at all.
- */
-export async function withFiles(
-  reply: BehaviorReply,
-  fetchFiles: ReplyFileFetcher | undefined,
-): Promise<{ ok: true; reply: BehaviorReply } | { ok: false; error: string }> {
-  if (!reply.attachments?.length) return { ok: true, reply };
-  if (!fetchFiles) return { ok: false, error: "attachments: not available for this reply" };
-  const fetched = await fetchFiles(reply.attachments);
-  return fetched.ok
-    ? { ok: true, reply: { ...reply, files: fetched.files } }
-    : { ok: false, error: `attachments: ${fetched.error}` };
 }
 
 /** What parseBehaviorReply dropped or changed, for the admin and the log. */
@@ -152,9 +116,14 @@ const KNOWN_FIELDS = new Set([
   "attachments",
 ]);
 
-/** The most files a reply may attach, and the largest one (#156). */
+/**
+ * The most files a reply may attach, the largest one and the most they
+ * may weigh together (#156). The first two are also the plugin
+ * attachment limits (plugin-rpc-routes.ts).
+ */
 export const MAX_REPLY_ATTACHMENTS = 5;
 export const MAX_REPLY_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+export const MAX_REPLY_ATTACHMENT_TOTAL_BYTES = 25 * 1024 * 1024;
 const MAX_ATTACHMENT_NAME = 200;
 const MAX_ATTACHMENT_PATH = 2048;
 
@@ -449,8 +418,16 @@ export function parseBehaviorReply(raw: unknown): ReplyParse {
   return { ok: true, reply, notes };
 }
 
-/** Whether the reply has anything Discord would show. */
-export function hasVisibleReply(reply: BehaviorReply): boolean {
+/**
+ * Whether the reply has anything Discord would show: attachments count,
+ * as descriptors or (a reply ready to render, reply-files.ts) as files.
+ */
+export function hasVisibleReply(
+  reply: Pick<BehaviorReply, "content" | "embeds" | "components"> & {
+    attachments?: readonly unknown[];
+    files?: readonly unknown[];
+  },
+): boolean {
   return Boolean(
     reply.content ||
       (reply.embeds && reply.embeds.length > 0) ||

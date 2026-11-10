@@ -40,6 +40,7 @@ import { InteractionDispatcher } from "../src/modules/command-system/interaction
 import {
   ALLOWED_REPLY_FLAGS,
   MAX_REPLY_ATTACHMENT_BYTES,
+  MAX_REPLY_ATTACHMENT_TOTAL_BYTES,
   MAX_REPLY_ATTACHMENTS,
   MAX_REPLY_BODY_BYTES,
   MAX_REPLY_CONTENT,
@@ -320,6 +321,7 @@ describe("behavior webhook contract (BH-2.3)", () => {
     expect(MAX_REPLY_BODY_BYTES).toBe(C.response.maxBodyBytes);
     expect(MAX_REPLY_ATTACHMENTS).toBe(C.response.maxAttachments);
     expect(MAX_REPLY_ATTACHMENT_BYTES).toBe(C.response.maxAttachmentBytes);
+    expect(MAX_REPLY_ATTACHMENT_TOTAL_BYTES).toBe(C.response.maxAttachmentTotalBytes);
     const long = parseBehaviorReply({ content: "x".repeat(C.response.maxContentLength + 1) });
     expect(long.ok && long.reply.content!.length).toBe(C.response.maxContentLength);
   });

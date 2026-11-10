@@ -48,14 +48,14 @@ import type { BehaviorWebhookActionRow } from "../behavior/models/behavior-webho
 import type { ForwardErrorCode, ForwardResult } from "./types.js";
 import {
   MAX_REPLY_ATTACHMENT_BYTES,
+  MAX_REPLY_ATTACHMENT_TOTAL_BYTES,
   MAX_REPLY_BODY_BYTES,
   attachmentsProblem,
   parseBehaviorReply,
   type ReplyAttachment,
-  type ReplyFile,
-  type ReplyFilesResult,
   type ReplyNote,
 } from "./behavior-reply.js";
+import type { ReplyFile, ReplyFilesResult } from "./reply-files.js";
 
 /**
  * Read the body, giving up past `max` bytes (null). A declared
@@ -275,9 +275,14 @@ export class WebhookForwarder {
    * URL, no backslash) is resolved against it and fetched with a GET under
    * the same rules as the POST — the target policy (private addresses only
    * when allowlisted), a connection pinned to the checked addresses, no
-   * redirects, and the timeout, for all the files together. Each body is
-   * cut off past MAX_REPLY_ATTACHMENT_BYTES as it streams. No credentials
-   * are sent. One file that can't be had fails them all. Never throws.
+   * redirects, and one timeout for the whole batch. Each body is cut off
+   * as it streams, past MAX_REPLY_ATTACHMENT_BYTES or past what is left of
+   * MAX_REPLY_ATTACHMENT_TOTAL_BYTES. No credentials are sent. One file
+   * that can't be had fails them all. Never throws.
+   *
+   * At most MAX_DOWNLOAD_BATCHES batches download at a time across the
+   * process (each may hold up to the total cap); another waits for a turn
+   * within its own timeout, and fails when the timeout ends first.
    */
   async fetchReplyFiles(
     action: BehaviorWebhookActionRow,
@@ -290,29 +295,42 @@ export class WebhookForwarder {
     try {
       origin = new URL(new URL(decryptSecret(action.url)).origin);
     } catch (err) {
-      return { ok: false, error: `the webhook URL is unusable: ${errorText(err)}` };
+      return {
+        ok: false,
+        error: `the webhook URL is unusable: ${err instanceof Error ? err.message : String(err)}`,
+      };
     }
-    let target: WebhookTarget;
-    try {
-      target = await resolveWebhookTarget(origin, this.allowlist);
-    } catch (err) {
-      if (!(err instanceof HostPolicyError)) return { ok: false, error: errorText(err) };
-      return { ok: false, error: err.message };
-    }
-    const agent = createPinnedAgent(target.addresses);
     const signal = AbortSignal.timeout(this.timeoutMs);
-    const files: ReplyFile[] = [];
-    try {
-      for (const [i, attachment] of attachments.entries()) {
-        const got = await fetchReplyFile(origin, attachment, agent, signal);
-        if (!got.ok) return { ok: false, error: `attachment ${i + 1} (${JSON.stringify(attachment.name)}): ${got.error}` };
-        files.push(got.file);
-      }
-    } finally {
-      // one-shot agent, as for the POST
-      void agent.destroy().catch(() => {});
+    if (!(await downloadSlots.take(signal))) {
+      return { ok: false, error: "timed out waiting for a download slot (the bot is downloading other replies' files)" };
     }
-    return { ok: true, files };
+    try {
+      let target: WebhookTarget;
+      try {
+        target = await resolveWebhookTarget(origin, this.allowlist);
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+      const agent = createPinnedAgent(target.addresses);
+      const files: ReplyFile[] = [];
+      let total = 0;
+      try {
+        for (const [i, attachment] of attachments.entries()) {
+          const got = await fetchReplyFile(origin, attachment, agent, signal, MAX_REPLY_ATTACHMENT_TOTAL_BYTES - total);
+          if (!got.ok) {
+            return { ok: false, error: `attachment ${i + 1} (${JSON.stringify(attachment.name)}): ${got.error}` };
+          }
+          total += got.file.data.byteLength;
+          files.push(got.file);
+        }
+      } finally {
+        // one-shot agent, as for the POST
+        void agent.destroy().catch(() => {});
+      }
+      return { ok: true, files };
+    } finally {
+      downloadSlots.release();
+    }
   }
 
   // ── 私有：HTTP POST ───────────────────────────────────────────────────────
@@ -532,14 +550,58 @@ export class WebhookForwarder {
   }
 }
 
-const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+/** The most reply attachment downloads in flight at once, process-wide (#156). */
+export const MAX_DOWNLOAD_BATCHES = 2;
 
-/** GET one attachment over the pinned connection. */
+/**
+ * Turns for downloading a reply's attachments: at most
+ * MAX_DOWNLOAD_BATCHES at a time, the rest wait in order. A waiter whose
+ * signal aborts leaves the queue without a turn.
+ */
+const downloadSlots = (() => {
+  let inFlight = 0;
+  const waiting: Array<() => void> = [];
+  return {
+    take(signal: AbortSignal): Promise<boolean> {
+      if (signal.aborted) return Promise.resolve(false);
+      if (inFlight < MAX_DOWNLOAD_BATCHES) {
+        inFlight += 1;
+        return Promise.resolve(true);
+      }
+      return new Promise<boolean>((resolve) => {
+        const onAbort = () => {
+          waiting.splice(waiting.indexOf(grant), 1);
+          resolve(false);
+        };
+        // a released turn passes straight to the waiter: inFlight stays
+        const grant = () => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(true);
+        };
+        waiting.push(grant);
+        signal.addEventListener("abort", onAbort, { once: true });
+      });
+    },
+    release(): void {
+      const next = waiting.shift();
+      if (next) next();
+      else inFlight -= 1;
+    },
+  };
+})();
+
+const MiB = 1024 * 1024;
+
+/**
+ * GET one attachment over the pinned connection, cut off past the per-file
+ * cap or past `budget`, what is left of the batch's total.
+ */
 async function fetchReplyFile(
   origin: URL,
   { name, path }: ReplyAttachment,
   agent: ReturnType<typeof createPinnedAgent>,
   signal: AbortSignal,
+  budget: number,
 ): Promise<{ ok: true; file: ReplyFile } | { ok: false; error: string }> {
   const url = new URL(path, origin);
   // attachmentsProblem lets only a plain path through; this is the backstop
@@ -554,7 +616,7 @@ async function fetchReplyFile(
       signal,
     } as RequestInit);
   } catch (err) {
-    return { ok: false, error: `network error: ${errorText(err)}` };
+    return { ok: false, error: `network error: ${err instanceof Error ? err.message : String(err)}` };
   }
   if (!res.ok) {
     await res.body?.cancel().catch(() => {});
@@ -568,12 +630,18 @@ async function fetchReplyFile(
   }
   let data: Buffer | null;
   try {
-    data = await readCappedBytes(res, MAX_REPLY_ATTACHMENT_BYTES);
+    data = await readCappedBytes(res, Math.min(MAX_REPLY_ATTACHMENT_BYTES, budget));
   } catch (err) {
-    return { ok: false, error: `could not read it: ${errorText(err)}` };
+    return { ok: false, error: `could not read it: ${err instanceof Error ? err.message : String(err)}` };
   }
   if (data === null) {
-    return { ok: false, error: `larger than ${MAX_REPLY_ATTACHMENT_BYTES / (1024 * 1024)} MiB` };
+    return {
+      ok: false,
+      error:
+        budget < MAX_REPLY_ATTACHMENT_BYTES
+          ? `the files together are larger than ${MAX_REPLY_ATTACHMENT_TOTAL_BYTES / MiB} MiB`
+          : `larger than ${MAX_REPLY_ATTACHMENT_BYTES / MiB} MiB`,
+    };
   }
   return { ok: true, file: { name, data } };
 }

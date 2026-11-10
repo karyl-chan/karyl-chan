@@ -15,7 +15,7 @@
 import { mintLoginLink, type LoginContextRefs } from "../admin/admin-login.service.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { moduleLogger } from "../../logger.js";
-import type { BehaviorReply } from "./behavior-reply.js";
+import type { RenderableReply } from "./reply-files.js";
 import { renderFailure, renderReply, type ReplyTarget } from "./reply-renderer.js";
 
 const log = moduleLogger("admin-login");
@@ -31,7 +31,7 @@ export async function loginActionReply(
   userId: string,
   ctx: LoginContextRefs,
   surface: "command" | "message",
-): Promise<BehaviorReply | null> {
+): Promise<RenderableReply | null> {
   const result = await mintLoginLink(userId, ctx);
   if (!result.ok) {
     return surface === "command" ? { content: NOT_AUTHORIZED, ephemeral: true } : null;

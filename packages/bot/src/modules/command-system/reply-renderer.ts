@@ -23,8 +23,10 @@
  * For a message trigger the bot has no placeholder: a callback's first
  * answer sends the reply, later ones edit the message it sent.
  *
- * A reply's attachments (#156) are sent as the files the caller downloaded
- * (`reply.files`); an edit that has files replaces the message's old ones.
+ * The renderer takes a RenderableReply (reply-files.ts): a reply's
+ * attachments (#156) arrive as the files the caller downloaded, so a reply
+ * can't be rendered without them. An edit that has files replaces all the
+ * message's earlier ones; an edit without keeps them.
  *
  * Mentions are never parsed (a reply comes from an external service). A
  * Discord refusal comes back as `{ ok: false }` for the caller to log and
@@ -46,7 +48,8 @@ import {
 import { planRespond } from "../plugin-system/plugin-defer-state.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { resolveLocale, t } from "../../i18n/index.js";
-import { hasVisibleReply, type BehaviorReply } from "./behavior-reply.js";
+import { hasVisibleReply } from "./behavior-reply.js";
+import type { RenderableReply } from "./reply-files.js";
 import type { ReplyVisibility } from "../behavior/models/behavior-definition.model.js";
 
 /**
@@ -94,15 +97,8 @@ export type RenderOutcome =
 const errorText = (err: unknown): string =>
   err instanceof Error ? err.message : String(err);
 
-/**
- * content / embeds / components / files with mentions off — what every
- * send shares. A reply whose attachments were not downloaded (#156) is
- * never sent without them.
- */
-function messageBody(reply: BehaviorReply) {
-  if (reply.attachments?.length && !reply.files) {
-    throw new Error("the reply's attachments were not downloaded");
-  }
+/** content / embeds / components / files with mentions off — what every send shares. */
+function messageBody(reply: RenderableReply) {
   return {
     ...(reply.content ? { content: reply.content } : {}),
     ...(reply.embeds?.length ? { embeds: reply.embeds } : {}),
@@ -121,7 +117,7 @@ const withFlags = <T extends object>(body: T, flags: number) =>
  * The body of an edit: only the fields the reply has, and of its flags
  * only SuppressEmbeds. Files replace the message's earlier ones.
  */
-function editBody(reply: BehaviorReply) {
+function editBody(reply: RenderableReply) {
   const body = messageBody(reply);
   return withFlags(
     "files" in body ? { ...body, attachments: [] as [] } : body,
@@ -189,7 +185,7 @@ export interface RenderOptions {
  * undefined).
  */
 export function effectiveEphemeral(
-  reply: BehaviorReply,
+  reply: RenderableReply,
   visibility: ReplyVisibility | null | undefined,
 ): boolean | undefined {
   if (reply.ephemeral !== undefined) return reply.ephemeral;
@@ -197,11 +193,11 @@ export function effectiveEphemeral(
 }
 
 export async function renderReply(
-  reply: BehaviorReply,
+  reply: RenderableReply,
   target: ReplyTarget,
   opts: RenderOptions = {},
 ): Promise<RenderOutcome> {
-  const resolved: BehaviorReply = { ...reply, ephemeral: effectiveEphemeral(reply, opts.visibility) };
+  const resolved: RenderableReply = { ...reply, ephemeral: effectiveEphemeral(reply, opts.visibility) };
   if (resolved.ephemeral === undefined) delete resolved.ephemeral;
   try {
     return target.kind === "interaction"
@@ -217,7 +213,7 @@ export async function renderReply(
 }
 
 async function renderToInteraction(
-  reply: BehaviorReply,
+  reply: RenderableReply,
   interaction: ChatInputCommandInteraction,
   current: ReplySlot | null | undefined,
 ): Promise<RenderOutcome> {
@@ -280,7 +276,7 @@ export type FollowupOutcome<T = object> =
  * default — a command's invoker only, a guild message's channel.
  */
 export async function renderFollowup(
-  reply: BehaviorReply,
+  reply: RenderableReply,
   target: ReplyTarget,
   opts: RenderOptions = {},
 ): Promise<FollowupOutcome<{ sent: ReplySlot }>> {
@@ -311,7 +307,7 @@ export async function renderFollowup(
 }
 
 /** Edit a follow-up: only the fields the reply has (an edit cannot clear the others). */
-export async function editFollowup(reply: BehaviorReply, sent: ReplySlot): Promise<FollowupOutcome> {
+export async function editFollowup(reply: RenderableReply, sent: ReplySlot): Promise<FollowupOutcome> {
   try {
     await editSlot(sent, editBody(reply));
     return { ok: true };
@@ -375,7 +371,7 @@ export async function sendTypingFor(
 }
 
 async function renderToMessage(
-  reply: BehaviorReply,
+  reply: RenderableReply,
   message: TriggerMessage,
   current: MessageSlot | null,
 ): Promise<RenderOutcome> {

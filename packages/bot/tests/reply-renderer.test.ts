@@ -256,7 +256,7 @@ describe("renderReply — the stored default (replyVisibility)", () => {
 
 describe("renderReply — attachments (#156)", () => {
   const png = { name: "chart.png", data: Buffer.from("PNG") };
-  const withFile = { attachments: [{ name: "chart.png", path: "/chart.png" }], files: [png] };
+  const withFile = { files: [png] };
   const sentFiles = [{ attachment: png.data, name: "chart.png" }];
 
   it("an attachments-only reply fills the placeholder, replacing its files", async () => {
@@ -289,13 +289,19 @@ describe("renderReply — attachments (#156)", () => {
     expect(authorSend).toHaveBeenCalledWith({ files: sentFiles, allowedMentions: { parse: [] } });
   });
 
-  it("never sends a reply whose attachments were not downloaded", async () => {
-    const { message, channelSend } = fakeMessage("guild");
-    const out = await renderReply(
-      { content: "x", attachments: [{ name: "a.png", path: "/a.png" }] },
-      { kind: "message", message: message as never },
-    );
-    expect(out).toEqual({ ok: false, error: "the reply's attachments were not downloaded" });
-    expect(channelSend).not.toHaveBeenCalled();
+  it("an edit without files keeps the message's earlier ones", async () => {
+    const ix = fakeInteraction({ deferred: true, ephemeral: true });
+    await renderReply({ content: "only text" }, { kind: "interaction", interaction: ix as never });
+    expect(ix.editReply).toHaveBeenCalledWith({ content: "only text", allowedMentions: { parse: [] } });
+  });
+
+  it("takes no attachment descriptors: they must be downloaded first (a type error)", () => {
+    const { message } = fakeMessage("guild");
+    const notDownloaded = { content: "x", attachments: [{ name: "a.png", path: "/a.png" }] };
+    // compile-time only: the call is never made
+    const render = () =>
+      // @ts-expect-error a reply with attachments is not a RenderableReply
+      renderReply(notDownloaded, { kind: "message", message: message as never });
+    expect(typeof render).toBe("function");
   });
 });

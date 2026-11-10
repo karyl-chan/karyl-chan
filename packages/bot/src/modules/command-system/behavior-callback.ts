@@ -39,7 +39,8 @@
 import { recordDelivery, type DeliveryErrorCode } from "../behavior/behavior-deliveries.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { shouldRecord } from "../bot-events/bot-event-dedup.js";
-import { hasVisibleReply, parseBehaviorReply, withFiles, type BehaviorReply } from "./behavior-reply.js";
+import { hasVisibleReply, parseBehaviorReply, type BehaviorReply } from "./behavior-reply.js";
+import { readyToRender, type RenderableReply } from "./reply-files.js";
 import { serializeReply, type BehaviorCallbackPrincipal } from "./behavior-callback-token.js";
 import {
   deleteFollowup,
@@ -102,16 +103,17 @@ function readReply(body: Record<string, unknown>): { ok: true; reply: BehaviorRe
 }
 
 /**
- * The call's reply, with its attachments downloaded from the run's
- * webhook origin (#156); `attachment_failed` when they can't be had.
+ * The call's reply, ready to render: read, then its attachments
+ * downloaded from the run's webhook origin (#156) — in the run's turn,
+ * after the revoked check, so a refused call downloads nothing.
  */
 async function replyOf(
   call: Call,
-): Promise<{ ok: true; reply: BehaviorReply } | { ok: false; outcome: Outcome }> {
+): Promise<{ ok: true; reply: RenderableReply } | { ok: false; outcome: Outcome }> {
   const read = readReply(call.body);
   if (!read.ok) return { ok: false, outcome: refused(400, read.error) };
-  const fetched = await withFiles(read.reply, call.principal.fetchFiles);
-  return fetched.ok ? fetched : { ok: false, outcome: failed(fetched.error, "attachment_failed") };
+  const ready = await readyToRender(read.reply, call.principal.fetchFiles);
+  return ready.ok ? ready : { ok: false, outcome: failed(ready.error, ready.errorCode) };
 }
 
 /** The message a call's `message_id` names, when this token sent it. */
