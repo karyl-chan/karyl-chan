@@ -15,6 +15,7 @@ import {
   type BehaviorCallback,
   type BehaviorReply,
   type BehaviorReplyAttachment,
+  type BehaviorDirectMessage,
   type BehaviorReplyEmbed,
   type BehaviorWebhookAttachment,
   type BehaviorWebhookPayload,
@@ -105,6 +106,15 @@ const reply: Required<BehaviorReply> = {
   flags: 0,
   defer: true,
   attachments: [replyAttachment],
+  direct_messages: [],
+};
+
+const directMessage: Required<BehaviorDirectMessage> = {
+  user_id: "",
+  content: "",
+  embeds: [],
+  components: [],
+  attachments: [],
 };
 
 describe("behavior-receiver types, against the fixtures", () => {
@@ -123,6 +133,7 @@ describe("behavior-receiver types, against the fixtures", () => {
     assert.deepEqual(keys(reply), sorted(response.fields));
     assert.deepEqual(keys(embed), sorted(response.embedWhitelist));
     assert.deepEqual(keys(replyAttachment), sorted(response.attachmentKeys));
+    assert.deepEqual(keys(directMessage), sorted(response.directMessageKeys));
   });
 });
 
