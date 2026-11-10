@@ -374,6 +374,18 @@ export function buildManifest(
     ...(guild_features.length > 0 ? { guild_features } : {}),
     ...(plugin_commands.length > 0 ? { plugin_commands } : {}),
     ...(capabilities.length > 0 ? { capabilities } : {}),
+    // Behavior actions (#127). They answer through the run's callback
+    // token, which is its own principal on the bot: no rpc_methods_used
+    // entry is needed (or consulted) for `ctx.reply` / `ctx.followup`.
+    ...((cfg.behaviorActions ?? []).length > 0
+      ? {
+          behavior_actions: (cfg.behaviorActions ?? []).map(({ key, name, description }) => ({
+            key,
+            name,
+            description,
+          })),
+        }
+      : {}),
     ...(cfg.webUI
       ? { web_ui: { manage_path: cfg.webUI.managePath ?? "/manage" } }
       : {}),
@@ -401,6 +413,9 @@ export function buildManifest(
         : {}),
       ...((cfg.modals ?? []).length > 0
         ? { plugin_modal: "/modals/{modal_id}" }
+        : {}),
+      ...((cfg.behaviorActions ?? []).length > 0
+        ? { behavior_action: "/behavior-actions/{action_key}" }
         : {}),
       // Emit autocomplete endpoint when at least one command declares
       // an autocomplete handler. We use the SDK builder-side

@@ -9,6 +9,7 @@ import {
   verifyDispatchHmac,
 } from "./hmac.js";
 import type {
+  PluginBehaviorActionDefinition,
   PluginCommandDefinition,
   PluginComponentDefinition,
   PluginModalDefinition,
@@ -16,6 +17,9 @@ import type {
 import type {
   APIApplicationCommandOptionChoice,
   AutocompleteContext,
+  BehaviorActionContext,
+  BehaviorActionPayload,
+  BehaviorActionReply,
   CommandContext,
   CommandReply,
   ComponentContext,
@@ -41,6 +45,8 @@ export interface PluginServerOptions {
   components?: PluginComponentDefinition[];
   /** Plugin modal handler。掛在 `/modals/:modalId`。 */
   modals?: PluginModalDefinition[];
+  /** Behavior action handler（#127）。掛在 `/behavior-actions/:actionKey`。 */
+  behaviorActions?: PluginBehaviorActionDefinition[];
   getToken: () => string | null;
   getDispatchHmacKey?: () => string | null;
   getPublicBaseUrl?: () => string | undefined;
@@ -623,6 +629,11 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
     (opts.components ?? []).map((c) => [c.id, c.handler]),
   );
 
+  // action key → behavior action handler
+  const behaviorActionMap = new Map<string, PluginBehaviorActionDefinition["handler"]>(
+    (opts.behaviorActions ?? []).map((a) => [a.key, a.handler]),
+  );
+
   // modalId → handler
   const modalMap = new Map<string, PluginModalDefinition["handler"]>(
     (opts.modals ?? []).map((m) => [m.id, m.handler]),
@@ -1170,6 +1181,110 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
       } catch (err) {
         server.log.error({ err }, "component handler threw");
         await followup("⚠ Internal error while handling the component");
+      }
+    },
+  );
+
+  // ── behavior action dispatch（HMAC 驗證，#127）──────────────────────────
+  // 綁定此 plugin action 的 behavior 觸發時，bot POST 過來：body 是觸發的
+  // behavior webhook `_meta` 加上 `action_key`。驗章後先回 204，再非同步
+  // 跑 handler。回覆（ctx.reply / ctx.followup，或 handler 的回傳值）走
+  // 這次觸發的 callback token（`_meta.callback.token`），不是 plugin 自己
+  // 的 token：bot 只讓它回覆這一次觸發。
+  server.post(
+    "/behavior-actions/:actionKey",
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const signingKey = opts.getDispatchHmacKey?.() ?? null;
+      if (!signingKey) return refuseUnregistered(request, reply);
+      const rawBody = typeof request.body === "string" ? request.body : "";
+      const auth = verifyDispatchAuth(request, rawBody, signingKey);
+      if (!auth.ok) return reply.code(401).send({ error: auth.reason });
+      const notReady = refuseNotReady(request, reply);
+      if (notReady) return notReady;
+
+      let payload: BehaviorActionPayload;
+      try {
+        payload = JSON.parse(rawBody) as BehaviorActionPayload;
+      } catch {
+        return reply.code(400).send({ error: "invalid JSON" });
+      }
+      const { actionKey } = request.params as { actionKey: string };
+      if (!payload || typeof payload !== "object" || !payload.user || typeof payload.user.id !== "string") {
+        return reply.code(400).send({ error: "missing user.id" });
+      }
+      if (payload.action_key !== actionKey) {
+        return reply.code(400).send({ error: "action_key mismatch" });
+      }
+      const callbackToken = payload.callback?.token;
+      if (typeof callbackToken !== "string" || callbackToken === "") {
+        return reply.code(400).send({ error: "missing callback.token" });
+      }
+      const handler = behaviorActionMap.get(actionKey);
+      if (!handler) {
+        return reply.code(404).send({ error: `unknown behavior action "${actionKey}"` });
+      }
+      reply.code(204).send();
+
+      // the run's own answers: the callback token, never the plugin token
+      let replied = false;
+      const answer = (path: string, body: BehaviorActionReply) =>
+        callBotRpc(server.log, opts.botUrl, callbackToken, path, body);
+      const ctxReply = async (body: BehaviorActionReply): Promise<void> => {
+        await answer("/api/plugin/interactions.respond", body);
+        replied = true;
+      };
+      const ctxFollowup = async (body: BehaviorActionReply): Promise<string | null> => {
+        const res = (await answer("/api/plugin/interactions.followup", body)) as { id?: unknown };
+        return typeof res?.id === "string" ? res.id : null;
+      };
+      // anything else: the plugin's own token and scopes
+      const callRpc = (path: string, body?: unknown): Promise<unknown> => {
+        const token = opts.getToken();
+        if (!token) {
+          return Promise.reject(new BotRpcError("no_token", "plugin has not registered with the bot yet"));
+        }
+        return callBotRpc(server.log, opts.botUrl, token, path, body);
+      };
+      const rpc = createPluginRpc(callRpc);
+      const ctx: BehaviorActionContext = {
+        ...("interaction_id" in payload
+          ? { trigger: "command" as const, payload }
+          : { trigger: "message" as const, payload }),
+        pluginKey: opts.pluginKey,
+        actionKey,
+        behaviorId: payload.behavior_id,
+        userId: payload.user.id,
+        userDisplayName: payload.user.global_name || payload.user.username || payload.user.id,
+        guildId: payload.guild_id ?? null,
+        channelId: payload.channel_id,
+        reply: ctxReply,
+        followup: ctxFollowup,
+        log: {
+          info: (msg, meta) => server.log.info(meta ?? {}, msg),
+          warn: (msg, meta) => server.log.warn(meta ?? {}, msg),
+          error: (msg, meta) => server.log.error(meta ?? {}, msg),
+        },
+        publicBaseUrl: opts.getPublicBaseUrl?.(),
+        botRpc: callRpc,
+        discord: rpc.discord,
+        voice: rpc.voice,
+        me: rpc.me,
+        kv: rpc.kv,
+        auth: rpc.auth,
+      };
+
+      try {
+        const result = await handler(ctx);
+        if (result && typeof result === "object") await ctxReply(result);
+      } catch (err) {
+        server.log.error({ err, actionKey }, "behavior action handler threw");
+        // the user would otherwise wait on "thinking…" until it expires
+        if (!replied) {
+          await ctxReply({
+            content: "⚠ Internal error while running this action",
+            ephemeral: true,
+          }).catch(() => {});
+        }
       }
     },
   );

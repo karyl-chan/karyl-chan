@@ -2,6 +2,8 @@ import type { FastifyInstance } from "fastify";
 import type {
   APIApplicationCommandOptionChoice,
   AutocompleteContext,
+  BehaviorActionContext,
+  BehaviorActionResult,
   CommandContext,
   CommandOption,
   CommandReply,
@@ -22,6 +24,11 @@ import {
   PluginReadinessError,
   type PluginLifecycleState,
 } from "./lifecycle.js";
+import {
+  BEHAVIOR_ACTION_KEY_PATTERN,
+  MAX_BEHAVIOR_ACTION_DESCRIPTION,
+  MAX_BEHAVIOR_ACTION_NAME,
+} from "@karyl-chan/plugin-wire";
 
 /**
  * Handler for one Discord-side event the plugin subscribed to.
@@ -241,6 +248,26 @@ export interface PluginComponentDefinition {
  * 送出後 bot 收到 `MODAL_SUBMIT` interaction，依 `custom_id` 派送到此
  * 對應 id 的 handler。Modal `custom_id` 形如 `kc:<pluginKey>:<id>[:<tail>]`。
  */
+/**
+ * A behavior action (#127): something this plugin does when a behavior
+ * fires. The plugin declares it (`behavior_actions` in the manifest); an
+ * admin binds it to any trigger — a command or a message — in the bot's
+ * behaviors page. The bot POSTs the run to `/behavior-actions/<key>`
+ * (HMAC-signed); the SDK answers 204 and runs `handler`, which answers
+ * the run with `ctx.reply` / `ctx.followup` or by returning a reply.
+ * Those go through the run's callback token, so they need no
+ * `rpcMethodsUsed`: the binding is the authorization.
+ */
+export interface PluginBehaviorActionDefinition {
+  /** Unique within the plugin: `^[a-z0-9][a-z0-9_-]{0,31}$` (V-09). */
+  key: string;
+  /** Shown to the admin picking an action; at most 100 characters (V-10). */
+  name: string;
+  /** What it does, for the admin; at most 200 characters (V-10). */
+  description: string;
+  handler: (ctx: BehaviorActionContext) => BehaviorActionResult | Promise<BehaviorActionResult>;
+}
+
 export interface PluginModalDefinition {
   /** Modal id（plugin 內唯一），同 component id 規則。 */
   id: string;
@@ -376,6 +403,13 @@ export interface PluginConfig {
    * Modal 由 command handler 透過 `ctx.sendModal(modal)` 開啟。
    */
   modals?: PluginModalDefinition[];
+
+  /**
+   * Behavior action（#127）。宣告任一條時，manifest 會帶 `behavior_actions`
+   * 與 `endpoints.behavior_action = "/behavior-actions/{action_key}"`，SDK
+   * 掛上對應路由；管理員把 action 綁到 behavior 觸發後，bot 才會派送過來。
+   */
+  behaviorActions?: PluginBehaviorActionDefinition[];
 
   /**
    * 此 plugin 需要的 RBAC capability 詞條。bot 端在 register 時持久化，
@@ -532,6 +566,37 @@ export function definePluginComponent(
     throw new Error(
       `definePluginComponent: '${def.id}'.handler must be a function`,
     );
+  }
+  return def;
+}
+
+/**
+ * Define a behavior action. Returns the definition unchanged (a typed
+ * constructor); the key, name, description and handler are checked
+ * now, so a bad one fails at startup. Duplicates and the count are
+ * checked by `buildManifest` (V-11, V-12).
+ */
+export function definePluginBehaviorAction(
+  def: PluginBehaviorActionDefinition,
+): PluginBehaviorActionDefinition {
+  if (typeof def.key !== "string" || !BEHAVIOR_ACTION_KEY_PATTERN.test(def.key)) {
+    throw new Error(
+      `definePluginBehaviorAction: key "${String(def.key)}" must match ${BEHAVIOR_ACTION_KEY_PATTERN.source} (V-09)`,
+    );
+  }
+  for (const [field, max] of [
+    ["name", MAX_BEHAVIOR_ACTION_NAME],
+    ["description", MAX_BEHAVIOR_ACTION_DESCRIPTION],
+  ] as const) {
+    const value = def[field];
+    if (typeof value !== "string" || value.trim() === "" || value.length > max) {
+      throw new Error(
+        `definePluginBehaviorAction: '${def.key}'.${field} must be a non-empty string of at most ${max} characters (V-10)`,
+      );
+    }
+  }
+  if (typeof def.handler !== "function") {
+    throw new Error(`definePluginBehaviorAction: '${def.key}'.handler must be a function`);
   }
   return def;
 }
@@ -801,6 +866,7 @@ export function definePlugin(config: PluginConfig): PluginInstance {
         ],
         components: config.components ?? [],
         modals: config.modals ?? [],
+        behaviorActions: config.behaviorActions ?? [],
         getToken: () => client?.token() ?? null,
         getDispatchHmacKey: () => client?.getDispatchHmacKey() ?? null,
         getPublicBaseUrl: () => client?.getPublicBaseUrl(),

@@ -426,6 +426,70 @@ The explicit `rpcMethodsUsed` array stays the documented escape hatch
 for any scope the auto-rules don't cover (e.g. `voice.*`, `channels.*`,
 `roles.*`, `members.add_role`, `messages.send_dm`, `auth.session`).
 
+[Behavior actions](#behavior-actions) add no scope: they answer through
+the run's callback token, which the bot authorizes on its own.
+
+---
+
+## Behavior actions
+
+A behavior action is something your plugin does when a behavior fires.
+You declare it; an admin binds it to any trigger in the bot's behaviors
+page — a command, or a message — the way they would bind a webhook. The
+binding is the authorization: no guild feature has to be enabled.
+
+```ts
+import { definePlugin, definePluginBehaviorAction } from "@karyl-chan/plugin-sdk";
+
+const weather = definePluginBehaviorAction({
+  key: "weather", // ^[a-z0-9][a-z0-9_-]{0,31}$, unique in the plugin
+  name: "Weather", // what the admin picks (at most 100 characters)
+  description: "Tells the weather for a city", // at most 200
+  handler: async (ctx) => {
+    const city =
+      ctx.trigger === "command"
+        ? String(ctx.payload.options.find((o) => o.name === "city")?.value ?? "")
+        : (ctx.payload.captures[0] ?? "");
+    await ctx.reply({ content: `Looking up ${city}…` });
+    const forecast = await lookUp(city); // take as long as you need, up to 15 minutes
+    await ctx.reply({ content: `${city}: ${forecast}` }); // edits the reply
+  },
+});
+
+definePlugin({ key: "weather", name: "Weather", version: "1.0.0", rpcMethodsUsed: [], behaviorActions: [weather] });
+```
+
+When the bound behavior fires, the bot POSTs the run to
+`/behavior-actions/<key>` (signed like every dispatch). The SDK checks
+the signature, answers 204 at once and runs your handler. A command is
+already showing "thinking…"; a message trigger has no reply yet.
+
+| `ctx` | |
+| ----- | - |
+| `trigger` | `"command"` or `"message"`. `ctx.payload` is that trigger's behavior-webhook `_meta` plus `action_key` (`options` for a command, `captures` for a message, `attachments` for both). |
+| `actionKey`, `behaviorId`, `userId`, `userDisplayName`, `guildId`, `channelId` | Who and where. |
+| `reply(reply)` | The run's reply. The first fills the "thinking…" or sends the message; later ones edit it. |
+| `followup(reply)` | A new message; resolves to its id. |
+| `botRpc`, `discord`, `kv`, `voice`, `me`, `auth` | Your plugin's own RPC, under your own token and `rpcMethodsUsed`. |
+
+A reply is the behavior reply model, the same as a webhook's: `content`,
+`embeds`, link-button `components`, `flags`, and `ephemeral` for who sees
+it (else the behavior's stored visibility, else the trigger's default).
+Returning a reply from the handler sends it with `reply`. If the handler
+throws before replying, the user gets a generic private line.
+
+`reply` and `followup` do not use your plugin token: they carry the run's
+**callback token** from `ctx.payload.callback`, which the bot lets answer
+that one run for 15 minutes and nothing else. They call the bot at your
+plugin's usual bot URL; `callback.api_base` is for webhook receivers
+outside the bot's network.
+
+`buildManifest` publishes the actions as `behavior_actions` and the
+route as `endpoints.behavior_action`, and refuses a bad declaration when
+the plugin starts: a key that doesn't match (V-09), an empty or
+over-long name or description (V-10), a key declared twice (V-11), more
+than 25 actions (V-12).
+
 ---
 
 ## Background tasks
