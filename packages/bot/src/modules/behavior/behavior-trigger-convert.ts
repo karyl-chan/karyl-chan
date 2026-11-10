@@ -2,9 +2,10 @@
  * POST /api/behaviors/:id/convert-trigger (#172) — a custom behavior
  * changes its kind of trigger: a Message Trigger becomes a Command Leaf,
  * or a leaf becomes a Message Trigger. The behavior keeps its row, so its
- * id, title, note, enabled flag, webhook (URL, secret, a previous secret
- * still in its rotation grace), statistics and delivery log stay as they
- * are — the receiver keeps verifying with the same secret. What only the
+ * id, title, note, enabled flag, action — a webhook (URL, secret, a
+ * previous secret still in its rotation grace) or a plugin action binding
+ * (#203) — statistics and delivery log stay as they are; the receiver
+ * keeps verifying with the same secret. What only the
  * old trigger had goes: a pattern, its location, position and stop flag;
  * a leaf's path and options.
  *
