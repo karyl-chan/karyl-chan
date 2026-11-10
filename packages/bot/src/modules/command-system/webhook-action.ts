@@ -21,6 +21,12 @@
  * answer — or failure line — arriving after it is not shown, and the
  * delivery is ok and marked `deferred` (its reply came through the
  * token), even when the synchronous request itself failed.
+ *
+ * A reply with attachments (#156) is shown only with its files, which the
+ * forwarder downloads from the webhook URL's origin in the run's turn, once
+ * the answer is known to be shown (not superseded); when they can't be
+ * had the run fails (`attachment_failed`) and the user gets the failure
+ * line — never the reply without them.
  */
 
 import type { BehaviorWebhookActionRow } from "../behavior/models/behavior-webhook-action.model.js";
@@ -40,6 +46,7 @@ import {
   type CallbackMeta,
 } from "./behavior-callback-token.js";
 import type { BehaviorReply } from "./behavior-reply.js";
+import { readyToRender, type ReplyFileFetcher } from "./reply-files.js";
 import { sendTypingFor, type RenderOutcome } from "./reply-renderer.js";
 import type { ForwardResult } from "./types.js";
 import type { WebhookForwarder } from "./webhook-forwarder.service.js";
@@ -70,18 +77,25 @@ function withCallback(
   return { ...payload, _meta: { ...meta, callback } };
 }
 
+/** The synchronous answer's attachments could not be had (#156). */
+type AttachmentFailure = Extract<Awaited<ReturnType<typeof readyToRender>>, { ok: false }>;
+
 /**
  * Show the synchronous answer in the run's current reply message, or not
- * at all ("superseded") when a callback `respond` already answered.
+ * at all ("superseded") when a callback `respond` already answered. Its
+ * attachments are downloaded in the run's turn, once it is known to be
+ * shown: a superseded answer downloads nothing.
  */
 async function renderAnswer(
   run: WebhookActionRun,
   principal: BehaviorCallbackPrincipal,
   reply: BehaviorReply,
-): Promise<RenderOutcome | "superseded"> {
+): Promise<RenderOutcome | AttachmentFailure | "superseded"> {
   return serializeReply(principal, async () => {
     if (principal.answeredByCallback) return "superseded" as const;
-    const rendered = await renderReply(reply, run.target, {
+    const ready = await readyToRender(reply, principal.fetchFiles);
+    if (!ready.ok) return ready;
+    const rendered = await renderReply(ready.reply, run.target, {
       visibility: run.visibility,
       replyMessage: principal.replyMessage,
     });
@@ -93,7 +107,11 @@ async function renderAnswer(
 export async function runWebhookAction(run: WebhookActionRun): Promise<void> {
   const { behaviorId, target } = run;
   const firedAt = new Date();
-  const issued = behaviorCallbackTokens.issue({ behaviorId, target, visibility: run.visibility });
+  // a reply's attachments come from the run's webhook origin (#156), for
+  // the synchronous answer and the callback calls alike
+  const fetchFiles: ReplyFileFetcher = (attachments) =>
+    run.forwarder.fetchReplyFiles(run.webhook, attachments);
+  const issued = behaviorCallbackTokens.issue({ behaviorId, target, visibility: run.visibility, fetchFiles });
   const { principal } = issued;
   const payload = withCallback(run.payload, callbackMetaOf(issued));
   let deferred = false;
@@ -121,7 +139,12 @@ export async function runWebhookAction(run: WebhookActionRun): Promise<void> {
     } else if (result.ok) {
       const rendered = await renderAnswer(run, principal, result.reply);
       if (rendered === "superseded") deferred = true;
-      else if (!rendered.ok) {
+      else if (!rendered.ok && "errorCode" in rendered) {
+        // a reply is never shown without its files (#156)
+        ok = false;
+        errorCode = rendered.errorCode;
+        error = rendered.error;
+      } else if (!rendered.ok) {
         ok = false;
         unreachable = rendered.dmFailed === true;
         errorCode = unreachable ? "dm_failed" : "render_failed";

@@ -253,3 +253,55 @@ describe("renderReply — the stored default (replyVisibility)", () => {
     expect(authorSend).not.toHaveBeenCalled();
   });
 });
+
+describe("renderReply — attachments (#156)", () => {
+  const png = { name: "chart.png", data: Buffer.from("PNG") };
+  const withFile = { files: [png] };
+  const sentFiles = [{ attachment: png.data, name: "chart.png" }];
+
+  it("an attachments-only reply fills the placeholder, replacing its files", async () => {
+    const ix = fakeInteraction({ deferred: true, ephemeral: true });
+    const out = await renderReply(withFile, { kind: "interaction", interaction: ix as never });
+    expect(out.ok && out.via).toBe("interaction");
+    expect(ix.editReply).toHaveBeenCalledWith({
+      files: sentFiles,
+      attachments: [],
+      allowedMentions: { parse: [] },
+    });
+    expect(ix.deleteReply).not.toHaveBeenCalled();
+  });
+
+  it("a public answer to a private placeholder follows up with the files", async () => {
+    const ix = fakeInteraction({ deferred: true, ephemeral: true });
+    await renderReply({ ...withFile, content: "here", ephemeral: false }, { kind: "interaction", interaction: ix as never });
+    expect(ix.followUp).toHaveBeenCalledWith({
+      content: "here",
+      files: sentFiles,
+      allowedMentions: { parse: [] },
+    });
+  });
+
+  it("sends the files with a message trigger's reply, in the channel or the author's DM", async () => {
+    const { message, channelSend, authorSend } = fakeMessage("guild");
+    await renderReply(withFile, { kind: "message", message: message as never });
+    expect(channelSend).toHaveBeenCalledWith({ files: sentFiles, allowedMentions: { parse: [] } });
+    await renderReply({ ...withFile, ephemeral: true }, { kind: "message", message: message as never });
+    expect(authorSend).toHaveBeenCalledWith({ files: sentFiles, allowedMentions: { parse: [] } });
+  });
+
+  it("an edit without files keeps the message's earlier ones", async () => {
+    const ix = fakeInteraction({ deferred: true, ephemeral: true });
+    await renderReply({ content: "only text" }, { kind: "interaction", interaction: ix as never });
+    expect(ix.editReply).toHaveBeenCalledWith({ content: "only text", allowedMentions: { parse: [] } });
+  });
+
+  it("takes no attachment descriptors: they must be downloaded first (a type error)", () => {
+    const { message } = fakeMessage("guild");
+    const notDownloaded = { content: "x", attachments: [{ name: "a.png", path: "/a.png" }] };
+    // compile-time only: the call is never made
+    const render = () =>
+      // @ts-expect-error a reply with attachments is not a RenderableReply
+      renderReply(notDownloaded, { kind: "message", message: message as never });
+    expect(typeof render).toBe("function");
+  });
+});

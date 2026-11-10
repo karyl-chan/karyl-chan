@@ -415,6 +415,7 @@ these codes:
 | `defer_failed` | Discord refused a command's deferral (the interaction had expired): the webhook was never called, and the user sees "interaction failed". It counts as a failure in the statistics too, and is warned about once per leaf in the event log. |
 | `callback_invalid` | A callback call (#113) the bot refused: a component that is not an https link button, nothing to show, or a `message_id` the token did not send. A row of its own, not counted in the statistics. |
 | `callback_failed` | Discord refused a callback call's reply. A row of its own, not counted in the statistics. |
+| `attachment_failed` | The reply's [attachments](behavior-webhook-protocol.md#attachments) could not be downloaded from the webhook's origin: more than 5, a refused path or name, over 8 MiB (25 MiB together), a redirect, a non-2xx answer, or no answer in time (including a wait for a download turn). The user gets the failure line, never the reply without its files (by the synchronous answer or a callback call). |
 
 A row never holds the webhook URL, a secret, the payload, the message or
 the reply, a user id or a message id. Each behavior keeps its last 20

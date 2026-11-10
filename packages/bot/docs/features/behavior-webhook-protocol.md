@@ -314,9 +314,11 @@ subset of this shape, so there is no version field.
 | `ephemeral` | boolean | Who sees the reply. See below. |
 | `flags` | integer | Only `SuppressEmbeds` (4) and `SuppressNotifications` (4096) are kept. Who sees the reply is never a flag. |
 | `defer` | boolean | `true`: answer later with the callback token. A command keeps its "thinking…" placeholder, a message trigger shows "typing…", and the other fields are not shown. See [Answering later](#answering-later). |
+| `attachments` | array | `[{ name, path }]`: files to send with the reply. See [Attachments](#attachments). |
 
-- A field of the wrong type is ignored. Any other top-level field is
-  ignored too. The bot logs either once per behavior, so you can see it.
+- A field of the wrong type is ignored, except `attachments`: files are
+  never dropped. Any other top-level field is ignored too. The bot logs
+  either once per behavior, so you can see it.
 - Mentions in a reply are never turned into pings: `<@id>` shows as a
   mention but notifies no one.
 - The body may be at most **64 KiB**. A larger body fails the action.
@@ -327,6 +329,57 @@ subset of this shape, so there is no version field.
   of the `flags`.
 
 The test-fire result shows what these rules changed in your reply.
+
+### Attachments
+
+`attachments` is `[{ name, path }]`, the same shape a plugin gives
+`interactions.respond`. `name` is the file's name in Discord (an embed
+can show it as `attachment://<name>`); `path` is where the file is on
+your receiver. The bot resolves `path` against the **origin** of the
+webhook URL (scheme, host and port; not the URL's own path) and
+downloads each file with a `GET`, before it shows the reply:
+
+```json
+{ "content": "Today's chart", "attachments": [{ "name": "chart.png", "path": "/files/chart.png" }] }
+```
+
+With the webhook URL `https://hooks.example/weather`, the bot fetches
+`https://hooks.example/files/chart.png`.
+
+- At most 5 files of at most **8 MiB** each, and **25 MiB** together.
+  A file past either limit is cut off as it streams in.
+- `path` is a plain path starting with a single `/`. `//host`, a full URL,
+  a relative path, a backslash, a space or control character, and an
+  encoded slash (`%2F`, `%5C`) are refused. `name` must not be empty or
+  longer than 200 characters, and has no slash, backslash or control
+  character.
+- The download follows the webhook URL's rules: the same target rules
+  (a private address only when the operator's allowlist has it), the
+  checked address only, and no redirects — a 3xx is a failure.
+- **Anything on that origin can be fetched.** The bot does not limit
+  `path` to the webhook URL's own path, so whoever holds a run's callback
+  token can have any path of your origin attached to a reply (a `respond`
+  with `attachments`). Serve on that origin only what you mean to share
+  — for example, put the webhook on a host or port of its own rather than
+  beside an admin panel or internal API.
+- The bot sends no credentials with the `GET`: use paths nobody can
+  guess, or files that may be public.
+- One 10-second limit covers the whole download of a reply — all its
+  files together, not each one.
+- The bot downloads at most 2 replies' files at a time. Another reply
+  waits for its turn within its own 10 seconds, and fails if they run
+  out first.
+- A reply of only attachments is a reply, not "no reply".
+- An `attachments` that is not an array of `{ name, path }` strings fails
+  the action as a bad reply. A file the bot can't get — too many, a
+  refused path or name, too large, a redirect, a non-2xx answer, or no
+  answer in time — fails the action too (`attachment_failed` in the
+  delivery log): the user gets the failure line, never the reply without
+  its files.
+- An edit that has files (a `respond` that edits the reply, or
+  `edit_followup`) replaces **all** the message's earlier files with
+  its own; an edit without `attachments` keeps them.
+- A test-fire does not download the files.
 
 ### Who sees the reply
 
@@ -415,7 +468,10 @@ and an empty one (`""`, `[]`) counts as left out.
   it, `429`.
 - A call the bot refuses (`callback_invalid`) or Discord refuses
   (`callback_failed`; `dm_failed` when a private reply could not be sent
-  to the author as a DM) is a failed delivery of the behavior. A call that
+  to the author as a DM) is a failed delivery of the behavior, and so is
+  a call whose [attachments](#attachments) the bot can't get
+  (`attachment_failed`, `400`, nothing shown). Attachments come from the
+  run's webhook URL origin, as for the synchronous answer. A call that
   works is not logged.
 - The token lives in the bot's memory: after a restart it is unknown.
 
@@ -431,6 +487,7 @@ The action fails when:
 - the body is too large, is not JSON, or is not a JSON object;
 - in `hmac` mode, the response signature is missing, stale or wrong (in
   `token` mode, only when a signature is present and wrong);
+- the reply's [attachments](#attachments) can't all be downloaded;
 - Discord refuses the reply, or an `ephemeral` reply in a guild cannot be
   sent to the author as a DM.
 
@@ -650,5 +707,7 @@ changes the protocol. Update a receiver **before** the bot is upgraded:
   commands, with the files of the `attachment` options (#152).
 - New: `_meta.callback` on commands and message triggers, and the `defer`
   reply field, to answer later (#113).
+- New: the `attachments` reply field, files the bot downloads from the
+  webhook URL's origin (#156).
 - Removed: conversation sessions and the `[BEHAVIOR:END]` marker. A reply
   never starts or ends a session.

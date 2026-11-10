@@ -191,6 +191,11 @@ describe("the protocol document, against the contract fixtures", () => {
     expect(section).toContain(`At most ${r.maxComponentRows} rows of ${r.maxButtonsPerRow} buttons`);
     expect(section).toContain(`**${r.maxBodyBytes / 1024} KiB**`);
     for (const flag of r.allowedFlags) expect(section).toContain(`(${flag})`);
+    expect(section).toContain(`\`[{ ${r.attachmentKeys.join(", ")} }]\``);
+    expect(section).toContain(
+      `At most ${r.maxAttachments} files of at most **${r.maxAttachmentBytes / 1024 / 1024} MiB** each`,
+    );
+    expect(section).toContain(`**${r.maxAttachmentTotalBytes / 1024 / 1024} MiB** together`);
   });
 });
 

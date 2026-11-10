@@ -87,7 +87,7 @@ describe("WebhookForwarder — the response body", () => {
 
   it("returns what parsing dropped, and logs unknown fields once per behavior", async () => {
     const action = plainAction();
-    const body = JSON.stringify({ content: "hi", attachments: [] });
+    const body = JSON.stringify({ content: "hi", tts: true });
     const forwarder = new WebhookForwarder();
     respond(body);
     const first = await forwarder.forward(action, {});
@@ -97,12 +97,12 @@ describe("WebhookForwarder — the response body", () => {
     expect(first).toEqual({
       ok: true,
       reply: { content: "hi" },
-      notes: [{ kind: "unknown_fields", fields: ["attachments"] }],
+      notes: [{ kind: "unknown_fields", fields: ["tts"] }],
       status: 200,
     });
     const logged = vi
       .mocked(botEventLog.record)
-      .mock.calls.filter(([, , msg]) => String(msg).includes("attachments"));
+      .mock.calls.filter(([, , msg]) => String(msg).includes("tts"));
     expect(logged).toHaveLength(1);
   });
 });

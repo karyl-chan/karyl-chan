@@ -352,7 +352,8 @@ export interface BehaviorDelivery {
   /**
    * A host-policy code, `response_signature`, `http_error`,
    * `invalid_reply`, `request_failed`, `render_failed`, `dm_failed`,
-   * `defer_failed`, `callback_invalid` or `callback_failed`; null on success.
+   * `defer_failed`, `callback_invalid`, `callback_failed` or
+   * `attachment_failed`; null on success.
    */
   errorCode: string | null;
   /** At most 300 characters; null on success. */

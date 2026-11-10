@@ -213,6 +213,17 @@ export interface ContractFixtures {
       readonly maxButtonsPerRow: number;
       /** MessageFlags a response may set; visibility is `ephemeral`, never a flag. */
       readonly allowedFlags: readonly number[];
+      /**
+       * `attachments` (#156): `[{ name, path }]`, the plugin
+       * `interactions.respond` shape. The bot GETs each `path` (a plain
+       * path, never `//host` or a URL) from the webhook URL's origin,
+       * follows no redirect, and fails the action past these limits (per
+       * file, and all of a reply's files together).
+       */
+      readonly attachmentKeys: readonly string[];
+      readonly maxAttachments: number;
+      readonly maxAttachmentBytes: number;
+      readonly maxAttachmentTotalBytes: number;
     };
   };
 }
@@ -656,8 +667,9 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
      * with the bot.
      */
     response: {
-      // `defer: true` (#113): answer later with the callback token
-      fields: ["content", "embeds", "components", "ephemeral", "flags", "defer"],
+      // `defer: true` (#113): answer later with the callback token;
+      // `attachments` (#156): files the bot fetches from the receiver
+      fields: ["content", "embeds", "components", "ephemeral", "flags", "defer", "attachments"],
       embedWhitelist: [
         "title",
         "description",
@@ -679,6 +691,11 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
       maxButtonsPerRow: 5,
       // SuppressEmbeds, SuppressNotifications
       allowedFlags: [4, 4096],
+      attachmentKeys: ["name", "path"],
+      maxAttachments: 5,
+      // 8 MiB per file and 25 MiB per reply, counted as they stream
+      maxAttachmentBytes: 8388608,
+      maxAttachmentTotalBytes: 26214400,
     },
   },
 };

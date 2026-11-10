@@ -28,6 +28,10 @@
  * the reply (to the channel, or the author's DM), later ones edit that
  * message, and follow-ups are new messages placed the same way.
  *
+ * A reply's attachments (#156) are downloaded from the run's webhook
+ * origin, as for the synchronous answer; when they can't be had the call
+ * fails (`attachment_failed`) and nothing is shown.
+ *
  * A call the bot refuses, or one Discord refuses, is a failed delivery of
  * the same behavior (`callback_invalid` / `callback_failed`).
  */
@@ -36,6 +40,7 @@ import { recordDelivery, type DeliveryErrorCode } from "../behavior/behavior-del
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { shouldRecord } from "../bot-events/bot-event-dedup.js";
 import { hasVisibleReply, parseBehaviorReply, type BehaviorReply } from "./behavior-reply.js";
+import { readyToRender, type RenderableReply } from "./reply-files.js";
 import { serializeReply, type BehaviorCallbackPrincipal } from "./behavior-callback-token.js";
 import {
   deleteFollowup,
@@ -53,7 +58,7 @@ export interface CallbackAnswer {
 
 const COMPONENTS_REFUSED =
   "components: only link buttons (type 2, style 5) with an https url, in action rows, at most 5 rows of 5";
-const NOTHING_TO_SHOW = "content, embeds or components required";
+const NOTHING_TO_SHOW = "content, embeds, components or attachments required";
 const NOT_OURS = "message_id was not sent with this callback token";
 
 /** One callback call: the outcome, before it is recorded and answered. */
@@ -61,14 +66,25 @@ type Outcome =
   | { ok: true; body: Record<string, unknown> }
   /** The bot refused the call (`callback_invalid`). */
   | { ok: false; refused: true; status: number; error: string }
-  /** Discord refused it (`callback_failed`), or a private reply could not be DMed (`dm_failed`). */
-  | { ok: false; refused: false; error: string; dmFailed?: true }
+  /**
+   * Discord refused it (`callback_failed`), a private reply could not be
+   * DMed (`dm_failed`), or its attachments could not be had (`attachment_failed`).
+   */
+  | { ok: false; refused: false; error: string; code: FailedCode }
   /** The token was revoked while the call waited its turn: as if unknown. */
   | { ok: false; gone: true };
 
 const refused = (status: number, error: string): Outcome => ({ ok: false, refused: true, status, error });
-const failed = (error: string, dmFailed?: true): Outcome =>
-  dmFailed ? { ok: false, refused: false, error, dmFailed } : { ok: false, refused: false, error };
+type FailedCode = "callback_failed" | "dm_failed" | "attachment_failed";
+const failed = (error: string, code: FailedCode = "callback_failed"): Outcome => ({
+  ok: false,
+  refused: false,
+  error,
+  code,
+});
+/** A render the renderer refused: Discord's refusal, or an author it could not DM. */
+const renderFailed = (outcome: { error: string; dmFailed?: true }): Outcome =>
+  failed(outcome.error, outcome.dmFailed ? "dm_failed" : "callback_failed");
 const GONE: Outcome = { ok: false, gone: true };
 
 type Call = { principal: BehaviorCallbackPrincipal; body: Record<string, unknown> };
@@ -86,6 +102,20 @@ function readReply(body: Record<string, unknown>): { ok: true; reply: BehaviorRe
   return { ok: true, reply };
 }
 
+/**
+ * The call's reply, ready to render: read, then its attachments
+ * downloaded from the run's webhook origin (#156) — in the run's turn,
+ * after the revoked check, so a refused call downloads nothing.
+ */
+async function replyOf(
+  call: Call,
+): Promise<{ ok: true; reply: RenderableReply } | { ok: false; outcome: Outcome }> {
+  const read = readReply(call.body);
+  if (!read.ok) return { ok: false, outcome: refused(400, read.error) };
+  const ready = await readyToRender(read.reply, call.principal.fetchFiles);
+  return ready.ok ? ready : { ok: false, outcome: failed(ready.error, ready.errorCode) };
+}
+
 /** The message a call's `message_id` names, when this token sent it. */
 function ownMessage({ principal, body }: Call): ReplySlot | null {
   const id = body.message_id;
@@ -93,27 +123,27 @@ function ownMessage({ principal, body }: Call): ReplySlot | null {
 }
 
 async function respond(call: Call): Promise<Outcome> {
-  const read = readReply(call.body);
-  if (!read.ok) return refused(400, read.error);
+  const read = await replyOf(call);
+  if (!read.ok) return read.outcome;
   const { principal } = call;
   const rendered = await renderReply(read.reply, principal.target, {
     visibility: principal.visibility,
     replyMessage: principal.replyMessage,
   });
-  if (!rendered.ok) return failed(rendered.error, rendered.dmFailed);
+  if (!rendered.ok) return renderFailed(rendered);
   principal.replyMessage = rendered.replyMessage ?? null;
   principal.answeredByCallback = true;
   return { ok: true, body: { ok: true } };
 }
 
 async function followup(call: Call): Promise<Outcome> {
-  const read = readReply(call.body);
-  if (!read.ok) return refused(400, read.error);
+  const read = await replyOf(call);
+  if (!read.ok) return read.outcome;
   const { principal } = call;
   const sent = await renderFollowup(read.reply, principal.target, {
     visibility: principal.visibility,
   });
-  if (!sent.ok) return failed(sent.error, sent.dmFailed);
+  if (!sent.ok) return renderFailed(sent);
   principal.createdMessages.set(sent.sent.messageId, sent.sent);
   return { ok: true, body: { ok: true, id: sent.sent.messageId } };
 }
@@ -121,8 +151,8 @@ async function followup(call: Call): Promise<Outcome> {
 async function editOwnFollowup(call: Call): Promise<Outcome> {
   const own = ownMessage(call);
   if (!own) return refused(403, NOT_OURS);
-  const read = readReply(call.body);
-  if (!read.ok) return refused(400, read.error);
+  const read = await replyOf(call);
+  if (!read.ok) return read.outcome;
   const edited = await editFollowup(read.reply, own);
   return edited.ok ? { ok: true, body: { ok: true } } : failed(edited.error);
 }
@@ -206,9 +236,8 @@ export async function runBehaviorCallback(
     await recordFailure(principal, method, "callback_invalid", outcome.error, firedAt, started);
     return { status: outcome.status, body: { error: outcome.error } };
   }
-  // a private reply that could not reach the author is what the
-  // synchronous path calls it too
-  const code = outcome.dmFailed ? "dm_failed" : "callback_failed";
-  await recordFailure(principal, method, code, outcome.error, firedAt, started);
+  // a private reply that could not reach the author, and attachments that
+  // could not be had, are what the synchronous path calls them too
+  await recordFailure(principal, method, outcome.code, outcome.error, firedAt, started);
   return { status: 400, body: { error: `${failedAs}: ${outcome.error}` } };
 }
