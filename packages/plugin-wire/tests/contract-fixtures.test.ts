@@ -95,6 +95,29 @@ describe("contract fixtures: internal consistency", () => {
   });
 });
 
+describe("contract fixtures: behavior action dispatch (#127)", () => {
+  const payload = CONTRACT_FIXTURES.dispatchEnvelope.payloads.behavior_action;
+  const request = CONTRACT_FIXTURES.behaviorWebhook.request;
+
+  it("carries what both triggers' webhook _meta share, plus action_key", () => {
+    const shared = request.slashMetaKeys.filter((k) => request.patternMetaKeys.includes(k));
+    assert.deepEqual([...payload.requiredFields].sort(), [...shared, "action_key"].sort());
+    assert.deepEqual([...payload.userFields].sort(), [...request.userKeys].sort());
+    assert.ok(payload.requiredFields.includes("callback"));
+  });
+
+  it("is dispatched to /behavior-actions/{action_key}", () => {
+    assert.equal(payload.endpointTemplate, "/behavior-actions/{action_key}");
+  });
+
+  it("is answered only through paths the callback principal may call", () => {
+    const allowed = CONTRACT_FIXTURES.behaviorWebhook.callback.methods.map((m) => `/api/plugin/${m}`);
+    for (const p of CONTRACT_FIXTURES.rpc.behaviorActionPathsCalledBySdk) {
+      assert.ok(allowed.includes(p), `${p} is not a callback method`);
+    }
+  });
+});
+
 describe("contract fixtures: behavior webhook signing", () => {
   const signing = CONTRACT_FIXTURES.behaviorWebhook.signing;
 

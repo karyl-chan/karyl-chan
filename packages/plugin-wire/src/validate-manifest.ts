@@ -1,5 +1,6 @@
 import { validateConfigSchema } from "./validate-config.js";
 import type {
+  ManifestBehaviorAction,
   ManifestCapability,
   ManifestCommand,
   ManifestConfigField,
@@ -23,13 +24,22 @@ import type {
  * module confirms the URL parses and is http(s); whether that target is
  * *allowed* is the bot's call, applied after this returns.
  *
- * Rule IDs (V-01 ~ V-08, V-C1 ~ V-C3) trace to B-sdk §4. V-01 was
+ * Rule IDs (V-01 ~ V-08, V-C1 ~ V-C3) trace to B-sdk §4; V-09 ~ V-12
+ * (behavior_actions, #127) were added after it. V-01 was
  * `schema_version === "1"`; it now only rejects values other than
  * absent / null / "1" — see `isSupportedSchemaVersion` and `manifest.ts`.
  */
 
 /** Hard cap on how many capabilities one plugin may declare. */
 export const MAX_PLUGIN_CAPABILITIES = 32;
+
+/** A behavior action key (V-09): like a command name, `_` allowed too. */
+export const BEHAVIOR_ACTION_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]{0,31}$/;
+/** How many behavior actions one plugin may declare (V-12). */
+export const MAX_BEHAVIOR_ACTIONS = 25;
+/** Caps on a behavior action's name and description (V-10). */
+export const MAX_BEHAVIOR_ACTION_NAME = 100;
+export const MAX_BEHAVIOR_ACTION_DESCRIPTION = 200;
 
 const VALID_INTEGRATION_TYPES = new Set(["guild_install", "user_install"]);
 const VALID_CONTEXTS = new Set(["Guild", "BotDM", "PrivateChannel"]);
@@ -119,6 +129,7 @@ export function validateManifestProtocol(input: unknown): ManifestValidation {
     "guild_features",
     "capabilities",
     "events_subscribed_global",
+    "behavior_actions",
   ] as const) {
     if (m[k] !== undefined && !Array.isArray(m[k])) {
       return reject(`manifest.${k} must be an array`);
@@ -156,6 +167,47 @@ export function validateManifestProtocol(input: unknown): ManifestValidation {
       return reject(`capabilities[${c.key}].key is declared more than once`);
     }
     seenCapKeys.add(c.key);
+  }
+
+  // ── behavior_actions[] 驗證（V-09 ~ V-12）──────────────────────────────
+  const behaviorActions =
+    (m.behavior_actions as ManifestBehaviorAction[] | undefined) ?? [];
+  // V-12：數量上限
+  if (behaviorActions.length > MAX_BEHAVIOR_ACTIONS) {
+    return reject(
+      `manifest.behavior_actions: at most ${MAX_BEHAVIOR_ACTIONS} allowed (got ${behaviorActions.length}) (V-12)`,
+    );
+  }
+  const seenActionKeys = new Set<string>();
+  for (let i = 0; i < behaviorActions.length; i++) {
+    const a = behaviorActions[i];
+    // V-09：物件，key 格式
+    if (!a || typeof a !== "object" || Array.isArray(a)) {
+      return reject(`behavior_actions[${i}] must be an object (V-09)`);
+    }
+    if (typeof a.key !== "string" || !BEHAVIOR_ACTION_KEY_PATTERN.test(a.key)) {
+      return reject(
+        `behavior_actions[${i}].key "${String(a.key)}" must match ${BEHAVIOR_ACTION_KEY_PATTERN.source} (V-09)`,
+      );
+    }
+    // V-10：name / description 必填、非空、有上限
+    for (const [field, max] of [
+      ["name", MAX_BEHAVIOR_ACTION_NAME],
+      ["description", MAX_BEHAVIOR_ACTION_DESCRIPTION],
+    ] as const) {
+      const value = a[field];
+      if (typeof value !== "string" || value.trim().length === 0) {
+        return reject(`behavior_actions[${a.key}].${field} must be a non-empty string (V-10)`);
+      }
+      if (value.length > max) {
+        return reject(`behavior_actions[${a.key}].${field} must be ≤${max} chars (V-10)`);
+      }
+    }
+    // V-11：key 不重複
+    if (seenActionKeys.has(a.key)) {
+      return reject(`behavior_actions[${a.key}].key is declared more than once (V-11)`);
+    }
+    seenActionKeys.add(a.key);
   }
 
   // ── plugin_commands[] 驗證（V-05 ~ V-08、V-C1 / V-C2 / V-C3）─────────

@@ -94,10 +94,23 @@ export interface ContractFixtures {
       readonly autocomplete: DispatchPayloadContract;
       readonly component: DispatchPayloadContract;
       readonly modal: DispatchPayloadContract;
+      /**
+       * A behavior action (#127): the fields both triggers' webhook
+       * `_meta` share, plus `action_key`. The rest of the body is that
+       * trigger's `_meta` (behaviorWebhook.request slashMetaKeys /
+       * patternMetaKeys), `callback` included.
+       */
+      readonly behavior_action: DispatchPayloadContract;
     };
   };
   readonly rpc: {
     readonly pathsCalledBySdk: readonly string[];
+    /**
+     * The RPC paths the SDK's behavior action context calls with the
+     * run's callback token (not the plugin's own): each must be one the
+     * callback principal may reach (behaviorWebhook.callback.methods).
+     */
+    readonly behaviorActionPathsCalledBySdk: readonly string[];
   };
   readonly register: {
     readonly endpoint: string;
@@ -406,6 +419,23 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
         userFields: ["id", "username", "global_name"],
         memberFields: ["permissions", "capabilities"],
       },
+      behavior_action: {
+        endpointTemplate: "/behavior-actions/{action_key}",
+        requiredFields: [
+          "action_key",
+          "behavior_id",
+          "user",
+          "guild_id",
+          "channel_id",
+          "attachments",
+          // the run's callback token: how the plugin answers
+          "callback",
+        ],
+        // the webhook `_meta.user`
+        userFields: ["id", "username", "global_name", "discriminator", "avatar"],
+        // a webhook `_meta` has no member
+        memberFields: null,
+      },
     },
   },
 
@@ -416,6 +446,10 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
    * reach paths not listed here.
    */
   rpc: {
+    behaviorActionPathsCalledBySdk: [
+      "/api/plugin/interactions.respond",
+      "/api/plugin/interactions.followup",
+    ],
     pathsCalledBySdk: [
       "/api/plugin/messages.send",
       "/api/plugin/messages.edit",
