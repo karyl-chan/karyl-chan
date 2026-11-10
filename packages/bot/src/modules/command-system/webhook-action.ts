@@ -10,10 +10,12 @@
  * (message triggers) each build their payload and their ReplyTarget, then
  * hand over here. Never throws.
  *
- * A command trigger's run also gets a callback token (#113), sent in
+ * Every run also gets a callback token (#113, #200), sent in
  * `_meta.callback`: the receiver may answer `{"defer": true}` and reply
- * later with it. A deferred run is an ok delivery marked `deferred`; a
- * failed run's token is revoked, since the user was already told.
+ * later with it — a command keeps its "thinking…" placeholder, a message
+ * trigger shows typing — and the rest of that answer is not shown. A
+ * deferred run is an ok delivery marked `deferred`; a failed run's token
+ * is revoked, since the user was already told.
  * The synchronous answer and the callback calls take turns on the reply
  * (serializeReply); once a callback `respond` has landed, a synchronous
  * answer — or failure line — arriving after it is not shown, and the
@@ -38,7 +40,7 @@ import {
   type CallbackMeta,
 } from "./behavior-callback-token.js";
 import type { BehaviorReply } from "./behavior-reply.js";
-import type { RenderOutcome } from "./reply-renderer.js";
+import { sendTypingFor, type RenderOutcome } from "./reply-renderer.js";
 import type { ForwardResult } from "./types.js";
 import type { WebhookForwarder } from "./webhook-forwarder.service.js";
 
@@ -69,16 +71,14 @@ function withCallback(
 }
 
 /**
- * Show the synchronous answer — in the run's current reply message when
- * it has a callback principal, and not at all ("superseded") when a
- * callback `respond` already answered.
+ * Show the synchronous answer in the run's current reply message, or not
+ * at all ("superseded") when a callback `respond` already answered.
  */
 async function renderAnswer(
   run: WebhookActionRun,
-  principal: BehaviorCallbackPrincipal | null,
+  principal: BehaviorCallbackPrincipal,
   reply: BehaviorReply,
 ): Promise<RenderOutcome | "superseded"> {
-  if (!principal) return renderReply(reply, run.target, { visibility: run.visibility });
   return serializeReply(principal, async () => {
     if (principal.answeredByCallback) return "superseded" as const;
     const rendered = await renderReply(reply, run.target, {
@@ -93,13 +93,9 @@ async function renderAnswer(
 export async function runWebhookAction(run: WebhookActionRun): Promise<void> {
   const { behaviorId, target } = run;
   const firedAt = new Date();
-  // message triggers get theirs in #200
-  const issued =
-    target.kind === "interaction"
-      ? behaviorCallbackTokens.issue({ behaviorId, target, visibility: run.visibility })
-      : null;
-  const principal = issued?.principal ?? null;
-  const payload = issued ? withCallback(run.payload, callbackMetaOf(issued)) : run.payload;
+  const issued = behaviorCallbackTokens.issue({ behaviorId, target, visibility: run.visibility });
+  const { principal } = issued;
+  const payload = withCallback(run.payload, callbackMetaOf(issued));
   let deferred = false;
   const started = performance.now();
   let ok: boolean;
@@ -117,9 +113,12 @@ export async function runWebhookAction(run: WebhookActionRun): Promise<void> {
     httpStatus = result.status ?? null;
     verified = result.verified ?? null;
     if (!result.ok) errorCode = forwardErrorCode(result);
-    // the placeholder stays; the receiver answers with the token
-    if (result.ok && principal && result.reply.defer) deferred = true;
-    else if (result.ok) {
+    // the receiver answers with the token: a command's placeholder
+    // stays, a message trigger shows typing
+    if (result.ok && result.reply.defer) {
+      deferred = true;
+      if (target.kind === "message") await sendTypingFor(target.message, run.visibility);
+    } else if (result.ok) {
       const rendered = await renderAnswer(run, principal, result.reply);
       if (rendered === "superseded") deferred = true;
       else if (!rendered.ok) {
@@ -138,19 +137,17 @@ export async function runWebhookAction(run: WebhookActionRun): Promise<void> {
   }
   const durationMs = Math.round(performance.now() - started);
 
-  // A failed run with a callback principal: in the run's turn, either a
-  // callback respond already answered — the user saw a reply, so the
+  // A failed run: in the run's turn, either a callback respond already
+  // answered — the user saw a reply, so the
   // delivery is ok and marked deferred — or the token is revoked and the
   // user told, before any later callback call can get in.
-  let told = false;
-  if (!ok && principal && issued) {
+  if (!ok) {
     const answered = await serializeReply(principal, async () => {
       if (principal.answeredByCallback) return true;
       behaviorCallbackTokens.revoke(issued.token);
       if (!unreachable) await renderFailure(target);
       return false;
     });
-    told = true;
     if (answered) {
       ok = true;
       deferred = true;
@@ -180,5 +177,4 @@ export async function runWebhookAction(run: WebhookActionRun): Promise<void> {
     `webhook action of behavior ${behaviorId} failed (${target.kind}): ${error ?? "unknown"}`,
     { behaviorId, via: target.kind },
   );
-  if (!unreachable && !told) await renderFailure(target);
 }

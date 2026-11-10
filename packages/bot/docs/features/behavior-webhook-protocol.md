@@ -94,6 +94,7 @@ guild, as in `guild_id`.)
 | `_meta.behavior_id` | The behavior that fired. |
 | `_meta.attachments` | `[{ id, url, filename, content_type, size }]`, empty when the message has none. `id` is the Discord attachment id; `url` is Discord's CDN link, signed and valid for a limited time, so download the file soon. |
 | `_meta.captures` | A regex trigger's capture groups, group 1 first. A named group counts by its position, and an optional group that took no part is `null`. `天氣 台北` against `^天氣\s+(.+)` sends `["台北"]`. Always `[]` for `startswith` / `endswith`. |
+| `_meta.callback` | This run's callback token, `{ token, expires_at, api_base }`, to answer later ([Answering later](#answering-later)). |
 
 One message can fire more than one behavior, unless a behavior stops the
 walk ([behaviors.md](behaviors.md#matching-order)). Each behavior sends its
@@ -312,7 +313,7 @@ subset of this shape, so there is no version field.
 | `components` | array | Action rows (`type: 1`) of **link buttons only** (`type: 2`, `style: 5`, a non-empty `label` cut to 80 characters, an `https://` `url` of at most 512 characters). At most 5 rows of 5 buttons. Anything else is dropped. |
 | `ephemeral` | boolean | Who sees the reply. See below. |
 | `flags` | integer | Only `SuppressEmbeds` (4) and `SuppressNotifications` (4096) are kept. Who sees the reply is never a flag. |
-| `defer` | boolean | `true`: answer later with the callback token. The command keeps its "thinking…" placeholder and the other fields are not shown. A command only. See [Answering later](#answering-later). |
+| `defer` | boolean | `true`: answer later with the callback token. A command keeps its "thinking…" placeholder, a message trigger shows "typing…", and the other fields are not shown. See [Answering later](#answering-later). |
 
 - A field of the wrong type is ignored. Any other top-level field is
   ignored too. The bot logs either once per behavior, so you can see it.
@@ -352,25 +353,28 @@ placeholder.
 ## Answering later
 
 A receiver that needs longer than 10 seconds, or wants to follow up, uses
-the run's **callback token**. Every command run gets one in
-`_meta.callback`:
+the run's **callback token**. Every run, of a command or a message
+trigger, gets one in `_meta.callback`:
 
 | Key | Value |
 |-----|-------|
 | `token` | An opaque token for this run only. Not the Discord interaction token, which never leaves the bot. |
-| `expires_at` | When it stops working (ISO 8601): **15 minutes** after the command was used, when Discord's own interaction token ends. |
+| `expires_at` | When it stops working (ISO 8601): **15 minutes** after the command was used (when Discord's own interaction token ends) or the message was sent. |
 | `api_base` | The bot's public base URL. |
 
-1. Answer the request within 10 seconds with `{"defer": true}`. The user
-   keeps seeing "thinking…", and the delivery log marks the delivery
-   *deferred*.
+1. Answer the request within 10 seconds with `{"defer": true}`. On a
+   command the user keeps seeing "thinking…"; on a message trigger the bot
+   shows "typing…" where the reply will most likely go (the author's DM
+   for a guild message whose stored visibility is private, else the
+   channel). Anything else in that answer is not shown, and the delivery
+   log marks the delivery *deferred*.
 2. Then call the bot with `Authorization: Bearer <token>`, a JSON body and
    `POST <api_base>/api/plugin/<method>`:
 
 | Method | Body | Does |
 |--------|------|------|
-| `interactions.respond` | a reply | The run's reply: fills the "thinking…" placeholder, or edits the reply already shown (your synchronous answer or an earlier `respond`). When the reply's visibility changes, or an empty answer removed it, a new message takes its place. |
-| `interactions.followup` | a reply | Sends a new message. Answers `{ ok: true, id }`. |
+| `interactions.respond` | a reply | The run's reply: fills a command's "thinking…" placeholder, or edits the reply already shown (your synchronous answer or an earlier `respond`). When the reply's visibility changes, or there is no reply yet (a message trigger, or an empty answer removed it), a new message takes its place. |
+| `interactions.followup` | a reply | Sends a new message, placed like a reply. Answers `{ ok: true, id }`. |
 | `interactions.edit_followup` | `message_id` and a reply | Edits a message this token sent with `followup`. |
 | `interactions.delete_followup` | `message_id` | Deletes a message this token sent with `followup`. |
 
@@ -385,6 +389,13 @@ Each `respond` decides who sees it afresh — its own `ephemeral` first,
 then the behavior's stored visibility — so a `respond` without
 `ephemeral` after a public one goes back to the stored visibility (and
 stays where the reply is when none is stored).
+
+A message trigger has no interaction, so the bot answers with messages of
+its own: the first `respond` sends the reply — to the channel, or for a
+private reply in a guild to the author's DM, never the channel — and
+later ones edit that message (or, when the reply moves between the
+channel and the DM, send it anew and delete the old one). In a DM with
+the bot everything goes to that DM.
 
 - An unknown, revoked or expired token gets `401`. Any other
   `/api/plugin/*` path gets `403`: the token answers this run and nothing
@@ -402,8 +413,6 @@ stays where the reply is when none is stored).
   (`callback_failed`) is a failed delivery of the behavior. A call that
   works is not logged.
 - The token lives in the bot's memory: after a restart it is unknown.
-
-Message triggers do not get a callback token yet.
 
 ## Failures
 
@@ -634,7 +643,7 @@ changes the protocol. Update a receiver **before** the bot is upgraded:
 - New: secret rotation with the `-Previous` headers (#99).
 - New: `id` on each `_meta.attachments` entry, and `_meta.attachments` on
   commands, with the files of the `attachment` options (#152).
-- New: `_meta.callback` on commands and the `defer` reply field, to answer
-  later (#113).
+- New: `_meta.callback` on commands and message triggers, and the `defer`
+  reply field, to answer later (#113).
 - Removed: conversation sessions and the `[BEHAVIOR:END]` marker. A reply
   never starts or ends a session.
