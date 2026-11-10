@@ -33,7 +33,12 @@ import {
 } from "../src/modules/behavior/models/behavior-group-member.model.js";
 import { destroyDmAllowlists, findDmAllowlist } from "../src/modules/behavior/models/behavior-dm-allowlist.model.js";
 import { BehaviorDefinition } from "../src/modules/behavior/models/behavior-definition.model.js";
-import { DM_LOG_MAX_AGE_MS, pruneDmLog, recordDmLog } from "../src/modules/behavior/behavior-dm-log.js";
+import {
+  DM_LOG_MAX_AGE_MS,
+  findRecentDmLog,
+  pruneDmLog,
+  recordDmLog,
+} from "../src/modules/behavior/behavior-dm-log.js";
 import { destroyCommandRows, restoreCommand, snapshotCommand } from "../src/modules/behavior/command-snapshot.js";
 import {
   clearBehaviors,
@@ -132,15 +137,17 @@ describe("a group a DM allowlist names", () => {
     expect(await findGroupMembers("ops")).toEqual([]);
   });
 
-  it("goes with its behavior when the behavior is deleted", async () => {
+  it("goes with its behavior when the behavior is deleted, and so does its DM log", async () => {
     const id = await seedMessageTrigger();
     await putList(id, { userIds: [], groupNames: ["ops"] });
     await putMembers("ops", [U1]);
+    await recordDmLog({ behaviorId: id, recipientUserId: U1, triggererUserId: U2, outcome: "sent" });
 
     const res = await server.inject({ method: "DELETE", url: `/api/behaviors/${id}` });
     expect(res.statusCode).toBe(204);
     expect(await findDmAllowlist(id)).toBeNull();
     expect(await findGroupMembers("ops")).toEqual([]);
+    expect(await findRecentDmLog(id)).toEqual([]);
   });
 
   it("stays while a message trigger still uses it", async () => {
@@ -154,15 +161,17 @@ describe("a group a DM allowlist names", () => {
 });
 
 describe("a command leaf's DM allowlist", () => {
-  it("goes with its command, and its group's members with it", async () => {
+  it("goes with its command, and its group's members and DM log with it", async () => {
     const commandId = await seedCommand();
     const leaf = await seedLeaf(commandId);
     await putList(leaf, { userIds: [U1], groupNames: ["ops"] });
     await sequelize.transaction((t) => replaceGroupMembers("ops", [U2], t));
+    await recordDmLog({ behaviorId: leaf, recipientUserId: U1, triggererUserId: U2, outcome: "sent" });
 
     await sequelize.transaction((t) => destroyCommandRows(commandId, t));
     expect(await findDmAllowlist(leaf)).toBeNull();
     expect(await findGroupMembers("ops")).toEqual([]);
+    expect(await findRecentDmLog(leaf)).toEqual([]);
   });
 
   it("is in the command snapshot: a refused write puts it back", async () => {

@@ -57,7 +57,7 @@ import {
 } from "./behavior-fixtures.js";
 import { CONTRACT_FIXTURES } from "@karyl-chan/plugin-wire";
 import { CALLBACK_TOKEN_TTL_MS } from "../src/modules/command-system/behavior-callback-token.js";
-import { BEHAVIOR_DMS_PER_MINUTE } from "../src/modules/command-system/behavior-direct-messages.js";
+import { config } from "../src/config.js";
 import { DM_OUTCOMES } from "../src/modules/behavior/models/behavior-dm-log.model.js";
 import { BEHAVIOR_CALLBACK_METHODS } from "../src/modules/command-system/behavior-callback.js";
 import { signBody, verifyInboundSignature } from "../src/utils/hmac.js";
@@ -338,7 +338,10 @@ describe("behavior webhook contract (BH-2.3)", () => {
     expect(MAX_REPLY_ATTACHMENT_BYTES).toBe(C.response.maxAttachmentBytes);
     expect(MAX_REPLY_ATTACHMENT_TOTAL_BYTES).toBe(C.response.maxAttachmentTotalBytes);
     expect(MAX_DIRECT_MESSAGES).toBe(C.response.maxDirectMessages);
-    expect(BEHAVIOR_DMS_PER_MINUTE).toBe(C.response.directMessagesPerMinute);
+    // the defaults (no env in tests)
+    expect(config.behavior.dmPerMinute).toBe(C.response.directMessagesPerMinute);
+    expect(config.behavior.dmPerRecipient).toBe(C.response.directMessagesPerRecipient);
+    expect(config.behavior.dmPerRecipientWindowMs).toBe(C.response.directMessagesPerRecipientWindowSeconds * 1000);
     expect([...DM_OUTCOMES]).toEqual([...C.response.directMessageOutcomes]);
     const long = parseBehaviorReply({ content: "x".repeat(C.response.maxContentLength + 1) });
     expect(long.ok && long.reply.content!.length).toBe(C.response.maxContentLength);

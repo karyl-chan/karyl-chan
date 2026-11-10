@@ -400,11 +400,16 @@ from the webhook URL's origin like the reply's.
 - At most **5** direct messages per reply. A list that is not an array,
   is longer, or has an entry without a Discord user id in `user_id` or
   with nothing to send fails the action as a bad reply.
-- Who may be DMed is the behavior's rule, set by the admin. With a **DM
-  allowlist** (users and behavior groups): only them. Without one: a
-  member of the server the behavior was triggered in; for a trigger in a
-  DM with the bot, a member of any server the bot is in.
-- At most **10 a minute** per behavior; a DM past it is not sent.
+- The user who triggered the behavior may always be DMed. Anyone else is
+  the behavior's rule, set by the admin. With a **DM allowlist** (users
+  and behavior groups): only them. Without one: a member of the server
+  the behavior was triggered in; for a trigger in a DM with the bot, a
+  member of any server the bot is in.
+- At most **10 a minute** per behavior by default, every DM asked for
+  counted — allowed or not. And at most **3 per 10 minutes** from one
+  behavior to one user by default. A DM past either is not sent. The
+  operator sets both (`BEHAVIOR_DM_PER_MINUTE`, `BEHAVIOR_DM_PER_RECIPIENT`,
+  `BEHAVIOR_DM_PER_RECIPIENT_WINDOW_MS`).
 - The DMs go only once the reply was shown: not with `{"defer": true}`, a
   superseded answer, or a failed one. A reply of only `direct_messages`
   shows nothing to the user (on a command, the "thinking…" placeholder is
@@ -418,7 +423,7 @@ from the webhook URL's origin like the reply's.
 |---------|---------|
 | `sent` | Discord took it. |
 | `not_allowed` | The rule above does not allow this user. |
-| `rate_limited` | Past the behavior's 10 a minute. |
+| `rate_limited` | Past the behavior's DMs a minute, or the user's from this behavior. |
 | `attachment_failed` | Its attachments could not be downloaded. |
 | `failed` | Discord refused it (the user's DMs are closed, unknown user, …). |
 
@@ -487,7 +492,10 @@ stays where the reply is when none is stored).
 `respond` and `followup` take [`direct_messages`](#direct-messages) too,
 sent after the reply, and answer their outcomes as
 `direct_messages: [{ user_id, outcome }]`. One of only `direct_messages`
-leaves the reply as it is (a `followup` then answers no `id`).
+leaves the reply as it is (a `followup` then answers no `id`), and
+is allowed only once the run's reply was shown — the synchronous answer
+or an earlier `respond`; before that it is refused with `400`, so nobody
+is DMed while the user still sees "thinking…".
 `edit_followup` refuses them with `400`.
 
 A message trigger has no interaction, so the bot answers with messages of

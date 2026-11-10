@@ -104,7 +104,10 @@ async function renderAnswer(
       visibility: run.visibility,
       replyMessage: principal.replyMessage,
     });
-    if (rendered.ok) principal.replyMessage = rendered.replyMessage ?? null;
+    if (rendered.ok) {
+      principal.replyMessage = rendered.replyMessage ?? null;
+      principal.replyShown = true;
+    }
     return rendered;
   });
 }

@@ -6,8 +6,9 @@
  * (every 10 minutes, like the delivery log's) deletes older rows.
  */
 
-import { Op } from "sequelize";
+import { Op, type Transaction } from "sequelize";
 import { moduleLogger } from "../../logger.js";
+import { startPruner } from "./behavior-pruner.js";
 import { BehaviorDmLog, type DmOutcome } from "./models/behavior-dm-log.model.js";
 
 export type { DmOutcome };
@@ -18,7 +19,6 @@ const log = moduleLogger("behavior-dm-log");
 export const DM_LOG_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 /** The most rows the admin API returns per behavior. */
 export const DM_LOG_PAGE = 50;
-const PRUNE_INTERVAL_MS = 10 * 60 * 1000;
 
 export interface DmLogInput {
   behaviorId: number;
@@ -68,21 +68,15 @@ export async function pruneDmLog(now: Date = new Date()): Promise<number> {
   return removed;
 }
 
-let pruneTimer: ReturnType<typeof setInterval> | null = null;
-
-function pruneQuietly(): void {
-  pruneDmLog().catch((err: unknown) => {
-    log.error({ err }, "behavior_dm_log prune failed");
-  });
+/** Remove deleted behaviors' rows (SQLite may run without FK enforcement). */
+export async function destroyDmLog(behaviorIds: number | number[], transaction: Transaction): Promise<void> {
+  await BehaviorDmLog.destroy({ where: { behaviorId: behaviorIds }, transaction });
 }
 
 /**
  * Start the pruner (runtime startup, after the DB is ready): once now,
- * then every 10 minutes. Idempotent; the timer is unref'd.
+ * then every 10 minutes (behavior-pruner.ts). Idempotent.
  */
 export function startDmLogPruner(): void {
-  if (pruneTimer) return;
-  pruneQuietly();
-  pruneTimer = setInterval(pruneQuietly, PRUNE_INTERVAL_MS);
-  pruneTimer.unref();
+  startPruner("behavior_dm_log", () => pruneDmLog(), log);
 }

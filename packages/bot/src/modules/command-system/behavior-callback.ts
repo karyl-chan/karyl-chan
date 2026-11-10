@@ -65,6 +65,8 @@ const COMPONENTS_REFUSED =
   "components: only link buttons (type 2, style 5) with an https url, in action rows, at most 5 rows of 5";
 const NOTHING_TO_SHOW = "content, embeds, components, attachments or direct_messages required";
 const DMS_NOT_HERE = "direct_messages: only with interactions.respond or interactions.followup";
+const DMS_BEFORE_REPLY =
+  "direct_messages: the run's reply must be shown first — send content, embeds, components or attachments with them, or respond before";
 const NOT_OURS = "message_id was not sent with this callback token";
 
 /** One callback call: the outcome, before it is recorded and answered. */
@@ -97,11 +99,11 @@ type Call = { principal: BehaviorCallbackPrincipal; body: Record<string, unknown
 
 /**
  * The reply in a callback body: the reply model, components refused rather
- * than dropped; `direct_messages` (#157) only where `withDirectMessages`.
+ * than dropped; `direct_messages` (#157) only where `acceptDirectMessages`.
  */
 function readReply(
   body: Record<string, unknown>,
-  withDirectMessages: boolean,
+  acceptDirectMessages: boolean,
 ): { ok: true; reply: BehaviorReply } | { ok: false; error: string } {
   const { interaction_token: _token, message_id: _id, ...rest } = body;
   const parsed = parseBehaviorReply(rest);
@@ -110,7 +112,7 @@ function readReply(
     return { ok: false, error: COMPONENTS_REFUSED };
   }
   const { defer: _defer, ...reply } = parsed.reply;
-  if (reply.direct_messages && !withDirectMessages) return { ok: false, error: DMS_NOT_HERE };
+  if (reply.direct_messages && !acceptDirectMessages) return { ok: false, error: DMS_NOT_HERE };
   if (!hasVisibleReply(reply) && !reply.direct_messages) return { ok: false, error: NOTHING_TO_SHOW };
   return { ok: true, reply };
 }
@@ -123,15 +125,19 @@ function readReply(
  */
 async function replyOf(
   call: Call,
-  withDirectMessages = false,
+  acceptDirectMessages = false,
 ): Promise<
   | { ok: true; reply: RenderableReply | null; directMessages: DirectMessage[] | undefined }
   | { ok: false; outcome: Outcome }
 > {
-  const read = readReply(call.body, withDirectMessages);
+  const read = readReply(call.body, acceptDirectMessages);
   if (!read.ok) return { ok: false, outcome: refused(400, read.error) };
   const directMessages = read.reply.direct_messages;
-  if (!hasVisibleReply(read.reply)) return { ok: true, reply: null, directMessages };
+  if (!hasVisibleReply(read.reply)) {
+    // DMs alone only once the user has their reply: never while "thinking…" hangs
+    if (!call.principal.replyShown) return { ok: false, outcome: refused(400, DMS_BEFORE_REPLY) };
+    return { ok: true, reply: null, directMessages };
+  }
   const ready = await readyToRender(read.reply, call.principal.fetchFiles);
   return ready.ok
     ? { ok: true, reply: ready.reply, directMessages }
@@ -142,7 +148,7 @@ async function replyOf(
  * Send the call's direct messages (#157) once its reply was shown; their
  * outcomes go back in the answer, `direct_messages: [{ user_id, outcome }]`.
  */
-async function withDirectMessages(
+async function sendCallDirectMessages(
   { principal }: Call,
   messages: DirectMessage[] | undefined,
   body: Record<string, unknown>,
@@ -174,8 +180,9 @@ async function respond(call: Call): Promise<Outcome> {
     if (!rendered.ok) return renderFailed(rendered);
     principal.replyMessage = rendered.replyMessage ?? null;
     principal.answeredByCallback = true;
+    principal.replyShown = true;
   }
-  return withDirectMessages(call, read.directMessages, { ok: true });
+  return sendCallDirectMessages(call, read.directMessages, { ok: true });
 }
 
 async function followup(call: Call): Promise<Outcome> {
@@ -183,13 +190,13 @@ async function followup(call: Call): Promise<Outcome> {
   if (!read.ok) return read.outcome;
   const { principal } = call;
   // only direct messages: no follow-up, so no id
-  if (!read.reply) return withDirectMessages(call, read.directMessages, { ok: true });
+  if (!read.reply) return sendCallDirectMessages(call, read.directMessages, { ok: true });
   const sent = await renderFollowup(read.reply, principal.target, {
     visibility: principal.visibility,
   });
   if (!sent.ok) return renderFailed(sent);
   principal.createdMessages.set(sent.sent.messageId, sent.sent);
-  return withDirectMessages(call, read.directMessages, { ok: true, id: sent.sent.messageId });
+  return sendCallDirectMessages(call, read.directMessages, { ok: true, id: sent.sent.messageId });
 }
 
 async function editOwnFollowup(call: Call): Promise<Outcome> {

@@ -1660,7 +1660,7 @@
                 "attachment_failed": "附件失败",
                 "failed": "失败"
             },
-            "retention": "保留最近 50 条、最多 30 天内的私信。每个 behavior 每分钟最多 10 条私信。"
+            "retention": "保留最近 50 条、最多 30 天内的私信。触发者本人一律可以私信。默认每个 behavior 每分钟最多 10 条，同一人每 10 分钟最多 3 条。"
         },
         "convertTrigger": {
             "menuTitle": "触发方式",

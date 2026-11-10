@@ -39,6 +39,7 @@
  */
 
 import type { SanitizedEmbed } from "./types.js";
+import { SNOWFLAKE_PATTERN } from "../behavior/behavior-api-error.js";
 
 // ── the model ────────────────────────────────────────────────────────────────
 
@@ -135,7 +136,8 @@ const KNOWN_FIELDS = new Set([
 /** The most direct messages one reply may ask for (#157). */
 export const MAX_DIRECT_MESSAGES = 5;
 const DIRECT_MESSAGE_FIELDS = ["content", "embeds", "components", "attachments"] as const;
-const SNOWFLAKE = /^[0-9]{17,20}$/;
+// a Discord id, as the behavior admin routes check one
+const SNOWFLAKE = new RegExp(SNOWFLAKE_PATTERN);
 
 /**
  * The most files a reply may attach, the largest one and the most they

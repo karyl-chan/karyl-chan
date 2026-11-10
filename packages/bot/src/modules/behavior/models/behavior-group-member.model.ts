@@ -72,29 +72,30 @@ export const replaceGroupMembers = async (
   );
 };
 
-/** Whether some message trigger's audience, or some behavior's DM allowlist (#157), is this group. */
-export const groupInUse = async (
-  groupName: string,
-  transaction: Transaction,
-): Promise<boolean> =>
-  (await BehaviorDefinition.count({
-    where: { triggerKind: "message", audienceGroupName: groupName },
-    transaction,
-  })) > 0 || (await groupsInDmAllowlists(transaction)).has(groupName);
-
-/** Drop the member lists of every group no message trigger and no DM allowlist uses any more. */
-export const pruneUnusedGroupMembers = async (transaction: Transaction): Promise<void> => {
+/** Every group some message trigger's audience names. */
+const groupsInTriggerAudiences = async (transaction: Transaction): Promise<Set<string>> => {
   const rows = await BehaviorDefinition.findAll({
     attributes: ["audienceGroupName"],
     where: { triggerKind: "message", audienceGroupName: { [Op.ne]: null } },
     transaction,
   });
-  const inUse = [
-    ...new Set([
-      ...rows.map((r) => r.getDataValue("audienceGroupName") as string),
-      ...(await groupsInDmAllowlists(transaction)),
-    ]),
-  ];
+  return new Set(rows.map((r) => r.getDataValue("audienceGroupName") as string));
+};
+
+/**
+ * Every group in use: named by a message trigger's audience, or by a
+ * behavior's DM allowlist (#157). Its member list may be set and is kept.
+ */
+const groupsInUse = async (transaction: Transaction): Promise<Set<string>> =>
+  new Set([...(await groupsInTriggerAudiences(transaction)), ...(await groupsInDmAllowlists(transaction))]);
+
+/** Whether the group is in use (groupsInUse). */
+export const groupInUse = async (groupName: string, transaction: Transaction): Promise<boolean> =>
+  (await groupsInUse(transaction)).has(groupName);
+
+/** Drop the member lists of every group no longer in use (groupsInUse). */
+export const pruneUnusedGroupMembers = async (transaction: Transaction): Promise<void> => {
+  const inUse = [...(await groupsInUse(transaction))];
   await BehaviorGroupMember.destroy({
     where: inUse.length > 0 ? { groupName: { [Op.notIn]: inUse } } : {},
     transaction,

@@ -4,7 +4,7 @@ import { BehaviorDefinition } from "./behavior-definition.model.js";
 
 /**
  * behavior_dm_allowlists (#157): who a behavior's reply may DM besides the
- * person who triggered it (`direct_messages`). One row per behavior that
+ * person who triggered it (`direct_messages`; the triggerer always may be). One row per behavior that
  * has a list: user ids and behavior group names (a group's members are
  * behavior_group_members, shared by name). No row = no list: then a guild
  * trigger may DM members of its guild, a DM trigger members of any guild

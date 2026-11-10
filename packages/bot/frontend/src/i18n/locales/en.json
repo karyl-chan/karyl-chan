@@ -1660,7 +1660,7 @@
                 "attachment_failed": "Attachment failed",
                 "failed": "Failed"
             },
-            "retention": "The last 50, at most 30 days old. At most 10 direct messages a minute per behavior."
+            "retention": "The last 50, at most 30 days old. The triggering user may always be DMed. By default at most 10 direct messages a minute per behavior, and 3 per 10 minutes to one user."
         },
         "convertTrigger": {
             "menuTitle": "Trigger kind",

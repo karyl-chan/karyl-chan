@@ -199,6 +199,9 @@ describe("the protocol document, against the contract fixtures", () => {
     expect(section).toContain(`\`[{ ${r.directMessageKeys.join(", ")} }]\``);
     expect(section).toContain(`At most **${r.maxDirectMessages}** direct messages`);
     expect(section).toContain(`**${r.directMessagesPerMinute} a minute**`);
+    expect(section).toContain(
+      `**${r.directMessagesPerRecipient} per ${r.directMessagesPerRecipientWindowSeconds / 60} minutes**`,
+    );
     for (const outcome of r.directMessageOutcomes) expect(section, outcome).toContain(`| \`${outcome}\` |`);
   });
 });

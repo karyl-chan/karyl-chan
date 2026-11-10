@@ -5,10 +5,13 @@
  * callback token; Discord — the client's users, guilds and members — is
  * faked.
  *
- *   - with a DM allowlist: its users and its groups' members, nobody else
- *   - without one: members of the triggering guild; for a DM trigger, of
- *     any guild the bot is in, asked guild by guild until one has them
- *   - 10 a minute per behavior; past it `rate_limited`
+ *   - the triggerer always; anyone else: with a DM allowlist, its users and
+ *     its groups' members, nobody else; without one, members of the
+ *     triggering guild — for a DM trigger, of any guild the bot is in,
+ *     asked guild by guild until one has them, answers cached for a minute
+ *   - 10 a minute per behavior, every attempt counted before any member
+ *     lookup; 3 per 10 minutes per recipient; past either `rate_limited`
+ *   - a callback of only DMs before the reply was shown is refused
  *   - a DM Discord refuses, or whose attachments can't be had, is that
  *     DM's outcome only: the reply and the delivery are untouched
  *   - every DM leaves a behavior_dm_log row; behavior_deliveries keeps no
@@ -47,8 +50,8 @@ import { WebhookForwarder } from "../src/modules/command-system/webhook-forwarde
 import { runWebhookAction } from "../src/modules/command-system/webhook-action.js";
 import { behaviorCallbackTokens } from "../src/modules/command-system/behavior-callback-token.js";
 import {
-  BEHAVIOR_DMS_PER_MINUTE,
-  __resetBehaviorDmRateLimitForTests,
+  MEMBERSHIP_TTL_MS,
+  __resetBehaviorDmLimitsForTests,
 } from "../src/modules/command-system/behavior-direct-messages.js";
 import { findRecentDeliveries } from "../src/modules/behavior/behavior-deliveries.js";
 import { findRecentDmLog } from "../src/modules/behavior/behavior-dm-log.js";
@@ -167,7 +170,7 @@ let server: FastifyInstance;
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  __resetBehaviorDmRateLimitForTests();
+  __resetBehaviorDmLimitsForTests();
   behaviorCallbackTokens.clear();
   await clearBehaviors();
   await BehaviorDelivery.destroy({ where: {} });
@@ -268,31 +271,86 @@ describe("with a DM allowlist", () => {
       [MEMBER, "not_allowed"],
     ]);
   });
+
+  it("the triggerer may always be DMed, listed or not", async () => {
+    const id = await seed();
+    await sequelize.transaction((t) => replaceDmAllowlist(id, { userIds: [STRANGER], groupNames: [] }, t));
+    answer = JSON.stringify({ direct_messages: dmTo(TRIGGERER) });
+    const client = fakeClient();
+    await fire(id, fakeMessage("guild", client));
+    expect(await logOf(id)).toEqual([[TRIGGERER, "sent"]]);
+    for (const guild of client.guildList) expect(guild.members.fetch).not.toHaveBeenCalled();
+  });
 });
 
 // ── outcomes that stay the DM's own ──────────────────────────────────────────
 
 describe("each DM's outcome is its own", () => {
-  it("past 10 a minute per behavior, a DM is rate_limited", async () => {
-    expect(BEHAVIOR_DMS_PER_MINUTE).toBe(10);
+  it("past 10 a minute per behavior, a DM is rate_limited — refused ones count, before any lookup", async () => {
     const id = await seed();
     const client = fakeClient();
+    // ten refused recipients use up the minute
     for (let i = 0; i < 2; i += 1) {
-      answer = JSON.stringify({ direct_messages: dmTo(MEMBER, MEMBER, MEMBER, MEMBER, MEMBER) });
-      await fire(id, fakeMessage("guild", client));
+      answer = JSON.stringify({ direct_messages: dmTo(STRANGER, STRANGER, STRANGER, STRANGER, STRANGER) });
+      await fire(id, fakeMessage("dm", client));
     }
-    answer = JSON.stringify({ content: "still shown", direct_messages: dmTo(MEMBER) });
-    const fake = fakeMessage("guild", client);
+    const lookups = () => client.guildList.reduce((n, g) => n + g.members.fetch.mock.calls.length, 0);
+    const before = lookups();
+    answer = JSON.stringify({ content: "still shown", direct_messages: dmTo(MEMBER, STRANGER) });
+    const fake = fakeMessage("dm", client);
     await fire(id, fake);
 
-    expect(client.users.send).toHaveBeenCalledTimes(10);
-    expect((await logOf(id)).at(-1)).toEqual([MEMBER, "rate_limited"]);
+    expect(client.users.send).not.toHaveBeenCalled();
+    expect((await logOf(id)).slice(-2)).toEqual([
+      [MEMBER, "rate_limited"],
+      [STRANGER, "rate_limited"],
+    ]);
+    expect(lookups()).toBe(before);
     expect(fake.channel.send).toHaveBeenCalledWith({ content: "still shown", allowedMentions: { parse: [] } });
     // another behavior has its own 10
     const other = await seed();
     answer = JSON.stringify({ direct_messages: dmTo(MEMBER) });
     await fire(other, fakeMessage("guild", client));
     expect(await logOf(other)).toEqual([[MEMBER, "sent"]]);
+  });
+
+  it("one recipient gets at most 3 per 10 minutes from one behavior", async () => {
+    const id = await seed();
+    answer = JSON.stringify({ direct_messages: dmTo(MEMBER, MEMBER, MEMBER, MEMBER, TRIGGERER) });
+    await fire(id, fakeMessage("guild", fakeClient()));
+    expect(await logOf(id)).toEqual([
+      [MEMBER, "sent"],
+      [MEMBER, "sent"],
+      [MEMBER, "sent"],
+      [MEMBER, "rate_limited"],
+      [TRIGGERER, "sent"],
+    ]);
+  });
+
+  it("the limits come from the config, and a test may set its own", async () => {
+    __resetBehaviorDmLimitsForTests({ perMinute: 1 });
+    const id = await seed();
+    answer = JSON.stringify({ direct_messages: dmTo(MEMBER, TRIGGERER) });
+    await fire(id, fakeMessage("guild", fakeClient()));
+    expect(await logOf(id)).toEqual([
+      [MEMBER, "sent"],
+      [TRIGGERER, "rate_limited"],
+    ]);
+  });
+
+  it("caches a membership answer for a minute", async () => {
+    expect(MEMBERSHIP_TTL_MS).toBe(60_000);
+    const id = await seed();
+    const client = fakeClient();
+    answer = JSON.stringify({ direct_messages: dmTo(ELSEWHERE, STRANGER) });
+    await fire(id, fakeMessage("dm", client));
+    await fire(id, fakeMessage("dm", client));
+    // each guild was asked once about each user
+    for (const guild of client.guildList) {
+      const asked = guild.members.fetch.mock.calls.map(([u]) => u);
+      expect(new Set(asked).size).toBe(asked.length);
+    }
+    expect((await logOf(id)).map(([, o]) => o)).toEqual(["sent", "not_allowed", "sent", "not_allowed"]);
   });
 
   it("a DM Discord refuses is failed; one whose file can't be had is attachment_failed", async () => {
@@ -382,6 +440,24 @@ describe("callback calls with direct_messages", () => {
       [MEMBER, "sent"],
       [STRANGER, "not_allowed"],
     ]);
+  });
+
+  it("only DMs before the run's reply was shown are refused: nobody is DMed while thinking… hangs", async () => {
+    const id = await seed();
+    answer = JSON.stringify({ defer: true });
+    const client = fakeClient();
+    await fire(id, fakeMessage("guild", client));
+    const token = tokenOf(posts[0]!);
+    for (const method of ["interactions.respond", "interactions.followup"]) {
+      const res = await call(method, token, { direct_messages: dmTo(MEMBER) });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toMatch(/^direct_messages: the run's reply must be shown first/);
+    }
+    expect(client.users.send).not.toHaveBeenCalled();
+    // with a reply in the same call it goes; after that, DMs alone too
+    expect((await call("interactions.respond", token, { content: "done", direct_messages: dmTo(MEMBER) })).statusCode).toBe(200);
+    expect((await call("interactions.followup", token, { direct_messages: dmTo(TRIGGERER) })).statusCode).toBe(200);
+    expect(sentTo(client)).toEqual([MEMBER, TRIGGERER]);
   });
 
   it("followup of only DMs leaves the reply alone and has no id", async () => {

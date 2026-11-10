@@ -17,6 +17,7 @@
 
 import { Op, col, fn, where } from "sequelize";
 import { moduleLogger } from "../../logger.js";
+import { startPruner } from "./behavior-pruner.js";
 import type { ForwardErrorCode } from "../command-system/types.js";
 import { BehaviorDelivery, type DeliveryVia } from "./models/behavior-delivery.model.js";
 
@@ -28,8 +29,6 @@ const log = moduleLogger("behavior-deliveries");
 export const DELIVERIES_PER_BEHAVIOR = 20;
 /** The oldest delivery kept. */
 export const DELIVERY_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-/** How often the pruner runs. */
-const PRUNE_INTERVAL_MS = 10 * 60 * 1000;
 /** The longest `error` stored (behavior_stats.lastError keeps 500). */
 export const DELIVERY_ERROR_MAX = 300;
 
@@ -163,21 +162,10 @@ export async function pruneDeliveries(now: Date = new Date()): Promise<void> {
   if (byAge + byCount > 0) log.info({ byAge, byCount }, "pruned behavior deliveries");
 }
 
-let pruneTimer: ReturnType<typeof setInterval> | null = null;
-
-function pruneQuietly(): void {
-  pruneDeliveries().catch((err: unknown) => {
-    log.error({ err }, "behavior_deliveries prune failed");
-  });
-}
-
 /**
  * Start the pruner (runtime startup, after the DB is ready): once now,
- * then every 10 minutes. Idempotent; the timer is unref'd.
+ * then every 10 minutes (behavior-pruner.ts). Idempotent.
  */
 export function startDeliveryPruner(): void {
-  if (pruneTimer) return;
-  pruneQuietly();
-  pruneTimer = setInterval(pruneQuietly, PRUNE_INTERVAL_MS);
-  pruneTimer.unref();
+  startPruner("behavior_deliveries", () => pruneDeliveries(), log);
 }

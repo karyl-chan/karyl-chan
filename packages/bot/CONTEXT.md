@@ -126,7 +126,7 @@ _Avoid_: 內建動作（它不是可選的動作來源）、admin-login
 _Avoid_: relay、轉發內容（舊稱，只有 content / embeds）
 
 **DM Allowlist（私訊白名單）**:
-behavior 的回覆可以私訊的對象（#157）：使用者 id 與 behavior 群組。有名單就只能私訊名單上的人與群組成員；名單引用的群組算被使用中。存在 behavior_dm_allowlists。
+behavior 的回覆可以私訊的對象（#157）：使用者 id 與 behavior 群組。觸發者本人一律可以私訊；其他人：有名單就只能私訊名單上的人與群組成員；名單引用的群組算被使用中。存在 behavior_dm_allowlists。
 _Avoid_: 白名單（單獨用時不清楚是哪一份）
 
 **DM Log（私訊紀錄）**:
