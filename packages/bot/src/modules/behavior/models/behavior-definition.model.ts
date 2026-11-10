@@ -19,8 +19,8 @@ import { BehaviorCommand } from "./behavior-command.model.js";
  *   - `builtin`：系統動作，只給 System Behavior（systemKey 必填）
  *   - `webhook`：behavior_webhook_actions 的一列
  *   - `service`：Service Behavior（#126）—— 以觸發者身分簽發服務 token、
- *     私下回覆登入連結。serviceId 指向 services，動作固定，只有觸發可改；
- *     觸發只能是與 bot 私訊的 Message Trigger
+ *     私下回覆登入連結。serviceId 指向 services，動作固定，只有觸發可改：
+ *     與 bot 私訊的 Message Trigger，或 `isSystem` 指令的根葉節點（同登入）
  *
  * 回覆給誰看（replyVisibility，#140）：回應沒帶 `ephemeral` 時的預設 ——
  * `private`（指令：只有執行的人；伺服器訊息：私訊作者）、`public`（指令：
@@ -38,7 +38,12 @@ import { BehaviorCommand } from "./behavior-command.model.js";
 
 export type BehaviorTriggerKind = "command" | "message";
 export type BehaviorActionSource = "builtin" | "webhook" | "service";
-export const ACTION_SOURCES: readonly BehaviorActionSource[] = ["builtin", "webhook", "service"];
+const ACTION_SOURCES: readonly BehaviorActionSource[] = ["builtin", "webhook", "service"];
+
+/** A Service Behavior (#126): the row a service owns. */
+export function isServiceBehavior(row: { actionSource: string }): boolean {
+  return row.actionSource === "service";
+}
 export type BehaviorMessageSurface = "bot_dm" | "guild";
 export type BehaviorPatternKind = "startswith" | "endswith" | "regex";
 export type BehaviorAudienceKind = "all" | "user" | "group";
@@ -298,7 +303,7 @@ export const BehaviorDefinition = sequelize.define(
           throw new Error("the system login's message trigger must be bot_dm");
         }
       },
-      // service ⇔ serviceId；Service Behavior 的觸發只能是與 bot 的私訊
+      // service ⇔ serviceId；Service Behavior 的訊息觸發只能在與 bot 的私訊
       serviceShape(this: Record<string, unknown>) {
         const { actionSource, serviceId } = this;
         if (actionSource === undefined || serviceId === undefined) return;
@@ -312,10 +317,11 @@ export const BehaviorDefinition = sequelize.define(
         if (this["replyVisibility"] !== undefined && this["replyVisibility"] !== null) {
           throw new Error("a service behavior's reply visibility is fixed");
         }
-        if (this["triggerKind"] !== undefined && this["triggerKind"] !== "message") {
-          throw new Error("a service behavior's trigger is a message trigger");
-        }
-        if (this["surface"] !== undefined && this["surface"] !== "bot_dm") {
+        if (
+          this["triggerKind"] === "message" &&
+          this["surface"] !== undefined &&
+          this["surface"] !== "bot_dm"
+        ) {
           throw new Error("a service behavior's message trigger must be bot_dm");
         }
       },

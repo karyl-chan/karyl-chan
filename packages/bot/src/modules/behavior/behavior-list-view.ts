@@ -5,8 +5,8 @@
  *
  * 每一項帶推導出的 Behavior Section（behaviorSection，唯一的推導規則）。
  * System Behavior 從所屬清單抽出放在 `system`，UI 把它釘在所屬分區最上方；
- * Service Behavior（#126）同樣抽出放在 `services`（帶它的服務），UI 在
- * 「服務」區段列出。
+ * Service Behavior（#126）同樣抽出放在 `services`（一個訊息觸發或它的
+ * 指令，帶它的服務），UI 在所屬分區的「服務」群組列出。
  * webhook 密鑰只回報是否已設定（secretSet），從不回傳明文；網址是 operator
  * 設定，解密後回傳。前端在 frontend/src/api/behavior.ts 鏡像這些型別。
  */
@@ -21,6 +21,7 @@ import type {
   BehaviorCatalog,
   CatalogBehavior,
   CatalogCommand,
+  FixedRowEntry,
 } from "./behavior-catalog.js";
 import { parseContexts, parseIntegrationTypes } from "../../utils/command-axes.js";
 import {
@@ -33,6 +34,7 @@ import {
   type BehaviorPatternKind,
   type BehaviorSystemKey,
   type ReplyVisibility,
+  isServiceBehavior,
 } from "./models/behavior-definition.model.js";
 import type { BehaviorCommandRegistration } from "./models/behavior-command.model.js";
 import type { BehaviorWebhookAuthMode } from "./models/behavior-webhook-action.model.js";
@@ -111,10 +113,13 @@ export interface ServiceSummaryView {
   redirectUrl: string;
 }
 
-/** A Service Behavior: a bot DM message trigger whose action is its service's login. */
-export interface ServiceBehaviorView extends MessageTriggerView {
+/**
+ * A Service Behavior: a bot DM message trigger, or the command whose root
+ * leaf it is, with the service whose login it runs.
+ */
+export type ServiceBehaviorView = (CommandView | MessageTriggerView) & {
   service: ServiceSummaryView;
-}
+};
 
 export interface BehaviorListView {
   system: CommandView | MessageTriggerView | null;
@@ -227,12 +232,13 @@ export function messageTriggerView(
 
 /** A Service Behavior's view; null for a row without its service (cannot happen: they go together). */
 export function serviceBehaviorView(
-  b: CatalogBehavior,
+  { row, command }: FixedRowEntry,
   stats: ReadonlyMap<number, BehaviorStatRow>,
 ): ServiceBehaviorView | null {
-  if (!b.service) return null;
-  const { id, name, audience, redirectUrl } = b.service;
-  return { ...messageTriggerView(b, stats), service: { id, name, audience, redirectUrl } };
+  if (!row.service) return null;
+  const { id, name, audience, redirectUrl } = row.service;
+  const view = command ? commandView(command, stats) : messageTriggerView(row, stats);
+  return { ...view, service: { id, name, audience, redirectUrl } };
 }
 
 export function buildBehaviorListView(
@@ -240,23 +246,32 @@ export function buildBehaviorListView(
   stats: ReadonlyMap<number, BehaviorStatRow>,
 ): BehaviorListView {
   let system: CommandView | MessageTriggerView | null = null;
+  const services: ServiceBehaviorView[] = [];
+  const addService = (entry: FixedRowEntry) => {
+    const view = serviceBehaviorView(entry, stats);
+    if (view) services.push(view);
+  };
   const commands: CommandView[] = [];
   for (const c of catalog.commands) {
+    const serviceRow = c.leaves.find(isServiceBehavior);
+    if (serviceRow) {
+      addService({ row: serviceRow, command: c });
+      continue;
+    }
     const view = commandView(c, stats);
     if (c.leaves.some((l) => l.systemKey !== null)) system = view;
     else commands.push(view);
   }
   const messageTriggers: MessageTriggerView[] = [];
-  const services: ServiceBehaviorView[] = [];
   for (const t of catalog.messageTriggers) {
-    if (t.actionSource === "service") {
-      const view = serviceBehaviorView(t, stats);
-      if (view) services.push(view);
+    if (isServiceBehavior(t)) {
+      addService({ row: t, command: null });
       continue;
     }
     const view = messageTriggerView(t, stats);
     if (t.systemKey !== null) system = view;
     else messageTriggers.push(view);
   }
+  services.sort((a, b) => a.service.id - b.service.id);
   return { system, services, commands, messageTriggers };
 }

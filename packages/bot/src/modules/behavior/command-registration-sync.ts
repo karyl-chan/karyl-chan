@@ -213,7 +213,7 @@ async function refused(
 
 /** A deleted command: remove its registration. */
 export async function releaseDeletedCommand(
-  registrar: BehaviorCommandRegistrar | undefined,
+  registrar: Pick<BehaviorCommandRegistrar, "releaseRegistration"> | undefined,
   previous: RegisteredName,
 ): Promise<RegistrationReport> {
   if (!registrar) {

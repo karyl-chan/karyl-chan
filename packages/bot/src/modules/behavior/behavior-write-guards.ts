@@ -9,6 +9,7 @@
 import { BehaviorApiError } from "./behavior-api-error.js";
 import {
   BehaviorDefinition,
+  isServiceBehavior,
   rowOfBehaviorDefinition,
   type BehaviorDefinitionRow,
 } from "./models/behavior-definition.model.js";
@@ -20,16 +21,16 @@ export async function loadBehaviorRow(id: number): Promise<BehaviorDefinitionRow
 }
 
 /**
- * The System Behavior and the Service Behaviors (#126) are not custom
- * behaviors: they are never deleted, converted or given another action
- * here. A Service Behavior's trigger is edited by PATCH /api/behaviors/:id
- * (service-behavior-rules.ts), and it goes with its service.
+ * The fixed rows — the System Behavior and the Service Behaviors (#126) —
+ * are not custom behaviors: nothing here changes, converts or deletes
+ * them. Each takes only its trigger switch (fixed-trigger-switch.ts); a
+ * Service Behavior goes with its service.
  */
-export function refuseSystem(row: { systemKey: string | null; actionSource: string }): void {
-  if (row.actionSource === "service") {
+export function refuseFixedRow(row: { systemKey: string | null; actionSource: string }): void {
+  if (isServiceBehavior(row)) {
     throw new BehaviorApiError(
       "system_immutable",
-      "a service's behavior cannot be deleted, converted or given another action; only its trigger can be edited (PATCH /api/behaviors/:id), and it is removed with its service (DELETE /api/services/:id)",
+      "a service's behavior cannot be changed, converted or deleted here; switch its trigger (PUT /api/services/:id/trigger) — it is removed with its service (DELETE /api/services/:id)",
     );
   }
   if (row.systemKey !== null) {
@@ -40,12 +41,12 @@ export function refuseSystem(row: { systemKey: string | null; actionSource: stri
   }
 }
 
-/** The system login's command container: changed only by the trigger switch (system-login-trigger-route.ts). */
+/** A fixed row's command container (the login's or a service's): changed only by its trigger switch. */
 export function refuseSystemCommand(command: { isSystem: boolean }): void {
   if (command.isSystem) {
     throw new BehaviorApiError(
       "system_immutable",
-      "the system login command cannot be changed or deleted here; switch the login's trigger instead (PUT /api/behaviors/system/login/trigger)",
+      "the command of the system login or of a service cannot be changed or deleted here; switch its trigger instead (PUT /api/behaviors/system/login/trigger or PUT /api/services/:id/trigger)",
     );
   }
 }

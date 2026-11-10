@@ -7,7 +7,7 @@
  *
  * 對齊 C-runtime §4.1 派發路徑（first-claim-wins）：
  *   [1]   behaviors（Command Trigger）── 指令（名稱 + 註冊目標）→ 葉節點（子指令）
- *         → 動作（builtin：系統登入；webhook）
+ *         → 動作（builtin：系統登入；service：服務登入；webhook）
  *   [2]   plugin_commands（軌三）── 走 plugin-interaction-dispatch.service.ts
  *   [2.5] plugin components（按鈕 + select menu）── 走 plugin-component-dispatch.service.ts
  *         custom_id 必須是 `kc:<pluginKey>:<componentId>[:<tail>]`
@@ -41,6 +41,8 @@ import { dispatchComponentToPlugin } from "../plugin-system/plugin-component-dis
 import { dispatchModalToPlugin } from "../plugin-system/plugin-modal-dispatch.service.js";
 import { dispatchInProcessInteraction } from "../builtin-features/in-process-command-registry.service.js";
 import { runLoginAction } from "./builtin-login-action.js";
+import { runServiceLoginAction } from "./service-login-action.js";
+import { isServiceBehavior } from "../behavior/models/behavior-definition.model.js";
 import { renderFailure } from "./reply-renderer.js";
 import { runWebhookAction } from "./webhook-action.js";
 import { takeBehaviorRun } from "./behavior-rate-limits.js";
@@ -277,6 +279,7 @@ export class InteractionDispatcher {
     if (leaf.actionSource === "builtin") {
       return this.dispatchSystemBehavior(interaction, leaf);
     }
+    if (isServiceBehavior(leaf)) return this.dispatchServiceBehavior(interaction, leaf);
     return this.dispatchWebhookBehavior(interaction, leaf, subcommandGroup, subcommand);
   }
 
@@ -311,6 +314,37 @@ export class InteractionDispatcher {
         ephemeral: true,
       })
       .catch(() => {});
+    return { claimed: true, claimedBy: "behavior_system" };
+  }
+
+  /**
+   * Service Behavior（#126）：服務登入 → runServiceLoginAction（ephemeral
+   * 回覆登入連結）。照一般指令觸發限速：每次都簽一張 token。
+   */
+  private async dispatchServiceBehavior(
+    interaction: ChatInputCommandInteraction,
+    leaf: CatalogBehavior,
+  ): Promise<DispatchOutcome> {
+    if (!takeBehaviorRun({ kind: "slash_user", userId: interaction.user.id })) {
+      await interaction
+        .reply({
+          content: tForInteraction(interaction, "behavior.rate-limited"),
+          flags: MessageFlags.Ephemeral,
+        })
+        .catch(() => {});
+      return { claimed: true, claimedBy: "behavior_system" };
+    }
+    if (!leaf.service) {
+      botEventLog.record(
+        "warn",
+        "bot",
+        `interaction-dispatcher: service behavior ${leaf.id} 找不到它的服務`,
+        { behaviorId: leaf.id },
+      );
+      await renderFailure({ kind: "interaction", interaction });
+      return { claimed: true, claimedBy: "behavior_system" };
+    }
+    await runServiceLoginAction({ kind: "interaction", interaction }, leaf.service);
     return { claimed: true, claimedBy: "behavior_system" };
   }
 

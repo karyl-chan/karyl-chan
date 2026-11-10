@@ -30,7 +30,8 @@ export type BehaviorAuditAction =
   | "behavior.trigger.convert"
   | "behavior.service.create"
   | "behavior.service.update"
-  | "behavior.service.delete";
+  | "behavior.service.delete"
+  | "behavior.service.trigger";
 
 /**
  * Record one behavior write. Never throws: it runs after the write is

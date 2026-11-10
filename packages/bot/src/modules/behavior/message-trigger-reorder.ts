@@ -32,6 +32,7 @@ import {
 } from "./message-trigger-rules.js";
 import {
   BehaviorDefinition,
+  isServiceBehavior,
   rowOfBehaviorDefinition,
 } from "./models/behavior-definition.model.js";
 
@@ -57,7 +58,7 @@ interface ReorderBody {
 
 /** Rows this route never moves: the login and the Service Behaviors. */
 function isPinned(row: { systemKey: string | null; actionSource: string }): boolean {
-  return row.systemKey !== null || row.actionSource === "service";
+  return row.systemKey !== null || isServiceBehavior(row);
 }
 
 function sameSet(a: readonly number[], b: readonly number[]): boolean {

@@ -21,7 +21,7 @@
 import type { User } from "discord.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { moduleLogger } from "../../logger.js";
-import type { ServiceRow } from "../behavior/models/service.model.js";
+import { serviceBehaviorTitle, type ServiceRow } from "../behavior/models/service.model.js";
 import { mintServiceToken, type ServiceTokenUser } from "../web-core/service-token.js";
 import { SERVICE_TOKEN_TTL_SECONDS } from "../web-core/jwt.service.js";
 import type { BehaviorReply } from "./behavior-reply.js";
@@ -58,7 +58,7 @@ export function serviceLoginReply(service: ServiceLoginTarget, link: string): Be
     embeds: [
       {
         color: 0x5865f2,
-        title: `登入 ${service.name}`,
+        title: serviceBehaviorTitle(service.name),
         description: "點下方按鈕登入。連結只能使用一次，請勿轉發。",
         fields: [{ name: "有效時間", value: `${SERVICE_TOKEN_TTL_SECONDS} 秒`, inline: true }],
       },

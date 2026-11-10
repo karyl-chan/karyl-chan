@@ -30,6 +30,7 @@ import type { MessageMatchOutcome } from "./types.js";
 import type { WebhookForwarder } from "./webhook-forwarder.service.js";
 import { runLoginAction } from "./builtin-login-action.js";
 import { runServiceLoginAction } from "./service-login-action.js";
+import { isServiceBehavior } from "../behavior/models/behavior-definition.model.js";
 import { runWebhookAction } from "./webhook-action.js";
 import { takeBehaviorRun } from "./behavior-rate-limits.js";
 import { toWebhookAttachment } from "./webhook-attachment.js";
@@ -262,7 +263,7 @@ export class MessageTriggerMatcher {
     djsMessage: DjsMessage,
     userId: string,
   ): Promise<MessageMatchOutcome> {
-    if (behavior.actionSource === "service") {
+    if (isServiceBehavior(behavior)) {
       // 服務登入照一般觸發限速（系統登入不受限）：每則都簽一張 token
       if (!takeBehaviorRun({ kind: "dm_user", userId })) return { handled: false };
       if (!behavior.service) {

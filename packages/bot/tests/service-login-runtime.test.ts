@@ -16,6 +16,13 @@ vi.hoisted(() => {
 vi.mock("../src/modules/bot-events/bot-event-log.js", () => ({
   botEventLog: { record: vi.fn() },
 }));
+vi.mock("../src/modules/plugin-system/plugin-interaction-dispatch.service.js", () => ({
+  dispatchInteractionToPlugin: vi.fn(async () => false),
+}));
+vi.mock("../src/modules/builtin-features/in-process-command-registry.service.js", () => ({
+  dispatchInProcessInteraction: vi.fn(async () => false),
+  listInProcessCommandNames: vi.fn(() => []),
+}));
 vi.mock("../src/modules/admin/admin-login.service.js", () => ({
   mintLoginLink: vi.fn(async () => ({
     ok: true,
@@ -26,20 +33,53 @@ vi.mock("../src/modules/admin/admin-login.service.js", () => ({
 }));
 
 import { createPublicKey, verify as cryptoVerify } from "crypto";
-import { ChannelType } from "discord.js";
+import { ChannelType, MessageFlags, type Client, type Interaction } from "discord.js";
 import Fastify, { type FastifyInstance } from "fastify";
 import { sequelize } from "../src/db.js";
 import { registerBehaviorRoutes } from "../src/modules/behavior/behavior-routes.js";
 import { mintLoginLink } from "../src/modules/admin/admin-login.service.js";
 import { MessageTriggerMatcher } from "../src/modules/command-system/message-trigger-matcher.service.js";
+import { InteractionDispatcher } from "../src/modules/command-system/interaction-dispatcher.service.js";
+import { CommandReconciler } from "../src/modules/command-system/reconcile.service.js";
+import { CommandNamespace } from "../src/modules/command-system/command-namespace.js";
 import type { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
 import { getJwks, initJwtSigningAuthority, type Jwks } from "../src/modules/web-core/jwt.service.js";
 import { publicBaseUrl } from "../src/modules/web-core/public-base-url.js";
 import { __resetBehaviorRateLimitsForTests } from "../src/modules/command-system/behavior-rate-limits.js";
 import { clearBehaviors, seedSystemLogin } from "./behavior-fixtures.js";
 
-const matcher = new MessageTriggerMatcher({ forward: vi.fn() } as unknown as WebhookForwarder);
+const forwarder = { forward: vi.fn() } as unknown as WebhookForwarder;
+const matcher = new MessageTriggerMatcher(forwarder);
+const dispatcher = new InteractionDispatcher(forwarder);
 let server: FastifyInstance;
+let serviceId: number;
+
+const registered = new Map<string, { id: string; name: string }>();
+const reconciler = new CommandReconciler(
+  () =>
+    ({
+      application: {
+        commands: {
+          fetch: async () => {
+            const all = new Map(registered) as Map<string, { id: string; name: string }> & {
+              find?: unknown;
+            };
+            return Object.assign(all, {
+              find: (fn: (v: { id: string; name: string }) => boolean) => [...registered.values()].find(fn),
+            });
+          },
+          create: async (data: { name: string }) => {
+            const cmd = { id: `c${registered.size + 1}`, name: data.name };
+            registered.set(cmd.id, cmd);
+            return cmd;
+          },
+          edit: async () => undefined,
+          delete: async (id: string) => void registered.delete(id),
+        },
+      },
+      guilds: { cache: new Map() },
+    }) as unknown as Client,
+);
 
 beforeAll(async () => {
   await sequelize.sync({ force: true });
@@ -49,7 +89,7 @@ beforeAll(async () => {
     request.authUserId = "admin";
     request.authCapabilities = new Set(["behavior.manage"]) as never;
   });
-  await registerBehaviorRoutes(server);
+  await registerBehaviorRoutes(server, { reconciler, namespace: new CommandNamespace() });
   await server.ready();
 });
 
@@ -64,6 +104,7 @@ beforeEach(async () => {
     payload: { name: "NAS", audience: "nas", redirectUrl: "https://nas.example/auth/karyl?from=bot" },
   });
   expect(res.statusCode).toBe(201);
+  serviceId = res.json().service.id;
 });
 
 function dm(content: string, userId = "222222222222222222") {
@@ -161,11 +202,16 @@ describe("a Service Behavior's trigger", () => {
   });
 
   it("answers only its audience", async () => {
-    const view = (await server.inject({ method: "GET", url: "/api/behaviors" })).json();
     await server.inject({
-      method: "PATCH",
-      url: `/api/behaviors/${view.services[0].id}`,
-      payload: { audienceKind: "user", audienceUserId: "333333333333333333" },
+      method: "PUT",
+      url: `/api/services/${serviceId}/trigger`,
+      payload: {
+        kind: "message",
+        patternKind: "regex",
+        patternValue: "^!login-nas$",
+        audienceKind: "user",
+        audienceUserId: "333333333333333333",
+      },
     });
     // someone else's `!login-nas` walks on to the login (startswith `!login`),
     // which answers only authorised admins — never with a service link
@@ -177,6 +223,57 @@ describe("a Service Behavior's trigger", () => {
     expect(verifyAsService(sentLink(allowed.send).searchParams.get("token")!, await getJwks(), "nas")).toMatchObject({
       sub: "333333333333333333",
     });
+  });
+
+  it("on a command: /nas-login replies ephemerally with the link; the DM no longer does", async () => {
+    const res = await server.inject({
+      method: "PUT",
+      url: `/api/services/${serviceId}/trigger`,
+      payload: {
+        kind: "command",
+        name: "nas-login",
+        description: "Log in to the NAS",
+        integrationTypes: ["guild_install"],
+        contexts: ["BotDM", "Guild"],
+      },
+    });
+    expect(res.statusCode).toBe(200);
+
+    const reply = vi.fn(async () => {});
+    const interaction = {
+      isChatInputCommand: () => true,
+      isAutocomplete: () => false,
+      isButton: () => false,
+      isAnySelectMenu: () => false,
+      isModalSubmit: () => false,
+      commandName: "nas-login",
+      commandGuildId: null,
+      guildId: "G1",
+      channelId: "C1",
+      deferred: false,
+      replied: false,
+      user: {
+        id: "222222222222222222",
+        username: "karyl",
+        globalName: "Karyl",
+        avatarURL: () => null,
+      },
+      options: { data: [], getSubcommand: () => null, getSubcommandGroup: () => null },
+      reply,
+    } as unknown as Interaction;
+    expect(await dispatcher.dispatch(interaction)).toEqual({ claimed: true, claimedBy: "behavior_system" });
+    const sent = (reply.mock.calls[0] as unknown[])[0] as {
+      flags?: number;
+      ephemeral?: boolean;
+      components: Array<{ components: Array<{ url: string }> }>;
+    };
+    expect(sent.ephemeral === true || ((sent.flags ?? 0) & MessageFlags.Ephemeral) !== 0).toBe(true);
+    const token = new URL(sent.components[0].components[0].url).searchParams.get("token")!;
+    expect(verifyAsService(token, await getJwks(), "nas")).toMatchObject({ sub: "222222222222222222", avatar: null });
+
+    const { message, send } = dm("!login-nas");
+    await matcher.onMessage(message);
+    expect(JSON.stringify(send.mock.calls)).not.toContain("nas.example");
   });
 
   it("is gone with its service", async () => {

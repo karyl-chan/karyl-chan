@@ -27,7 +27,10 @@ import {
 } from "./models/behavior-webhook-action.model.js";
 import { BehaviorGroupMember } from "./models/behavior-group-member.model.js";
 import { Service, rowOfService, type ServiceRow } from "./models/service.model.js";
-import { SYSTEM_BEHAVIOR_KEY_LOGIN } from "./models/behavior-definition.model.js";
+import {
+  SYSTEM_BEHAVIOR_KEY_LOGIN,
+  isServiceBehavior,
+} from "./models/behavior-definition.model.js";
 
 /** 一個 behavior 與它的動作設定：webhook（actionSource='webhook'）或服務（'service'）。 */
 export interface CatalogBehavior extends BehaviorDefinitionRow {
@@ -116,22 +119,47 @@ export async function loadBehaviorCatalog(): Promise<BehaviorCatalog> {
   };
 }
 
-/** The System Behavior (login) in a catalog: its row, and its command when its trigger is one. */
-export interface SystemLoginEntry {
+/**
+ * A fixed row in a catalog — the System Behavior or a Service Behavior
+ * (fixed-trigger-switch.ts): its row, and its command when its trigger
+ * is one.
+ */
+export interface FixedRowEntry {
   row: CatalogBehavior;
   command: CatalogCommand | null;
 }
 
-export function systemLoginOf(catalog: BehaviorCatalog): SystemLoginEntry | null {
-  const isLogin = (b: CatalogBehavior) => b.systemKey === SYSTEM_BEHAVIOR_KEY_LOGIN;
-  const command = catalog.commands.find((c) => c.leaves.some(isLogin)) ?? null;
-  const row = command?.leaves.find(isLogin) ?? catalog.messageTriggers.find(isLogin);
+/** The System Behavior (login) in a catalog. */
+export type SystemLoginEntry = FixedRowEntry;
+
+function fixedRowOf(
+  catalog: BehaviorCatalog,
+  isRow: (b: CatalogBehavior) => boolean,
+): FixedRowEntry | null {
+  const command = catalog.commands.find((c) => c.leaves.some(isRow)) ?? null;
+  const row = command?.leaves.find(isRow) ?? catalog.messageTriggers.find(isRow);
   return row ? { row, command } : null;
 }
 
-/** The Service Behaviors in a catalog, in matching order (each with its service). */
-export function serviceBehaviorsOf(catalog: BehaviorCatalog): CatalogBehavior[] {
-  return catalog.messageTriggers.filter((b) => b.actionSource === "service");
+export function systemLoginOf(catalog: BehaviorCatalog): SystemLoginEntry | null {
+  return fixedRowOf(catalog, (b) => b.systemKey === SYSTEM_BEHAVIOR_KEY_LOGIN);
+}
+
+/** One service's Service Behavior, wherever its trigger is. */
+export function serviceBehaviorOf(catalog: BehaviorCatalog, serviceId: number): FixedRowEntry | null {
+  return fixedRowOf(catalog, (b) => isServiceBehavior(b) && b.serviceId === serviceId);
+}
+
+/** Every Service Behavior, by service id (commands' leaves and message triggers alike). */
+export function serviceBehaviorsOf(catalog: BehaviorCatalog): FixedRowEntry[] {
+  const entries: FixedRowEntry[] = [];
+  for (const command of catalog.commands) {
+    for (const row of command.leaves) if (isServiceBehavior(row)) entries.push({ row, command });
+  }
+  for (const row of catalog.messageTriggers) {
+    if (isServiceBehavior(row)) entries.push({ row, command: null });
+  }
+  return entries.sort((a, b) => (a.row.serviceId ?? 0) - (b.row.serviceId ?? 0));
 }
 
 // ── 快照 ────────────────────────────────────────────────────────────────────

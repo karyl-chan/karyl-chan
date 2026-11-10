@@ -12,7 +12,8 @@
  *   /api/behavior-commands[/:id[/resync]]        — 指令的寫入與重新註冊（behavior-command-routes.ts）
  *   POST /api/behaviors/:id/convert-trigger      — 自訂 behavior 在訊息觸發與指令觸發間轉換（behavior-trigger-convert.ts）
  *   PUT  /api/behaviors/system/login/trigger     — 切換登入系統列的觸發（system-login-trigger-route.ts）
- *   GET / POST / PUT / DELETE /api/services[/:id] — 服務與它的 Service Behavior（service-routes.ts，#126）
+ *   GET / POST / PUT / DELETE /api/services[/:id] — 服務與它的 Service Behavior（service-routes.ts，#126；owner 限定）
+ *   PUT  /api/services/:id/trigger               — 切換服務列的觸發（同登入的 fixed-row switch；owner 限定）
  *   GET  /api/behavior-groups/:groupName/members — 群組名單
  *   PUT  /api/behavior-groups/:groupName/members — 全量替換群組名單
  *
@@ -70,7 +71,11 @@ import {
   convertTriggerSchema,
   registerTriggerConvertRoute,
 } from "./behavior-trigger-convert.js";
-import { createServiceSchema, registerServiceRoutes } from "./service-routes.js";
+import {
+  createServiceSchema,
+  registerServiceRoutes,
+  serviceTriggerSchema,
+} from "./service-routes.js";
 
 export type { BehaviorRoutesOptions };
 
@@ -103,7 +108,7 @@ export async function registerBehaviorRoutes(
     registerBehaviorCommandRoutes(scope, options);
     registerSystemLoginTriggerRoute(scope, options);
     registerTriggerConvertRoute(scope, options);
-    registerServiceRoutes(scope);
+    registerServiceRoutes(scope, options);
     registerGroupMemberRoutes(scope);
   });
 }
@@ -141,6 +146,7 @@ function registerReadAndTestRoutes(
       loginTrigger: loginTriggerSchema,
       convertTrigger: convertTriggerSchema,
       service: createServiceSchema,
+      serviceTrigger: serviceTriggerSchema,
     });
   });
 

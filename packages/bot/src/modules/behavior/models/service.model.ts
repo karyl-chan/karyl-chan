@@ -46,6 +46,11 @@ export const Service = sequelize.define(
   },
 );
 
+/** A service's login title: its Service Behavior's title and the login reply's. */
+export function serviceBehaviorTitle(serviceName: string): string {
+  return `登入 ${serviceName}`;
+}
+
 export interface ServiceRow {
   id: number;
   name: string;
