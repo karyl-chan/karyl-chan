@@ -16,6 +16,7 @@ const api = vi.hoisted(() => ({
     getGroupMembers: vi.fn(),
 }));
 vi.mock('../../../api/behavior', () => api);
+vi.mock('../../../api/discord', () => ({ fetchUserSummaries: vi.fn(async () => []) }));
 vi.mock('../../../api/guilds', () => ({ listGuilds: vi.fn(async () => []), listGuildTextChannels: vi.fn(async () => []) }));
 
 import ServiceBehaviorCard from './ServiceBehaviorCard.vue';
@@ -82,9 +83,12 @@ beforeEach(() => {
     api.getGroupMembers.mockResolvedValue({ groupName: 'g', members: [] });
 });
 
-async function mountOpen(behavior = onMessage()): Promise<VueWrapper> {
+async function mountOpen(
+    behavior = onMessage(),
+    groupUse: ReadonlyMap<string, number> = new Map(),
+): Promise<VueWrapper> {
     const wrapper = mount(ServiceBehaviorCard, {
-        props: { behavior, guildNames: new Map(), groupNames: [], groupUse: new Map() },
+        props: { behavior, guildNames: new Map(), groupNames: [...groupUse.keys()], groupUse },
         global: { plugins: [i18n], stubs: { RouterLink: RouterLinkStub } },
         attachTo: document.body,
     });
@@ -185,6 +189,34 @@ describe('ServiceBehaviorCard', () => {
         await wrapper.find('form').trigger('submit');
         await flushPromises();
         expect(wrapper.emitted('reload')).toHaveLength(1);
+    });
+
+    it('warns that a command answers everyone who can run it', async () => {
+        const wrapper = await mountOpen(onCommand());
+        expect(wrapper.find('[data-test="command-warning"]').text()).toBe('behaviors.service.commandNote');
+    });
+
+    it("warns before a switch to a command drops the list of the group only it uses", async () => {
+        api.getGroupMembers.mockResolvedValue({ groupName: 'family', members: ['1', '2'] });
+        const wrapper = await mountOpen(
+            onMessage({ audienceKind: 'group', audienceGroupName: 'family' }),
+            new Map([['family', 1]]),
+        );
+        expect(wrapper.find('[data-test="group-drop"]').exists()).toBe(false);
+        await pickKind(wrapper, 'command');
+        expect(wrapper.find('[data-test="group-drop"]').text()).toContain('behaviors.group.dropOnSave');
+    });
+
+    it("a non-owner sees the group's members but cannot change them", async () => {
+        signInAs(false);
+        api.getGroupMembers.mockResolvedValue({ groupName: 'family', members: ['1'] });
+        const wrapper = await mountOpen(
+            onMessage({ audienceKind: 'group', audienceGroupName: 'family' }),
+            new Map([['family', 1]]),
+        );
+        expect(wrapper.findAll('.chip')).toHaveLength(1);
+        expect(wrapper.find('.chip-remove').exists()).toBe(false);
+        expect(wrapper.find('[data-test="add-member"]').exists()).toBe(false);
     });
 
     it('is read-only for an admin who is not the owner', async () => {

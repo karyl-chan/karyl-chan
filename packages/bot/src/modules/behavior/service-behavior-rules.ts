@@ -65,7 +65,7 @@ export function defaultServicePattern(audience: string): ServicePattern {
 }
 
 export const SERVICE_BEHAVIOR_DESCRIPTION =
-  "以觸發者身分簽發這個服務的登入 token，私下回覆登入連結（120 秒、一次性）。服務列：只能改觸發，隨服務新增與刪除。";
+  "以觸發者身分簽發這個服務的服務 token，私下回覆登入連結（120 秒、一次性）。服務列：只能改觸發，隨服務新增與刪除。";
 
 /** What a command trigger offers when the body does not say: DMs with the bot, as the login. */
 export const SERVICE_COMMAND_DEFAULTS = {

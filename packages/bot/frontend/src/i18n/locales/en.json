@@ -1692,7 +1692,7 @@
             "audience": "Audience",
             "redirectUrl": "Redirect URL",
             "ownerOnly": "Only a bot owner can change a service's trigger: it decides who receives the service's login tokens.",
-            "commandNote": "A global command; its reply (the login link) is only shown to whoever ran it.",
+            "commandNote": "A global command has no audience: anyone who can see and run it — wherever its installs and contexts reach — gets a login token for this service. Narrow it with the server's integration settings, or use a bot DM pattern with an audience instead. Its reply is shown only to whoever ran it.",
             "patternRequired": "Enter a pattern",
             "commandName": "Lower-case letters, digits, - and _, at most 32",
             "descriptionRequired": "Describe the command"

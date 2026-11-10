@@ -199,6 +199,35 @@ describe("owner only", () => {
     expect((await listView()).services[0]).toMatchObject({ service: { redirectUrl: NAS.redirectUrl } });
   });
 
+  it("a group a service trigger uses: only an owner sets its members", async () => {
+    const service = await created();
+    await switchTrigger(service.id, {
+      kind: "message",
+      patternKind: "regex",
+      patternValue: "^!login-nas$",
+      audienceKind: "group",
+      audienceGroupName: "family",
+    });
+    await seedMessageTrigger({ title: "ops", audienceKind: "group", audienceGroupName: "ops" });
+    const put = (group: string) =>
+      server.inject({
+        method: "PUT",
+        url: `/api/behavior-groups/${group}/members`,
+        payload: { userIds: ["123456789012345678"] },
+      });
+
+    caller = { userId: "admin", capabilities: new Set(["behavior.manage"]) };
+    expect((await put("family")).statusCode).toBe(403);
+    expect(await BehaviorGroupMember.count({ where: { groupName: "family" } })).toBe(0);
+    // a group only ordinary triggers use stays behavior.manage's
+    expect((await put("ops")).statusCode).toBe(200);
+    // reading it is fine
+    expect((await server.inject({ method: "GET", url: "/api/behavior-groups/family/members" })).statusCode).toBe(200);
+
+    caller = { userId: OWNER, capabilities: new Set(["behavior.manage"]) };
+    expect((await put("family")).json()).toEqual({ groupName: "family", members: ["123456789012345678"] });
+  });
+
   it("needs behavior.manage (or admin) before that", async () => {
     caller = { userId: OWNER, capabilities: new Set() };
     expect((await createService()).statusCode).toBe(403);

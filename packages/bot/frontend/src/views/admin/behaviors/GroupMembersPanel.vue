@@ -12,11 +12,14 @@ import { describeBehaviorError } from './behavior-errors';
  * shared by every bot DM trigger using it; it can only be set while some
  * trigger uses the group (#137), so this panel is shown for the saved
  * group of a saved trigger. Adding or removing saves right away.
+ * `readonly` shows the list only (a group a Service Behavior uses: only an
+ * owner sets who may log in to the service, #126).
  */
 const props = defineProps<{
     groupName: string;
     /** How many message triggers use this group. */
     usedBy: number;
+    readonly?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -50,6 +53,7 @@ async function load() {
 watch(() => props.groupName, () => void load(), { immediate: true });
 
 async function save(next: string[]): Promise<boolean> {
+    if (props.readonly) return false;
     saving.value = true;
     error.value = null;
     try {
@@ -89,6 +93,7 @@ async function add() {
             <li v-for="id in members" :key="id" class="chip">
                 <span>{{ getDisplayName(id) ?? id }}</span>
                 <button
+                    v-if="!readonly"
                     type="button"
                     class="chip-remove"
                     :disabled="saving"
@@ -102,7 +107,7 @@ async function add() {
         <p v-else class="hint">{{ t('behaviors.group.empty') }}</p>
 
         <!-- not a <form>: the panel sits inside the card's editor form -->
-        <div class="add">
+        <div v-if="!readonly" class="add">
             <AppTextField
                 v-model="newUserId"
                 :placeholder="t('behaviors.group.addPlaceholder')"
