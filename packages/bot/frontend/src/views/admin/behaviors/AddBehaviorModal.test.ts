@@ -4,7 +4,12 @@ import { createPinia, setActivePinia } from 'pinia';
 import type { BehaviorSection, MessageTriggerView } from '../../../api/behavior';
 import { ApiError } from '../../../api/client';
 
-const api = vi.hoisted(() => ({ createMessageTrigger: vi.fn(), createBehaviorCommand: vi.fn(), getBehaviorSchemas: vi.fn() }));
+const api = vi.hoisted(() => ({
+    createMessageTrigger: vi.fn(),
+    createBehaviorCommand: vi.fn(),
+    getBehaviorSchemas: vi.fn(),
+    getPluginBehaviorActions: vi.fn(),
+}));
 vi.mock('../../../api/behavior', () => api);
 vi.mock('../../../api/guilds', () => ({ listGuilds: vi.fn(async () => []), listGuildTextChannels: vi.fn(async () => []) }));
 
@@ -223,6 +228,52 @@ describe('AddBehaviorModal — creating a command (board 2)', () => {
         expect($('[data-test="registration-result"]')!.getAttribute('data-tone')).toBe('warn');
         expect($('[data-test="secret-value"]')!.textContent).toBe('cmd-s3cret');
         expect(wrapper.emitted('close')).toBeUndefined();
+    });
+
+    it('creates a command whose action is a plugin action (#203)', async () => {
+        api.getPluginBehaviorActions.mockResolvedValue([
+            {
+                pluginKey: 'dice',
+                pluginName: 'Dice',
+                enabled: true,
+                status: 'active',
+                actions: [{ key: 'roll', name: 'Roll dice', description: 'Rolls' }],
+            },
+        ]);
+        api.createBehaviorCommand.mockResolvedValue({ command: savedCommand(), registration: { status: 'registered', targets: [] } });
+        open('bot_dm');
+        await flushPromises();
+        radio('command').click();
+        await flushPromises();
+        await type('behaviors.add.name', 'Roll');
+        await type('behaviors.command.name', 'roll');
+        await type('behaviors.command.description', 'Roll dice');
+        for (const [label, option] of [
+            ['behaviors.action.source', 'behaviors.action.sourcePlugin'],
+            ['behaviors.action.plugin.label', 'Roll dice'],
+        ]) {
+            const field = $$('label.field').find((f) => f.querySelector('.field-label')?.textContent === label)!;
+            field.querySelector<HTMLButtonElement>('button.select-trigger')!.click();
+            await flushPromises();
+            $$('li').find((li) => li.textContent?.trim() === option)!.click();
+            await flushPromises();
+        }
+        $('[data-test="create"]')!.click();
+        await flushPromises();
+
+        expect(api.createBehaviorCommand).toHaveBeenCalledWith(
+            expect.objectContaining({
+                name: 'roll',
+                leaves: [
+                    {
+                        subcommand: '',
+                        title: 'Roll',
+                        replyVisibility: null,
+                        pluginAction: { pluginKey: 'dice', actionKey: 'roll' },
+                    },
+                ],
+            })
+        );
     });
 
     it('in one server it creates a server command there', async () => {

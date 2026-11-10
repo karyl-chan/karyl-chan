@@ -23,7 +23,7 @@ export type BehaviorSection =
   | `guild:${string}`
   | `channel:${string}:${string}`;
 
-export type BehaviorActionSource = "builtin" | "webhook";
+export type BehaviorActionSource = "builtin" | "webhook" | "plugin";
 export type BehaviorMessageSurface = "bot_dm" | "guild";
 export type BehaviorPatternKind = "startswith" | "endswith" | "regex";
 export type BehaviorAudienceKind = "all" | "user" | "group";
@@ -59,6 +59,16 @@ export interface WebhookActionView {
   previousSecretExpiresAt: string | null;
 }
 
+/**
+ * A plugin action binding (#203): the plugin and one of the actions its
+ * manifest declares. Names and whether it is still declared come from
+ * getPluginBehaviorActions().
+ */
+export interface PluginActionView {
+  pluginKey: string;
+  actionKey: string;
+}
+
 export interface BehaviorCommandOption {
   type:
     | "string"
@@ -84,6 +94,8 @@ interface BehaviorViewBase {
   systemKey: string | null;
   actionSource: BehaviorActionSource;
   webhook: WebhookActionView | null;
+  /** actionSource 'plugin' only */
+  pluginAction: PluginActionView | null;
   stats: BehaviorStats | null;
   /** ISO time of the last write; send back as `ifUpdatedAt` to refuse a stale edit. */
   /** null = the trigger's own default; see ReplyVisibility */
@@ -187,7 +199,9 @@ export interface MessageTriggerInput {
   audienceUserId?: string | null;
   audienceGroupName?: string | null;
   replyVisibility?: ReplyVisibility | null;
-  webhook: WebhookInput;
+  /** The action: `webhook` or `pluginAction`, exactly one (#203). */
+  webhook?: WebhookInput;
+  pluginAction?: PluginActionView;
 }
 
 export interface CommandOptionInput {
@@ -206,7 +220,9 @@ export interface CommandLeafInput {
   leafDescription?: string | null;
   options?: CommandOptionInput[];
   replyVisibility?: ReplyVisibility | null;
-  webhook: WebhookInput;
+  /** The action: `webhook` or `pluginAction`, exactly one (#203). */
+  webhook?: WebhookInput;
+  pluginAction?: PluginActionView;
 }
 
 export interface CommandInput {
@@ -219,10 +235,12 @@ export interface CommandInput {
   defaultMemberPermissions?: string | null;
 }
 
-/** PATCH /api/behaviors/:id — a message trigger's or a leaf's own fields. */
-export type BehaviorPatch = Partial<Omit<MessageTriggerInput, "webhook">> &
-  Partial<Omit<CommandLeafInput, "webhook">> & {
-    webhook?: WebhookInput;
+/**
+ * PATCH /api/behaviors/:id — a message trigger's or a leaf's own fields.
+ * Naming the other kind of action converts the behavior to it (#203).
+ */
+export type BehaviorPatch = Partial<MessageTriggerInput> &
+  Partial<CommandLeafInput> & {
     ifUpdatedAt?: string;
   };
 
@@ -575,6 +593,23 @@ export interface BehaviorSchemas {
   loginTrigger?: Record<string, unknown>;
   /** POST /api/behaviors/:id/convert-trigger. */
   convertTrigger?: Record<string, unknown>;
+}
+
+/** An installed plugin and the behavior actions its manifest declares (#203). */
+export interface PluginBehaviorActions {
+  pluginKey: string;
+  pluginName: string;
+  enabled: boolean;
+  status: "active" | "inactive";
+  actions: Array<{ key: string; name: string; description: string }>;
+}
+
+/** The plugin action picker's choices: installed plugins that declare behavior actions. */
+export async function getPluginBehaviorActions(): Promise<PluginBehaviorActions[]> {
+  const { plugins } = await jsonOrThrow<{ plugins: PluginBehaviorActions[] }>(
+    await send("GET", "/api/behaviors/plugin-actions"),
+  );
+  return plugins;
 }
 
 let schemas: Promise<BehaviorSchemas> | null = null;

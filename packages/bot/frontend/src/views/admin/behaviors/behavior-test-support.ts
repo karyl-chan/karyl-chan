@@ -26,14 +26,26 @@ export function stubMatchMedia(): void {
 }
 
 /** The schema shape GET /api/behaviors/schema serves, trimmed to what the tests touch. */
+/** A plugin action binding as the write schemas serve it (#203). */
+export const PLUGIN_ACTION_SCHEMA = {
+    type: 'object',
+    properties: {
+        pluginKey: { type: 'string', minLength: 1, maxLength: 64, pattern: '^[a-z0-9][a-z0-9-]*$' },
+        actionKey: { type: 'string', pattern: '^[a-z0-9][a-z0-9_-]{0,31}$' },
+    },
+    required: ['pluginKey', 'actionKey'],
+};
+
 export const MESSAGE_TRIGGER_SCHEMA = {
     type: 'object',
     properties: {
         title: { type: 'string', minLength: 1, maxLength: 100, pattern: '\\S' },
         patternValue: { type: 'string', minLength: 1, maxLength: 500 },
         webhook: { type: 'object', properties: { url: { type: 'string', minLength: 1 } }, required: ['url'] },
+        pluginAction: PLUGIN_ACTION_SCHEMA,
     },
-    required: ['title', 'patternValue', 'webhook'],
+    // the action is webhook XOR pluginAction, refused by the handler (#203): neither is required
+    required: ['title', 'patternValue'],
 };
 
 /** The command schema GET /api/behaviors/schema serves, trimmed to what the tests touch. */
@@ -72,8 +84,9 @@ function leafSchemaItems() {
                 },
             },
             webhook: { type: 'object', properties: { url: { type: 'string', minLength: 1 } }, required: ['url'] },
+            pluginAction: PLUGIN_ACTION_SCHEMA,
         },
-        required: ['title', 'webhook'],
+        required: ['title'],
     };
 }
 
@@ -81,7 +94,7 @@ function leafSchemaItems() {
 export const COMMAND_LEAF_SCHEMA = {
     ...leafSchemaItems(),
     properties: { ...leafSchemaItems().properties, subcommand: { type: 'string', pattern: '^[a-z0-9_-]{1,32}$' } },
-    required: ['subcommand', 'title', 'webhook'],
+    required: ['subcommand', 'title'],
 };
 
 /** A saved bot DM message trigger, id 7, HMAC webhook. */
@@ -96,6 +109,7 @@ export function savedTrigger(overrides: Partial<MessageTriggerView> = {}): Messa
         systemKey: null,
         actionSource: 'webhook',
         webhook: { url: 'https://hook.example/w', authMode: 'hmac', secretSet: true, previousSecretExpiresAt: null },
+        pluginAction: null,
         stats: null,
         updatedAt: '2026-10-27T00:00:00.000Z',
         replyVisibility: null,
@@ -125,6 +139,7 @@ export function savedLeaf(overrides: Partial<CommandLeafView> = {}): CommandLeaf
         systemKey: null,
         actionSource: 'webhook',
         webhook: { url: 'https://hook.example/s', authMode: 'hmac', secretSet: true, previousSecretExpiresAt: null },
+        pluginAction: null,
         stats: null,
         updatedAt: '2026-10-27T00:00:00.000Z',
         replyVisibility: null,

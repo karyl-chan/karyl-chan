@@ -60,3 +60,37 @@ describe('leaf draft', () => {
         });
     });
 });
+
+describe('leaf draft — a plugin action (#203)', () => {
+    const bound = savedLeaf({ actionSource: 'plugin', webhook: null, pluginAction: { pluginKey: 'dice', actionKey: 'roll' } });
+
+    it('a bound leaf reads back as its binding, with a fresh webhook side kept aside', () => {
+        const draft = draftFromLeaf(bound);
+        expect(draft).toMatchObject({ actionSource: 'plugin', pluginKey: 'dice', actionKey: 'roll', webhookUrl: '', authMode: 'hmac' });
+        expect(leafBody(draft)).toMatchObject({ pluginAction: { pluginKey: 'dice', actionKey: 'roll' } });
+        expect(leafBody(draft)).not.toHaveProperty('webhook');
+        expect(leafPatch(bound, draft)).toBeNull();
+    });
+
+    it('re-binding sends the new binding; switching source sends the other kind alone', () => {
+        expect(leafPatch(bound, { ...draftFromLeaf(bound), actionKey: 'flip' })).toEqual({
+            pluginAction: { pluginKey: 'dice', actionKey: 'flip' },
+            ifUpdatedAt: '2026-10-27T00:00:00.000Z',
+        });
+        const toWebhook = { ...draftFromLeaf(bound), actionSource: 'webhook' as const, webhookUrl: 'https://hook.example/n' };
+        expect(leafPatch(bound, toWebhook)).toEqual({
+            webhook: { url: 'https://hook.example/n', authMode: 'hmac' },
+            ifUpdatedAt: '2026-10-27T00:00:00.000Z',
+        });
+        const toPlugin = { ...draftFromLeaf(savedLeaf()), actionSource: 'plugin' as const, pluginKey: 'dice', actionKey: 'roll' };
+        expect(leafPatch(savedLeaf(), toPlugin)).toEqual({
+            pluginAction: { pluginKey: 'dice', actionKey: 'roll' },
+            ifUpdatedAt: '2026-10-27T00:00:00.000Z',
+        });
+    });
+
+    it('switching to a plugin action and back changes nothing', () => {
+        const draft = { ...draftFromLeaf(savedLeaf()), actionSource: 'plugin' as const, pluginKey: 'dice', actionKey: 'roll' };
+        expect(leafPatch(savedLeaf(), { ...draft, actionSource: 'webhook' })).toBeNull();
+    });
+});

@@ -4,6 +4,7 @@ import { optionIssues } from './command-rules';
 import { checkAgainstSchema, type JsonSchema } from './form-schema';
 import { leafBody, type LeafDraft } from './leaf-draft';
 import type { Translate } from './translate';
+import { ACTION_ERROR_FIELDS } from './webhook-draft';
 
 /**
  * Which leaf form: the root leaf (the command itself), a saved subcommand,
@@ -13,7 +14,7 @@ export type LeafFormKind = 'root' | 'subcommand' | 'add';
 
 /** The leaf fields with an error line on screen (the server's `error.field` paths, unprefixed). */
 export function leafFieldsWithErrorLine(draft: LeafDraft, kind: LeafFormKind): string[] {
-    const fields = ['title', 'description', 'options', 'webhook.url', 'webhook.authMode'];
+    const fields: string[] = ['title', 'description', 'options', ...ACTION_ERROR_FIELDS];
     if (kind !== 'root') fields.push('subcommand', 'leafDescription');
     draft.options.forEach((_, i) => {
         for (const f of ['type', 'name', 'description', 'required']) fields.push(`options.${i}.${f}`);

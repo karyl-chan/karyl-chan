@@ -34,7 +34,7 @@ import {
 } from './registration-result';
 import { sectionLabel } from './section-labels';
 import { draftPatcher } from './use-draft-form';
-import { webhookBody } from './webhook-draft';
+import { ACTION_ERROR_FIELDS, actionBody } from './webhook-draft';
 
 /**
  * "New behavior" in a section (board 2): only what the section can hold is
@@ -72,7 +72,7 @@ const options = computed(() => newBehaviorOptions(props.section));
 const choices = computed(() => ({ command: options.value.command, message: options.value.message }));
 
 const kind = ref<Kind | null>(null);
-/** The message trigger draft; its title and webhook are a new command's too. */
+/** The message trigger draft; its title and action are a new command's too. */
 const draft = ref<MessageTriggerDraft>(emptyDraft({ kind: 'bot_dm' }));
 const applyPatch = draftPatcher(draft);
 const command = ref({ name: '', description: '' });
@@ -151,7 +151,7 @@ const presetSummary = computed(() => {
 });
 
 /** The fields the command form shows an error line on. */
-const COMMAND_FIELDS = ['title', 'name', 'description', 'webhook.url', 'webhook.authMode'];
+const COMMAND_FIELDS = ['title', 'name', 'description', ...ACTION_ERROR_FIELDS];
 
 /** `leaves.0.title` → `title`: the dialog's one leaf is its own fields. */
 const leafField = (field: string) => field.replace(/^leaves\.0\./, '');
@@ -162,7 +162,8 @@ function commandDraft(): CommandDraft {
 
 async function createCommand() {
     const cmd = commandDraft();
-    const leaf = { ...emptyLeafDraft(), title: draft.value.title, webhookUrl: draft.value.webhookUrl, authMode: draft.value.authMode };
+    const { webhookUrl, authMode, actionSource, pluginKey, actionKey } = draft.value;
+    const leaf = { ...emptyLeafDraft(), title: draft.value.title, webhookUrl, authMode, actionSource, pluginKey, actionKey };
     const [commandErrors, leafErrors] = await Promise.all([checkCommandDraft(t, cmd), checkLeafDraft(t, leaf, 'root')]);
     const found = onFields(
         {
@@ -182,7 +183,7 @@ async function createCommand() {
                     subcommand: '',
                     title: leaf.title.trim(),
                     replyVisibility: draft.value.replyVisibility,
-                    webhook: webhookBody(leaf),
+                    ...actionBody(leaf),
                 },
             ],
         });
