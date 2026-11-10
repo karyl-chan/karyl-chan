@@ -397,6 +397,10 @@ later ones edit that message (or, when the reply moves between the
 channel and the DM, send it anew and delete the old one). In a DM with
 the bot everything goes to that DM.
 
+An edit — a `respond` that edits the reply, or `edit_followup` — changes
+only the fields its body has: it cannot clear one the body leaves out,
+and an empty one (`""`, `[]`) counts as left out.
+
 - An unknown, revoked or expired token gets `401`. Any other
   `/api/plugin/*` path gets `403`: the token answers this run and nothing
   else.
@@ -410,7 +414,8 @@ the bot everything goes to that DM.
 - Calls are rate-limited per token, that is per run (60 a minute); over
   it, `429`.
 - A call the bot refuses (`callback_invalid`) or Discord refuses
-  (`callback_failed`) is a failed delivery of the behavior. A call that
+  (`callback_failed`; `dm_failed` when a private reply could not be sent
+  to the author as a DM) is a failed delivery of the behavior. A call that
   works is not logged.
 - The token lives in the bot's memory: after a restart it is unknown.
 

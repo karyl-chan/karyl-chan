@@ -50,7 +50,7 @@ describe("renderReply — interaction target", () => {
     expect(out).toEqual({
       ok: true,
       via: "interaction",
-      replyMessage: { messageId: "@original", ephemeral: true },
+      replyMessage: { kind: "interaction", interaction: ix, messageId: "@original", ephemeral: true },
     });
     expect(ix.reply).toHaveBeenCalledWith({
       content: "hi",
@@ -76,7 +76,7 @@ describe("renderReply — interaction target", () => {
     expect(out).toEqual({
       ok: true,
       via: "interaction",
-      replyMessage: { messageId: "@original", ephemeral: true },
+      replyMessage: { kind: "interaction", interaction: ix, messageId: "@original", ephemeral: true },
     });
     // an edit can only carry SuppressEmbeds
     expect(ix.editReply).toHaveBeenCalledWith({

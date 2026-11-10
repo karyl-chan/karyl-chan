@@ -90,26 +90,43 @@ interface SentMessage {
   delete: Mock;
 }
 
-/** A triggering message in a guild channel or in a DM with the bot. */
+/**
+ * A triggering message in a guild channel or in a DM with the bot. The bot
+ * edits and deletes what it sent by id, through the channel's message
+ * manager; `sent[i].edit` / `.delete` record that per message.
+ */
 function fakeMessage(place: "guild" | "dm", createdTimestamp = Date.now()) {
   const sent: SentMessage[] = [];
-  const make = (prefix: string) => async (body: unknown) => {
-    const m: SentMessage = {
+  const byId = (id: string) => {
+    const m = sent.find((s) => s.id === id);
+    if (!m) throw new Error("Unknown Message");
+    return m;
+  };
+  const messages = {
+    edit: vi.fn(async (id: string, body: unknown) => byId(id).edit(body)),
+    delete: vi.fn(async (id: string) => byId(id).delete()),
+  };
+  const make = (prefix: string, into: () => unknown) => async (body: unknown) => {
+    const m: SentMessage & { channel: unknown } = {
       id: `${prefix}${sent.length + 1}`,
       body,
+      channel: into(),
       edit: vi.fn(async () => m),
       delete: vi.fn(async () => {}),
     };
     sent.push(m);
     return m;
   };
-  const dmChannel = { sendTyping: vi.fn(async () => {}) };
+  const dmChannel = { sendTyping: vi.fn(async () => {}), messages };
+  let channelRef: unknown = null;
   const channel = {
     id: "C1",
     type: place === "guild" ? ChannelType.GuildText : ChannelType.DM,
-    send: vi.fn(make("C")),
+    send: vi.fn(make("C", () => channelRef)),
     sendTyping: vi.fn(async () => {}),
+    messages,
   };
+  channelRef = channel;
   const author = {
     id: "U1",
     username: "tester",
@@ -118,7 +135,7 @@ function fakeMessage(place: "guild" | "dm", createdTimestamp = Date.now()) {
     avatar: null,
     bot: false,
     displayAvatarURL: () => "https://cdn.example/avatar.png",
-    send: vi.fn(make("D")),
+    send: vi.fn(make("D", () => dmChannel)),
     createDM: vi.fn(async () => dmChannel),
   };
   const message = {
@@ -315,10 +332,11 @@ describe("respond on a message trigger", () => {
     const res = await call("interactions.respond", other, { content: "only you" });
     expect(res.statusCode).toBe(400);
     expect(second.channel.send).not.toHaveBeenCalled();
+    // as the synchronous path calls it
     expect((await findRecentDeliveries(id))[0]).toMatchObject({
       via: "message",
       ok: false,
-      errorCode: "callback_failed",
+      errorCode: "dm_failed",
     });
   });
 
@@ -421,6 +439,16 @@ describe("a message trigger's callback principal", () => {
     await held;
     expect((await respond).statusCode).toBe(401);
     expect(fake.channel.send).not.toHaveBeenCalled();
+  });
+
+  it("keeps where the message was and who sent it, not the message", async () => {
+    const id = await seedTrigger();
+    const fake = fakeMessage("guild");
+    const { principal } = issuedFor(id, fake);
+    expect(principal.target).toEqual({
+      kind: "message",
+      message: { channel: fake.channel, author: fake.author, guild: { preferredLocale: "en-US" } },
+    });
   });
 
   it("a token is 401 once 15 minutes have passed since the message", async () => {

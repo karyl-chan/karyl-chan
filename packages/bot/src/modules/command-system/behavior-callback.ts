@@ -61,13 +61,14 @@ type Outcome =
   | { ok: true; body: Record<string, unknown> }
   /** The bot refused the call (`callback_invalid`). */
   | { ok: false; refused: true; status: number; error: string }
-  /** Discord refused it (`callback_failed`). */
-  | { ok: false; refused: false; error: string }
+  /** Discord refused it (`callback_failed`), or a private reply could not be DMed (`dm_failed`). */
+  | { ok: false; refused: false; error: string; dmFailed?: true }
   /** The token was revoked while the call waited its turn: as if unknown. */
   | { ok: false; gone: true };
 
 const refused = (status: number, error: string): Outcome => ({ ok: false, refused: true, status, error });
-const failed = (error: string): Outcome => ({ ok: false, refused: false, error });
+const failed = (error: string, dmFailed?: true): Outcome =>
+  dmFailed ? { ok: false, refused: false, error, dmFailed } : { ok: false, refused: false, error };
 const GONE: Outcome = { ok: false, gone: true };
 
 type Call = { principal: BehaviorCallbackPrincipal; body: Record<string, unknown> };
@@ -99,7 +100,7 @@ async function respond(call: Call): Promise<Outcome> {
     visibility: principal.visibility,
     replyMessage: principal.replyMessage,
   });
-  if (!rendered.ok) return failed(rendered.error);
+  if (!rendered.ok) return failed(rendered.error, rendered.dmFailed);
   principal.replyMessage = rendered.replyMessage ?? null;
   principal.answeredByCallback = true;
   return { ok: true, body: { ok: true } };
@@ -112,7 +113,7 @@ async function followup(call: Call): Promise<Outcome> {
   const sent = await renderFollowup(read.reply, principal.target, {
     visibility: principal.visibility,
   });
-  if (!sent.ok) return failed(sent.error);
+  if (!sent.ok) return failed(sent.error, sent.dmFailed);
   principal.createdMessages.set(sent.sent.messageId, sent.sent);
   return { ok: true, body: { ok: true, id: sent.sent.messageId } };
 }
@@ -122,14 +123,14 @@ async function editOwnFollowup(call: Call): Promise<Outcome> {
   if (!own) return refused(403, NOT_OURS);
   const read = readReply(call.body);
   if (!read.ok) return refused(400, read.error);
-  const edited = await editFollowup(read.reply, call.principal.target, own);
+  const edited = await editFollowup(read.reply, own);
   return edited.ok ? { ok: true, body: { ok: true } } : failed(edited.error);
 }
 
 async function deleteOwnFollowup(call: Call): Promise<Outcome> {
   const own = ownMessage(call);
   if (!own) return refused(403, NOT_OURS);
-  const deleted = await deleteFollowup(call.principal.target, own);
+  const deleted = await deleteFollowup(own);
   if (!deleted.ok) return failed(deleted.error);
   call.principal.createdMessages.delete(own.messageId);
   return { ok: true, body: { ok: true } };
@@ -205,6 +206,9 @@ export async function runBehaviorCallback(
     await recordFailure(principal, method, "callback_invalid", outcome.error, firedAt, started);
     return { status: outcome.status, body: { error: outcome.error } };
   }
-  await recordFailure(principal, method, "callback_failed", outcome.error, firedAt, started);
+  // a private reply that could not reach the author is what the
+  // synchronous path calls it too
+  const code = outcome.dmFailed ? "dm_failed" : "callback_failed";
+  await recordFailure(principal, method, code, outcome.error, firedAt, started);
   return { status: 400, body: { error: `${failedAs}: ${outcome.error}` } };
 }

@@ -24,7 +24,7 @@
 import { createHash, randomBytes } from "crypto";
 import type { ReplyVisibility } from "../behavior/models/behavior-definition.model.js";
 import { publicBaseUrl } from "../web-core/public-base-url.js";
-import type { ReplySlot, ReplyTarget } from "./reply-renderer.js";
+import type { RenderTarget, ReplySlot, ReplyTarget } from "./reply-renderer.js";
 
 /** How long a callback token is good for: Discord's interaction token lifetime. */
 export const CALLBACK_TOKEN_TTL_MS = 15 * 60 * 1000;
@@ -32,15 +32,12 @@ export const CALLBACK_TOKEN_TTL_MS = 15 * 60 * 1000;
 const SWEEP_INTERVAL_MS = 60_000;
 
 /**
- * What a callback answers: a command trigger's (already deferred)
+ * What the token is issued for: a command trigger's (already deferred)
  * interaction, or a message trigger's message.
  */
-export type CallbackTarget = ReplyTarget;
-
-/** What the token is issued for. */
 export interface CallbackIssue {
   behaviorId: number;
-  target: CallbackTarget;
+  target: ReplyTarget;
   /** The behavior's stored reply default (replyVisibility). */
   visibility: ReplyVisibility | null;
 }
@@ -49,8 +46,19 @@ export interface CallbackIssue {
  * The principal a callback token resolves to: one run, and the state its
  * reply is in. Only `serializeReply` callers change `replyMessage` and
  * `answeredByCallback`.
+ *
+ * What it keeps for up to 15 minutes, and what bounds it: a command's
+ * interaction; for a message trigger only the TriggerMessage (its channel,
+ * author and guild — cache objects the bot holds anyway), never the
+ * message; and per sent message a slot of ids plus its channel. Runs are
+ * capped by takeBehaviorRun (5 per 10 s per command user, per guild
+ * channel, per bot-DM user); a run's follow-ups by the 60-a-minute
+ * callback throttle.
  */
-export interface BehaviorCallbackPrincipal extends CallbackIssue {
+export interface BehaviorCallbackPrincipal {
+  readonly behaviorId: number;
+  readonly target: RenderTarget;
+  readonly visibility: ReplyVisibility | null;
   readonly expiresAt: number;
   /**
    * The message that holds the run's reply now: a command's deferred
@@ -78,7 +86,7 @@ export interface BehaviorCallbackPrincipal extends CallbackIssue {
 const hashToken = (token: string): string => createHash("sha256").update(token).digest("hex");
 
 /** When the run began: the interaction's creation or the message's, else now. */
-function startOf(target: CallbackTarget): number {
+function startOf(target: ReplyTarget): number {
   const created =
     target.kind === "interaction" ? target.interaction.createdTimestamp : target.message.createdTimestamp;
   return typeof created === "number" && Number.isFinite(created) ? created : Date.now();
@@ -95,13 +103,30 @@ export class BehaviorCallbackTokenStore {
     const { target } = input;
     const hash = hashToken(token);
     const principal: BehaviorCallbackPrincipal = {
-      ...input,
+      behaviorId: input.behaviorId,
+      visibility: input.visibility,
+      target:
+        target.kind === "interaction"
+          ? target
+          : {
+              kind: "message",
+              message: {
+                channel: target.message.channel,
+                author: target.message.author,
+                guild: target.message.guild,
+              },
+            },
       runKey: hash,
-      expiresAt: startOf(input.target) + CALLBACK_TOKEN_TTL_MS,
+      expiresAt: startOf(target) + CALLBACK_TOKEN_TTL_MS,
       // a webhook's command is deferred before the token is issued
       replyMessage:
         target.kind === "interaction" && (target.interaction.deferred || target.interaction.replied)
-          ? { messageId: "@original", ephemeral: target.interaction.ephemeral ?? true }
+          ? {
+              kind: "interaction",
+              interaction: target.interaction,
+              messageId: "@original",
+              ephemeral: target.interaction.ephemeral ?? true,
+            }
           : null,
       answeredByCallback: false,
       revoked: false,

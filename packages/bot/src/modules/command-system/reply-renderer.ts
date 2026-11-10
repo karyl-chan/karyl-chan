@@ -46,23 +46,36 @@ import { resolveLocale, t } from "../../i18n/index.js";
 import { hasVisibleReply, type BehaviorReply } from "./behavior-reply.js";
 import type { ReplyVisibility } from "../behavior/models/behavior-definition.model.js";
 
+/**
+ * What answering a message trigger needs of its message: where it was and
+ * who sent it. Long-lived cache objects only, so a callback token (#200)
+ * that keeps a target for 15 minutes keeps no message of its own.
+ */
+export type TriggerMessage = Pick<Message, "channel" | "author" | "guild">;
+
 export type ReplyTarget =
   | { kind: "interaction"; interaction: ChatInputCommandInteraction }
   | { kind: "message"; message: Message };
 
+/** What the renderer answers: a ReplyTarget, or a message trigger kept as its TriggerMessage. */
+export type RenderTarget =
+  | { kind: "interaction"; interaction: ChatInputCommandInteraction }
+  | { kind: "message"; message: TriggerMessage };
+
+/** A channel the bot sent into, whose messages it can edit and delete by id. */
+type SentChannel = Message["channel"];
+
 /**
- * The message that holds a reply. A command's: `@original` (the
- * placeholder, or the direct reply) or a follow-up id, and whether only
- * the invoker sees it (fixed when the message was made). A message
- * trigger's: the message the bot sent, `ephemeral` meaning it went to the
- * author's DM instead of the guild channel; it is edited and deleted
- * through `message`.
+ * The message that holds a reply (or a callback follow-up), with what it
+ * takes to edit or delete it. A command's is `@original` (the placeholder,
+ * or the direct reply) or a follow-up id; `ephemeral`: only the invoker
+ * sees it (fixed when the message was made). A message trigger's is a
+ * message the bot sent; `ephemeral`: it went to the author's DM instead of
+ * the guild channel.
  */
-export interface ReplySlot {
-  messageId: string;
-  ephemeral: boolean;
-  message?: Message;
-}
+export type ReplySlot =
+  | { kind: "interaction"; interaction: ChatInputCommandInteraction; messageId: string; ephemeral: boolean }
+  | { kind: "message"; channel: SentChannel; messageId: string; ephemeral: boolean };
 
 export type RenderOutcome =
   | {
@@ -89,6 +102,50 @@ function messageBody(reply: BehaviorReply) {
 
 const withFlags = <T extends object>(body: T, flags: number) =>
   flags !== 0 ? { ...body, flags } : body;
+
+/** The body of an edit: only the fields the reply has, and of its flags only SuppressEmbeds. */
+const editBody = (reply: BehaviorReply) =>
+  withFlags(messageBody(reply), (reply.flags ?? 0) & MessageFlags.SuppressEmbeds);
+
+/** The `@original` reply of a command. */
+const originalOf = (interaction: ChatInputCommandInteraction, ephemeral: boolean): ReplySlot => ({
+  kind: "interaction",
+  interaction,
+  messageId: "@original",
+  ephemeral,
+});
+
+/** A command's slot for a message it sent, when Discord said which. */
+function interactionSlotOf(
+  interaction: ChatInputCommandInteraction,
+  sent: unknown,
+  ephemeral: boolean,
+): ReplySlot | null {
+  const id = (sent as { id?: unknown } | null | undefined)?.id;
+  return typeof id === "string" ? { kind: "interaction", interaction, messageId: id, ephemeral } : null;
+}
+
+/** A message trigger's slot for a message the bot sent, when it is one. */
+function messageSlotOf(sent: Message, ephemeral: boolean): ReplySlot | null {
+  return typeof sent?.id === "string" && sent.channel
+    ? { kind: "message", channel: sent.channel, messageId: sent.id, ephemeral }
+    : null;
+}
+
+async function editSlot(slot: ReplySlot, body: ReturnType<typeof editBody>): Promise<void> {
+  if (slot.kind === "message") {
+    await slot.channel.messages.edit(slot.messageId, body);
+  } else {
+    const { interaction, messageId } = slot;
+    await interaction.editReply(messageId === "@original" ? body : { ...body, message: messageId });
+  }
+}
+
+async function deleteSlot(slot: ReplySlot): Promise<void> {
+  if (slot.kind === "message") await slot.channel.messages.delete(slot.messageId);
+  else if (slot.messageId === "@original") await slot.interaction.deleteReply();
+  else await slot.interaction.deleteReply(slot.messageId);
+}
 
 export interface RenderOptions {
   /**
@@ -119,7 +176,7 @@ export function effectiveEphemeral(
 
 export async function renderReply(
   reply: BehaviorReply,
-  target: ReplyTarget,
+  target: RenderTarget,
   opts: RenderOptions = {},
 ): Promise<RenderOutcome> {
   const resolved: BehaviorReply = { ...reply, ephemeral: effectiveEphemeral(reply, opts.visibility) };
@@ -133,18 +190,6 @@ export async function renderReply(
   }
 }
 
-const slotOf = (sent: unknown, ephemeral: boolean): ReplySlot | null => {
-  const id = (sent as { id?: unknown } | null | undefined)?.id;
-  return typeof id === "string" ? { messageId: id, ephemeral } : null;
-};
-
-/** Edit `@original` or a follow-up. */
-const editMessage = (interaction: ChatInputCommandInteraction, messageId: string, body: object) =>
-  interaction.editReply(messageId === "@original" ? body : { ...body, message: messageId });
-
-const deleteMessage = (interaction: ChatInputCommandInteraction, messageId: string) =>
-  messageId === "@original" ? interaction.deleteReply() : interaction.deleteReply(messageId);
-
 async function renderToInteraction(
   reply: BehaviorReply,
   interaction: ChatInputCommandInteraction,
@@ -156,11 +201,11 @@ async function renderToInteraction(
     current !== undefined
       ? current
       : acked
-        ? { messageId: "@original", ephemeral: interaction.ephemeral ?? true }
+        ? originalOf(interaction, interaction.ephemeral ?? true)
         : null;
 
   if (!hasVisibleReply(reply)) {
-    if (slot) await deleteMessage(interaction, slot.messageId);
+    if (slot) await deleteSlot(slot);
     return { ok: true, via: "none", replyMessage: null };
   }
 
@@ -170,7 +215,7 @@ async function renderToInteraction(
     await interaction.reply(
       withFlags(body, (ephemeral ? MessageFlags.Ephemeral : 0) | extraFlags),
     );
-    return { ok: true, via: "interaction", replyMessage: { messageId: "@original", ephemeral } };
+    return { ok: true, via: "interaction", replyMessage: originalOf(interaction, ephemeral) };
   }
 
   if (!slot) {
@@ -179,14 +224,13 @@ async function renderToInteraction(
     const sent = await interaction.followUp(
       withFlags(body, (ephemeral ? MessageFlags.Ephemeral : 0) | extraFlags),
     );
-    return { ok: true, via: "interaction", replyMessage: slotOf(sent, ephemeral) };
+    return { ok: true, via: "interaction", replyMessage: interactionSlotOf(interaction, sent, ephemeral) };
   }
 
   // Discord fixed the message's visibility when it was made.
   const plan = planRespond({ kind: "reply", ephemeral: slot.ephemeral }, reply.ephemeral);
   if (plan.action === "patch-original") {
-    // an edit can only carry SuppressEmbeds
-    await editMessage(interaction, slot.messageId, withFlags(body, extraFlags & MessageFlags.SuppressEmbeds));
+    await editSlot(slot, editBody(reply));
     return { ok: true, via: "interaction", replyMessage: slot };
   }
   const sent = await interaction.followUp(
@@ -194,9 +238,14 @@ async function renderToInteraction(
   );
   // The reply already landed; a message left behind only lingers
   // until Discord expires it.
-  await deleteMessage(interaction, slot.messageId).catch(() => {});
-  return { ok: true, via: "interaction", replyMessage: slotOf(sent, plan.ephemeral) };
+  await deleteSlot(slot).catch(() => {});
+  return { ok: true, via: "interaction", replyMessage: interactionSlotOf(interaction, sent, plan.ephemeral) };
 }
+
+/** A behavior callback's outcome for one follow-up operation. */
+export type FollowupOutcome<T = object> =
+  | ({ ok: true } & T)
+  | { ok: false; error: string; dmFailed?: true };
 
 /**
  * A new message (a behavior callback's `followup`): a command's follow-up,
@@ -206,51 +255,44 @@ async function renderToInteraction(
  */
 export async function renderFollowup(
   reply: BehaviorReply,
-  target: ReplyTarget,
+  target: RenderTarget,
   opts: RenderOptions = {},
-): Promise<{ ok: true; sent: ReplySlot } | { ok: false; error: string }> {
+): Promise<FollowupOutcome<{ sent: ReplySlot }>> {
   const wanted = effectiveEphemeral(reply, opts.visibility);
   const flags = reply.flags ?? 0;
-  try {
-    if (target.kind === "message") {
-      const dm = goesToDm(target.message, wanted);
-      const sent = await sendFor(target.message, dm, withFlags(messageBody(reply), flags));
-      return { ok: true, sent: { messageId: sent.id, ephemeral: dm, message: sent } };
-    }
+  let slot: ReplySlot | null;
+  if (target.kind === "message") {
+    const dm = goesToDm(target.message, wanted);
+    const sent = await sendFor(target.message, dm, withFlags(messageBody(reply), flags));
+    if (!sent.ok) return sent;
+    slot = messageSlotOf(sent.message, dm);
+  } else {
     const ephemeral = wanted ?? true;
-    const sent = await target.interaction.followUp(
-      withFlags(messageBody(reply), (ephemeral ? MessageFlags.Ephemeral : 0) | flags),
-    );
-    const slot = slotOf(sent, ephemeral);
-    return slot ? { ok: true, sent: slot } : { ok: false, error: "Discord returned no message" };
-  } catch (err) {
-    return { ok: false, error: errorText(err) };
+    try {
+      const sent = await target.interaction.followUp(
+        withFlags(messageBody(reply), (ephemeral ? MessageFlags.Ephemeral : 0) | flags),
+      );
+      slot = interactionSlotOf(target.interaction, sent, ephemeral);
+    } catch (err) {
+      return { ok: false, error: errorText(err) };
+    }
   }
+  return slot ? { ok: true, sent: slot } : { ok: false, error: "Discord returned no message" };
 }
 
-/** Edit a follow-up: only the fields the reply has; an edit keeps only SuppressEmbeds. */
-export async function editFollowup(
-  reply: BehaviorReply,
-  target: ReplyTarget,
-  sent: ReplySlot,
-): Promise<{ ok: true } | { ok: false; error: string }> {
-  const body = withFlags(messageBody(reply), (reply.flags ?? 0) & MessageFlags.SuppressEmbeds);
+/** Edit a follow-up: only the fields the reply has (an edit cannot clear the others). */
+export async function editFollowup(reply: BehaviorReply, sent: ReplySlot): Promise<FollowupOutcome> {
   try {
-    if (target.kind === "message") await sent.message!.edit(body);
-    else await editMessage(target.interaction, sent.messageId, body);
+    await editSlot(sent, editBody(reply));
     return { ok: true };
   } catch (err) {
     return { ok: false, error: errorText(err) };
   }
 }
 
-export async function deleteFollowup(
-  target: ReplyTarget,
-  sent: ReplySlot,
-): Promise<{ ok: true } | { ok: false; error: string }> {
+export async function deleteFollowup(sent: ReplySlot): Promise<FollowupOutcome> {
   try {
-    if (target.kind === "message") await sent.message!.delete();
-    else await deleteMessage(target.interaction, sent.messageId);
+    await deleteSlot(sent);
     return { ok: true };
   } catch (err) {
     return { ok: false, error: errorText(err) };
@@ -261,12 +303,23 @@ export async function deleteFollowup(
  * Where a message trigger's reply goes: a DM to the author for a private
  * reply in a guild, else the channel (a DM with the bot is both).
  */
-function goesToDm(message: Message, ephemeral: boolean | undefined): boolean {
+function goesToDm(message: TriggerMessage, ephemeral: boolean | undefined): boolean {
   return message.channel.type !== ChannelType.DM && ephemeral === true;
 }
 
-const sendFor = (message: Message, dm: boolean, body: MessageCreateOptions) =>
-  dm ? message.author.send(body) : (message.channel as SendableChannels).send(body);
+/** Send for a message trigger; a DM that fails is `dmFailed`, never retried in the channel. */
+async function sendFor(
+  message: TriggerMessage,
+  dm: boolean,
+  body: MessageCreateOptions,
+): Promise<{ ok: true; message: Message } | { ok: false; error: string; dmFailed?: true }> {
+  try {
+    const sent = dm ? await message.author.send(body) : await (message.channel as SendableChannels).send(body);
+    return { ok: true, message: sent };
+  } catch (err) {
+    return dm ? { ok: false, error: errorText(err), dmFailed: true } : { ok: false, error: errorText(err) };
+  }
+}
 
 /**
  * The typing indicator where a message trigger's reply will most likely go
@@ -274,7 +327,7 @@ const sendFor = (message: Message, dm: boolean, body: MessageCreateOptions) =>
  * stored visibility is private, else the channel. Best-effort.
  */
 export async function sendTypingFor(
-  message: Message,
+  message: TriggerMessage,
   visibility: ReplyVisibility | null | undefined,
 ): Promise<void> {
   try {
@@ -290,7 +343,7 @@ export async function sendTypingFor(
 
 async function renderToMessage(
   reply: BehaviorReply,
-  message: Message,
+  message: TriggerMessage,
   current: ReplySlot | null,
 ): Promise<RenderOutcome> {
   if (!hasVisibleReply(reply)) return { ok: true, via: "none", replyMessage: current };
@@ -300,26 +353,20 @@ async function renderToMessage(
   const via = dm ? "dm" : "channel";
 
   // the reply already sent (a behavior callback answering again): edit it
-  // in place while it stays where it is; an edit keeps only SuppressEmbeds
-  if (current?.message && current.ephemeral === dm) {
-    await current.message.edit(
-      withFlags(messageBody(reply), (reply.flags ?? 0) & MessageFlags.SuppressEmbeds),
-    );
+  // in place while it stays where it is
+  if (current && current.ephemeral === dm) {
+    await editSlot(current, editBody(reply));
     return { ok: true, via, replyMessage: current };
   }
 
-  const body = withFlags(messageBody(reply), reply.flags ?? 0);
-  let sent: Message;
-  try {
-    sent = await sendFor(message, dm, body);
-  } catch (err) {
-    if (dm) return { ok: false, error: errorText(err), dmFailed: true };
-    throw err;
+  const sent = await sendFor(message, dm, withFlags(messageBody(reply), reply.flags ?? 0));
+  if (!sent.ok) {
+    if (sent.dmFailed) return sent;
+    throw new Error(sent.error);
   }
   // moved between the channel and the DM: the old one goes
-  if (current?.message) await current.message.delete().catch(() => {});
-  const slot = slotOf(sent, dm);
-  return { ok: true, via, replyMessage: slot && { ...slot, message: sent } };
+  if (current) await deleteSlot(current).catch(() => {});
+  return { ok: true, via, replyMessage: messageSlotOf(sent.message, dm) };
 }
 
 /**
@@ -331,7 +378,7 @@ async function renderToMessage(
  * broad trigger and could undo a reply meant to be private. If the DM
  * fails too, nothing is said; the caller has logged it. Never throws.
  */
-export async function renderFailure(target: ReplyTarget): Promise<void> {
+export async function renderFailure(target: RenderTarget): Promise<void> {
   try {
     if (target.kind === "interaction") {
       const { interaction } = target;
