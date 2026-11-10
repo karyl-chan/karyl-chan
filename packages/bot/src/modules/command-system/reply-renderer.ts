@@ -47,18 +47,17 @@ import { hasVisibleReply, type BehaviorReply } from "./behavior-reply.js";
 import type { ReplyVisibility } from "../behavior/models/behavior-definition.model.js";
 
 /**
- * What answering a message trigger needs of its message: where it was and
- * who sent it. Long-lived cache objects only, so a callback token (#200)
- * that keeps a target for 15 minutes keeps no message of its own.
+ * What answering a message trigger needs of its message: where it was,
+ * who sent it, its ids and when. Ids, a timestamp and long-lived cache
+ * objects only, so a callback token (#200) that keeps a target for 15
+ * minutes keeps no message of its own.
  */
-export type TriggerMessage = Pick<Message, "channel" | "author" | "guild">;
+export type TriggerMessage = Pick<
+  Message,
+  "id" | "guildId" | "createdTimestamp" | "channel" | "author" | "guild"
+>;
 
 export type ReplyTarget =
-  | { kind: "interaction"; interaction: ChatInputCommandInteraction }
-  | { kind: "message"; message: Message };
-
-/** What the renderer answers: a ReplyTarget, or a message trigger kept as its TriggerMessage. */
-export type RenderTarget =
   | { kind: "interaction"; interaction: ChatInputCommandInteraction }
   | { kind: "message"; message: TriggerMessage };
 
@@ -75,7 +74,9 @@ type SentChannel = Message["channel"];
  */
 export type ReplySlot =
   | { kind: "interaction"; interaction: ChatInputCommandInteraction; messageId: string; ephemeral: boolean }
-  | { kind: "message"; channel: SentChannel; messageId: string; ephemeral: boolean };
+  | MessageSlot;
+
+type MessageSlot = { kind: "message"; channel: SentChannel; messageId: string; ephemeral: boolean };
 
 export type RenderOutcome =
   | {
@@ -126,7 +127,7 @@ function interactionSlotOf(
 }
 
 /** A message trigger's slot for a message the bot sent, when it is one. */
-function messageSlotOf(sent: Message, ephemeral: boolean): ReplySlot | null {
+function messageSlotOf(sent: Message, ephemeral: boolean): MessageSlot | null {
   return typeof sent?.id === "string" && sent.channel
     ? { kind: "message", channel: sent.channel, messageId: sent.id, ephemeral }
     : null;
@@ -176,7 +177,7 @@ export function effectiveEphemeral(
 
 export async function renderReply(
   reply: BehaviorReply,
-  target: RenderTarget,
+  target: ReplyTarget,
   opts: RenderOptions = {},
 ): Promise<RenderOutcome> {
   const resolved: BehaviorReply = { ...reply, ephemeral: effectiveEphemeral(reply, opts.visibility) };
@@ -184,7 +185,11 @@ export async function renderReply(
   try {
     return target.kind === "interaction"
       ? await renderToInteraction(resolved, target.interaction, opts.replyMessage)
-      : await renderToMessage(resolved, target.message, opts.replyMessage ?? null);
+      : await renderToMessage(
+          resolved,
+          target.message,
+          opts.replyMessage?.kind === "message" ? opts.replyMessage : null,
+        );
   } catch (err) {
     return { ok: false, error: errorText(err) };
   }
@@ -255,7 +260,7 @@ export type FollowupOutcome<T = object> =
  */
 export async function renderFollowup(
   reply: BehaviorReply,
-  target: RenderTarget,
+  target: ReplyTarget,
   opts: RenderOptions = {},
 ): Promise<FollowupOutcome<{ sent: ReplySlot }>> {
   const wanted = effectiveEphemeral(reply, opts.visibility);
@@ -263,9 +268,13 @@ export async function renderFollowup(
   let slot: ReplySlot | null;
   if (target.kind === "message") {
     const dm = goesToDm(target.message, wanted);
-    const sent = await sendFor(target.message, dm, withFlags(messageBody(reply), flags));
-    if (!sent.ok) return sent;
-    slot = messageSlotOf(sent.message, dm);
+    try {
+      const sent = await sendFor(target.message, dm, withFlags(messageBody(reply), flags));
+      if (!sent.ok) return sent;
+      slot = messageSlotOf(sent.message, dm);
+    } catch (err) {
+      return { ok: false, error: errorText(err) };
+    }
   } else {
     const ephemeral = wanted ?? true;
     try {
@@ -307,17 +316,20 @@ function goesToDm(message: TriggerMessage, ephemeral: boolean | undefined): bool
   return message.channel.type !== ChannelType.DM && ephemeral === true;
 }
 
-/** Send for a message trigger; a DM that fails is `dmFailed`, never retried in the channel. */
+/**
+ * Send for a message trigger. A DM that fails is `dmFailed` (never
+ * retried in the channel); a channel send that fails throws, as is.
+ */
 async function sendFor(
   message: TriggerMessage,
   dm: boolean,
   body: MessageCreateOptions,
-): Promise<{ ok: true; message: Message } | { ok: false; error: string; dmFailed?: true }> {
+): Promise<{ ok: true; message: Message } | { ok: false; error: string; dmFailed: true }> {
+  if (!dm) return { ok: true, message: await (message.channel as SendableChannels).send(body) };
   try {
-    const sent = dm ? await message.author.send(body) : await (message.channel as SendableChannels).send(body);
-    return { ok: true, message: sent };
+    return { ok: true, message: await message.author.send(body) };
   } catch (err) {
-    return dm ? { ok: false, error: errorText(err), dmFailed: true } : { ok: false, error: errorText(err) };
+    return { ok: false, error: errorText(err), dmFailed: true };
   }
 }
 
@@ -344,7 +356,7 @@ export async function sendTypingFor(
 async function renderToMessage(
   reply: BehaviorReply,
   message: TriggerMessage,
-  current: ReplySlot | null,
+  current: MessageSlot | null,
 ): Promise<RenderOutcome> {
   if (!hasVisibleReply(reply)) return { ok: true, via: "none", replyMessage: current };
   // no say on who sees it: an answer already sent stays where it is
@@ -360,10 +372,7 @@ async function renderToMessage(
   }
 
   const sent = await sendFor(message, dm, withFlags(messageBody(reply), reply.flags ?? 0));
-  if (!sent.ok) {
-    if (sent.dmFailed) return sent;
-    throw new Error(sent.error);
-  }
+  if (!sent.ok) return sent;
   // moved between the channel and the DM: the old one goes
   if (current) await deleteSlot(current).catch(() => {});
   return { ok: true, via, replyMessage: messageSlotOf(sent.message, dm) };
@@ -378,7 +387,7 @@ async function renderToMessage(
  * broad trigger and could undo a reply meant to be private. If the DM
  * fails too, nothing is said; the caller has logged it. Never throws.
  */
-export async function renderFailure(target: RenderTarget): Promise<void> {
+export async function renderFailure(target: ReplyTarget): Promise<void> {
   try {
     if (target.kind === "interaction") {
       const { interaction } = target;

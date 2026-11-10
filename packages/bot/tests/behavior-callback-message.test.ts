@@ -447,7 +447,14 @@ describe("a message trigger's callback principal", () => {
     const { principal } = issuedFor(id, fake);
     expect(principal.target).toEqual({
       kind: "message",
-      message: { channel: fake.channel, author: fake.author, guild: { preferredLocale: "en-US" } },
+      message: {
+        id: "M1",
+        guildId: "G1",
+        createdTimestamp: expect.any(Number),
+        channel: fake.channel,
+        author: fake.author,
+        guild: { preferredLocale: "en-US" },
+      },
     });
   });
 

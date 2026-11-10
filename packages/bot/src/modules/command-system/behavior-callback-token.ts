@@ -24,7 +24,7 @@
 import { createHash, randomBytes } from "crypto";
 import type { ReplyVisibility } from "../behavior/models/behavior-definition.model.js";
 import { publicBaseUrl } from "../web-core/public-base-url.js";
-import type { RenderTarget, ReplySlot, ReplyTarget } from "./reply-renderer.js";
+import type { ReplySlot, ReplyTarget } from "./reply-renderer.js";
 
 /** How long a callback token is good for: Discord's interaction token lifetime. */
 export const CALLBACK_TOKEN_TTL_MS = 15 * 60 * 1000;
@@ -48,17 +48,14 @@ export interface CallbackIssue {
  * `answeredByCallback`.
  *
  * What it keeps for up to 15 minutes, and what bounds it: a command's
- * interaction; for a message trigger only the TriggerMessage (its channel,
- * author and guild — cache objects the bot holds anyway), never the
- * message; and per sent message a slot of ids plus its channel. Runs are
+ * interaction; for a message trigger only the TriggerMessage (ids, a
+ * timestamp, and its channel, author and guild — cache objects the bot
+ * holds anyway), never the message; and per sent message a slot of ids plus its channel. Runs are
  * capped by takeBehaviorRun (5 per 10 s per command user, per guild
  * channel, per bot-DM user); a run's follow-ups by the 60-a-minute
  * callback throttle.
  */
-export interface BehaviorCallbackPrincipal {
-  readonly behaviorId: number;
-  readonly target: RenderTarget;
-  readonly visibility: ReplyVisibility | null;
+export interface BehaviorCallbackPrincipal extends Readonly<CallbackIssue> {
   readonly expiresAt: number;
   /**
    * The message that holds the run's reply now: a command's deferred
@@ -111,6 +108,9 @@ export class BehaviorCallbackTokenStore {
           : {
               kind: "message",
               message: {
+                id: target.message.id,
+                guildId: target.message.guildId,
+                createdTimestamp: target.message.createdTimestamp,
                 channel: target.message.channel,
                 author: target.message.author,
                 guild: target.message.guild,
