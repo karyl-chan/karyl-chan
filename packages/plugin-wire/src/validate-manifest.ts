@@ -41,6 +41,21 @@ export const MAX_BEHAVIOR_ACTIONS = 25;
 export const MAX_BEHAVIOR_ACTION_NAME = 100;
 export const MAX_BEHAVIOR_ACTION_DESCRIPTION = 200;
 
+/**
+ * The V-10 rule for one of a behavior action's texts: what is wrong with
+ * it ("must be a non-empty string", "must be ≤N chars"), or null. Shared
+ * so the SDK's eager check says exactly what register would.
+ */
+export function behaviorActionTextProblem(
+  field: "name" | "description",
+  value: unknown,
+): string | null {
+  const max = field === "name" ? MAX_BEHAVIOR_ACTION_NAME : MAX_BEHAVIOR_ACTION_DESCRIPTION;
+  if (typeof value !== "string" || value.trim().length === 0) return "must be a non-empty string";
+  if (value.length > max) return `must be ≤${max} chars`;
+  return null;
+}
+
 const VALID_INTEGRATION_TYPES = new Set(["guild_install", "user_install"]);
 const VALID_CONTEXTS = new Set(["Guild", "BotDM", "PrivateChannel"]);
 
@@ -191,17 +206,9 @@ export function validateManifestProtocol(input: unknown): ManifestValidation {
       );
     }
     // V-10：name / description 必填、非空、有上限
-    for (const [field, max] of [
-      ["name", MAX_BEHAVIOR_ACTION_NAME],
-      ["description", MAX_BEHAVIOR_ACTION_DESCRIPTION],
-    ] as const) {
-      const value = a[field];
-      if (typeof value !== "string" || value.trim().length === 0) {
-        return reject(`behavior_actions[${a.key}].${field} must be a non-empty string (V-10)`);
-      }
-      if (value.length > max) {
-        return reject(`behavior_actions[${a.key}].${field} must be ≤${max} chars (V-10)`);
-      }
+    for (const field of ["name", "description"] as const) {
+      const problem = behaviorActionTextProblem(field, a[field]);
+      if (problem) return reject(`behavior_actions[${a.key}].${field} ${problem} (V-10)`);
     }
     // V-11：key 不重複
     if (seenActionKeys.has(a.key)) {
