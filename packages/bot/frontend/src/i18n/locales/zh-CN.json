@@ -1629,6 +1629,8 @@
             "empty": "还没有投递记录。",
             "ok": "成功",
             "failed": "失败",
+            "deferred": "延后回复",
+            "deferredHint": "receiver 之后会用 callback token 补上回复。",
             "verified": {
                 "hmac": "签名已验证（HMAC）",
                 "token": "签名已验证（token）"

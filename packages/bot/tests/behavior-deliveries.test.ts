@@ -346,7 +346,7 @@ describe("GET /api/behaviors/:id/deliveries", () => {
     expect(deliveries[0]).toMatchObject({ ok: true, httpStatus: 204, verified: "token", via: "message" });
     expect(deliveries[1]).toMatchObject({ ok: false, httpStatus: 500, errorCode: "http_error", error: "boom" });
     expect(Object.keys(deliveries[0]).sort()).toEqual(
-      ["durationMs", "error", "errorCode", "firedAt", "httpStatus", "id", "ok", "verified", "via"],
+      ["deferred", "durationMs", "error", "errorCode", "firedAt", "httpStatus", "id", "ok", "verified", "via"],
     );
     await server.close();
   });

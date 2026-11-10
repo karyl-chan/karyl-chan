@@ -15,6 +15,9 @@
  *     `ephemeral: true` DMs the author instead — never the channel, also
  *     when the DM fails.
  *
+ * A behavior callback (#113) also follows up on a command, and edits or
+ * deletes those follow-ups (renderFollowup / editFollowup / deleteFollowup).
+ *
  * Mentions are never parsed (a reply comes from an external service). A
  * Discord refusal comes back as `{ ok: false }` for the caller to log and
  * count — nothing here swallows it.
@@ -139,6 +142,56 @@ async function renderToInteraction(
   // until Discord expires it.
   await interaction.deleteReply().catch(() => {});
   return { ok: true, via: "interaction" };
+}
+
+/**
+ * A new message on a command (a behavior callback's `followup`). Who sees
+ * it: the reply's `ephemeral`, then the stored visibility, then the
+ * command's default — only the invoker.
+ */
+export async function renderFollowup(
+  reply: BehaviorReply,
+  interaction: ChatInputCommandInteraction,
+  opts: RenderOptions = {},
+): Promise<{ ok: true; messageId: string } | { ok: false; error: string }> {
+  const ephemeral = effectiveEphemeral(reply, opts.visibility) ?? true;
+  try {
+    const sent = await interaction.followUp(
+      withFlags(messageBody(reply), (ephemeral ? MessageFlags.Ephemeral : 0) | (reply.flags ?? 0)),
+    );
+    return { ok: true, messageId: sent.id };
+  } catch (err) {
+    return { ok: false, error: errorText(err) };
+  }
+}
+
+/** Edit a follow-up: only the fields the reply has; an edit keeps only SuppressEmbeds. */
+export async function editFollowup(
+  reply: BehaviorReply,
+  interaction: ChatInputCommandInteraction,
+  messageId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    await interaction.editReply({
+      ...withFlags(messageBody(reply), (reply.flags ?? 0) & MessageFlags.SuppressEmbeds),
+      message: messageId,
+    });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: errorText(err) };
+  }
+}
+
+export async function deleteFollowup(
+  interaction: ChatInputCommandInteraction,
+  messageId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    await interaction.deleteReply(messageId);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: errorText(err) };
+  }
 }
 
 async function renderToMessage(

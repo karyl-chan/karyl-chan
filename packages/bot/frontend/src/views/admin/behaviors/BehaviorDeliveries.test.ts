@@ -20,6 +20,7 @@ function delivery(overrides: Partial<BehaviorDelivery> = {}): BehaviorDelivery {
         errorCode: null,
         error: null,
         verified: null,
+        deferred: false,
         ...overrides,
     };
 }
@@ -49,6 +50,20 @@ describe('BehaviorDeliveries', () => {
 
         expect(api.getBehaviorDeliveries).toHaveBeenCalledWith(7);
         expect(wrapper.find('[data-test="deliveries-toggle"]').attributes('aria-expanded')).toBe('true');
+    });
+
+    it('marks a deferred delivery, and only that one', async () => {
+        api.getBehaviorDeliveries.mockResolvedValue({
+            deliveries: [delivery({ id: 2, via: 'command', deferred: true }), delivery({ id: 1, via: 'command' })],
+        });
+        const wrapper = mountList();
+
+        await expand(wrapper);
+
+        const rows = wrapper.findAll('[data-test="delivery-row"]');
+        expect(rows[0].get('[data-test="delivery-deferred"]').text()).toBe('behaviors.deliveries.deferred');
+        expect(rows[0].text()).toContain('behaviors.deliveries.ok');
+        expect(rows[1].find('[data-test="delivery-deferred"]').exists()).toBe(false);
     });
 
     it('renders one row per delivery: outcome, status, latency, error and signature', async () => {

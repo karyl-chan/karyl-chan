@@ -127,8 +127,12 @@ _Avoid_: relay、轉發內容（舊稱，只有 content / embeds）
 指令葉節點與伺服器訊息觸發儲存的回覆預設：`private`（指令只有執行的人；伺服器訊息私訊作者）、`public`（貼在頻道），null 沿用觸發本身的預設。回應的 `ephemeral` 可覆蓋；與 bot 的私訊與 System Behavior 不適用。
 
 **Delivery（投遞）**:
-一次 webhook 動作的呼叫與它的結果：成功或失敗、HTTP 狀態、延遲、錯誤碼、簽章驗證。每個 behavior 留最近 20 筆、最多 7 天（delivery log，投遞紀錄）；不存 URL、密鑰、內容或使用者 id。測試 webhook 不算投遞；指令的 defer 被 Discord 拒絕時 webhook 沒被呼叫，仍記成一次失敗的投遞（`defer_failed`）。
+一次 webhook 動作的呼叫與它的結果：成功或失敗、HTTP 狀態、延遲、錯誤碼、簽章驗證。每個 behavior 留最近 20 筆、最多 7 天（delivery log，投遞紀錄）；不存 URL、密鑰、內容或使用者 id。測試 webhook 不算投遞；指令的 defer 被 Discord 拒絕時 webhook 沒被呼叫，仍記成一次失敗的投遞（`defer_failed`）。receiver 回 `{"defer": true}` 的投遞算成功並標為延後（deferred）；之後用 Callback Token 的呼叫失敗時，另記一筆失敗的投遞（`callback_invalid` / `callback_failed`）。
 _Avoid_: 事件（那是 bot event log）、forward（只是投遞的一部分）
+
+**Callback Token**:
+bot 每次觸發簽發、只對該次觸發有效的不透明 token，15 分鐘到期，放在 webhook 請求的 `_meta.callback`。receiver 拿它呼叫 `/api/plugin/interactions.respond`／`followup`／`edit_followup`／`delete_followup`，補發、修改或刪除這次的回覆；其他 `/api/plugin/*` 一律 403。它代替 Discord interaction token，後者不離開 bot。目前只有指令觸發有。
+_Avoid_: interaction token（那是 Discord 的，從不交給 receiver）、plugin token
 
 **Reply Renderer**:
 把 Behavior Reply 送到 Discord 的唯一入口，目標是一個互動（指令觸發）或一則訊息（訊息觸發）。

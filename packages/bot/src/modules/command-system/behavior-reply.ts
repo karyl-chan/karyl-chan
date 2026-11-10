@@ -21,6 +21,8 @@
  *     in action rows (type 1); at most 5 rows of 5
  *   - flags: only SuppressEmbeds and SuppressNotifications; visibility is
  *     the `ephemeral` field, never the Ephemeral bit
+ *   - defer: `true` only (#113); it means "answer later", so the renderer
+ *     never sees it — runWebhookAction does
  *   - any other top-level field is ignored (and named in a note)
  *   - the body itself is capped at MAX_REPLY_BODY_BYTES by the forwarder
  *
@@ -56,6 +58,12 @@ export interface BehaviorReply {
   ephemeral?: boolean;
   /** SuppressEmbeds (4) | SuppressNotifications (4096) only. */
   flags?: number;
+  /**
+   * A webhook's synchronous answer only (#113): "no reply now, I will
+   * answer with the callback token". The command keeps its "thinking…"
+   * placeholder; the rest of the reply is not shown. Only `true` is kept.
+   */
+  defer?: true;
 }
 
 /** What parseBehaviorReply dropped or changed, for the admin and the log. */
@@ -81,7 +89,7 @@ export const MAX_REPLY_BODY_BYTES = 64 * 1024;
 /** Ends content that was cut to MAX_REPLY_CONTENT. */
 export const TRUNCATION_MARK = "\n…(truncated)";
 
-const KNOWN_FIELDS = new Set(["content", "embeds", "components", "ephemeral", "flags"]);
+const KNOWN_FIELDS = new Set(["content", "embeds", "components", "ephemeral", "flags", "defer"]);
 
 const MAX_ROWS = 5;
 const MAX_BUTTONS_PER_ROW = 5;
@@ -294,6 +302,11 @@ export function parseBehaviorReply(raw: unknown): ReplyParse {
       const droppedFlags = body.flags & ~ALLOWED_REPLY_FLAGS;
       if (droppedFlags !== 0) notes.push({ kind: "flags_dropped", flags: droppedFlags });
     }
+  }
+
+  if (body.defer !== undefined && body.defer !== null) {
+    if (typeof body.defer !== "boolean") invalid("defer");
+    else if (body.defer) reply.defer = true;
   }
 
   const unknown = Object.keys(body).filter((k) => !KNOWN_FIELDS.has(k)).sort();

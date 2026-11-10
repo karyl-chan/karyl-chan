@@ -351,13 +351,15 @@ export interface BehaviorDelivery {
   durationMs: number | null;
   /**
    * A host-policy code, `response_signature`, `http_error`,
-   * `invalid_reply`, `request_failed`, `render_failed`, `dm_failed` or
-   * `defer_failed`; null on success.
+   * `invalid_reply`, `request_failed`, `render_failed`, `dm_failed`,
+   * `defer_failed`, `callback_invalid` or `callback_failed`; null on success.
    */
   errorCode: string | null;
   /** At most 300 characters; null on success. */
   error: string | null;
   verified: "hmac" | "token" | null;
+  /** The receiver answered `{"defer": true}`: its reply comes through the callback token (#113). */
+  deferred: boolean;
 }
 
 /** A behavior's last 20 deliveries, newest first. */

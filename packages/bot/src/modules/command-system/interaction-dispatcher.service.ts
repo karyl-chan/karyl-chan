@@ -58,7 +58,8 @@ import { tForInteraction } from "../../i18n/index.js";
  * Discord webhook 原生欄位（content / username / avatar_url）帶 interaction 資訊，
  * plugin 可直接用標準 Discord webhook 消費邏輯處理。
  * _meta 欄位帶完整 interaction 元資訊供需要的 plugin 使用（behavior webhook 可忽略）。
- * 不帶 interaction token：webhook 是裸外部 URL，回覆由 bot 代為送出。
+ * 不帶 interaction token：webhook 是裸外部 URL，回覆由 bot 代為送出；
+ * 要晚點回覆的 receiver 改用 runWebhookAction 加上的 `_meta.callback`（#113）。
  */
 function buildWebhookPayload(
   interaction: ChatInputCommandInteraction,
