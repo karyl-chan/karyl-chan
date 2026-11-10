@@ -161,7 +161,7 @@ describe("a group a DM allowlist names", () => {
 });
 
 describe("a command leaf's DM allowlist", () => {
-  it("goes with its command, and its group's members and DM log with it", async () => {
+  it("goes with its command, and its group's members with it; its DM log ages out", async () => {
     const commandId = await seedCommand();
     const leaf = await seedLeaf(commandId);
     await putList(leaf, { userIds: [U1], groupNames: ["ops"] });
@@ -171,7 +171,8 @@ describe("a command leaf's DM allowlist", () => {
     await sequelize.transaction((t) => destroyCommandRows(commandId, t));
     expect(await findDmAllowlist(leaf)).toBeNull();
     expect(await findGroupMembers("ops")).toEqual([]);
-    expect(await findRecentDmLog(leaf)).toEqual([]);
+    // kept for a refused write's restore; the 30-day prune removes it
+    expect(await findRecentDmLog(leaf)).toHaveLength(1);
   });
 
   it("is in the command snapshot: a refused write puts it back", async () => {
@@ -179,6 +180,7 @@ describe("a command leaf's DM allowlist", () => {
     const leaf = await seedLeaf(commandId, { subcommand: "a" });
     await seedLeaf(commandId, { subcommand: "b" });
     await putList(leaf, { userIds: [U1], groupNames: ["ops"] });
+    await recordDmLog({ behaviorId: leaf, recipientUserId: U1, triggererUserId: U2, outcome: "sent" });
 
     const snapshot = await snapshotCommand(commandId);
     // the write removed the leaf, then Discord refused it
@@ -188,6 +190,8 @@ describe("a command leaf's DM allowlist", () => {
     });
     await restoreCommand(snapshot);
     expect(await findDmAllowlist(leaf)).toEqual({ userIds: [U1], groupNames: ["ops"] });
+    // its DM log was never removed
+    expect((await findRecentDmLog(leaf)).map((e) => e.recipientUserId)).toEqual([U1]);
   });
 });
 

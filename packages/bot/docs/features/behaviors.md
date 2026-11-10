@@ -439,9 +439,14 @@ can be set, and it is not pruned while a list names it. Limits (env):
 `BEHAVIOR_DM_PER_MINUTE` DMs a minute per behavior (default 10, every
 attempt counted, before any member lookup) and `BEHAVIOR_DM_PER_RECIPIENT`
 per `BEHAVIOR_DM_PER_RECIPIENT_WINDOW_MS` to one user from one behavior
-(default 3 per 10 minutes); member lookups are cached for a minute. Every DM leaves a row in `behavior_dm_log` — the
+(default 3 per 10 minutes). Without a list, a DM trigger's recipient check
+can cost one member lookup per server the bot is in (stopping at the
+first hit), bounded by the per-behavior limit; each answer is cached for
+60 seconds. Every DM leaves a row in `behavior_dm_log` — the
 behavior, the recipient, the user who triggered it, the outcome and the
-time; kept 30 days and deleted with the behavior, listed on the card (`GET /api/behaviors/:id/dm-log`,
+time; kept 30 days (a deleted message trigger's rows go with it; a
+deleted command leaf's age out, so a refused command write can restore
+the leaf with its log), listed on the card (`GET /api/behaviors/:id/dm-log`,
 the last 50). Unlike the delivery log, it holds user ids: who a behavior
 DMed is what it answers. It never holds the message.
 

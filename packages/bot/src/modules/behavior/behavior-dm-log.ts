@@ -68,7 +68,11 @@ export async function pruneDmLog(now: Date = new Date()): Promise<number> {
   return removed;
 }
 
-/** Remove deleted behaviors' rows (SQLite may run without FK enforcement). */
+/**
+ * Remove a deleted message trigger's rows. Not for command leaves: a
+ * refused command write restores them (command-snapshot.ts), so theirs
+ * age out with the 30 days instead.
+ */
 export async function destroyDmLog(behaviorIds: number | number[], transaction: Transaction): Promise<void> {
   await BehaviorDmLog.destroy({ where: { behaviorId: behaviorIds }, transaction });
 }

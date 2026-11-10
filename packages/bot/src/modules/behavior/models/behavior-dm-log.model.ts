@@ -1,6 +1,5 @@
 import { DataTypes } from "sequelize";
 import { sequelize } from "../../../db.js";
-import { BehaviorDefinition } from "./behavior-definition.model.js";
 
 /**
  * behavior_dm_log (#157): one row per direct message a behavior's reply
@@ -38,13 +37,13 @@ export const BehaviorDmLog = sequelize.define(
   "BehaviorDmLog",
   {
     id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
-    behaviorId: {
-      type: DataTypes.INTEGER,
-      allowNull: false,
-      references: { model: BehaviorDefinition, key: "id" },
-      onDelete: "CASCADE",
-      onUpdate: "CASCADE",
-    },
+    /**
+     * No foreign key: a command leaf removed by a write Discord refuses
+     * comes back with its id (command-snapshot.ts), and its DM log must
+     * still be there. A deleted message trigger's rows are deleted with it
+     * (destroyDmLog); a deleted command leaf's age out with the 30 days.
+     */
+    behaviorId: { type: DataTypes.INTEGER, allowNull: false },
     recipientUserId: { type: DataTypes.STRING, allowNull: false },
     triggererUserId: { type: DataTypes.STRING, allowNull: false },
     outcome: {
