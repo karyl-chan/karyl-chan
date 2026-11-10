@@ -192,7 +192,9 @@ function registerReadAndTestRoutes(
       if (behavior.actionSource !== "webhook" || !action) {
         throw new BehaviorApiError(
           "validation_failed",
-          "this behavior has no webhook action to test (the system behavior runs a built-in action)",
+          behavior.actionSource === "plugin"
+            ? "this behavior runs a plugin action, which has no test-fire; only a webhook action can be tested"
+            : "this behavior has no webhook action to test (the system behavior runs a built-in action)",
         );
       }
       // injected (runtime.ts builds the one WebhookForwarder): behavior

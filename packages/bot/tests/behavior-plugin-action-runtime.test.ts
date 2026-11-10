@@ -51,7 +51,7 @@ import { sequelize } from "../src/db.js";
 import { createWebServer } from "../src/modules/web-core/server.js";
 import { InteractionDispatcher } from "../src/modules/command-system/interaction-dispatcher.service.js";
 import { MessageTriggerMatcher } from "../src/modules/command-system/message-trigger-matcher.service.js";
-import { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
+import { WebhookForwarder, fileUrl } from "../src/modules/command-system/webhook-forwarder.service.js";
 import { __resetBehaviorRateLimitsForTests } from "../src/modules/command-system/behavior-rate-limits.js";
 import { behaviorCallbackTokens } from "../src/modules/command-system/behavior-callback-token.js";
 import type { PluginActionDeps } from "../src/modules/command-system/plugin-action.js";
@@ -81,11 +81,14 @@ let pluginStatus = 204;
 /** Runs after the plugin answered, like an SDK handler. */
 let afterAnswer: ((d: Dispatched) => Promise<void>) | null = null;
 let handled: Promise<void> = Promise.resolve();
+/** The files the plugin served. */
+let fetchedPaths: string[] = [];
 
 beforeAll(async () => {
   await sequelize.sync({ force: true });
   plugin = createServer((req, res) => {
-    if (req.method === "GET" && req.url === "/files/six.txt") {
+    if (req.method === "GET" && (req.url === "/files/six.txt" || req.url === "/p1/files/six.txt")) {
+      fetchedPaths.push(req.url);
       res.writeHead(200, { "content-type": "text/plain" });
       res.end(FILE_BYTES);
       return;
@@ -248,6 +251,7 @@ beforeEach(async () => {
   pluginStatus = 204;
   afterAnswer = null;
   handled = Promise.resolve();
+  fetchedPaths = [];
   ready = true;
   server = await createWebServer({ staticRoot: undefined, bot: fakeBot as never });
   await server.ready();
@@ -258,7 +262,7 @@ afterEach(async () => {
 });
 
 /** The plugin's answer with the run's callback token, as the SDK's ctx.reply. */
-function answerWith(path: string, payload: Record<string, unknown>) {
+function answerWith(path: string, payload: Record<string, unknown>, status = 200) {
   afterAnswer = async (d) => {
     const { callback } = JSON.parse(d.body) as { callback: { token: string } };
     const res = await server.inject({
@@ -267,7 +271,7 @@ function answerWith(path: string, payload: Record<string, unknown>) {
       headers: { authorization: `Bearer ${callback.token}` },
       payload,
     });
-    expect(res.statusCode).toBe(200);
+    expect(res.statusCode).toBe(status);
   };
 }
 
@@ -337,6 +341,29 @@ describe("a command bound to a plugin action", () => {
     expect(options.files).toHaveLength(1);
     expect(options.files![0]!.name).toBe("six.txt");
     expect(Buffer.from(options.files![0]!.attachment).equals(FILE_BYTES)).toBe(true);
+  });
+
+  it("resolves attachment paths under a plugin registered with a path prefix, as its own RPC does", async () => {
+    await seedPlugin({ url: `${pluginUrl}/p1` });
+    await seedPluginLeaf();
+    answerWith("interactions.respond", { content: "here", attachments: [{ name: "six.txt", path: "/files/six.txt" }] });
+    const raw = fakeSlash();
+    await dispatchCommand(raw);
+    await handled;
+    expect(fetchedPaths).toEqual(["/p1/files/six.txt"]);
+    const [options] = raw.editReply.mock.calls.at(-1) as [{ files?: Array<{ name: string }> }];
+    expect(options.files?.map((f) => f.name)).toEqual(["six.txt"]);
+  });
+
+  it("refuses an attachment path that climbs out of the plugin's path prefix", async () => {
+    await seedPlugin({ url: `${pluginUrl}/p1` });
+    const id = await seedPluginLeaf();
+    answerWith("interactions.respond", { content: "here", attachments: [{ name: "six.txt", path: "/../files/six.txt" }] }, 400);
+    await dispatchCommand(fakeSlash());
+    await handled;
+    expect(fetchedPaths).toEqual([]);
+    // the run's own (ok, deferred) row and the refused callback call's
+    expect((await findRecentDeliveries(id)).map((d) => d.errorCode)).toContain("attachment_failed");
   });
 
   it("an offline plugin gets nothing: the user sees the failure line, the delivery says plugin_unavailable", async () => {
@@ -432,5 +459,16 @@ describe("a message trigger bound to a plugin action", () => {
     expect(dispatched).toHaveLength(0);
     expect(fake.sent).toHaveLength(1);
     expect((await findRecentDeliveries(id))[0]).toMatchObject({ via: "message", ok: false, errorCode: "plugin_unavailable" });
+  });
+});
+
+describe("fileUrl: where an attachment path points", () => {
+  it("appends the path to the base, path prefix kept, and refuses one that leaves it", () => {
+    expect(fileUrl(new URL("http://p:3000/p1/"), "/files/a.png")?.href).toBe("http://p:3000/p1/files/a.png");
+    expect(fileUrl(new URL("http://p:3000/p1"), "/files/a.png")?.href).toBe("http://p:3000/p1/files/a.png");
+    expect(fileUrl(new URL("https://hook.example"), "/x/../y.png")?.href).toBe("https://hook.example/y.png");
+    expect(fileUrl(new URL("http://p:3000/p1"), "/../a.png")).toBeNull();
+    expect(fileUrl(new URL("http://p:3000/p1"), "/%2e%2e/a.png")).toBeNull();
+    expect(fileUrl(new URL("http://p:3000/p1"), "@evil.example/a.png")).toBeNull();
   });
 });

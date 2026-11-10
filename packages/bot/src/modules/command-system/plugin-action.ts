@@ -12,8 +12,9 @@
  *      (`plugin_unavailable`, `action_undeclared`).
  *   2. a callback token is issued for the run (behavior-callback-token.ts)
  *      — the same token, principal and routes a webhook receiver gets —
- *      with a file fetcher on the plugin's registered origin, so a reply's
- *      attachments come from the plugin like a webhook's from its URL.
+ *      with a file fetcher on the plugin's registered URL, so a reply's
+ *      attachments come from the plugin as its own RPC replies' do
+ *      (`<plugin.url><path>`).
  *   3. the run is dispatched, signed like every Plugin Dispatch, to
  *      `endpoints.behavior_action` with the trigger's webhook `_meta` plus
  *      `callback` and `action_key` (CONTRACT_FIXTURES dispatchEnvelope
@@ -32,9 +33,7 @@
 
 import type { ReplyVisibility } from "../behavior/models/behavior-definition.model.js";
 import type { BehaviorPluginActionRow } from "../behavior/models/behavior-plugin-action.model.js";
-import { recordForwardOutcome } from "../behavior/models/behavior-stats.model.js";
-import { recordDelivery, type DeliveryErrorCode } from "../behavior/behavior-deliveries.js";
-import { botEventLog } from "../bot-events/bot-event-log.js";
+import type { DeliveryErrorCode } from "../behavior/behavior-deliveries.js";
 import { findPluginByKey, type PluginRow } from "../plugin-system/models/plugin.model.js";
 import {
   pluginDispatcher,
@@ -43,12 +42,9 @@ import {
 } from "../plugin-system/plugin-dispatch.service.js";
 import { declaredBehaviorActions } from "../plugin-system/plugin-behavior-actions.js";
 import { resolvePluginTarget } from "../../utils/host-policy.js";
-import {
-  behaviorCallbackTokens,
-  callbackMetaOf,
-  serializeReply,
-} from "./behavior-callback-token.js";
-import { renderFailure, sendTypingFor, type ReplyTarget } from "./reply-renderer.js";
+import { behaviorCallbackTokens, callbackMetaOf } from "./behavior-callback-token.js";
+import { failRun, recordRun, showDeferred } from "./behavior-run.js";
+import { renderFailure, type ReplyTarget } from "./reply-renderer.js";
 import type { ReplyFileFetcher } from "./reply-files.js";
 import { downloadReplyFiles } from "./webhook-forwarder.service.js";
 
@@ -78,9 +74,11 @@ export interface PluginActionRun {
 }
 
 /**
- * A plugin action's reply attachments (#156) come from the plugin's
- * registered URL's origin, under the plugin target policy, pinned to the
- * addresses it vetted, with a webhook's caps, turns and timeout.
+ * A plugin action's reply attachments (#156) come from under the plugin's
+ * registered URL, path prefix included — `<plugin.url><path>`, as the
+ * plugin RPC's own attachments (plugin-rpc-routes.ts) — under the plugin
+ * target policy, pinned to the addresses it vetted, with a webhook's
+ * caps, turns and timeout; a path that climbs out of the prefix is refused.
  */
 export function pluginReplyFileFetcher(
   plugin: PluginRow,
@@ -88,18 +86,20 @@ export function pluginReplyFileFetcher(
   timeoutMs: number,
 ): ReplyFileFetcher {
   return async (attachments) => {
-    let origin: URL;
+    let base: URL;
     try {
-      origin = new URL(new URL(plugin.url).origin);
+      base = new URL(plugin.url);
     } catch {
       return { ok: false, error: "the plugin's URL is unusable" };
     }
-    if (origin.protocol !== "http:" && origin.protocol !== "https:") {
+    if (base.protocol !== "http:" && base.protocol !== "https:") {
       return { ok: false, error: "the plugin's URL is not http(s)" };
     }
+    base.search = "";
+    base.hash = "";
     return downloadReplyFiles({
       behaviorId,
-      origin,
+      base,
       attachments,
       timeoutMs,
       resolveAddresses: (o) =>
@@ -206,25 +206,13 @@ export async function runPluginAction(run: PluginActionRun): Promise<void> {
     }
     httpStatus = delivery.status === "skipped" ? null : (delivery.httpStatus ?? null);
     if (delivery.status === "ok") {
-      // the plugin replies through the token: a command's placeholder
-      // stays, a message trigger shows typing
+      // the plugin replies through the token
       ok = true;
       deferred = true;
-      if (target.kind === "message" && !principal.answeredByCallback) {
-        await sendTypingFor(target.message, run.visibility);
-      }
+      await showDeferred(target, run.visibility, principal);
     } else {
       ({ errorCode, error } = deliveryFailure(delivery));
-      // in the run's turn: a callback respond that already answered makes
-      // it ok (the user saw a reply); otherwise the token goes and the
-      // user is told, before any later callback call can get in
-      const answered = await serializeReply(principal, async () => {
-        if (principal.answeredByCallback) return true;
-        behaviorCallbackTokens.revoke(issued.token);
-        await renderFailure(target);
-        return false;
-      });
-      if (answered) {
+      if (await failRun(issued.token, principal, target)) {
         ok = true;
         deferred = true;
         errorCode = null;
@@ -234,24 +222,18 @@ export async function runPluginAction(run: PluginActionRun): Promise<void> {
   }
 
   // the detail goes to the log, the stats and the delivery log only (#114)
-  await recordForwardOutcome(behaviorId, ok, error);
-  await recordDelivery({
+  await recordRun({
     behaviorId,
     firedAt,
-    via: target.kind === "interaction" ? "command" : "message",
+    target,
     ok,
+    deferred,
     httpStatus,
     durationMs: Math.round(performance.now() - started),
     errorCode,
-    error: ok ? null : (error ?? "unknown"),
+    error,
     verified: null,
-    deferred,
+    what: `plugin action ${binding.pluginKey}/${binding.actionKey}`,
+    context: { pluginKey: binding.pluginKey, actionKey: binding.actionKey },
   });
-  if (ok) return;
-  botEventLog.record(
-    "warn",
-    "bot",
-    `plugin action ${binding.pluginKey}/${binding.actionKey} of behavior ${behaviorId} failed (${target.kind}): ${error ?? "unknown"}`,
-    { behaviorId, via: target.kind, pluginKey: binding.pluginKey, actionKey: binding.actionKey },
-  );
 }

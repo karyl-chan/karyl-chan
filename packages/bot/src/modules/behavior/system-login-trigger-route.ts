@@ -230,7 +230,7 @@ async function switchToCommand(
   const id = current.command?.id ?? 0;
   const { outcomes } = await registerThenStore(locked, {
     proposed: proposedCommand(id, loginCommandSettingsOf(next), true, [
-      { ...current.row, ...leafColumnsOf(id), webhook: null },
+      { ...current.row, ...leafColumnsOf(id), action: null },
     ]),
     at: { name: next.name, target: "global" },
     keeps: "the login keeps its current trigger",

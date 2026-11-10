@@ -322,8 +322,8 @@ export async function assertPluginTarget(
 /**
  * `assertPluginTarget` that also returns the addresses it vetted (never
  * empty, resolver order), for a one-shot request that pins them: a
- * behavior action's reply attachments, downloaded from the plugin's
- * origin like a webhook's (#203).
+ * behavior action's reply attachments, downloaded from under the
+ * plugin's registered URL (#203).
  */
 export async function resolvePluginTarget(
   host: string,

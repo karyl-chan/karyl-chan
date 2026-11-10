@@ -33,10 +33,27 @@ import {
 import { BehaviorGroupMember } from "./models/behavior-group-member.model.js";
 import { SYSTEM_BEHAVIOR_KEY_LOGIN } from "./models/behavior-definition.model.js";
 
-/** 一個 behavior 與它的動作：webhook（actionSource='webhook'）或 plugin action（'plugin'）。 */
+/** 自訂 behavior 的動作，依來源區分（actionSource 'webhook' / 'plugin'）。 */
+export type CatalogAction =
+  | { source: "webhook"; webhook: BehaviorWebhookActionRow }
+  | { source: "plugin"; binding: BehaviorPluginActionRow };
+
+/**
+ * 一個 behavior 與它的動作。null：內建動作（System Behavior），或來源
+ * 對應的那一列不存在（手動改過 DB 等）—— 執行時當成沒有動作。
+ */
 export interface CatalogBehavior extends BehaviorDefinitionRow {
-  webhook: BehaviorWebhookActionRow | null;
-  pluginAction: BehaviorPluginActionRow | null;
+  action: CatalogAction | null;
+}
+
+function actionOf(
+  row: BehaviorDefinitionRow,
+  webhook: BehaviorWebhookActionRow | undefined,
+  binding: BehaviorPluginActionRow | undefined,
+): CatalogAction | null {
+  if (row.actionSource === "webhook" && webhook) return { source: "webhook", webhook };
+  if (row.actionSource === "plugin" && binding) return { source: "plugin", binding };
+  return null;
 }
 
 /** 一個指令與它的葉節點（依 sortOrder、子指令名排序）。 */
@@ -81,11 +98,7 @@ export async function loadBehaviorCatalog(): Promise<BehaviorCatalog> {
   );
   const behaviors: CatalogBehavior[] = definitionModels.map((m) => {
     const row = rowOfBehaviorDefinition(m);
-    return {
-      ...row,
-      webhook: webhooks.get(row.id) ?? null,
-      pluginAction: pluginActions.get(row.id) ?? null,
-    };
+    return { ...row, action: actionOf(row, webhooks.get(row.id), pluginActions.get(row.id)) };
   });
 
   const leavesByCommand = new Map<number, CatalogBehavior[]>();

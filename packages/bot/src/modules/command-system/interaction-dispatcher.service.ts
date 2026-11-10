@@ -42,8 +42,8 @@ import { dispatchModalToPlugin } from "../plugin-system/plugin-modal-dispatch.se
 import { dispatchInProcessInteraction } from "../builtin-features/in-process-command-registry.service.js";
 import { runLoginAction } from "./builtin-login-action.js";
 import { renderFailure } from "./reply-renderer.js";
-import { runWebhookAction } from "./webhook-action.js";
-import { defaultPluginActionDeps, runPluginAction, type PluginActionDeps } from "./plugin-action.js";
+import { actionToRun, runBehaviorAction } from "./behavior-action.js";
+import { defaultPluginActionDeps, type PluginActionDeps } from "./plugin-action.js";
 import { takeBehaviorRun } from "./behavior-rate-limits.js";
 import { toWebhookAttachment } from "./webhook-attachment.js";
 import type { DispatchOutcome } from "./types.js";
@@ -363,15 +363,8 @@ export class InteractionDispatcher {
     subcommandGroup: string,
     subcommand: string,
   ): Promise<DispatchOutcome> {
-    const { webhook, pluginAction } = leaf;
-    const configured = leaf.actionSource === "plugin" ? pluginAction !== null : webhook !== null;
-    if (!configured) {
-      botEventLog.record(
-        "warn",
-        "bot",
-        `interaction-dispatcher: behavior ${leaf.id} 沒有 ${leaf.actionSource} 動作`,
-        { behaviorId: leaf.id },
-      );
+    const action = actionToRun(leaf, "interaction-dispatcher");
+    if (!action) {
       await renderFailure({ kind: "interaction", interaction });
       return { claimed: true, claimedBy: "behavior_custom" };
     }
@@ -403,27 +396,15 @@ export class InteractionDispatcher {
       return { claimed: true, claimedBy: "behavior_custom" };
     }
 
-    // 回覆模型（#140）與失敗處理（#114）：webhook-action.ts / plugin-action.ts
-    const target = { kind: "interaction", interaction } as const;
-    if (leaf.actionSource === "plugin") {
-      await runPluginAction({
-        deps: this.pluginActions,
-        behaviorId: leaf.id,
-        binding: pluginAction!,
-        meta: payload._meta as Record<string, unknown>,
-        target,
-        visibility: leaf.replyVisibility,
-      });
-    } else {
-      await runWebhookAction({
-        forwarder: this.forwarder,
-        behaviorId: leaf.id,
-        webhook: webhook!,
-        payload,
-        target,
-        visibility: leaf.replyVisibility,
-      });
-    }
+    // 回覆模型（#140）與失敗處理（#114）：behavior-action.ts
+    await runBehaviorAction({
+      behavior: leaf,
+      action,
+      payload,
+      target: { kind: "interaction", interaction },
+      forwarder: this.forwarder,
+      plugins: this.pluginActions,
+    });
 
     return { claimed: true, claimedBy: "behavior_custom" };
   }

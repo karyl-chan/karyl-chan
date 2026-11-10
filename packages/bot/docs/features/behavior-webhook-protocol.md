@@ -528,7 +528,7 @@ and an empty one (`""`, `[]`) counts as left out.
   a call whose [attachments](#attachments) the bot can't get
   (`attachment_failed`, `400`, nothing shown). Attachments come from the
   run's webhook URL origin, as for the synchronous answer (a
-  [plugin action](#plugin-actions)'s from the plugin's). A call that
+  [plugin action](#plugin-actions)'s from under the plugin's URL). A call that
   works is not logged.
 - The token lives in the bot's memory: after a restart it is unknown.
 
@@ -555,7 +555,9 @@ run exactly as a receiver answers later:
   `interactions.respond` / `followup` / `edit_followup` /
   `delete_followup`, under every rule of
   [answering later](#answering-later). A reply's attachments are
-  downloaded from the **plugin's registered URL's origin**.
+  downloaded from `<plugin URL><path>` — the plugin's **registered URL,
+  path prefix included**, as for the attachments a plugin sends with its
+  own token; a path that climbs out of that prefix is refused.
 - A dispatch the plugin refuses (non-2xx) or does not answer in time
   fails the run: the user gets the failure line and the token is
   revoked. A plugin that is offline, or that no longer declares the

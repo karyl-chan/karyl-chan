@@ -19,6 +19,7 @@
  */
 
 import type { Transaction } from "sequelize";
+import { BEHAVIOR_ACTION_KEY_PATTERN } from "@karyl-chan/plugin-wire";
 import { BehaviorApiError } from "./behavior-api-error.js";
 import {
   BehaviorWebhookAction,
@@ -63,8 +64,8 @@ export const pluginActionInputSchema = {
   type: "object",
   properties: {
     pluginKey: { type: "string", minLength: 1, maxLength: 64, pattern: "^[a-z0-9][a-z0-9-]*$" },
-    // plugin-wire BEHAVIOR_ACTION_KEY_PATTERN (V-09)
-    actionKey: { type: "string", pattern: "^[a-z0-9][a-z0-9_-]{0,31}$" },
+    // the manifest's own rule for a behavior action key (V-09)
+    actionKey: { type: "string", pattern: BEHAVIOR_ACTION_KEY_PATTERN.source },
   },
   required: ["pluginKey", "actionKey"],
   additionalProperties: false,

@@ -29,8 +29,8 @@ import { shouldRecord } from "../bot-events/bot-event-dedup.js";
 import type { MessageMatchOutcome } from "./types.js";
 import type { WebhookForwarder } from "./webhook-forwarder.service.js";
 import { runLoginAction } from "./builtin-login-action.js";
-import { runWebhookAction } from "./webhook-action.js";
-import { defaultPluginActionDeps, runPluginAction, type PluginActionDeps } from "./plugin-action.js";
+import { actionToRun, runBehaviorAction } from "./behavior-action.js";
+import { defaultPluginActionDeps, type PluginActionDeps } from "./plugin-action.js";
 import { takeBehaviorRun } from "./behavior-rate-limits.js";
 import { toWebhookAttachment } from "./webhook-attachment.js";
 
@@ -237,40 +237,20 @@ export class MessageTriggerMatcher {
         : { kind: "dm_user", userId },
     );
     if (!allowed) return { handled: false };
-    const { webhook, pluginAction } = behavior;
-    if (behavior.actionSource === "plugin" ? !pluginAction : !webhook) {
-      botEventLog.record(
-        "warn",
-        "bot",
-        `message-trigger-matcher: behavior ${behavior.id} 沒有 ${behavior.actionSource} 動作，略過`,
-        { behaviorId: behavior.id },
-      );
-      return { handled: false };
-    }
+    // 沒有動作可執行：略過（不回覆、記一筆警告）
+    const action = actionToRun(behavior, "message-trigger-matcher");
+    if (!action) return { handled: false };
 
-    // 回覆模型（#140）與失敗處理（#114）：webhook-action.ts / plugin-action.ts。
-    // 私訊照常回；伺服器預設貼頻道，ephemeral=true 改私訊作者；失敗從不貼頻道。
-    const payload = this.buildPayload(djsMessage, behavior, match);
-    const target = { kind: "message", message: djsMessage } as const;
-    if (behavior.actionSource === "plugin") {
-      await runPluginAction({
-        deps: this.pluginActions,
-        behaviorId: behavior.id,
-        binding: pluginAction!,
-        meta: payload._meta as Record<string, unknown>,
-        target,
-        visibility: behavior.replyVisibility,
-      });
-    } else {
-      await runWebhookAction({
-        forwarder: this.forwarder,
-        behaviorId: behavior.id,
-        webhook: webhook!,
-        payload,
-        target,
-        visibility: behavior.replyVisibility,
-      });
-    }
+    // 回覆模型（#140）與失敗處理（#114）：behavior-action.ts。私訊照常回；
+    // 伺服器預設貼頻道，ephemeral=true 改私訊作者；失敗從不貼頻道。
+    await runBehaviorAction({
+      behavior,
+      action,
+      payload: this.buildPayload(djsMessage, behavior, match),
+      target: { kind: "message", message: djsMessage },
+      forwarder: this.forwarder,
+      plugins: this.pluginActions,
+    });
 
     return { handled: true, behaviorId: behavior.id };
   }

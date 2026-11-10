@@ -119,8 +119,8 @@ export interface BehaviorListView {
 }
 
 function webhookView(behavior: CatalogBehavior): WebhookActionView | null {
-  const action = behavior.webhook;
-  if (!action) return null;
+  if (behavior.action?.source !== "webhook") return null;
+  const action = behavior.action.webhook;
   let url: string | null;
   try {
     url = decryptSecret(action.url);
@@ -153,9 +153,10 @@ function baseView(
     systemKey: b.systemKey,
     actionSource: b.actionSource,
     webhook: webhookView(b),
-    pluginAction: b.pluginAction
-      ? { pluginKey: b.pluginAction.pluginKey, actionKey: b.pluginAction.actionKey }
-      : null,
+    pluginAction:
+      b.action?.source === "plugin"
+        ? { pluginKey: b.action.binding.pluginKey, actionKey: b.action.binding.actionKey }
+        : null,
     stats: stats.get(b.id) ?? null,
     replyVisibility: b.replyVisibility,
     updatedAt: b.updatedAt.toISOString(),

@@ -8,6 +8,7 @@ import {
   type HostPolicyCode,
 } from "../../utils/host-policy.js";
 import { checkTriggerRegex, type TriggerRegexRefusal } from "../../utils/linear-regex.js";
+import type { PluginActionCatalog } from "./behavior-action-input.js";
 
 export interface BehaviorRoutesOptions {
   /**
@@ -33,7 +34,7 @@ export interface BehaviorRoutesOptions {
    * 動作選單列出。由 route wiring 注入（behavior 不 import plugin-system）；
    * 綁定 plugin action 時必填。
    */
-  plugins?: import("./behavior-action-input.js").PluginActionCatalog;
+  plugins?: PluginActionCatalog;
 }
 
 /**

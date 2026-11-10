@@ -45,7 +45,7 @@ export interface CallbackIssue {
   /**
    * Downloads a reply's attachments for this run (#156): a webhook run's
    * come from its webhook URL's origin, a plugin action's from the
-   * plugin's registered origin (#203). Unset: a reply with attachments is
+   * plugin's registered URL, path prefix included (#203). Unset: a reply with attachments is
    * refused.
    */
   fetchFiles?: ReplyFileFetcher;

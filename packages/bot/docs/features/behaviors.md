@@ -417,7 +417,7 @@ these codes:
 | `defer_failed` | Discord refused a command's deferral (the interaction had expired): the webhook was never called, and the user sees "interaction failed". It counts as a failure in the statistics too, and is warned about once per leaf in the event log. |
 | `callback_invalid` | A callback call (#113) the bot refused: a component that is not an https link button, nothing to show, or a `message_id` the token did not send. A row of its own, not counted in the statistics. |
 | `callback_failed` | Discord refused a callback call's reply. A row of its own, not counted in the statistics. |
-| `attachment_failed` | The reply's [attachments](behavior-webhook-protocol.md#attachments) could not be downloaded from the webhook's origin (a plugin action's: the plugin's): more than 5, a refused path or name, over 8 MiB (25 MiB together), a redirect, a non-2xx answer, or no answer in time (including a wait for a download turn). The user gets the failure line, never the reply without its files (by the synchronous answer or a callback call). |
+| `attachment_failed` | The reply's [attachments](behavior-webhook-protocol.md#attachments) could not be downloaded from the webhook's origin (a plugin action's: from under the plugin's registered URL): more than 5, a refused path or name, over 8 MiB (25 MiB together), a redirect, a non-2xx answer, or no answer in time (including a wait for a download turn). The user gets the failure line, never the reply without its files (by the synchronous answer or a callback call). |
 | `plugin_unavailable` | A [plugin action](#plugin-actions)'s plugin could not take the run: not installed, disabled or inactive, not ready, without a dispatch key, or its address refused. Nothing was dispatched; the user gets the failure line. |
 | `action_undeclared` | The plugin's current manifest no longer declares the bound [plugin action](#plugin-actions). Nothing was dispatched; the user gets the failure line. |
 
@@ -481,7 +481,8 @@ When the behavior fires, the bot:
 4. records an ok delivery marked deferred once the plugin accepts (2xx);
    a message trigger shows typing. The plugin replies with the token,
    like a webhook that deferred: the same reply model, visibility rules,
-   attachments (downloaded from the plugin's registered origin) and
+   attachments (downloaded from under the plugin's registered URL,
+   `<plugin URL><path>`, as for a plugin's own replies) and
    direct messages. A dispatch the plugin refuses or does not answer
    fails the run (`http_error` / `request_failed`), revokes the token and
    shows the failure line.
@@ -497,7 +498,9 @@ declares (`400 validation_failed` on `pluginAction.pluginKey` /
 `pluginAction.actionKey` otherwise). A disabled or offline plugin's
 actions can still be bound — the runs fail until it is back — and the
 admin UI says so. Bindings are keyed by the plugin's key, so they survive
-a plugin re-registering or being reinstalled. A plugin action has no test
+a plugin re-registering or being reinstalled: a plugin that registers
+under the same key — which takes that key's setup secret — inherits the
+existing bindings. A plugin action has no test
 webhook.
 
 ### Webhook targets

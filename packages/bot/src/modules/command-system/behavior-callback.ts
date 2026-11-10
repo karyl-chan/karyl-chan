@@ -30,7 +30,7 @@
  *
  * A reply's attachments (#156) are downloaded from the run's webhook
  * origin, as for the synchronous answer — or, for a plugin action (#203),
- * from the plugin's registered origin; when they can't be had the call
+ * from under the plugin's registered URL; when they can't be had the call
  * fails (`attachment_failed`) and nothing is shown.
  *
  * `respond` and `followup` take `direct_messages` (#157): sent after the
