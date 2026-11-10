@@ -1637,6 +1637,31 @@
             },
             "retention": "保留最近 20 条、最多 7 天内的投递；测试 webhook 不计入。"
         },
+        "directMessages": {
+            "title": "私信其他用户",
+            "refresh": "刷新",
+            "loading": "加载中…",
+            "allowlistTitle": "回复可以私信谁",
+            "ruleNone": "没有名单：触发所在服务器的成员（在与 bot 的私信中触发时，是 bot 所在任一服务器的成员）。",
+            "ruleList": "只有这些用户与这些群组的成员。",
+            "userPlaceholder": "用户 ID",
+            "addUser": "添加用户",
+            "groupPlaceholder": "behavior 群组名称",
+            "addGroup": "添加群组",
+            "remove": "移除 {name}",
+            "badUserId": "用户 ID 是 17–20 位数字。",
+            "logTitle": "最近的私信",
+            "logEmpty": "还没有私信。",
+            "logLine": "给 {to}，由 {by} 触发",
+            "outcome": {
+                "sent": "已发送",
+                "not_allowed": "不允许",
+                "rate_limited": "超出速率",
+                "attachment_failed": "附件失败",
+                "failed": "失败"
+            },
+            "retention": "保留最近 50 条、最多 30 天内的私信。每个 behavior 每分钟最多 10 条私信。"
+        },
         "convertTrigger": {
             "menuTitle": "触发方式",
             "menuLabel": "触发方式：{kind}，可转换成另一种",
