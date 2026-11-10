@@ -10,6 +10,7 @@ import {
     type RegistrationReport,
 } from '../../../api/behavior';
 import BehaviorDeliveries from './BehaviorDeliveries.vue';
+import BehaviorDirectMessages from './BehaviorDirectMessages.vue';
 import CommandLeafFields from './CommandLeafFields.vue';
 import WebhookTestResult from './WebhookTestResult.vue';
 import { NO_ERRORS, errorsFromRefusal, hasErrors, isStale, type FormErrors } from './behavior-errors';
@@ -172,6 +173,7 @@ async function testFire() {
                 />
 
                 <BehaviorDeliveries :behavior-id="leaf.id" />
+                <BehaviorDirectMessages :behavior-id="leaf.id" />
 
                 <div v-if="conflict" class="conflict" role="alert" data-test="leaf-conflict">
                     <span>{{ t('behaviors.card.conflict') }}</span>

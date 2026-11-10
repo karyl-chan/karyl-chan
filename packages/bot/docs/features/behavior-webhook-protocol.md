@@ -315,6 +315,7 @@ subset of this shape, so there is no version field.
 | `flags` | integer | Only `SuppressEmbeds` (4) and `SuppressNotifications` (4096) are kept. Who sees the reply is never a flag. |
 | `defer` | boolean | `true`: answer later with the callback token. A command keeps its "thinking…" placeholder, a message trigger shows "typing…", and the other fields are not shown. See [Answering later](#answering-later). |
 | `attachments` | array | `[{ name, path }]`: files to send with the reply. See [Attachments](#attachments). |
+| `direct_messages` | array | DMs to other users, sent after the reply. See [Direct messages](#direct-messages). |
 
 - A field of the wrong type is ignored, except `attachments`: files are
   never dropped. Any other top-level field is ignored too. The bot logs
@@ -381,6 +382,51 @@ With the webhook URL `https://hooks.example/weather`, the bot fetches
   its own; an edit without `attachments` keeps them.
 - A test-fire does not download the files.
 
+### Direct messages
+
+`direct_messages` is `[{ user_id, content, embeds, components, attachments }]`
+(all but `user_id` optional): messages the bot DMs to users — other than
+the person who triggered the behavior, or them too — after it showed the
+reply. Each is read with the reply's rules above; its `attachments` come
+from the webhook URL's origin like the reply's.
+
+```json
+{
+  "content": "Ticket #42 opened.",
+  "direct_messages": [{ "user_id": "123456789012345678", "content": "New ticket #42 from Mika." }]
+}
+```
+
+- At most **5** direct messages per reply. A list that is not an array,
+  is longer, or has an entry without a Discord user id in `user_id` or
+  with nothing to send fails the action as a bad reply.
+- The user who triggered the behavior may always be DMed. Anyone else is
+  the behavior's rule, set by the admin. With a **DM allowlist** (users
+  and behavior groups): only them. Without one: a member of the server
+  the behavior was triggered in; for a trigger in a DM with the bot, a
+  member of any server the bot is in.
+- At most **10 a minute** per behavior by default, every DM asked for
+  counted — allowed or not. And at most **3 per 10 minutes** from one
+  behavior to one user by default. A DM past either is not sent. The
+  operator sets both (`BEHAVIOR_DM_PER_MINUTE`, `BEHAVIOR_DM_PER_RECIPIENT`,
+  `BEHAVIOR_DM_PER_RECIPIENT_WINDOW_MS`).
+- The DMs go only once the reply was shown: not with `{"defer": true}`, a
+  superseded answer, or a failed one. A reply of only `direct_messages`
+  shows nothing to the user (on a command, the "thinking…" placeholder is
+  removed, as for an empty reply).
+- A test-fire sends no direct messages.
+- Each DM has its own outcome; none fails the reply or the delivery. The
+  bot keeps one row per DM in the behavior's DM log (who to, who
+  triggered it, the outcome; 30 days), which the admin UI shows:
+
+| Outcome | Meaning |
+|---------|---------|
+| `sent` | Discord took it. |
+| `not_allowed` | The rule above does not allow this user. |
+| `rate_limited` | Past the behavior's DMs a minute, or the user's from this behavior. |
+| `attachment_failed` | Its attachments could not be downloaded. |
+| `failed` | Discord refused it (the user's DMs are closed, unknown user, …). |
+
 ### Who sees the reply
 
 Who sees a reply depends on the trigger. The order is: your response's
@@ -442,6 +488,15 @@ Each `respond` decides who sees it afresh — its own `ephemeral` first,
 then the behavior's stored visibility — so a `respond` without
 `ephemeral` after a public one goes back to the stored visibility (and
 stays where the reply is when none is stored).
+
+`respond` and `followup` take [`direct_messages`](#direct-messages) too,
+sent after the reply, and answer their outcomes as
+`direct_messages: [{ user_id, outcome }]`. One of only `direct_messages`
+leaves the reply as it is (a `followup` then answers no `id`), and
+is allowed only once the run's reply was shown — the synchronous answer
+or an earlier `respond`; before that it is refused with `400`, so nobody
+is DMed while the user still sees "thinking…".
+`edit_followup` refuses them with `400`.
 
 A message trigger has no interaction, so the bot answers with messages of
 its own: the first `respond` sends the reply — to the channel, or for a
@@ -709,5 +764,7 @@ changes the protocol. Update a receiver **before** the bot is upgraded:
   reply field, to answer later (#113).
 - New: the `attachments` reply field, files the bot downloads from the
   webhook URL's origin (#156).
+- New: the `direct_messages` reply field, DMs to other users under the
+  behavior's DM allowlist or server membership (#157).
 - Removed: conversation sessions and the `[BEHAVIOR:END]` marker. A reply
   never starts or ends a session.

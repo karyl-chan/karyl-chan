@@ -1637,6 +1637,31 @@
             },
             "retention": "The last 20 deliveries, at most 7 days old. Test webhooks are not listed."
         },
+        "directMessages": {
+            "title": "Direct messages to others",
+            "refresh": "Refresh",
+            "loading": "Loading…",
+            "allowlistTitle": "Who replies may DM",
+            "ruleNone": "No list: members of the server the behavior was triggered in (any server the bot is in, for a trigger in a DM with the bot).",
+            "ruleList": "Only these users and the members of these groups.",
+            "userPlaceholder": "User ID",
+            "addUser": "Add user",
+            "groupPlaceholder": "Behavior group name",
+            "addGroup": "Add group",
+            "remove": "Remove {name}",
+            "badUserId": "A user ID is 17–20 digits.",
+            "logTitle": "Recent direct messages",
+            "logEmpty": "No direct messages yet.",
+            "logLine": "to {to}, triggered by {by}",
+            "outcome": {
+                "sent": "Sent",
+                "not_allowed": "Not allowed",
+                "rate_limited": "Rate limited",
+                "attachment_failed": "Attachment failed",
+                "failed": "Failed"
+            },
+            "retention": "The last 50, at most 30 days old. The triggering user may always be DMed. By default at most 10 direct messages a minute per behavior, and 3 per 10 minutes to one user."
+        },
         "convertTrigger": {
             "menuTitle": "Trigger kind",
             "menuLabel": "Trigger: {kind}. Convert to the other kind",

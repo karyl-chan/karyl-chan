@@ -196,6 +196,13 @@ describe("the protocol document, against the contract fixtures", () => {
       `At most ${r.maxAttachments} files of at most **${r.maxAttachmentBytes / 1024 / 1024} MiB** each`,
     );
     expect(section).toContain(`**${r.maxAttachmentTotalBytes / 1024 / 1024} MiB** together`);
+    expect(section).toContain(`\`[{ ${r.directMessageKeys.join(", ")} }]\``);
+    expect(section).toContain(`At most **${r.maxDirectMessages}** direct messages`);
+    expect(section).toContain(`**${r.directMessagesPerMinute} a minute**`);
+    expect(section).toContain(
+      `**${r.directMessagesPerRecipient} per ${r.directMessagesPerRecipientWindowSeconds / 60} minutes**`,
+    );
+    for (const outcome of r.directMessageOutcomes) expect(section, outcome).toContain(`| \`${outcome}\` |`);
   });
 });
 

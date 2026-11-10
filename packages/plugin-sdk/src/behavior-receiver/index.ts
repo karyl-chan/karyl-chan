@@ -39,6 +39,7 @@ export type {
   BehaviorReply,
   BehaviorReplyActionRow,
   BehaviorReplyAttachment,
+  BehaviorDirectMessage,
   BehaviorReplyEmbed,
   BehaviorReplyLinkButton,
   BehaviorWebhookAttachment,

@@ -21,6 +21,7 @@ export type BehaviorAuditAction =
   | "behavior.reorder"
   | "behavior.webhook_secret.rotate"
   | "behavior.group_members.replace"
+  | "behavior.dm_allowlist.replace"
   | "behavior.command.create"
   | "behavior.command.update"
   | "behavior.command.delete"

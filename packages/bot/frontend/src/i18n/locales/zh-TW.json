@@ -1637,6 +1637,31 @@
             },
             "retention": "保留最近 20 筆、最多 7 天內的投遞；測試 webhook 不列入。"
         },
+        "directMessages": {
+            "title": "私訊其他使用者",
+            "refresh": "重新整理",
+            "loading": "載入中…",
+            "allowlistTitle": "回覆可以私訊誰",
+            "ruleNone": "沒有名單：觸發所在伺服器的成員（在與 bot 的私訊中觸發時，是 bot 所在任一伺服器的成員）。",
+            "ruleList": "只有這些使用者與這些群組的成員。",
+            "userPlaceholder": "使用者 ID",
+            "addUser": "加入使用者",
+            "groupPlaceholder": "behavior 群組名稱",
+            "addGroup": "加入群組",
+            "remove": "移除 {name}",
+            "badUserId": "使用者 ID 是 17–20 位數字。",
+            "logTitle": "最近的私訊",
+            "logEmpty": "還沒有私訊。",
+            "logLine": "給 {to}，由 {by} 觸發",
+            "outcome": {
+                "sent": "已送出",
+                "not_allowed": "不允許",
+                "rate_limited": "超過速率",
+                "attachment_failed": "附件失敗",
+                "failed": "失敗"
+            },
+            "retention": "保留最近 50 則、最多 30 天內的私訊。觸發者本人一律可以私訊。預設每個 behavior 每分鐘最多 10 則，同一人每 10 分鐘最多 3 則。"
+        },
         "convertTrigger": {
             "menuTitle": "觸發方式",
             "menuLabel": "觸發方式：{kind}，可轉換成另一種",

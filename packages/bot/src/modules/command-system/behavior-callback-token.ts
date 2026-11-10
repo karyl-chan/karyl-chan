@@ -77,6 +77,12 @@ export interface BehaviorCallbackPrincipal extends Readonly<CallbackIssue> {
   /** A callback `respond` landed: a synchronous answer arriving after it is not shown. */
   answeredByCallback: boolean;
   /**
+   * The run's reply was shown — its synchronous answer or a `respond`
+   * rendered — so a call of only `direct_messages` (#157) no longer
+   * leaves "thinking…" hanging while others get DMs.
+   */
+  replyShown: boolean;
+  /**
    * Revoked (its run failed and the user was told): a call that passed
    * the auth hook before that is refused when its turn comes.
    */
@@ -139,6 +145,7 @@ export class BehaviorCallbackTokenStore {
             }
           : null,
       answeredByCallback: false,
+      replyShown: false,
       revoked: false,
       createdMessages: new Map(),
       replyQueue: Promise.resolve(),

@@ -41,6 +41,7 @@ import {
   ChannelType,
   MessageFlags,
   type ChatInputCommandInteraction,
+  type Client,
   type Message,
   type MessageCreateOptions,
   type SendableChannels,
@@ -393,6 +394,25 @@ async function renderToMessage(
   // moved between the channel and the DM: the old one goes
   if (current) await deleteSlot(current).catch(() => {});
   return { ok: true, via, replyMessage: messageSlotOf(sent.message, dm) };
+}
+
+/**
+ * A behavior's direct message (#157) to `userId` — the triggerer or
+ * someone else; who may be DMed is decided before (behavior-direct-
+ * messages.ts). Content, embeds, link buttons and files, mentions off. A
+ * refusal (DMs closed, unknown user) comes back as `{ ok: false }`.
+ */
+export async function sendDirectMessage(
+  client: Client,
+  userId: string,
+  reply: RenderableReply,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    await client.users.send(userId, withFlags(messageBody(reply), reply.flags ?? 0));
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: errorText(err) };
+  }
 }
 
 /**

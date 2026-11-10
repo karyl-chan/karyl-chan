@@ -158,6 +158,25 @@ export interface BehaviorReply {
    * reply.
    */
   attachments?: BehaviorReplyAttachment[];
+  /**
+   * DMs to other users (at most 5), sent after the reply is shown. The
+   * triggerer may always be DMed; anyone else by the behavior's rule (its DM
+   * allowlist, else members of the triggering guild — any guild the bot is
+   * in for a DM trigger). Rate-limited per behavior and per recipient
+   * (by default 10 a minute, 3 per 10 minutes). A DM that is refused or
+   * fails does not fail the reply.
+   */
+  direct_messages?: BehaviorDirectMessage[];
+}
+
+/** One direct message a reply asks for. */
+export interface BehaviorDirectMessage {
+  /** The Discord user id to DM. */
+  user_id: string;
+  content?: string;
+  embeds?: BehaviorReplyEmbed[];
+  components?: BehaviorReplyActionRow[];
+  attachments?: BehaviorReplyAttachment[];
 }
 
 /** A file a reply attaches: its name in Discord, and a path on your webhook's origin. */

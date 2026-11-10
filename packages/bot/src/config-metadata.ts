@@ -397,6 +397,31 @@ export const CONFIG_METADATA: Record<string, ConfigFieldMeta> = {
     productionRequired: false,
     descriptionKey: "config.behavior.webhookPrivateAllowlist",
   },
+  // DM-spam protection (#157): env-only, like PLUGIN_DM_PER_SEC's posture
+  "behavior.dmPerMinute": {
+    group: "behavior",
+    envVar: "BEHAVIOR_DM_PER_MINUTE",
+    sensitivity: "public",
+    editability: "env-only",
+    productionRequired: false,
+    descriptionKey: "config.behavior.dmPerMinute",
+  },
+  "behavior.dmPerRecipient": {
+    group: "behavior",
+    envVar: "BEHAVIOR_DM_PER_RECIPIENT",
+    sensitivity: "public",
+    editability: "env-only",
+    productionRequired: false,
+    descriptionKey: "config.behavior.dmPerRecipient",
+  },
+  "behavior.dmPerRecipientWindowMs": {
+    group: "behavior",
+    envVar: "BEHAVIOR_DM_PER_RECIPIENT_WINDOW_MS",
+    sensitivity: "public",
+    editability: "env-only",
+    productionRequired: false,
+    descriptionKey: "config.behavior.dmPerRecipientWindowMs",
+  },
 
   // ── admin ─────────────────────────────────────────────────────────────────
   "admin.profileCacheTtlMs": {

@@ -370,6 +370,46 @@ export async function getBehaviorDeliveries(
   return jsonOrThrow(await send("GET", `/api/behaviors/${id}/deliveries`));
 }
 
+/**
+ * Who a behavior's replies may DM besides the triggerer (#157), from
+ * GET /api/behaviors/:id/dm-allowlist. Both empty: no list — then members
+ * of the triggering server (any server the bot is in, for a DM trigger).
+ */
+export interface BehaviorDmAllowlist {
+  userIds: string[];
+  groupNames: string[];
+}
+
+export async function getBehaviorDmAllowlist(id: number): Promise<BehaviorDmAllowlist> {
+  return jsonOrThrow(await send("GET", `/api/behaviors/${id}/dm-allowlist`));
+}
+
+/** Replace the list; both empty removes it. */
+export async function replaceBehaviorDmAllowlist(
+  id: number,
+  list: BehaviorDmAllowlist,
+): Promise<BehaviorDmAllowlist> {
+  return jsonOrThrow(await send("PUT", `/api/behaviors/${id}/dm-allowlist`, list));
+}
+
+/** What came of one direct message — mirrors behavior-dm-log.model.ts. */
+export type BehaviorDmOutcome = "sent" | "not_allowed" | "rate_limited" | "attachment_failed" | "failed";
+
+/** One direct message of a behavior (#157), from GET /api/behaviors/:id/dm-log. Never its content. */
+export interface BehaviorDmLogEntry {
+  id: number;
+  recipientUserId: string;
+  triggererUserId: string;
+  outcome: BehaviorDmOutcome;
+  /** ISO 8601. */
+  at: string;
+}
+
+/** A behavior's last 50 direct messages, newest first (kept 30 days). */
+export async function getBehaviorDmLog(id: number): Promise<{ entries: BehaviorDmLogEntry[] }> {
+  return jsonOrThrow(await send("GET", `/api/behaviors/${id}/dm-log`));
+}
+
 export async function createBehaviorCommand(
   input: CommandInput & { leaves: CommandLeafInput[] },
 ): Promise<{

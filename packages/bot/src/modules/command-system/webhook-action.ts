@@ -27,6 +27,10 @@
  * the answer is known to be shown (not superseded); when they can't be
  * had the run fails (`attachment_failed`) and the user gets the failure
  * line — never the reply without them.
+ *
+ * A reply's direct messages (#157) are sent after it was shown, and only
+ * then (not for a deferred, superseded or failed answer); each has its own
+ * outcome in the DM log and none fails the run.
  */
 
 import type { BehaviorWebhookActionRow } from "../behavior/models/behavior-webhook-action.model.js";
@@ -45,7 +49,8 @@ import {
   type BehaviorCallbackPrincipal,
   type CallbackMeta,
 } from "./behavior-callback-token.js";
-import type { BehaviorReply } from "./behavior-reply.js";
+import type { BehaviorReply, DirectMessage } from "./behavior-reply.js";
+import { sendDirectMessages } from "./behavior-direct-messages.js";
 import { readyToRender, type ReplyFileFetcher } from "./reply-files.js";
 import { sendTypingFor, type RenderOutcome } from "./reply-renderer.js";
 import type { ForwardResult } from "./types.js";
@@ -99,7 +104,10 @@ async function renderAnswer(
       visibility: run.visibility,
       replyMessage: principal.replyMessage,
     });
-    if (rendered.ok) principal.replyMessage = rendered.replyMessage ?? null;
+    if (rendered.ok) {
+      principal.replyMessage = rendered.replyMessage ?? null;
+      principal.replyShown = true;
+    }
     return rendered;
   });
 }
@@ -124,6 +132,7 @@ export async function runWebhookAction(run: WebhookActionRun): Promise<void> {
   // an ephemeral guild reply that could not be DMed: the author can't be
   // reached privately, and the channel must not hear about it
   let unreachable = false;
+  let directMessages: DirectMessage[] | undefined;
   try {
     const result = await run.forwarder.forward(run.webhook, payload);
     ok = result.ok;
@@ -138,6 +147,8 @@ export async function runWebhookAction(run: WebhookActionRun): Promise<void> {
       if (target.kind === "message") await sendTypingFor(target.message, run.visibility);
     } else if (result.ok) {
       const rendered = await renderAnswer(run, principal, result.reply);
+      // its direct messages go once the reply itself was shown (#157)
+      if (rendered !== "superseded" && rendered.ok) directMessages = result.reply.direct_messages;
       if (rendered === "superseded") deferred = true;
       else if (!rendered.ok && "errorCode" in rendered) {
         // a reply is never shown without its files (#156)
@@ -193,6 +204,8 @@ export async function runWebhookAction(run: WebhookActionRun): Promise<void> {
     verified,
     deferred,
   });
+  // after the delivery is logged: a DM's outcome is its own, never the run's
+  await sendDirectMessages({ behaviorId, target, fetchFiles }, directMessages);
   if (ok) return;
   botEventLog.record(
     "warn",
