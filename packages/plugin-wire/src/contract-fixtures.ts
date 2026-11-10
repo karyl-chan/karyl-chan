@@ -224,6 +224,17 @@ export interface ContractFixtures {
       readonly maxAttachments: number;
       readonly maxAttachmentBytes: number;
       readonly maxAttachmentTotalBytes: number;
+      /**
+       * `direct_messages` (#157): DMs to other users, each
+       * `{ user_id, content?, embeds?, components?, attachments? }` read
+       * like the reply. Who may be DMed is the behavior's rule; each DM's
+       * outcome is its own (logged, and answered by a callback
+       * respond / followup as `direct_messages: [{ user_id, outcome }]`).
+       */
+      readonly directMessageKeys: readonly string[];
+      readonly maxDirectMessages: number;
+      readonly directMessagesPerMinute: number;
+      readonly directMessageOutcomes: readonly string[];
     };
   };
 }
@@ -669,7 +680,17 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
     response: {
       // `defer: true` (#113): answer later with the callback token;
       // `attachments` (#156): files the bot fetches from the receiver
-      fields: ["content", "embeds", "components", "ephemeral", "flags", "defer", "attachments"],
+      fields: [
+        "content",
+        "embeds",
+        "components",
+        "ephemeral",
+        "flags",
+        "defer",
+        "attachments",
+        // DMs to other users (#157)
+        "direct_messages",
+      ],
       embedWhitelist: [
         "title",
         "description",
@@ -696,6 +717,11 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
       // 8 MiB per file and 25 MiB per reply, counted as they stream
       maxAttachmentBytes: 8388608,
       maxAttachmentTotalBytes: 26214400,
+      directMessageKeys: ["user_id", "content", "embeds", "components", "attachments"],
+      maxDirectMessages: 5,
+      // per behavior
+      directMessagesPerMinute: 10,
+      directMessageOutcomes: ["sent", "not_allowed", "rate_limited", "attachment_failed", "failed"],
     },
   },
 };
