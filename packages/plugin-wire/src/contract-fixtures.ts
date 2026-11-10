@@ -217,11 +217,13 @@ export interface ContractFixtures {
        * `attachments` (#156): `[{ name, path }]`, the plugin
        * `interactions.respond` shape. The bot GETs each `path` (a plain
        * path, never `//host` or a URL) from the webhook URL's origin,
-       * follows no redirect, and fails the action past these limits.
+       * follows no redirect, and fails the action past these limits (per
+       * file, and all of a reply's files together).
        */
       readonly attachmentKeys: readonly string[];
       readonly maxAttachments: number;
       readonly maxAttachmentBytes: number;
+      readonly maxAttachmentTotalBytes: number;
     };
   };
 }
@@ -691,8 +693,9 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
       allowedFlags: [4, 4096],
       attachmentKeys: ["name", "path"],
       maxAttachments: 5,
-      // 8 MiB per file, counted as it streams
+      // 8 MiB per file and 25 MiB per reply, counted as they stream
       maxAttachmentBytes: 8388608,
+      maxAttachmentTotalBytes: 26214400,
     },
   },
 };
