@@ -1,6 +1,7 @@
 import { DataTypes, Op, type Transaction } from "sequelize";
 import { sequelize } from "../../../db.js";
 import { BehaviorDefinition } from "./behavior-definition.model.js";
+import { groupsInDmAllowlists } from "./behavior-dm-allowlist.model.js";
 
 /**
  * Audience group 成員清單（BH-1）。取代舊 behavior_audience_members 表。
@@ -19,6 +20,9 @@ import { BehaviorDefinition } from "./behavior-definition.model.js";
  * 名字時存在。名單只能設給被引用的 group（groupInUse），最後一個引用它
  * 的觸發改掉對象或被刪除時，名單一併清掉（pruneUnusedGroupMembers），
  * 所以不會留下沒有觸發用的孤兒名單。
+ *
+ * behavior 的私訊白名單（#157，behavior_dm_allowlists）引用的 group 也算
+ * 被引用：名單可以設，也不會被清掉。
  */
 export const BehaviorGroupMember = sequelize.define(
   "BehaviorGroupMember",
@@ -68,7 +72,7 @@ export const replaceGroupMembers = async (
   );
 };
 
-/** Whether some message trigger's audience is this group. */
+/** Whether some message trigger's audience, or some behavior's DM allowlist (#157), is this group. */
 export const groupInUse = async (
   groupName: string,
   transaction: Transaction,
@@ -76,16 +80,21 @@ export const groupInUse = async (
   (await BehaviorDefinition.count({
     where: { triggerKind: "message", audienceGroupName: groupName },
     transaction,
-  })) > 0;
+  })) > 0 || (await groupsInDmAllowlists(transaction)).has(groupName);
 
-/** Drop the member lists of every group no message trigger uses any more. */
+/** Drop the member lists of every group no message trigger and no DM allowlist uses any more. */
 export const pruneUnusedGroupMembers = async (transaction: Transaction): Promise<void> => {
   const rows = await BehaviorDefinition.findAll({
     attributes: ["audienceGroupName"],
     where: { triggerKind: "message", audienceGroupName: { [Op.ne]: null } },
     transaction,
   });
-  const inUse = [...new Set(rows.map((r) => r.getDataValue("audienceGroupName") as string))];
+  const inUse = [
+    ...new Set([
+      ...rows.map((r) => r.getDataValue("audienceGroupName") as string),
+      ...(await groupsInDmAllowlists(transaction)),
+    ]),
+  ];
   await BehaviorGroupMember.destroy({
     where: inUse.length > 0 ? { groupName: { [Op.notIn]: inUse } } : {},
     transaction,

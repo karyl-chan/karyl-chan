@@ -14,6 +14,8 @@
  *   PUT  /api/behaviors/system/login/trigger     — 切換登入系統列的觸發（system-login-trigger-route.ts）
  *   GET  /api/behavior-groups/:groupName/members — 群組名單
  *   PUT  /api/behavior-groups/:groupName/members — 全量替換群組名單
+ *   GET / PUT /api/behaviors/:id/dm-allowlist     — 私訊白名單（#157，behavior-dm-routes.ts）
+ *   GET  /api/behaviors/:id/dm-log               — 最近的私訊紀錄（#157）
  *
  * 權限：requireBehaviorAdmin（behavior.manage 或 admin），在 schema 驗證之前。
  * 拒絕一律是 `{ error: { code, message, field? } }`（behavior-api-error.ts）。
@@ -55,6 +57,7 @@ import {
 } from "./behavior-write-routes.js";
 import { registerMessageTriggerReorderRoute } from "./message-trigger-reorder.js";
 import { registerWebhookSecretRotateRoute } from "./webhook-secret-rotate.js";
+import { registerBehaviorDmRoutes } from "./behavior-dm-routes.js";
 import {
   addLeafSchema,
   createCommandSchema,
@@ -102,6 +105,7 @@ export async function registerBehaviorRoutes(
     registerSystemLoginTriggerRoute(scope, options);
     registerTriggerConvertRoute(scope, options);
     registerGroupMemberRoutes(scope);
+    registerBehaviorDmRoutes(scope);
   });
 }
 
@@ -228,8 +232,8 @@ function registerReadAndTestRoutes(
 //
 // group 以名字為單位（訊息觸發的 audienceGroupName），名單存
 // behavior_group_members，同名 group 的 behaviors 共享。group 沒有自己的
-// 列：只有被訊息觸發引用的 group 能設名單，沒有觸發用了名單就清掉
-// （behavior-group-member.model.ts），不會留下孤兒名單（#137）。
+// 列：只有被訊息觸發或私訊白名單（#157）引用的 group 能設名單，沒有人用了
+// 名單就清掉（behavior-group-member.model.ts），不會留下孤兒名單（#137）。
 
 const groupParams = {
   type: "object",
@@ -286,7 +290,7 @@ function registerGroupMemberRoutes(server: FastifyInstance): void {
           if (!(await groupInUse(groupName, transaction))) {
             throw new BehaviorApiError(
               "not_found",
-              `no message trigger uses group '${groupName}'; set a trigger's audience to it first`,
+              `no message trigger or DM allowlist uses group '${groupName}'; set a trigger's audience or a behavior's DM allowlist to it first`,
               "groupName",
             );
           }

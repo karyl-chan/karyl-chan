@@ -31,11 +31,14 @@ export type ReplyFileFetcher = (attachments: readonly ReplyAttachment[]) => Prom
 
 /**
  * A reply ready for the ReplyRenderer: no attachment descriptors (and no
- * `defer`, which never reaches a render), only the files downloaded for them.
+ * `defer`, which never reaches a render, nor `direct_messages`, which are
+ * sent on their own: behavior-direct-messages.ts), only the files
+ * downloaded for them.
  */
-export type RenderableReply = Omit<BehaviorReply, "attachments" | "defer"> & {
+export type RenderableReply = Omit<BehaviorReply, "attachments" | "defer" | "direct_messages"> & {
   attachments?: never;
   defer?: never;
+  direct_messages?: never;
   files?: ReplyFile[];
 };
 
@@ -50,7 +53,7 @@ export async function readyToRender(
 ): Promise<
   { ok: true; reply: RenderableReply } | { ok: false; errorCode: "attachment_failed"; error: string }
 > {
-  const { attachments, defer: _defer, ...rest } = reply;
+  const { attachments, defer: _defer, direct_messages: _dms, ...rest } = reply;
   if (!attachments?.length) return { ok: true, reply: rest };
   const fetched: ReplyFilesResult = fetchFiles
     ? await fetchFiles(attachments)

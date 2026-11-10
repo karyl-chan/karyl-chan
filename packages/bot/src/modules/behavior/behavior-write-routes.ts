@@ -47,6 +47,7 @@ import {
   rowOfBehaviorWebhookAction,
 } from "./models/behavior-webhook-action.model.js";
 import { pruneUnusedGroupMembers } from "./models/behavior-group-member.model.js";
+import { destroyDmAllowlists } from "./models/behavior-dm-allowlist.model.js";
 import {
   prepareWebhookWrite,
   webhookInputSchema,
@@ -262,6 +263,7 @@ export function registerBehaviorWriteRoutes(
           return deleteCommandLeaf(reconciler, request, current);
         }
         await behaviorTransaction(async (transaction) => {
+          await destroyDmAllowlists(id, transaction);
           await BehaviorDefinition.destroy({ where: { id }, transaction });
           await pruneUnusedGroupMembers(transaction);
         });

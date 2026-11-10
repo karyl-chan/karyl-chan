@@ -426,6 +426,21 @@ the action and its reply go on. In the admin UI, a message trigger card
 and an open command leaf list the recent deliveries under
 「最近投遞」, loaded when the list is opened.
 
+**Direct messages to other users (#157):** a reply may ask the bot to DM
+other users (`direct_messages`, [protocol](behavior-webhook-protocol.md#direct-messages)).
+Each behavior may have a **DM allowlist** — user ids and behavior groups —
+set on its card (`GET` / `PUT /api/behaviors/:id/dm-allowlist`, audited as
+`behavior.dm_allowlist.replace`). With one, only those users and the
+groups' members may be DMed; without one, members of the server the
+behavior was triggered in, or of any server the bot is in for a trigger
+in a DM with the bot. A group a list names counts as in use: its members
+can be set, and it is not pruned while a list names it. At most 10 DMs a
+minute per behavior. Every DM leaves a row in `behavior_dm_log` — the
+behavior, the recipient, the user who triggered it, the outcome and the
+time; kept 30 days, listed on the card (`GET /api/behaviors/:id/dm-log`,
+the last 50). Unlike the delivery log, it holds user ids: who a behavior
+DMed is what it answers. It never holds the message.
+
 ### Webhook targets
 
 The webhook URL is checked by `resolveWebhookTarget`

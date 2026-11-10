@@ -28,6 +28,10 @@
  *     WebhookForwarder.fetchReplyFiles, which applies attachmentsProblem
  *     first). Never dropped: a malformed list fails the reply, and a file
  *     that cannot be had fails the action
+ *   - direct_messages (#157): at most MAX_DIRECT_MESSAGES `{ user_id,
+ *     content?, embeds?, components?, attachments? }`, each read with the
+ *     rules above; a malformed list fails the reply (behavior-direct-
+ *     messages.ts decides who may be DMed)
  *   - any other top-level field is ignored (and named in a note)
  *   - the body itself is capped at MAX_REPLY_BODY_BYTES by the forwarder
  *
@@ -75,7 +79,18 @@ export interface BehaviorReply {
    * (reply-files.ts). An attachments-only reply is a visible reply.
    */
   attachments?: ReplyAttachment[];
+  /**
+   * Messages to DM to other users (#157), besides the reply itself. Who
+   * may be DMed is the behavior's rule, checked when they are sent.
+   */
+  direct_messages?: DirectMessage[];
 }
+
+/** One direct message a reply asks for: who to, and what. */
+export type DirectMessage = { user_id: string } & Pick<
+  BehaviorReply,
+  "content" | "embeds" | "components" | "attachments"
+>;
 
 /** One file a reply asks for: its name in Discord, and where on the receiver it is. */
 export interface ReplyAttachment {
@@ -114,7 +129,13 @@ const KNOWN_FIELDS = new Set([
   "flags",
   "defer",
   "attachments",
+  "direct_messages",
 ]);
+
+/** The most direct messages one reply may ask for (#157). */
+export const MAX_DIRECT_MESSAGES = 5;
+const DIRECT_MESSAGE_FIELDS = ["content", "embeds", "components", "attachments"] as const;
+const SNOWFLAKE = /^[0-9]{17,20}$/;
 
 /**
  * The most files a reply may attach, the largest one and the most they
@@ -332,12 +353,58 @@ export function attachmentsProblem(attachments: readonly ReplyAttachment[]): str
   return null;
 }
 
+// ── direct messages (#157) ───────────────────────────────────────────────────
+
+/**
+ * `direct_messages` → the messages, each read with the reply's own rules
+ * (and their notes, fields named `direct_messages[i].…`), or why the list
+ * can't be used: not an array, more than MAX_DIRECT_MESSAGES, an entry
+ * without a user id, or one with nothing to send.
+ */
+function directMessagesOf(
+  raw: unknown,
+): { ok: true; messages: DirectMessage[]; notes: ReplyNote[] } | { ok: false; error: string } {
+  if (!Array.isArray(raw)) return { ok: false, error: "must be an array" };
+  if (raw.length > MAX_DIRECT_MESSAGES) {
+    return { ok: false, error: `at most ${MAX_DIRECT_MESSAGES} messages, got ${raw.length}` };
+  }
+  const messages: DirectMessage[] = [];
+  const notes: ReplyNote[] = [];
+  for (const [i, item] of raw.entries()) {
+    const at = `direct_messages[${i}]`;
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      return { ok: false, error: `entry ${i + 1} is not an object` };
+    }
+    const entry = item as Record<string, unknown>;
+    if (typeof entry.user_id !== "string" || !SNOWFLAKE.test(entry.user_id)) {
+      return { ok: false, error: `entry ${i + 1}: user_id must be a Discord user id` };
+    }
+    const fields: Record<string, unknown> = {};
+    for (const key of DIRECT_MESSAGE_FIELDS) if (key in entry) fields[key] = entry[key];
+    const parsed = parseBehaviorReply(fields);
+    if (!parsed.ok) return { ok: false, error: `entry ${i + 1}: ${parsed.error}` };
+    if (!hasVisibleReply(parsed.reply)) {
+      return { ok: false, error: `entry ${i + 1}: content, embeds, components or attachments required` };
+    }
+    messages.push({ user_id: entry.user_id, ...parsed.reply });
+    for (const note of parsed.notes) {
+      notes.push(note.kind === "invalid_field" ? { ...note, field: `${at}.${note.field}` } : note);
+    }
+    const unknown = Object.keys(entry)
+      .filter((k) => k !== "user_id" && !(DIRECT_MESSAGE_FIELDS as readonly string[]).includes(k))
+      .sort();
+    if (unknown.length > 0) notes.push({ kind: "unknown_fields", fields: unknown.map((k) => `${at}.${k}`) });
+  }
+  return { ok: true, messages, notes };
+}
+
 // ── parse ────────────────────────────────────────────────────────────────────
 
 /**
  * A response body (already JSON-decoded) → the reply to render. `ok: false`
- * when the body is not an object at all, or its `attachments` is not a
- * list of `{ name, path }` strings (files are never dropped); anything
+ * when the body is not an object at all, its `attachments` is not a
+ * list of `{ name, path }` strings (files are never dropped), or its
+ * `direct_messages` can't be read (directMessagesOf); anything
  * else inside an object that phase 1 can't carry is dropped with a note
  * instead.
  */
@@ -410,6 +477,14 @@ export function parseBehaviorReply(raw: unknown): ReplyParse {
       return { ok: false, error: "attachments: must be an array of { name, path } with string values" };
     }
     if (attachments.length > 0) reply.attachments = attachments;
+  }
+
+  if (body.direct_messages !== undefined && body.direct_messages !== null) {
+    // a DM is never dropped quietly either: a list the bot can't read fails the reply
+    const read = directMessagesOf(body.direct_messages);
+    if (!read.ok) return { ok: false, error: `direct_messages: ${read.error}` };
+    if (read.messages.length > 0) reply.direct_messages = read.messages;
+    notes.push(...read.notes);
   }
 
   const unknown = Object.keys(body).filter((k) => !KNOWN_FIELDS.has(k)).sort();

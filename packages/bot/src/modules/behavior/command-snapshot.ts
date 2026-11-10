@@ -1,6 +1,6 @@
 /**
  * A command's rows as they were before a write — the command, its leaves,
- * their webhook actions and stats — so a write Discord refuses can be put
+ * their webhook actions, stats and DM allowlists (#157) — so a write Discord refuses can be put
  * back exactly (ids included). See command-registration-sync.ts for when
  * that happens.
  */
@@ -10,6 +10,8 @@ import { BehaviorCommand } from "./models/behavior-command.model.js";
 import { BehaviorDefinition } from "./models/behavior-definition.model.js";
 import { BehaviorStat } from "./models/behavior-stats.model.js";
 import { BehaviorWebhookAction } from "./models/behavior-webhook-action.model.js";
+import { BehaviorDmAllowlist, destroyDmAllowlists } from "./models/behavior-dm-allowlist.model.js";
+import { pruneUnusedGroupMembers } from "./models/behavior-group-member.model.js";
 import { behaviorTransaction } from "./behavior-write-lock.js";
 
 type Raw = Record<string, unknown>;
@@ -18,6 +20,8 @@ interface LeafSnapshot {
   definition: Raw;
   webhook: Raw | null;
   stats: Raw | null;
+  /** Absent in a snapshot from before #157: none. */
+  dmAllowlist?: Raw | null;
 }
 
 export interface CommandSnapshot {
@@ -35,14 +39,16 @@ export async function snapshotCommand(commandId: number): Promise<CommandSnapsho
   if (!command) return { commandId, command: null, leaves: [] };
   const definitions = await BehaviorDefinition.findAll({ where: { commandId } });
   const ids = definitions.map((d) => d.getDataValue("id") as number);
-  const [webhooks, stats] = await Promise.all([
+  const [webhooks, stats, allowlists] = await Promise.all([
     BehaviorWebhookAction.findAll({ where: { behaviorId: ids } }),
     BehaviorStat.findAll({ where: { behaviorId: ids } }),
+    BehaviorDmAllowlist.findAll({ where: { behaviorId: ids } }),
   ]);
   const byBehavior = <M extends { getDataValue(k: string): unknown }>(rows: M[]) =>
     new Map(rows.map((r) => [r.getDataValue("behaviorId") as number, r]));
   const webhookOf = byBehavior(webhooks);
   const statsOf = byBehavior(stats);
+  const allowlistOf = byBehavior(allowlists);
   return {
     commandId,
     command: raw(command),
@@ -50,10 +56,12 @@ export async function snapshotCommand(commandId: number): Promise<CommandSnapsho
       const id = d.getDataValue("id") as number;
       const webhook = webhookOf.get(id);
       const stat = statsOf.get(id);
+      const allowlist = allowlistOf.get(id);
       return {
         definition: raw(d),
         webhook: webhook ? raw(webhook) : null,
         stats: stat ? raw(stat) : null,
+        dmAllowlist: allowlist ? raw(allowlist) : null,
       };
     }),
   };
@@ -64,7 +72,10 @@ async function destroyLeaves(ids: number[], transaction: Transaction): Promise<v
   // explicit, not via FK cascade: SQLite may run without FK enforcement
   await BehaviorWebhookAction.destroy({ where: { behaviorId: ids }, transaction });
   await BehaviorStat.destroy({ where: { behaviorId: ids }, transaction });
+  await destroyDmAllowlists(ids, transaction);
   await BehaviorDefinition.destroy({ where: { id: ids }, transaction });
+  // a group only these leaves' DM allowlists named goes with them (#157)
+  await pruneUnusedGroupMembers(transaction);
 }
 
 /** Delete a command with everything under it. */
@@ -121,6 +132,8 @@ export async function restoreCommand(snapshot: CommandSnapshot): Promise<void> {
       if (leaf.stats && !(await BehaviorStat.findByPk(id, { transaction }))) {
         await BehaviorStat.create(leaf.stats, { transaction });
       }
+      await destroyDmAllowlists(id, transaction);
+      if (leaf.dmAllowlist) await BehaviorDmAllowlist.create(leaf.dmAllowlist, { transaction });
     }
   });
 }

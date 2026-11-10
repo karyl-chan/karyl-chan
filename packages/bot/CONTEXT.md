@@ -122,7 +122,15 @@ _Avoid_: 內建動作（它不是可選的動作來源）、admin-login
 動作的回答：`{ content?, embeds?, components?, ephemeral?, flags? }`，與 plugin `interactions.respond` 同形。webhook 的回應與內建登入動作都產生它，由 Reply Renderer 送出；`ephemeral` 決定誰看得到（指令預設只有執行的人；伺服器訊息預設公開，`true` 改私訊作者；與 bot 的私訊不受影響）。
 誰看得到的順序：回應的 `ephemeral` → behavior 儲存的 Reply Visibility → 觸發本身的預設。
 `attachments: [{ name, path }]`（#156）是附加檔案：bot 從 webhook URL 的 origin 下載（同一套目標規則、pinned 連線、不跟 redirect，最多 5 個、每個 8 MiB、合計 25 MiB，全 bot 同時最多 2 批下載），拿不到就整個動作失敗（`attachment_failed`），不會只送出沒有檔案的回覆。只有附件的回覆也算有回覆。
+`direct_messages`（#157）是私訊其他使用者：回覆顯示之後才送，每則各自有結果（記在 DM Log），不會讓回覆失敗。可以私訊誰由 behavior 的 DM Allowlist 決定，沒有名單時是觸發所在伺服器的成員（私訊觸發則是 bot 所在任一伺服器的成員）。
 _Avoid_: relay、轉發內容（舊稱，只有 content / embeds）
+
+**DM Allowlist（私訊白名單）**:
+behavior 的回覆可以私訊的對象（#157）：使用者 id 與 behavior 群組。有名單就只能私訊名單上的人與群組成員；名單引用的群組算被使用中。存在 behavior_dm_allowlists。
+_Avoid_: 白名單（單獨用時不清楚是哪一份）
+
+**DM Log（私訊紀錄）**:
+behavior 每一則私訊的結果（收件人、觸發者、`sent` / `not_allowed` / `rate_limited` / `attachment_failed` / `failed`、時間），保留 30 天，存在 behavior_dm_log。與 Delivery 不同，它存使用者 id；不存訊息內容。
 
 **Reply Visibility（回覆給誰看）**:
 指令葉節點與伺服器訊息觸發儲存的回覆預設：`private`（指令只有執行的人；伺服器訊息私訊作者）、`public`（貼在頻道），null 沿用觸發本身的預設。回應的 `ephemeral` 可覆蓋；與 bot 的私訊與 System Behavior 不適用。

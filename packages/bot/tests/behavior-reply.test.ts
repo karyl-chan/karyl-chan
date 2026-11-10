@@ -228,3 +228,55 @@ describe("attachmentsProblem — what may be fetched (#156)", () => {
     }
   });
 });
+
+describe("parseBehaviorReply — direct_messages (#157)", () => {
+  const U1 = "111111111111111111";
+  const U2 = "222222222222222222";
+
+  it("reads each message with the reply's own rules", () => {
+    const { reply, notes } = parsed({
+      content: "done",
+      direct_messages: [
+        { user_id: U1, content: " hi ", attachments: [{ name: "a.png", path: "/a.png" }] },
+        { user_id: U2, embeds: [{ title: "t" }], components: [linkRow("https://ok.example")], ephemeral: true },
+      ],
+    });
+    expect(reply.direct_messages).toEqual([
+      { user_id: U1, content: "hi", attachments: [{ name: "a.png", path: "/a.png" }] },
+      { user_id: U2, embeds: [{ title: "t" }], components: [linkRow("https://ok.example")] },
+    ]);
+    expect(notes).toEqual([{ kind: "unknown_fields", fields: ["direct_messages[1].ephemeral"] }]);
+  });
+
+  it("names a dropped component under its message", () => {
+    const { reply, notes } = parsed({
+      direct_messages: [{ user_id: U1, content: "x", components: [linkRow("http://plain.example")] }],
+    });
+    expect(reply.direct_messages).toEqual([{ user_id: U1, content: "x" }]);
+    expect(notes).toEqual([{ kind: "components_dropped", count: 1 }]);
+  });
+
+  it("an empty list, or null, is none; a reply of only DMs has nothing visible", () => {
+    expect(parsed({ content: "x", direct_messages: [] }).reply).toEqual({ content: "x" });
+    expect(parsed({ content: "x", direct_messages: null }).reply).toEqual({ content: "x" });
+    expect(hasVisibleReply(parsed({ direct_messages: [{ user_id: U1, content: "x" }] }).reply)).toBe(false);
+  });
+
+  it("refuses the reply when the list can't be used, instead of dropping DMs", () => {
+    const one = { user_id: U1, content: "x" };
+    for (const [direct_messages, error] of [
+      ["x", "direct_messages: must be an array"],
+      [Array.from({ length: 6 }, () => one), "direct_messages: at most 5 messages, got 6"],
+      [[null], "direct_messages: entry 1 is not an object"],
+      [[{ content: "x" }], "direct_messages: entry 1: user_id must be a Discord user id"],
+      [[{ user_id: "<@1>", content: "x" }], "direct_messages: entry 1: user_id must be a Discord user id"],
+      [[one, { user_id: U2 }], "direct_messages: entry 2: content, embeds, components or attachments required"],
+      [
+        [{ user_id: U1, attachments: ["/a.png"] }],
+        "direct_messages: entry 1: attachments: must be an array of { name, path } with string values",
+      ],
+    ] as const) {
+      expect(parseBehaviorReply({ content: "x", direct_messages })).toEqual({ ok: false, error });
+    }
+  });
+});

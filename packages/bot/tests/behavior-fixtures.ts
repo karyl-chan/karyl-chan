@@ -2,6 +2,8 @@
  * Seed helpers for the trigger/action behavior tables. Every custom
  * behavior gets a webhook action (url encrypted with the test key).
  */
+import { BehaviorDmAllowlist } from "../src/modules/behavior/models/behavior-dm-allowlist.model.js";
+import { BehaviorDmLog } from "../src/modules/behavior/models/behavior-dm-log.model.js";
 import { BehaviorCommand } from "../src/modules/behavior/models/behavior-command.model.js";
 import { BehaviorDefinition } from "../src/modules/behavior/models/behavior-definition.model.js";
 import { BehaviorWebhookAction } from "../src/modules/behavior/models/behavior-webhook-action.model.js";
@@ -122,9 +124,11 @@ export async function seedLeaf(
   return id;
 }
 
-/** Remove every behavior row (cascades leaves, webhook actions, stats) and group list. */
+/** Remove every behavior row (cascades leaves, webhook actions, stats), group list, DM allowlist and DM log. */
 export async function clearBehaviors(): Promise<void> {
   await BehaviorGroupMember.destroy({ where: {} });
+  await BehaviorDmAllowlist.destroy({ where: {} });
+  await BehaviorDmLog.destroy({ where: {} });
   await BehaviorWebhookAction.destroy({ where: {} });
   await BehaviorDefinition.destroy({ where: {} });
   await BehaviorCommand.destroy({ where: {} });
