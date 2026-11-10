@@ -25,6 +25,7 @@ import { createHash, randomBytes } from "crypto";
 import type { ReplyVisibility } from "../behavior/models/behavior-definition.model.js";
 import { publicBaseUrl } from "../web-core/public-base-url.js";
 import type { ReplySlot, ReplyTarget } from "./reply-renderer.js";
+import type { ReplyFileFetcher } from "./behavior-reply.js";
 
 /** How long a callback token is good for: Discord's interaction token lifetime. */
 export const CALLBACK_TOKEN_TTL_MS = 15 * 60 * 1000;
@@ -40,6 +41,12 @@ export interface CallbackIssue {
   target: ReplyTarget;
   /** The behavior's stored reply default (replyVisibility). */
   visibility: ReplyVisibility | null;
+  /**
+   * Downloads a reply's attachments for this run (#156): a webhook run's
+   * come from its webhook URL's origin. Unset: a reply with attachments is
+   * refused.
+   */
+  fetchFiles?: ReplyFileFetcher;
 }
 
 /**
@@ -50,7 +57,9 @@ export interface CallbackIssue {
  * What it keeps for up to 15 minutes, and what bounds it: a command's
  * interaction; for a message trigger only the TriggerMessage (ids, a
  * timestamp, and its channel, author and guild — cache objects the bot
- * holds anyway), never the message; and per sent message a slot of ids plus its channel. Runs are
+ * holds anyway), never the message; per sent message a slot of ids plus
+ * its channel; and a webhook run's fetcher, which holds the run's
+ * (encrypted) webhook action row and the forwarder. Runs are
  * capped by takeBehaviorRun (5 per 10 s per command user, per guild
  * channel, per bot-DM user); a run's follow-ups by the 60-a-minute
  * callback throttle.
@@ -102,6 +111,7 @@ export class BehaviorCallbackTokenStore {
     const principal: BehaviorCallbackPrincipal = {
       behaviorId: input.behaviorId,
       visibility: input.visibility,
+      ...(input.fetchFiles ? { fetchFiles: input.fetchFiles } : {}),
       target:
         target.kind === "interaction"
           ? target

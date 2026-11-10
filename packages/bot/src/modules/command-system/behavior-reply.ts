@@ -23,10 +23,15 @@
  *     the `ephemeral` field, never the Ephemeral bit
  *   - defer: `true` only (#113); it means "answer later", so the renderer
  *     never sees it — runWebhookAction does
+ *   - attachments (#156): `{ name, path }` entries, files the bot downloads
+ *     from the receiver's origin (WebhookForwarder.fetchReplyFiles, which
+ *     applies attachmentsProblem first). Never dropped: a malformed list
+ *     fails the reply, and a file that cannot be had fails the action
  *   - any other top-level field is ignored (and named in a note)
  *   - the body itself is capped at MAX_REPLY_BODY_BYTES by the forwarder
  *
- * Pure: no discord.js runtime, no I/O.
+ * Pure: no discord.js runtime, no I/O (withFiles downloads through the
+ * fetcher it is given).
  */
 
 import type { SanitizedEmbed } from "./types.js";
@@ -64,6 +69,54 @@ export interface BehaviorReply {
    * placeholder; the rest of the reply is not shown. Only `true` is kept.
    */
   defer?: true;
+  /**
+   * Files to attach (#156): `path` is resolved against the webhook URL's
+   * origin and downloaded by the bot. An attachments-only reply is a
+   * visible reply.
+   */
+  attachments?: ReplyAttachment[];
+  /**
+   * The bot's own, never parsed from a body: the downloaded `attachments`,
+   * set before the reply is rendered. A reply with `attachments` and no
+   * `files` is not rendered.
+   */
+  files?: ReplyFile[];
+}
+
+/** One file a reply asks for: its name in Discord, and where on the receiver it is. */
+export interface ReplyAttachment {
+  name: string;
+  path: string;
+}
+
+/** A downloaded attachment. */
+export interface ReplyFile {
+  name: string;
+  data: Buffer;
+}
+
+/** The downloaded attachments of a reply, or why they could not be had. */
+export type ReplyFilesResult = { ok: true; files: ReplyFile[] } | { ok: false; error: string };
+
+/** Downloads a reply's attachments, from where its run says they are. */
+export type ReplyFileFetcher = (attachments: readonly ReplyAttachment[]) => Promise<ReplyFilesResult>;
+
+/**
+ * The reply with its attachments downloaded into `files`, or why they
+ * could not be (the error starts with `attachments: `). A reply without
+ * attachments comes back as is; without a fetcher, attachments can't be
+ * had at all.
+ */
+export async function withFiles(
+  reply: BehaviorReply,
+  fetchFiles: ReplyFileFetcher | undefined,
+): Promise<{ ok: true; reply: BehaviorReply } | { ok: false; error: string }> {
+  if (!reply.attachments?.length) return { ok: true, reply };
+  if (!fetchFiles) return { ok: false, error: "attachments: not available for this reply" };
+  const fetched = await fetchFiles(reply.attachments);
+  return fetched.ok
+    ? { ok: true, reply: { ...reply, files: fetched.files } }
+    : { ok: false, error: `attachments: ${fetched.error}` };
 }
 
 /** What parseBehaviorReply dropped or changed, for the admin and the log. */
@@ -89,7 +142,21 @@ export const MAX_REPLY_BODY_BYTES = 64 * 1024;
 /** Ends content that was cut to MAX_REPLY_CONTENT. */
 export const TRUNCATION_MARK = "\n…(truncated)";
 
-const KNOWN_FIELDS = new Set(["content", "embeds", "components", "ephemeral", "flags", "defer"]);
+const KNOWN_FIELDS = new Set([
+  "content",
+  "embeds",
+  "components",
+  "ephemeral",
+  "flags",
+  "defer",
+  "attachments",
+]);
+
+/** The most files a reply may attach, and the largest one (#156). */
+export const MAX_REPLY_ATTACHMENTS = 5;
+export const MAX_REPLY_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+const MAX_ATTACHMENT_NAME = 200;
+const MAX_ATTACHMENT_PATH = 2048;
 
 const MAX_ROWS = 5;
 const MAX_BUTTONS_PER_ROW = 5;
@@ -240,12 +307,70 @@ function sanitizeComponents(raw: unknown[]): { rows: LinkButtonRow[]; dropped: n
   return { rows, dropped };
 }
 
+// ── attachments (#156) ───────────────────────────────────────────────────────
+
+/** `{ name, path }` entries as given, or null when the list is malformed. */
+function attachmentsOf(raw: unknown[]): ReplyAttachment[] | null {
+  const out: ReplyAttachment[] = [];
+  for (const item of raw) {
+    if (typeof item !== "object" || item === null) return null;
+    const { name, path } = item as Record<string, unknown>;
+    if (typeof name !== "string" || typeof path !== "string") return null;
+    out.push({ name, path });
+  }
+  return out;
+}
+
+// control characters and whitespace (a path is sent as is, never re-encoded)
+// eslint-disable-next-line no-control-regex
+const UNSAFE_PATH_CHARS = /[\u0000-\u0020\u007f\\]/;
+// an encoded slash or backslash a receiver might decode into another host
+const ENCODED_SEPARATOR = /%(2f|5c)/i;
+// eslint-disable-next-line no-control-regex
+const UNSAFE_NAME_CHARS = /[\u0000-\u001f\u007f/\\]/;
+
+function pathProblem(path: string): string | null {
+  if (!path.startsWith("/") || path.startsWith("//")) {
+    return "path must start with a single / (a path on the webhook's origin)";
+  }
+  if (path.length > MAX_ATTACHMENT_PATH) return `path is longer than ${MAX_ATTACHMENT_PATH} characters`;
+  if (UNSAFE_PATH_CHARS.test(path)) return "path has a backslash, a space or a control character";
+  if (ENCODED_SEPARATOR.test(path)) return "path has an encoded slash or backslash";
+  return null;
+}
+
+function nameProblem(name: string): string | null {
+  if (name.trim() === "") return "name is empty";
+  if (name.length > MAX_ATTACHMENT_NAME) return `name is longer than ${MAX_ATTACHMENT_NAME} characters`;
+  if (UNSAFE_NAME_CHARS.test(name)) return "name has a slash, a backslash or a control character";
+  return null;
+}
+
+/**
+ * Why a reply's attachments may not be fetched, or null: more than
+ * MAX_REPLY_ATTACHMENTS, a name Discord can't take, or a path that is not
+ * a plain path on the receiver's origin — `//host`, an absolute URL, a
+ * relative path, a backslash or an encoded slash.
+ */
+export function attachmentsProblem(attachments: readonly ReplyAttachment[]): string | null {
+  if (attachments.length > MAX_REPLY_ATTACHMENTS) {
+    return `at most ${MAX_REPLY_ATTACHMENTS} attachments, got ${attachments.length}`;
+  }
+  for (const [i, { name, path }] of attachments.entries()) {
+    const problem = nameProblem(name) ?? pathProblem(path);
+    if (problem) return `attachment ${i + 1}: ${problem}`;
+  }
+  return null;
+}
+
 // ── parse ────────────────────────────────────────────────────────────────────
 
 /**
  * A response body (already JSON-decoded) → the reply to render. `ok: false`
- * only when the body is not an object at all; anything inside an object
- * that phase 1 can't carry is dropped with a note instead.
+ * when the body is not an object at all, or its `attachments` is not a
+ * list of `{ name, path }` strings (files are never dropped); anything
+ * else inside an object that phase 1 can't carry is dropped with a note
+ * instead.
  */
 export function parseBehaviorReply(raw: unknown): ReplyParse {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
@@ -309,6 +434,15 @@ export function parseBehaviorReply(raw: unknown): ReplyParse {
     else if (body.defer) reply.defer = true;
   }
 
+  if (body.attachments !== undefined && body.attachments !== null) {
+    const attachments = Array.isArray(body.attachments) ? attachmentsOf(body.attachments) : null;
+    // files are never dropped quietly: a list the bot can't read fails the reply
+    if (!attachments) {
+      return { ok: false, error: "attachments: must be an array of { name, path } with string values" };
+    }
+    if (attachments.length > 0) reply.attachments = attachments;
+  }
+
   const unknown = Object.keys(body).filter((k) => !KNOWN_FIELDS.has(k)).sort();
   if (unknown.length > 0) notes.push({ kind: "unknown_fields", fields: unknown });
 
@@ -320,6 +454,8 @@ export function hasVisibleReply(reply: BehaviorReply): boolean {
   return Boolean(
     reply.content ||
       (reply.embeds && reply.embeds.length > 0) ||
-      (reply.components && reply.components.length > 0),
+      (reply.components && reply.components.length > 0) ||
+      (reply.attachments && reply.attachments.length > 0) ||
+      (reply.files && reply.files.length > 0),
   );
 }

@@ -622,7 +622,7 @@ describe("a refused or failed call", () => {
     const { token } = await deferredRun(id);
     const res = await call("interactions.respond", token, {});
     expect(res.statusCode).toBe(400);
-    expect(res.json()).toEqual({ error: "content, embeds or components required" });
+    expect(res.json()).toEqual({ error: "content, embeds, components or attachments required" });
   });
 
   it("Discord refusing the reply is 400 and a callback_failed delivery", async () => {

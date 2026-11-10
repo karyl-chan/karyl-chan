@@ -21,6 +21,11 @@
  * answer — or failure line — arriving after it is not shown, and the
  * delivery is ok and marked `deferred` (its reply came through the
  * token), even when the synchronous request itself failed.
+ *
+ * A reply with attachments (#156) is shown only with its files, which the
+ * forwarder downloads from the webhook URL's origin first; when they can't
+ * be had the run fails (`attachment_failed`) and the user gets the failure
+ * line — never the reply without them.
  */
 
 import type { BehaviorWebhookActionRow } from "../behavior/models/behavior-webhook-action.model.js";
@@ -39,7 +44,7 @@ import {
   type BehaviorCallbackPrincipal,
   type CallbackMeta,
 } from "./behavior-callback-token.js";
-import type { BehaviorReply } from "./behavior-reply.js";
+import { withFiles, type BehaviorReply, type ReplyFileFetcher } from "./behavior-reply.js";
 import { sendTypingFor, type RenderOutcome } from "./reply-renderer.js";
 import type { ForwardResult } from "./types.js";
 import type { WebhookForwarder } from "./webhook-forwarder.service.js";
@@ -93,7 +98,16 @@ async function renderAnswer(
 export async function runWebhookAction(run: WebhookActionRun): Promise<void> {
   const { behaviorId, target } = run;
   const firedAt = new Date();
-  const issued = behaviorCallbackTokens.issue({ behaviorId, target, visibility: run.visibility });
+  // a reply's attachments come from the run's webhook origin (#156), for
+  // the synchronous answer and the callback calls alike
+  const fetchFiles: ReplyFileFetcher = (attachments) =>
+    run.forwarder.fetchReplyFiles(run.webhook, attachments);
+  const issued = behaviorCallbackTokens.issue({
+    behaviorId,
+    target,
+    visibility: run.visibility,
+    fetchFiles,
+  });
   const { principal } = issued;
   const payload = withCallback(run.payload, callbackMetaOf(issued));
   let deferred = false;
@@ -119,15 +133,23 @@ export async function runWebhookAction(run: WebhookActionRun): Promise<void> {
       deferred = true;
       if (target.kind === "message") await sendTypingFor(target.message, run.visibility);
     } else if (result.ok) {
-      const rendered = await renderAnswer(run, principal, result.reply);
-      if (rendered === "superseded") deferred = true;
-      else if (!rendered.ok) {
+      // its files first (#156): a reply is never shown without them
+      const answer = await withFiles(result.reply, fetchFiles);
+      if (!answer.ok) {
         ok = false;
-        unreachable = rendered.dmFailed === true;
-        errorCode = unreachable ? "dm_failed" : "render_failed";
-        error = unreachable
-          ? `could not DM the author: ${rendered.error}`
-          : `Discord refused the reply: ${rendered.error}`;
+        errorCode = "attachment_failed";
+        error = answer.error;
+      } else {
+        const rendered = await renderAnswer(run, principal, answer.reply);
+        if (rendered === "superseded") deferred = true;
+        else if (!rendered.ok) {
+          ok = false;
+          unreachable = rendered.dmFailed === true;
+          errorCode = unreachable ? "dm_failed" : "render_failed";
+          error = unreachable
+            ? `could not DM the author: ${rendered.error}`
+            : `Discord refused the reply: ${rendered.error}`;
+        }
       }
     }
   } catch (err) {

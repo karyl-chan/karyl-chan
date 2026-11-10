@@ -18,6 +18,9 @@
  *   - URL 解密後才用
  *   - 解析 response 成回覆模型（behavior-reply.ts，#140）
  *   - 回 ForwardResult { ok, reply, notes, status?, error?, errorCode?, verified? }
+ *   - 回覆的附件（#156）：fetchReplyFiles 從 webhook URL 的 origin 下載，
+ *     與 POST 同一套 host policy、pinned 連線、不跟 redirect、逾時，並邊讀
+ *     邊限制大小
  */
 
 import type { RESTPostAPIWebhookWithTokenJSONBody } from "discord.js";
@@ -44,8 +47,13 @@ import { decryptSecret } from "../../utils/crypto.js";
 import type { BehaviorWebhookActionRow } from "../behavior/models/behavior-webhook-action.model.js";
 import type { ForwardErrorCode, ForwardResult } from "./types.js";
 import {
+  MAX_REPLY_ATTACHMENT_BYTES,
   MAX_REPLY_BODY_BYTES,
+  attachmentsProblem,
   parseBehaviorReply,
+  type ReplyAttachment,
+  type ReplyFile,
+  type ReplyFilesResult,
   type ReplyNote,
 } from "./behavior-reply.js";
 
@@ -53,13 +61,13 @@ import {
  * Read the body, giving up past `max` bytes (null). A declared
  * Content-Length over the cap is refused before reading anything.
  */
-async function readCapped(res: Response, max: number): Promise<string | null> {
+async function readCappedBytes(res: Response, max: number): Promise<Buffer | null> {
   const declared = Number(res.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > max) {
     await res.body?.cancel().catch(() => {});
     return null;
   }
-  if (!res.body) return "";
+  if (!res.body) return Buffer.alloc(0);
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -73,7 +81,12 @@ async function readCapped(res: Response, max: number): Promise<string | null> {
     }
     chunks.push(value);
   }
-  return Buffer.concat(chunks).toString("utf8");
+  return Buffer.concat(chunks);
+}
+
+async function readCapped(res: Response, max: number): Promise<string | null> {
+  const bytes = await readCappedBytes(res, max);
+  return bytes === null ? null : bytes.toString("utf8");
 }
 
 /**
@@ -254,6 +267,52 @@ export class WebhookForwarder {
       previous: rawPrevious,
       scheme: opts.test ? TEST_SCHEME : REAL_SCHEME,
     });
+  }
+
+  /**
+   * Download a reply's attachments (#156) from the webhook URL's origin:
+   * each `path` (checked by attachmentsProblem: no `//host`, no absolute
+   * URL, no backslash) is resolved against it and fetched with a GET under
+   * the same rules as the POST — the target policy (private addresses only
+   * when allowlisted), a connection pinned to the checked addresses, no
+   * redirects, and the timeout, for all the files together. Each body is
+   * cut off past MAX_REPLY_ATTACHMENT_BYTES as it streams. No credentials
+   * are sent. One file that can't be had fails them all. Never throws.
+   */
+  async fetchReplyFiles(
+    action: BehaviorWebhookActionRow,
+    attachments: readonly ReplyAttachment[],
+  ): Promise<ReplyFilesResult> {
+    const problem = attachmentsProblem(attachments);
+    if (problem) return { ok: false, error: problem };
+    if (attachments.length === 0) return { ok: true, files: [] };
+    let origin: URL;
+    try {
+      origin = new URL(new URL(decryptSecret(action.url)).origin);
+    } catch (err) {
+      return { ok: false, error: `the webhook URL is unusable: ${errorText(err)}` };
+    }
+    let target: WebhookTarget;
+    try {
+      target = await resolveWebhookTarget(origin, this.allowlist);
+    } catch (err) {
+      if (!(err instanceof HostPolicyError)) return { ok: false, error: errorText(err) };
+      return { ok: false, error: err.message };
+    }
+    const agent = createPinnedAgent(target.addresses);
+    const signal = AbortSignal.timeout(this.timeoutMs);
+    const files: ReplyFile[] = [];
+    try {
+      for (const [i, attachment] of attachments.entries()) {
+        const got = await fetchReplyFile(origin, attachment, agent, signal);
+        if (!got.ok) return { ok: false, error: `attachment ${i + 1} (${JSON.stringify(attachment.name)}): ${got.error}` };
+        files.push(got.file);
+      }
+    } finally {
+      // one-shot agent, as for the POST
+      void agent.destroy().catch(() => {});
+    }
+    return { ok: true, files };
   }
 
   // ── 私有：HTTP POST ───────────────────────────────────────────────────────
@@ -471,4 +530,50 @@ export class WebhookForwarder {
       return null;
     }
   }
+}
+
+const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+/** GET one attachment over the pinned connection. */
+async function fetchReplyFile(
+  origin: URL,
+  { name, path }: ReplyAttachment,
+  agent: ReturnType<typeof createPinnedAgent>,
+  signal: AbortSignal,
+): Promise<{ ok: true; file: ReplyFile } | { ok: false; error: string }> {
+  const url = new URL(path, origin);
+  // attachmentsProblem lets only a plain path through; this is the backstop
+  if (url.origin !== origin.origin) return { ok: false, error: "the path leaves the webhook's origin" };
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "GET",
+      dispatcher: agent,
+      // a Location is the receiver's to choose: never followed (SSRF)
+      redirect: "manual",
+      signal,
+    } as RequestInit);
+  } catch (err) {
+    return { ok: false, error: `network error: ${errorText(err)}` };
+  }
+  if (!res.ok) {
+    await res.body?.cancel().catch(() => {});
+    return {
+      ok: false,
+      error:
+        res.status >= 300 && res.status < 400
+          ? `a redirect (HTTP ${res.status}); redirects are not followed`
+          : `HTTP ${res.status}`,
+    };
+  }
+  let data: Buffer | null;
+  try {
+    data = await readCappedBytes(res, MAX_REPLY_ATTACHMENT_BYTES);
+  } catch (err) {
+    return { ok: false, error: `could not read it: ${errorText(err)}` };
+  }
+  if (data === null) {
+    return { ok: false, error: `larger than ${MAX_REPLY_ATTACHMENT_BYTES / (1024 * 1024)} MiB` };
+  }
+  return { ok: true, file: { name, data } };
 }

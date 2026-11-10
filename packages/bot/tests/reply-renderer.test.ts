@@ -253,3 +253,49 @@ describe("renderReply — the stored default (replyVisibility)", () => {
     expect(authorSend).not.toHaveBeenCalled();
   });
 });
+
+describe("renderReply — attachments (#156)", () => {
+  const png = { name: "chart.png", data: Buffer.from("PNG") };
+  const withFile = { attachments: [{ name: "chart.png", path: "/chart.png" }], files: [png] };
+  const sentFiles = [{ attachment: png.data, name: "chart.png" }];
+
+  it("an attachments-only reply fills the placeholder, replacing its files", async () => {
+    const ix = fakeInteraction({ deferred: true, ephemeral: true });
+    const out = await renderReply(withFile, { kind: "interaction", interaction: ix as never });
+    expect(out.ok && out.via).toBe("interaction");
+    expect(ix.editReply).toHaveBeenCalledWith({
+      files: sentFiles,
+      attachments: [],
+      allowedMentions: { parse: [] },
+    });
+    expect(ix.deleteReply).not.toHaveBeenCalled();
+  });
+
+  it("a public answer to a private placeholder follows up with the files", async () => {
+    const ix = fakeInteraction({ deferred: true, ephemeral: true });
+    await renderReply({ ...withFile, content: "here", ephemeral: false }, { kind: "interaction", interaction: ix as never });
+    expect(ix.followUp).toHaveBeenCalledWith({
+      content: "here",
+      files: sentFiles,
+      allowedMentions: { parse: [] },
+    });
+  });
+
+  it("sends the files with a message trigger's reply, in the channel or the author's DM", async () => {
+    const { message, channelSend, authorSend } = fakeMessage("guild");
+    await renderReply(withFile, { kind: "message", message: message as never });
+    expect(channelSend).toHaveBeenCalledWith({ files: sentFiles, allowedMentions: { parse: [] } });
+    await renderReply({ ...withFile, ephemeral: true }, { kind: "message", message: message as never });
+    expect(authorSend).toHaveBeenCalledWith({ files: sentFiles, allowedMentions: { parse: [] } });
+  });
+
+  it("never sends a reply whose attachments were not downloaded", async () => {
+    const { message, channelSend } = fakeMessage("guild");
+    const out = await renderReply(
+      { content: "x", attachments: [{ name: "a.png", path: "/a.png" }] },
+      { kind: "message", message: message as never },
+    );
+    expect(out).toEqual({ ok: false, error: "the reply's attachments were not downloaded" });
+    expect(channelSend).not.toHaveBeenCalled();
+  });
+});

@@ -39,6 +39,8 @@ import { MessageTriggerMatcher } from "../src/modules/command-system/message-tri
 import { InteractionDispatcher } from "../src/modules/command-system/interaction-dispatcher.service.js";
 import {
   ALLOWED_REPLY_FLAGS,
+  MAX_REPLY_ATTACHMENT_BYTES,
+  MAX_REPLY_ATTACHMENTS,
   MAX_REPLY_BODY_BYTES,
   MAX_REPLY_CONTENT,
   MAX_REPLY_EMBED_CHARS,
@@ -295,8 +297,12 @@ describe("behavior webhook contract (BH-2.3)", () => {
       ephemeral: false,
       flags: 4,
       defer: true,
+      attachments: [{ name: "a.png", path: "/a.png" }],
     });
     expect(parsed.ok && Object.keys(parsed.reply).sort()).toEqual([...C.response.fields].sort());
+    expect(parsed.ok && Object.keys(parsed.reply.attachments![0]!).sort()).toEqual(
+      [...C.response.attachmentKeys].sort(),
+    );
     expect(C.response.allowedFlags.reduce((a, b) => a | b, 0)).toBe(ALLOWED_REPLY_FLAGS);
     const row = {
       type: 1,
@@ -312,6 +318,8 @@ describe("behavior webhook contract (BH-2.3)", () => {
     expect(MAX_REPLY_CONTENT).toBe(C.response.maxContentLength);
     expect(MAX_REPLY_EMBED_CHARS).toBe(C.response.maxEmbedTotalLength);
     expect(MAX_REPLY_BODY_BYTES).toBe(C.response.maxBodyBytes);
+    expect(MAX_REPLY_ATTACHMENTS).toBe(C.response.maxAttachments);
+    expect(MAX_REPLY_ATTACHMENT_BYTES).toBe(C.response.maxAttachmentBytes);
     const long = parseBehaviorReply({ content: "x".repeat(C.response.maxContentLength + 1) });
     expect(long.ok && long.reply.content!.length).toBe(C.response.maxContentLength);
   });

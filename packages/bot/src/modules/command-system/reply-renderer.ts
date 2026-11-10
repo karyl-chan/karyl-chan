@@ -23,6 +23,9 @@
  * For a message trigger the bot has no placeholder: a callback's first
  * answer sends the reply, later ones edit the message it sent.
  *
+ * A reply's attachments (#156) are sent as the files the caller downloaded
+ * (`reply.files`); an edit that has files replaces the message's old ones.
+ *
  * Mentions are never parsed (a reply comes from an external service). A
  * Discord refusal comes back as `{ ok: false }` for the caller to log and
  * count — nothing here swallows it.
@@ -91,12 +94,22 @@ export type RenderOutcome =
 const errorText = (err: unknown): string =>
   err instanceof Error ? err.message : String(err);
 
-/** content / embeds / components with mentions off — what every send shares. */
+/**
+ * content / embeds / components / files with mentions off — what every
+ * send shares. A reply whose attachments were not downloaded (#156) is
+ * never sent without them.
+ */
 function messageBody(reply: BehaviorReply) {
+  if (reply.attachments?.length && !reply.files) {
+    throw new Error("the reply's attachments were not downloaded");
+  }
   return {
     ...(reply.content ? { content: reply.content } : {}),
     ...(reply.embeds?.length ? { embeds: reply.embeds } : {}),
     ...(reply.components?.length ? { components: reply.components } : {}),
+    ...(reply.files?.length
+      ? { files: reply.files.map((f) => ({ attachment: f.data, name: f.name })) }
+      : {}),
     allowedMentions: { parse: [] as [] },
   };
 }
@@ -104,9 +117,17 @@ function messageBody(reply: BehaviorReply) {
 const withFlags = <T extends object>(body: T, flags: number) =>
   flags !== 0 ? { ...body, flags } : body;
 
-/** The body of an edit: only the fields the reply has, and of its flags only SuppressEmbeds. */
-const editBody = (reply: BehaviorReply) =>
-  withFlags(messageBody(reply), (reply.flags ?? 0) & MessageFlags.SuppressEmbeds);
+/**
+ * The body of an edit: only the fields the reply has, and of its flags
+ * only SuppressEmbeds. Files replace the message's earlier ones.
+ */
+function editBody(reply: BehaviorReply) {
+  const body = messageBody(reply);
+  return withFlags(
+    "files" in body ? { ...body, attachments: [] as [] } : body,
+    (reply.flags ?? 0) & MessageFlags.SuppressEmbeds,
+  );
+}
 
 /** The `@original` reply of a command. */
 const originalOf = (interaction: ChatInputCommandInteraction, ephemeral: boolean): ReplySlot => ({

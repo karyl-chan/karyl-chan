@@ -45,6 +45,9 @@ export const DELIVERY_ERROR_MAX = 300;
  *   defer_failed      Discord refused a command's deferral; nothing was forwarded
  *   callback_invalid  the bot refused a callback call's body (#113)
  *   callback_failed   Discord refused a callback call's reply (#113)
+ *   attachment_failed a reply's attachments could not be had (#156): too
+ *                     many, an unsafe path or name, too large, a redirect,
+ *                     a non-2xx, or the download failed
  */
 export type DeliveryErrorCode =
   | ForwardErrorCode
@@ -55,7 +58,8 @@ export type DeliveryErrorCode =
   | "dm_failed"
   | "defer_failed"
   | "callback_invalid"
-  | "callback_failed";
+  | "callback_failed"
+  | "attachment_failed";
 
 export interface DeliveryInput {
   behaviorId: number;

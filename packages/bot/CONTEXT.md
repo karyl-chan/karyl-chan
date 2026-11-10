@@ -121,13 +121,14 @@ _Avoid_: 內建動作（它不是可選的動作來源）、admin-login
 **Behavior Reply（回覆）**:
 動作的回答：`{ content?, embeds?, components?, ephemeral?, flags? }`，與 plugin `interactions.respond` 同形。webhook 的回應與內建登入動作都產生它，由 Reply Renderer 送出；`ephemeral` 決定誰看得到（指令預設只有執行的人；伺服器訊息預設公開，`true` 改私訊作者；與 bot 的私訊不受影響）。
 誰看得到的順序：回應的 `ephemeral` → behavior 儲存的 Reply Visibility → 觸發本身的預設。
+`attachments: [{ name, path }]`（#156）是附加檔案：bot 從 webhook URL 的 origin 下載（同一套目標規則、pinned 連線、不跟 redirect，最多 5 個、每個 8 MiB），拿不到就整個動作失敗（`attachment_failed`），不會只送出沒有檔案的回覆。只有附件的回覆也算有回覆。
 _Avoid_: relay、轉發內容（舊稱，只有 content / embeds）
 
 **Reply Visibility（回覆給誰看）**:
 指令葉節點與伺服器訊息觸發儲存的回覆預設：`private`（指令只有執行的人；伺服器訊息私訊作者）、`public`（貼在頻道），null 沿用觸發本身的預設。回應的 `ephemeral` 可覆蓋；與 bot 的私訊與 System Behavior 不適用。
 
 **Delivery（投遞）**:
-一次 webhook 動作的呼叫與它的結果：成功或失敗、HTTP 狀態、延遲、錯誤碼、簽章驗證。每個 behavior 留最近 20 筆、最多 7 天（delivery log，投遞紀錄）；不存 URL、密鑰、內容或使用者 id。測試 webhook 不算投遞；指令的 defer 被 Discord 拒絕時 webhook 沒被呼叫，仍記成一次失敗的投遞（`defer_failed`）。receiver 回 `{"defer": true}` 的投遞算成功並標為延後（deferred）；之後用 Callback Token 的呼叫失敗時，另記一筆失敗的投遞（`callback_invalid` / `callback_failed`）。
+一次 webhook 動作的呼叫與它的結果：成功或失敗、HTTP 狀態、延遲、錯誤碼、簽章驗證。每個 behavior 留最近 20 筆、最多 7 天（delivery log，投遞紀錄）；不存 URL、密鑰、內容或使用者 id。測試 webhook 不算投遞；指令的 defer 被 Discord 拒絕時 webhook 沒被呼叫，仍記成一次失敗的投遞（`defer_failed`）。receiver 回 `{"defer": true}` 的投遞算成功並標為延後（deferred）；之後用 Callback Token 的呼叫失敗時，另記一筆失敗的投遞（`callback_invalid` / `callback_failed`）。回覆的附件下載失敗記成 `attachment_failed`。
 _Avoid_: 事件（那是 bot event log）、forward（只是投遞的一部分）
 
 **Callback Token**:
