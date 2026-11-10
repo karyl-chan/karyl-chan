@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  createHash,
   createHmac,
+  createPrivateKey,
   createPublicKey,
   generateKeyPairSync,
+  sign as cryptoSign,
   verify as cryptoVerify,
+  type KeyObject,
 } from "crypto";
 import {
   JwtService,
@@ -265,6 +269,128 @@ describe("JwtService (Ed25519)", () => {
       expect(after).not.toBe(before);
       // The pre-rotation token no longer verifies against the new key.
       expect(sigVerifies(token, after)).toBe(false);
+    });
+  });
+
+  describe("service tokens (#126)", () => {
+    const serviceClaims = {
+      sub: "user-1",
+      name: "Karyl",
+      avatar: null,
+      aud: "wiki",
+      iss: "https://karyl.example",
+    };
+
+    function segment(token: string, i: number): Record<string, unknown> {
+      return JSON.parse(
+        Buffer.from(token.split(".")[i], "base64url").toString("utf-8"),
+      );
+    }
+
+    function thumbprintOf(key: KeyObject): string {
+      const { crv, kty, x } = createPublicKey(key).export({ format: "jwk" });
+      return createHash("sha256")
+        .update(JSON.stringify({ crv, kty, x }))
+        .digest("base64url");
+    }
+
+    it("carry the key's RFC 7638 thumbprint as kid and verify against its JWK", () => {
+      const key = newKey();
+      const svc = new JwtService(key);
+      const { token } = svc.signService(serviceClaims);
+      const kid = thumbprintOf(key);
+      expect(segment(token, 0)).toEqual({
+        alg: "EdDSA",
+        typ: "karyl-service+jwt",
+        kid,
+      });
+      const jwk = svc.publicJwk();
+      expect(jwk).toMatchObject({ kty: "OKP", crv: "Ed25519", kid });
+      const [h, b, s] = token.split(".");
+      expect(
+        cryptoVerify(
+          null,
+          Buffer.from(`${h}.${b}`, "utf-8"),
+          createPublicKey({ key: { ...jwk }, format: "jwk" }),
+          Buffer.from(s, "base64url"),
+        ),
+      ).toBe(true);
+    });
+
+    it("use the RFC 8037 A.3 thumbprint for the RFC 8037 A.1 example key", () => {
+      // Published vector, independent of thumbprintOf() above.
+      const key = createPrivateKey({
+        key: {
+          kty: "OKP",
+          crv: "Ed25519",
+          d: "nWGxne_9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A",
+          x: "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo",
+        },
+        format: "jwk",
+      });
+      const svc = new JwtService(key);
+      expect(svc.keyId()).toBe("kPrK_qmxVWaYVA9wwBF6Iuo3vVzz7TxHCTwXBygrS4k");
+      expect(svc.publicJwk().x).toBe(
+        "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo",
+      );
+    });
+
+    it("follow the key on setKey", () => {
+      const svc = new JwtService(newKey());
+      const next = newKey();
+      svc.setKey(next);
+      expect(segment(svc.signService(serviceClaims).token, 0).kid).toBe(
+        thumbprintOf(next),
+      );
+    });
+
+    it("live 120 s", () => {
+      const svc = new JwtService(newKey());
+      const now = 1_700_000_000_000;
+      const { token, expiresAt } = svc.signService(serviceClaims, { now });
+      const body = segment(token, 1);
+      expect(body.iat).toBe(1_700_000_000);
+      expect(body.exp).toBe(1_700_000_120);
+      expect(expiresAt).toBe(1_700_000_120_000);
+    });
+
+    it("refuse to sign without sub, name, aud or iss", () => {
+      const svc = new JwtService(newKey());
+      for (const field of ["sub", "name", "aud", "iss"] as const) {
+        expect(() => svc.signService({ ...serviceClaims, [field]: "" })).toThrow(
+          new RegExp(field),
+        );
+      }
+    });
+
+    it("are never accepted as bot tokens", () => {
+      const svc = new JwtService(newKey());
+      const { token } = svc.signService(serviceClaims);
+      expect(svc.verify(token)).toBeNull();
+      expect(svc.verify(token, { purpose: "login" })).toBeNull();
+    });
+
+    it("verify() refuses the service typ on its own, even with login claims", () => {
+      const key = newKey();
+      const svc = new JwtService(key);
+      const header = b64u(
+        JSON.stringify({ alg: "EdDSA", typ: "karyl-service+jwt", kid: svc.keyId() }),
+      );
+      const body = b64u(
+        JSON.stringify({
+          ...loginClaims,
+          iat: Math.floor(Date.now() / 1000),
+          exp: Math.floor(Date.now() / 1000) + 60,
+        }),
+      );
+      const sig = b64u(cryptoSign(null, Buffer.from(`${header}.${body}`), key));
+      expect(svc.verify(`${header}.${body}.${sig}`, { purpose: "login" })).toBeNull();
+    });
+
+    it("verify() refuses any token carrying aud, even with login claims", () => {
+      const svc = new JwtService(newKey());
+      const { token } = svc.sign({ ...loginClaims, aud: "wiki" } as JwtClaims);
+      expect(svc.verify(token, { purpose: "login" })).toBeNull();
     });
   });
 });

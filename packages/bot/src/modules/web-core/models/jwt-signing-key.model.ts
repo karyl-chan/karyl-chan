@@ -98,3 +98,31 @@ export const insertActiveJwtSigningKey = async (input: {
     return rowOf(created);
   });
 };
+
+/** A key's public side and when it was created — what the JWKS needs. */
+export interface JwtSigningKeyHistoryRow {
+  id: number;
+  publicKeyPem: string;
+  active: boolean;
+  createdAt: Date;
+}
+
+/**
+ * Every key, oldest first, without the private column. A key was
+ * deactivated when the next row was created (rotation inserts the
+ * successor in the same transaction that demotes it).
+ */
+export const listJwtSigningKeyHistory = async (): Promise<
+  JwtSigningKeyHistoryRow[]
+> => {
+  const rows = await JwtSigningKey.findAll({
+    attributes: ["id", "publicKeyPem", "active", "createdAt"],
+    order: [["id", "ASC"]],
+  });
+  return rows.map((row) => ({
+    id: row.getDataValue("id") as number,
+    publicKeyPem: row.getDataValue("publicKeyPem") as string,
+    active: !!row.getDataValue("active"),
+    createdAt: row.getDataValue("createdAt") as Date,
+  }));
+};
