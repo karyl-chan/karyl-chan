@@ -53,6 +53,7 @@ See [`docs/setup.md`](docs/setup.md) for the full setup walkthrough.
 | Voice | [`docs/features/voice.md`](docs/features/voice.md) |
 | Behaviors (Discord trigger → action rules) | [`docs/features/behaviors.md`](docs/features/behaviors.md) |
 | Behavior webhook protocol (for webhook receiver authors) | [`docs/features/behavior-webhook-protocol.md`](docs/features/behavior-webhook-protocol.md) |
+| Service login (for authors of services that log in through karyl) | [`docs/features/service-login.md`](docs/features/service-login.md) |
 
 ### Development
 

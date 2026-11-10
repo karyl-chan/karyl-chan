@@ -19,6 +19,7 @@ defined in the bot's [CONTEXT.md](../../CONTEXT.md#behaviors).
 - [Behavior Sections](#behavior-sections)
 - [Converting a trigger](#converting-a-trigger)
 - [The system login](#the-system-login)
+- [Service logins](#service-logins)
 - [Webhook actions](#webhook-actions)
 - [Who sees the reply](#who-sees-the-reply)
 - [Admin UI](#admin-ui)
@@ -31,7 +32,7 @@ defined in the bot's [CONTEXT.md](../../CONTEXT.md#behaviors).
 | Part | What it is |
 |------|------------|
 | **Trigger** | How the behavior starts. A **command trigger** is one leaf of a Discord command; a **message trigger** matches messages the bot can read. |
-| **Action** | What the behavior does. Admins choose a **webhook**. The system login runs a login action of the bot's own, which is not on offer to admins (stored as `actionSource: builtin`). Plugin actions are planned (phase 2), not available yet. |
+| **Action** | What the behavior does. Admins choose a **webhook**. The system login runs a login action of the bot's own, which is not on offer to admins (stored as `actionSource: builtin`); so do the [service logins](#service-logins) (`actionSource: service`). Plugin actions are planned (phase 2), not available yet. |
 | **Reply** | The action's answer, shown to the user: text, embeds and link buttons. One reply model serves every trigger. |
 
 A behavior has a title (at most 100 characters), an optional admin note
@@ -213,7 +214,9 @@ For one message, several triggers can fire, one after another:
 
 - A trigger with **Stop after a match** stops the walk when it matches
   (also when the rate limit below dropped its request).
-- The system login always stops the walk, and is always checked first.
+- The system login always stops the walk, and is checked before every
+  custom trigger. Only the [service logins](#service-logins) come before
+  it; they always stop the walk too.
 
 Other limits:
 
@@ -363,6 +366,29 @@ Every attempt that reaches the switch is audited as
 `registration_failed` or `store_failed`). A request refused before it (a
 malformed body, a stale version, not an owner) is not.
 Resyncing the login's command is also owner-only.
+
+## Service logins
+
+A **service login** (a Service Behavior) logs the user in to a
+self-hosted service: a [service](service-login.md) added on the admin
+UI's Services page comes with one. It is a message trigger in DMs with
+the bot — by default exactly `!login-<audience>` (`regex`
+`^!login-<audience>$`) — whose action is fixed: the bot signs a
+120-second Service Token for whoever triggered it and answers privately
+with a link button to the service. How the service verifies the token is
+in [service-login.md](service-login.md).
+
+- Only its trigger changes: the pattern and the audience (who may log in
+  to the service). Its title follows the service's name; it cannot be
+  disabled, deleted, converted, reordered or given a webhook
+  (`409 system_immutable`). Deleting the service deletes it.
+- It is listed in the bot DM section, under the system login.
+- Service logins are checked **before** the system login (the default
+  `!login-<audience>` starts with the login's `!login`), and always stop
+  the walk. So that a service can never lock the owner out, a service
+  trigger that matches the login's pattern text is refused, and so is a
+  login trigger switch whose sample DM a service trigger would take.
+- Rate-limited like a webhook trigger (5 per 10 seconds per user).
 
 ## Webhook actions
 
@@ -531,10 +557,10 @@ silently dropped.
 
 | Route | Does |
 |-------|------|
-| `GET /api/behaviors` | `{ system, commands, messageTriggers }`, each with its derived `section`, its statistics and its `updatedAt`. Secrets appear only as `secretSet`. |
+| `GET /api/behaviors` | `{ system, services, commands, messageTriggers }` (`services`: the [service logins](#service-logins), each with its `service`), each with its derived `section`, its statistics and its `updatedAt`. Secrets appear only as `secretSet`. |
 | `GET /api/behaviors/schema` | The write routes' JSON schemas. |
 | `POST /api/behaviors` | Create a message trigger with its webhook. |
-| `PATCH /api/behaviors/:id` | Edit a message trigger or a command leaf. |
+| `PATCH /api/behaviors/:id` | Edit a message trigger or a command leaf; a service login takes only `patternKind`, `patternValue`, `audienceKind`, `audienceUserId`, `audienceGroupName` (and `ifUpdatedAt`). |
 | `DELETE /api/behaviors/:id` | Delete a message trigger or a command leaf. |
 | `PUT /api/behaviors/reorder` | `{ location, ids }`: the full new order of one location's message triggers (`bot_dm`, `guild:all`, `guild:<id>`, `channel:<guildId>:<channelId>`). |
 | `POST /api/behaviors/:id/test` | Test-fire the saved webhook action. |
@@ -548,6 +574,7 @@ silently dropped.
 | `POST /api/behavior-commands/:id/convert-to-subcommands` | Turn the root leaf into the first subcommand. |
 | `POST /api/behavior-commands/:id/resync` | Register the command again as stored (the login's: owner only). |
 | `PUT /api/behaviors/system/login/trigger` | Change the system login's trigger (owner only). |
+| `GET` / `POST /api/services`, `PUT` / `DELETE /api/services/:id` | The [services](service-login.md#setting-a-service-up): `{ name, audience, redirectUrl }`; a new service comes with its service login, a deleted one takes it along. `PUT` takes any of the three and `ifUpdatedAt`. Answers `{ services }` / `{ service }`; a taken audience is `409 name_conflict`. |
 | `GET` / `PUT /api/behavior-groups/:groupName/members` | Read or replace an audience group's members (at most 1000). |
 
 - **Errors** have one shape, `{ error: { code, message, field?, details? } }`,
@@ -604,6 +631,7 @@ Schema changes and the 2.0 upgrade are in
 | `src/modules/behavior/behavior-trigger-convert.ts`, `command-register-first.ts` | Converting a behavior between a message trigger and a command leaf; the register-first flow it shares with the login's trigger switch. |
 | `src/modules/behavior/webhook-action-input.ts`, `webhook-secret-rotate.ts` | Webhook intake and rotation. |
 | `src/modules/behavior/system-seed.service.ts`, `system-login-trigger.ts`, `system-login-trigger-route.ts`, `login-trigger-hint-route.ts` | The system login. |
+| `src/modules/behavior/service-routes.ts`, `service-behavior-rules.ts`, `src/modules/command-system/service-login-action.ts` | Services and their service logins ([service-login.md](service-login.md)). |
 | `src/modules/behavior/behavior-trigger.ts`, `regex-trigger-boot-check.ts`, `src/utils/linear-regex.ts` | Pattern matching; the linear-time regex engine and its startup check. |
 | `src/modules/command-system/behavior-rate-limits.ts` | Rate limits. |
 | `src/modules/command-system/interaction-dispatcher.service.ts` | Runs command triggers. |
