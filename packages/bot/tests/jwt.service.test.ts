@@ -267,4 +267,75 @@ describe("JwtService (Ed25519)", () => {
       expect(sigVerifies(token, after)).toBe(false);
     });
   });
+
+  describe("service tokens (#126)", () => {
+    const serviceClaims = {
+      sub: "user-1",
+      name: "Karyl",
+      avatar: null,
+      aud: "wiki",
+      iss: "https://karyl.example",
+    };
+
+    function segment(token: string, i: number): Record<string, unknown> {
+      return JSON.parse(
+        Buffer.from(token.split(".")[i], "base64url").toString("utf-8"),
+      );
+    }
+
+    it("carry the key's kid and verify against its JWK", () => {
+      const svc = new JwtService(newKey(), "7");
+      const { token } = svc.signService(serviceClaims);
+      expect(segment(token, 0)).toEqual({ alg: "EdDSA", typ: "JWT", kid: "7" });
+      const jwk = svc.publicJwk();
+      expect(jwk).toMatchObject({ kty: "OKP", crv: "Ed25519", kid: "7" });
+      const [h, b, s] = token.split(".");
+      expect(
+        cryptoVerify(
+          null,
+          Buffer.from(`${h}.${b}`, "utf-8"),
+          createPublicKey({ key: { ...jwk }, format: "jwk" }),
+          Buffer.from(s, "base64url"),
+        ),
+      ).toBe(true);
+    });
+
+    it("follow the key on setKey", () => {
+      const svc = new JwtService(newKey(), "1");
+      svc.setKey(newKey(), "2");
+      expect(segment(svc.signService(serviceClaims).token, 0).kid).toBe("2");
+    });
+
+    it("live 120 s", () => {
+      const svc = new JwtService(newKey());
+      const now = 1_700_000_000_000;
+      const { token, expiresAt } = svc.signService(serviceClaims, { now });
+      const body = segment(token, 1);
+      expect(body.iat).toBe(1_700_000_000);
+      expect(body.exp).toBe(1_700_000_120);
+      expect(expiresAt).toBe(1_700_000_120_000);
+    });
+
+    it("refuse to sign without sub, name, aud or iss", () => {
+      const svc = new JwtService(newKey());
+      for (const field of ["sub", "name", "aud", "iss"] as const) {
+        expect(() => svc.signService({ ...serviceClaims, [field]: "" })).toThrow(
+          new RegExp(field),
+        );
+      }
+    });
+
+    it("are never accepted as bot tokens", () => {
+      const svc = new JwtService(newKey());
+      const { token } = svc.signService(serviceClaims);
+      expect(svc.verify(token)).toBeNull();
+      expect(svc.verify(token, { purpose: "login" })).toBeNull();
+    });
+
+    it("verify() refuses any token carrying aud, even with login claims", () => {
+      const svc = new JwtService(newKey());
+      const { token } = svc.sign({ ...loginClaims, aud: "wiki" } as JwtClaims);
+      expect(svc.verify(token, { purpose: "login" })).toBeNull();
+    });
+  });
 });

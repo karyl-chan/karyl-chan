@@ -92,6 +92,7 @@ import {
 import { registerPluginProxy } from "../plugin-system/plugin-proxy.js";
 import { STRICT_RPC_AJV_OPTIONS } from "../plugin-system/plugin-rpc-schema.js";
 import { registerModuleRoutes } from "./module-routes.js";
+import { registerJwksRoute } from "./jwks-route.js";
 import {
   pluginAuthStore,
   type PluginAuthRecord,
@@ -683,6 +684,11 @@ export async function createWebServer(
       (reply as unknown as { elapsedTime?: number }).elapsedTime ?? 0;
     httpRequestDuration.observe(labels, elapsedMs / 1000);
   });
+
+  // Public key set for service tokens (#126). Outside /api, so it must be
+  // a registered route — the SPA not-found handler below would serve
+  // index.html for it.
+  registerJwksRoute(server);
 
   // Business-module routes — delegated to a single aggregator so this
   // file stays focused on web infrastructure (Fastify, auth/throttle

@@ -3,6 +3,8 @@ import {
   createPublicKey,
   generateKeyPairSync,
   hkdfSync,
+  randomBytes,
+  randomUUID,
   sign as cryptoSign,
   verify as cryptoVerify,
   type KeyObject,
@@ -13,12 +15,20 @@ import { decryptSecret, encryptSecret } from "../../utils/crypto.js";
 import {
   getActiveJwtSigningKey,
   insertActiveJwtSigningKey,
+  listJwtSigningKeyHistory,
 } from "./models/jwt-signing-key.model.js";
 
 const log = moduleLogger("jwt");
 
 const DEFAULT_TTL_MS = config.jwt.loginLinkTtlMs;
 const KEY_ALGORITHM = "ed25519";
+/** Service tokens live 120 s: long enough to click a DM link, no longer. */
+export const SERVICE_TOKEN_TTL_SECONDS = 120;
+/**
+ * How long a deactivated key stays in the JWKS. Service tokens live 120 s,
+ * so this is a generous grace for services that cache the key set.
+ */
+export const JWKS_RETIRED_KEY_GRACE_MS = 24 * 60 * 60 * 1000;
 
 /**
  * PKCS8 DER prefix for an Ed25519 private key: SEQUENCE { version, OID
@@ -62,6 +72,15 @@ const PLUGIN_SESSION_KEY_SALT = Buffer.from("karyl-plugin-session-sign-v1");
  *
  * Stateless: a token validates iff its EdDSA signature checks out, its
  * `purpose` matches (when required), and its `exp` hasn't passed.
+ *
+ * Service tokens (#126) are the one other shape: tokens for self-hosted
+ * services that log in through karyl. They are signed with the same
+ * master key but carry a `kid` header and standard claims (`sub`, `aud`,
+ * `iss`, `jti`, …) instead of `purpose`/`userId`, and the service — not
+ * the bot — verifies them, against the key set published at
+ * `/.well-known/jwks.json` ({@link getJwks}). The two shapes do not
+ * cross: {@link JwtService.verify} refuses anything carrying `aud`, and a
+ * login token has neither the `kid` nor the `aud` a service checks.
  */
 
 export interface JwtClaims {
@@ -99,6 +118,34 @@ export interface SignOptions {
   now?: number;
 }
 
+/** What a service token says about the user, and for which service. */
+export interface ServiceTokenClaims {
+  /** Discord user id. */
+  sub: string;
+  /** Display name. */
+  name: string;
+  /** Avatar URL, or null when the user has none. */
+  avatar: string | null;
+  /** The service's audience. */
+  aud: string;
+  /** The bot's public base URL. */
+  iss: string;
+}
+
+/** One entry of the published key set (RFC 7517 / RFC 8037 OKP key). */
+export interface PublicJwk {
+  kty: "OKP";
+  crv: "Ed25519";
+  x: string;
+  kid: string;
+  alg: "EdDSA";
+  use: "sig";
+}
+
+export interface Jwks {
+  keys: PublicJwk[];
+}
+
 export interface VerifyOptions {
   /** Override `now` for tests. */
   now?: number;
@@ -126,6 +173,21 @@ function base64urlDecode(input: string): Buffer {
   return Buffer.from(padded, "base64");
 }
 
+function publicJwkOf(publicKey: KeyObject, kid: string): PublicJwk {
+  const { x } = publicKey.export({ format: "jwk" }) as { x?: string };
+  if (!x) throw new Error("public key has no JWK x coordinate");
+  return { kty: "OKP", crv: "Ed25519", x, kid, alg: "EdDSA", use: "sig" };
+}
+
+/**
+ * `kid` for a key that has no `jwt_signing_keys` row (the boot placeholder,
+ * the ephemeral fallback, test instances). Random, so a restart on the
+ * fallback never reuses a `kid` a service may have cached.
+ */
+function ephemeralKeyId(): string {
+  return `ephemeral-${randomBytes(6).toString("hex")}`;
+}
+
 function assertEd25519(key: KeyObject): void {
   if (key.asymmetricKeyType !== KEY_ALGORITHM) {
     throw new Error(
@@ -138,6 +200,8 @@ export class JwtService {
   private privateKey: KeyObject;
   private publicKey: KeyObject;
   private publicKeyPemCache: string;
+  /** `kid` of the signing key: its `jwt_signing_keys` row id. */
+  private keyIdValue: string;
   /**
    * Memoized per-plugin session-signing keys, keyed by pluginKey. Cleared
    * by {@link setKey} so a master-key rotation re-derives every plugin's
@@ -148,8 +212,9 @@ export class JwtService {
     { priv: KeyObject; pubPem: string }
   >();
 
-  constructor(privateKey: KeyObject) {
+  constructor(privateKey: KeyObject, keyId: string = ephemeralKeyId()) {
     assertEd25519(privateKey);
+    this.keyIdValue = keyId;
     this.privateKey = privateKey;
     this.publicKey = createPublicKey(privateKey);
     this.publicKeyPemCache = this.publicKey
@@ -160,10 +225,12 @@ export class JwtService {
   /**
    * Swap in a new signing key (used at boot to install the DB-stored key
    * over the bootstrap placeholder, and on rotation). Re-derives the
-   * public key.
+   * public key. `keyId` is the key's `jwt_signing_keys` row id; omitted
+   * for a key that has no row.
    */
-  setKey(privateKey: KeyObject): void {
+  setKey(privateKey: KeyObject, keyId: string = ephemeralKeyId()): void {
     assertEd25519(privateKey);
+    this.keyIdValue = keyId;
     this.privateKey = privateKey;
     this.publicKey = createPublicKey(privateKey);
     this.publicKeyPemCache = this.publicKey
@@ -177,6 +244,51 @@ export class JwtService {
   /** SPKI PEM the bot publishes so others can verify bot-issued JWTs. */
   publicKeyPem(): string {
     return this.publicKeyPemCache;
+  }
+
+  /** `kid` service tokens carry: the signing key's row id. */
+  keyId(): string {
+    return this.keyIdValue;
+  }
+
+  /** The signing key as a JWKS entry. */
+  publicJwk(): PublicJwk {
+    return publicJwkOf(this.publicKey, this.keyIdValue);
+  }
+
+  /**
+   * Sign a service token: header `{alg, typ, kid}`, the claims plus a
+   * fresh `jti`, `iat` and `exp = iat + 120`. The bot never verifies these
+   * itself — the service does, against the JWKS — and karyl does not track
+   * `jti`: rejecting a reused one is the service's job.
+   */
+  signService(
+    claims: ServiceTokenClaims,
+    options: { now?: number } = {},
+  ): { token: string; jti: string; expiresAt: number } {
+    for (const field of ["sub", "name", "aud", "iss"] as const) {
+      if (typeof claims[field] !== "string" || !claims[field]) {
+        throw new Error(`service token ${field} is required`);
+      }
+    }
+    const iat = Math.floor((options.now ?? Date.now()) / 1000);
+    const exp = iat + SERVICE_TOKEN_TTL_SECONDS;
+    const jti = randomUUID();
+    const token = this.signSegments(
+      { alg: "EdDSA", typ: "JWT", kid: this.keyIdValue },
+      {
+        sub: claims.sub,
+        name: claims.name,
+        avatar: claims.avatar,
+        aud: claims.aud,
+        iss: claims.iss,
+        jti,
+        iat,
+        exp,
+      },
+      this.privateKey,
+    );
+    return { token, jti, expiresAt: exp * 1000 };
   }
 
   sign(
@@ -205,9 +317,20 @@ export class JwtService {
       iat: Math.floor(now / 1000),
       exp: Math.floor(expiresAt / 1000),
     };
-    const headerSeg = base64urlEncode(
-      JSON.stringify({ alg: "EdDSA", typ: "JWT" }),
+    const token = this.signSegments(
+      { alg: "EdDSA", typ: "JWT" },
+      payload,
+      privateKey,
     );
+    return { token, expiresAt };
+  }
+
+  private signSegments(
+    header: Record<string, string>,
+    payload: object,
+    privateKey: KeyObject,
+  ): string {
+    const headerSeg = base64urlEncode(JSON.stringify(header));
     const bodySeg = base64urlEncode(JSON.stringify(payload));
     const signingInput = `${headerSeg}.${bodySeg}`;
     // Ed25519: the algorithm argument to crypto.sign MUST be null —
@@ -215,7 +338,7 @@ export class JwtService {
     const signatureSeg = base64urlEncode(
       cryptoSign(null, Buffer.from(signingInput, "utf-8"), privateKey),
     );
-    return { token: `${signingInput}.${signatureSeg}`, expiresAt };
+    return `${signingInput}.${signatureSeg}`;
   }
 
   /**
@@ -333,6 +456,9 @@ export class JwtService {
     const p = body as Record<string, unknown>;
 
     if (typeof p.exp !== "number" || p.exp * 1000 <= now) return null;
+    // A service token (same key, `aud`-scoped to one service) is never a
+    // bot token — refuse it before anything else could match.
+    if (p.aud !== undefined) return null;
     if (typeof p.purpose !== "string" || !p.purpose) return null;
     if (typeof p.userId !== "string" || !p.userId) return null;
     if (p.guildId !== null && typeof p.guildId !== "string") return null;
@@ -387,6 +513,14 @@ export const jwtService = new JwtService(
 /** Whether the persisted DB key has been installed (vs. the boot placeholder). */
 let dbKeyInstalled = false;
 
+/**
+ * The last JWKS built, so a flood of key-set fetches never reaches the DB.
+ * Dropped whenever the signing key changes; otherwise rebuilt after
+ * {@link JWKS_CACHE_MS} so retired keys age out.
+ */
+let jwksCache: { jwks: Jwks; builtAt: number } | null = null;
+const JWKS_CACHE_MS = 60_000;
+
 function privateKeyToB64Der(key: KeyObject): string {
   return key.export({ type: "pkcs8", format: "der" }).toString("base64");
 }
@@ -407,12 +541,13 @@ async function generateAndPersist(): Promise<string> {
   const publicKeyPem = createPublicKey(privateKey)
     .export({ type: "spki", format: "pem" })
     .toString();
-  await insertActiveJwtSigningKey({
+  const row = await insertActiveJwtSigningKey({
     algorithm: KEY_ALGORITHM,
     privateKeyEnc: encryptSecret(privateKeyToB64Der(privateKey)),
     publicKeyPem,
   });
-  jwtService.setKey(privateKey);
+  jwtService.setKey(privateKey, String(row.id));
+  jwksCache = null;
   return publicKeyPem;
 }
 
@@ -428,8 +563,12 @@ export async function initJwtSigningAuthority(): Promise<void> {
   try {
     const row = await getActiveJwtSigningKey();
     if (row) {
-      jwtService.setKey(privateKeyFromB64Der(decryptSecret(row.privateKeyEnc)));
+      jwtService.setKey(
+        privateKeyFromB64Der(decryptSecret(row.privateKeyEnc)),
+        String(row.id),
+      );
       dbKeyInstalled = true;
+      jwksCache = null;
       log.info({ keyId: row.id }, "JWT signing key loaded from DB");
       return;
     }
@@ -449,7 +588,9 @@ export async function initJwtSigningAuthority(): Promise<void> {
 /**
  * Admin-triggered key rotation: generate a fresh key, persist it as the
  * active one, and swap it in. Plugins pick up the new public key on
- * their next heartbeat; all previously-issued tokens become invalid.
+ * their next heartbeat; all previously-issued bot tokens become invalid.
+ * (Service tokens are verified by the services, which still find the old
+ * key in the JWKS for {@link JWKS_RETIRED_KEY_GRACE_MS}.)
  * Returns the new public key PEM. Throws if the new key can't be
  * persisted (so a rotation is never silently in-memory-only).
  */
@@ -496,4 +637,31 @@ export async function getJwtPublicKeyInfo(): Promise<{
     persisted: true,
     createdAt: row?.createdAt ?? null,
   };
+}
+
+/**
+ * The key set services verify service tokens against: the active signing
+ * key, plus every key deactivated within {@link JWKS_RETIRED_KEY_GRACE_MS}
+ * (a key is deactivated when its successor row is created). `kid` is the
+ * key's row id. On the ephemeral fallback there are no rows — the set is
+ * just the in-memory key.
+ */
+export async function getJwks(options: { now?: number } = {}): Promise<Jwks> {
+  const now = options.now ?? Date.now();
+  const age = jwksCache ? now - jwksCache.builtAt : -1;
+  if (jwksCache && age >= 0 && age < JWKS_CACHE_MS) return jwksCache.jwks;
+  const keys: PublicJwk[] = [jwtService.publicJwk()];
+  if (dbKeyInstalled) {
+    const history = await listJwtSigningKeyHistory();
+    history.forEach((row, i) => {
+      const successor = history[i + 1];
+      if (row.active || !successor) return;
+      if (String(row.id) === jwtService.keyId()) return;
+      if (now - successor.createdAt.getTime() > JWKS_RETIRED_KEY_GRACE_MS) return;
+      keys.push(publicJwkOf(createPublicKey(row.publicKeyPem), String(row.id)));
+    });
+  }
+  const jwks: Jwks = { keys };
+  jwksCache = { jwks, builtAt: now };
+  return jwks;
 }
