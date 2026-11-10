@@ -15,7 +15,11 @@
  *     command is not answered privately)
  *   - only https link buttons; a refused or failed call is a failed
  *     delivery of the behavior
- *   - writes are throttled per behavior
+ *   - respond always works on the message that holds the reply now, so a
+ *     later respond edits (or replaces) what the user sees
+ *   - a token ends 15 minutes after the interaction was created
+ *   - a callback respond is never overwritten by the synchronous answer
+ *   - writes are throttled per behavior, 60 a minute
  */
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -76,14 +80,18 @@ let receiverUrl: string;
 /** What the receiver answers next, and the raw bodies it got. */
 let answer: { status: number; body: string } = { status: 200, body: "" };
 let received: string[] = [];
+/** Runs before the receiver answers: a receiver calling back early. */
+let beforeAnswer: ((body: string) => Promise<void>) | null = null;
 
 beforeAll(async () => {
   await sequelize.sync({ force: true });
   receiver = createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on("data", (c: Buffer) => chunks.push(c));
-    req.on("end", () => {
-      received.push(Buffer.concat(chunks).toString("utf8"));
+    req.on("end", async () => {
+      const body = Buffer.concat(chunks).toString("utf8");
+      received.push(body);
+      if (beforeAnswer) await beforeAnswer(body);
       res.writeHead(answer.status, { "content-type": "application/json" });
       res.end(answer.body);
     });
@@ -98,7 +106,7 @@ afterAll(async () => {
 
 // ── the bot side ─────────────────────────────────────────────────────────────
 
-function fakeSlash(commandName = "slow") {
+function fakeSlash(commandName = "slow", createdTimestamp?: number) {
   let followups = 0;
   const raw = {
     isChatInputCommand: () => true,
@@ -108,6 +116,7 @@ function fakeSlash(commandName = "slow") {
     isModalSubmit: () => false,
     id: "ix1",
     token: DISCORD_TOKEN,
+    createdTimestamp,
     applicationId: "app1",
     commandName,
     commandGuildId: null,
@@ -147,8 +156,12 @@ function fakeSlash(commandName = "slow") {
 type FakeSlash = ReturnType<typeof fakeSlash>;
 
 /** A deferred command run of `behaviorId` and its callback token, without a webhook. */
-async function deferredRun(behaviorId: number, visibility: ReplyVisibility | null = null) {
-  const raw = fakeSlash();
+async function deferredRun(
+  behaviorId: number,
+  visibility: ReplyVisibility | null = null,
+  createdTimestamp?: number,
+) {
+  const raw = fakeSlash("slow", createdTimestamp);
   await raw.deferReply(visibility === "public" ? {} : { flags: MessageFlags.Ephemeral });
   const { token } = behaviorCallbackTokens.issue({
     behaviorId,
@@ -190,6 +203,7 @@ beforeEach(async () => {
   await clearBehaviors();
   answer = { status: 200, body: "" };
   received = [];
+  beforeAnswer = null;
   server = await createWebServer({ staticRoot: undefined, bot: fakeBot as never });
   await server.ready();
 });
@@ -207,6 +221,9 @@ function call(path: string, token: string, payload: Record<string, unknown> = {}
     payload,
   });
 }
+
+const tokenOf = (body: string) =>
+  (JSON.parse(body) as { _meta: { callback: { token: string } } })._meta.callback.token;
 
 const dispatch = (raw: FakeSlash) =>
   new InteractionDispatcher(new WebhookForwarder()).dispatch(raw as unknown as Interaction);
@@ -321,17 +338,26 @@ describe("the callback principal", () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it("a token is 401 once 15 minutes have passed", async () => {
+  it("a token is 401 once 15 minutes have passed since the command was used", async () => {
     const id = await seedSlowLeaf();
-    const { raw, token } = await deferredRun(id);
-    const issuedAt = Date.now();
+    // the command was used 14 minutes before the token was issued
+    const createdAt = Date.now() - 14 * 60 * 1000;
+    const { raw, token } = await deferredRun(id, null, createdAt);
     const now = vi.spyOn(Date, "now");
 
-    now.mockReturnValue(issuedAt + CALLBACK_TOKEN_TTL_MS - 1000);
+    now.mockReturnValue(createdAt + CALLBACK_TOKEN_TTL_MS - 1000);
     expect((await call("interactions.respond", token, { content: "in time" })).statusCode).toBe(200);
-    now.mockReturnValue(issuedAt + CALLBACK_TOKEN_TTL_MS + 1000);
+    now.mockReturnValue(createdAt + CALLBACK_TOKEN_TTL_MS + 1000);
     expect((await call("interactions.respond", token, { content: "late" })).statusCode).toBe(401);
     expect(raw.editReply).toHaveBeenCalledTimes(1);
+  });
+
+  it("expires_at is the interaction's creation plus 15 minutes", async () => {
+    await seedSlowLeaf();
+    const createdAt = Date.now() - 60_000;
+    await dispatch(fakeSlash("slow", createdAt));
+    const meta = (JSON.parse(received[0]!) as { _meta: { callback: { expires_at: string } } })._meta;
+    expect(Date.parse(meta.callback.expires_at)).toBe(createdAt + CALLBACK_TOKEN_TTL_MS);
   });
 
   it("ignores an interaction_token in the body: it answers its own run only", async () => {
@@ -380,6 +406,117 @@ describe("who sees a callback reply", () => {
       allowedMentions: { parse: [] },
       flags: MessageFlags.Ephemeral,
     });
+  });
+});
+
+// ── respond, again ───────────────────────────────────────────────────────────
+
+describe("respond works on the reply as it is now", () => {
+  it("after a respond went public on a private command, the next respond edits that message", async () => {
+    const id = await seedSlowLeaf();
+    const { raw, token } = await deferredRun(id);
+    await call("interactions.respond", token, { content: "everyone", ephemeral: false });
+    expect(raw.followUp).toHaveBeenCalledTimes(1);
+    expect(raw.deleteReply).toHaveBeenCalledWith();
+
+    const res = await call("interactions.respond", token, { content: "everyone, updated" });
+
+    expect(res.statusCode).toBe(200);
+    expect(raw.editReply).toHaveBeenCalledTimes(1);
+    expect(raw.editReply).toHaveBeenCalledWith({
+      content: "everyone, updated",
+      allowedMentions: { parse: [] },
+      message: "F1",
+    });
+    expect(raw.followUp).toHaveBeenCalledTimes(1);
+  });
+
+  it("switching back to private replaces the public message", async () => {
+    const id = await seedSlowLeaf();
+    const { raw, token } = await deferredRun(id);
+    await call("interactions.respond", token, { content: "everyone", ephemeral: false });
+    await call("interactions.respond", token, { content: "just you", ephemeral: true });
+    expect(raw.followUp).toHaveBeenLastCalledWith({
+      content: "just you",
+      allowedMentions: { parse: [] },
+      flags: MessageFlags.Ephemeral,
+    });
+    expect(raw.deleteReply).toHaveBeenLastCalledWith("F1");
+  });
+
+  it("after a synchronous answer that went public, respond edits that answer", async () => {
+    const id = await seedSlowLeaf();
+    answer = { status: 200, body: JSON.stringify({ content: "working", ephemeral: false }) };
+    const raw = fakeSlash();
+    await dispatch(raw);
+    expect(raw.followUp).toHaveBeenCalledTimes(1);
+
+    const res = await call("interactions.respond", tokenOf(received[0]!), { content: "done" });
+
+    expect(res.statusCode).toBe(200);
+    expect(raw.editReply).toHaveBeenCalledWith({ content: "done", allowedMentions: { parse: [] }, message: "F1" });
+    expect(raw.followUp).toHaveBeenCalledTimes(1);
+    expect(await findRecentDeliveries(id)).toHaveLength(1);
+  });
+
+  it("after an empty synchronous answer removed the placeholder, respond sends a new reply, then edits it", async () => {
+    await seedSlowLeaf();
+    answer = { status: 200, body: "" };
+    const raw = fakeSlash();
+    await dispatch(raw);
+    expect(raw.deleteReply).toHaveBeenCalledWith();
+    const token = tokenOf(received[0]!);
+
+    await call("interactions.respond", token, { content: "here after all" });
+    expect(raw.followUp).toHaveBeenCalledWith({
+      content: "here after all",
+      allowedMentions: { parse: [] },
+      flags: MessageFlags.Ephemeral,
+    });
+    expect(raw.editReply).not.toHaveBeenCalled();
+
+    await call("interactions.respond", token, { content: "and updated" });
+    expect(raw.editReply).toHaveBeenCalledWith({ content: "and updated", allowedMentions: { parse: [] }, message: "F1" });
+    expect(raw.followUp).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── the receiver calls back before it answers ────────────────────────────────
+
+describe("a callback respond before the synchronous answer", () => {
+  it("is not overwritten by the synchronous answer", async () => {
+    const id = await seedSlowLeaf();
+    answer = { status: 200, body: JSON.stringify({ content: "sync answer" }) };
+    beforeAnswer = async (body) => {
+      const res = await call("interactions.respond", tokenOf(body), { content: "callback answer" });
+      expect(res.statusCode).toBe(200);
+    };
+    const raw = fakeSlash();
+
+    await dispatch(raw);
+
+    expect(raw.editReply).toHaveBeenCalledTimes(1);
+    expect(raw.editReply).toHaveBeenCalledWith({ content: "callback answer", allowedMentions: { parse: [] } });
+    const [delivery] = await findRecentDeliveries(id);
+    expect(delivery).toMatchObject({ ok: true, deferred: true });
+  });
+
+  it("keeps its answer when the synchronous request then fails: no failure line, the token lives on", async () => {
+    const id = await seedSlowLeaf();
+    answer = { status: 500, body: "boom" };
+    let token = "";
+    beforeAnswer = async (body) => {
+      token = tokenOf(body);
+      await call("interactions.respond", token, { content: "callback answer" });
+    };
+    const raw = fakeSlash();
+
+    await dispatch(raw);
+
+    expect(raw.editReply).toHaveBeenCalledTimes(1);
+    expect(raw.followUp).not.toHaveBeenCalled();
+    expect((await findRecentDeliveries(id))[0]).toMatchObject({ ok: false, errorCode: "http_error" });
+    expect((await call("interactions.followup", token, { content: "more" })).statusCode).toBe(200);
   });
 });
 
@@ -476,12 +613,12 @@ describe("a refused or failed call", () => {
 // ── throttling ───────────────────────────────────────────────────────────────
 
 describe("write throttling", () => {
-  it("is per behavior: 600 a minute, then 429, while another behavior goes on", async () => {
+  it("is per behavior: 60 a minute, then 429, while another behavior goes on", async () => {
     const busy = await seedSlowLeaf();
     const other = await seedLeaf(await seedCommand({ name: "other" }));
     const { token } = await deferredRun(busy);
     const { token: otherToken } = await deferredRun(other);
-    for (let i = 0; i < 600; i++) {
+    for (let i = 0; i < 60; i++) {
       const res = await call("interactions.respond", token, { content: `#${i}` });
       expect(res.statusCode).toBe(200);
     }
@@ -490,5 +627,5 @@ describe("write throttling", () => {
     const { token: sameBehavior } = await deferredRun(busy);
     expect((await call("interactions.followup", sameBehavior, { content: "x" })).statusCode).toBe(429);
     expect((await call("interactions.respond", otherToken, { content: "fine" })).statusCode).toBe(200);
-  }, 60_000);
+  });
 });

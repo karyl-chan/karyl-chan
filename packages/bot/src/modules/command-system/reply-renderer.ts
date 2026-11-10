@@ -10,6 +10,8 @@
  *     (`planRespond`): same visibility → fill the placeholder in place;
  *     public → follow up publicly, then delete the placeholder. Not yet
  *     acknowledged (the built-in login answers at once) → reply directly.
+ *     A behavior callback (#113) passes the message that holds the reply
+ *     now (`replyMessage`), so a later answer edits or replaces that one.
  *   message — a Message Trigger. In a DM with the bot `ephemeral` changes
  *     nothing; in a guild channel the reply is public by default and
  *     `ephemeral: true` DMs the author instead — never the channel, also
@@ -44,8 +46,23 @@ export type ReplyTarget =
   | { kind: "interaction"; interaction: ChatInputCommandInteraction }
   | { kind: "message"; message: Message };
 
+/**
+ * The message that holds a command's reply: `@original` (the placeholder,
+ * or the direct reply) or a follow-up id, and whether only the invoker
+ * sees it (fixed when the message was made).
+ */
+export interface ReplySlot {
+  messageId: string;
+  ephemeral: boolean;
+}
+
 export type RenderOutcome =
-  | { ok: true; via: "interaction" | "channel" | "dm" | "none" }
+  | {
+      ok: true;
+      via: "interaction" | "channel" | "dm" | "none";
+      /** A command's reply message after the render; null: there is none. */
+      replyMessage?: ReplySlot | null;
+    }
   /** `dmFailed`: an ephemeral guild reply could not reach the author. */
   | { ok: false; error: string; dmFailed?: true };
 
@@ -71,6 +88,12 @@ export interface RenderOptions {
    * itself does not say `ephemeral`; null = the target's own default.
    */
   visibility?: ReplyVisibility | null;
+  /**
+   * A command: the message holding its reply now (a behavior callback
+   * keeps track of it, #113); null = none any more. Unset: the
+   * interaction's own placeholder, when it was acknowledged.
+   */
+  replyMessage?: ReplySlot | null;
 }
 
 /**
@@ -95,23 +118,42 @@ export async function renderReply(
   if (resolved.ephemeral === undefined) delete resolved.ephemeral;
   try {
     return target.kind === "interaction"
-      ? await renderToInteraction(resolved, target.interaction)
+      ? await renderToInteraction(resolved, target.interaction, opts.replyMessage)
       : await renderToMessage(resolved, target.message);
   } catch (err) {
     return { ok: false, error: errorText(err) };
   }
 }
 
+const slotOf = (sent: unknown, ephemeral: boolean): ReplySlot | null => {
+  const id = (sent as { id?: unknown } | null | undefined)?.id;
+  return typeof id === "string" ? { messageId: id, ephemeral } : null;
+};
+
+/** Edit `@original` or a follow-up. */
+const editMessage = (interaction: ChatInputCommandInteraction, messageId: string, body: object) =>
+  interaction.editReply(messageId === "@original" ? body : { ...body, message: messageId });
+
+const deleteMessage = (interaction: ChatInputCommandInteraction, messageId: string) =>
+  messageId === "@original" ? interaction.deleteReply() : interaction.deleteReply(messageId);
+
 async function renderToInteraction(
   reply: BehaviorReply,
   interaction: ChatInputCommandInteraction,
+  current: ReplySlot | null | undefined,
 ): Promise<RenderOutcome> {
   const acked = interaction.deferred || interaction.replied;
   const extraFlags = reply.flags ?? 0;
+  const slot =
+    current !== undefined
+      ? current
+      : acked
+        ? { messageId: "@original", ephemeral: interaction.ephemeral ?? true }
+        : null;
 
   if (!hasVisibleReply(reply)) {
-    if (acked) await interaction.deleteReply();
-    return { ok: true, via: "none" };
+    if (slot) await deleteMessage(interaction, slot.messageId);
+    return { ok: true, via: "none", replyMessage: null };
   }
 
   const body = messageBody(reply);
@@ -120,28 +162,32 @@ async function renderToInteraction(
     await interaction.reply(
       withFlags(body, (ephemeral ? MessageFlags.Ephemeral : 0) | extraFlags),
     );
-    return { ok: true, via: "interaction" };
+    return { ok: true, via: "interaction", replyMessage: { messageId: "@original", ephemeral } };
   }
 
-  // Deferred: Discord fixed the placeholder's visibility at defer time.
-  const plan = planRespond(
-    { kind: "reply", ephemeral: interaction.ephemeral ?? true },
-    reply.ephemeral,
-  );
+  if (!slot) {
+    // the reply message is gone (an empty answer deleted it): a new one
+    const ephemeral = reply.ephemeral ?? true;
+    const sent = await interaction.followUp(
+      withFlags(body, (ephemeral ? MessageFlags.Ephemeral : 0) | extraFlags),
+    );
+    return { ok: true, via: "interaction", replyMessage: slotOf(sent, ephemeral) };
+  }
+
+  // Discord fixed the message's visibility when it was made.
+  const plan = planRespond({ kind: "reply", ephemeral: slot.ephemeral }, reply.ephemeral);
   if (plan.action === "patch-original") {
     // an edit can only carry SuppressEmbeds
-    await interaction.editReply(
-      withFlags(body, extraFlags & MessageFlags.SuppressEmbeds),
-    );
-    return { ok: true, via: "interaction" };
+    await editMessage(interaction, slot.messageId, withFlags(body, extraFlags & MessageFlags.SuppressEmbeds));
+    return { ok: true, via: "interaction", replyMessage: slot };
   }
-  await interaction.followUp(
+  const sent = await interaction.followUp(
     withFlags(body, (plan.ephemeral ? MessageFlags.Ephemeral : 0) | extraFlags),
   );
-  // The reply already landed; a placeholder left behind only lingers
+  // The reply already landed; a message left behind only lingers
   // until Discord expires it.
-  await interaction.deleteReply().catch(() => {});
-  return { ok: true, via: "interaction" };
+  await deleteMessage(interaction, slot.messageId).catch(() => {});
+  return { ok: true, via: "interaction", replyMessage: slotOf(sent, plan.ephemeral) };
 }
 
 /**
@@ -172,10 +218,11 @@ export async function editFollowup(
   messageId: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
-    await interaction.editReply({
-      ...withFlags(messageBody(reply), (reply.flags ?? 0) & MessageFlags.SuppressEmbeds),
-      message: messageId,
-    });
+    await editMessage(
+      interaction,
+      messageId,
+      withFlags(messageBody(reply), (reply.flags ?? 0) & MessageFlags.SuppressEmbeds),
+    );
     return { ok: true };
   } catch (err) {
     return { ok: false, error: errorText(err) };
@@ -187,7 +234,7 @@ export async function deleteFollowup(
   messageId: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
-    await interaction.deleteReply(messageId);
+    await deleteMessage(interaction, messageId);
     return { ok: true };
   } catch (err) {
     return { ok: false, error: errorText(err) };

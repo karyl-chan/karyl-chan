@@ -48,6 +48,10 @@ const writeRateLimiter = new RateLimiter({ windowMs: 60_000, max: 30 });
 // throttle that into a death spiral, so plugin tokens get their own,
 // far higher ceiling (still enough to stop a runaway).
 const pluginWriteRateLimiter = new RateLimiter({ windowMs: 60_000, max: 600 });
+// A behavior callback token (#113) is held by an external receiver, not
+// trusted plugin code: its calls get a far lower ceiling, per behavior
+// (every run of the behavior shares it).
+const behaviorCallbackRateLimiter = new RateLimiter({ windowMs: 60_000, max: 60 });
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 // Interaction replies/followups must never be throttled — they're the
 // response to a user action (at most 1 + 5 followups per interaction),
@@ -358,7 +362,7 @@ export async function createWebServer(
     // receiver holds its token for 15 minutes.
     if (request.behaviorCallback) {
       if (
-        pluginWriteRateLimiter.isRateLimited(
+        behaviorCallbackRateLimiter.isRateLimited(
           `behavior:${request.behaviorCallback.behaviorId}`,
         )
       ) {

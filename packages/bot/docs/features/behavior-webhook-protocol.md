@@ -358,7 +358,7 @@ the run's **callback token**. Every command run gets one in
 | Key | Value |
 |-----|-------|
 | `token` | An opaque token for this run only. Not the Discord interaction token, which never leaves the bot. |
-| `expires_at` | When it stops working (ISO 8601): **15 minutes** after the run, like Discord's own interaction token. |
+| `expires_at` | When it stops working (ISO 8601): **15 minutes** after the command was used, when Discord's own interaction token ends. |
 | `api_base` | The bot's public base URL. |
 
 1. Answer the request within 10 seconds with `{"defer": true}`. The user
@@ -369,7 +369,7 @@ the run's **callback token**. Every command run gets one in
 
 | Method | Body | Does |
 |--------|------|------|
-| `interactions.respond` | a reply | Fills the "thinking…" placeholder (or replaces the reply you already gave). |
+| `interactions.respond` | a reply | The run's reply: fills the "thinking…" placeholder, or edits the reply already shown (your synchronous answer or an earlier `respond`). When the reply's visibility changes, or an empty answer removed it, a new message takes its place. |
 | `interactions.followup` | a reply | Sends a new message. Answers `{ ok: true, id }`. |
 | `interactions.edit_followup` | `message_id` and a reply | Edits a message this token sent with `followup`. |
 | `interactions.delete_followup` | `message_id` | Deletes a message this token sent with `followup`. |
@@ -388,7 +388,11 @@ plugin form of these methods takes, may be left out and is ignored.
 - The token is revoked when the run fails (the user has already seen the
   failure line). Answering synchronously does not revoke it: you may still
   follow up.
-- Calls are rate-limited per behavior (600 a minute); over it, `429`.
+- Once a `respond` has landed, the synchronous answer of the same run is
+  not shown, even if it arrives later (the delivery is marked deferred),
+  and a late failure of that request shows no failure line.
+- Calls are rate-limited per behavior, across all its runs (60 a minute);
+  over it, `429`.
 - A call the bot refuses (`callback_invalid`) or Discord refuses
   (`callback_failed`) is a failed delivery of the behavior. A call that
   works is not logged.

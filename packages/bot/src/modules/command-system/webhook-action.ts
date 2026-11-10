@@ -14,6 +14,10 @@
  * `_meta.callback`: the receiver may answer `{"defer": true}` and reply
  * later with it. A deferred run is an ok delivery marked `deferred`; a
  * failed run's token is revoked, since the user was already told.
+ * The synchronous answer and the callback calls take turns on the reply
+ * (serializeReply); once a callback `respond` has landed, a synchronous
+ * answer — or failure line — arriving after it is not shown, and the
+ * delivery is marked `deferred` (its reply came through the token).
  */
 
 import type { BehaviorWebhookActionRow } from "../behavior/models/behavior-webhook-action.model.js";
@@ -25,7 +29,15 @@ import {
 } from "../behavior/behavior-deliveries.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { renderFailure, renderReply, type ReplyTarget } from "./reply-renderer.js";
-import { behaviorCallbackTokens, callbackMetaOf } from "./behavior-callback-token.js";
+import {
+  behaviorCallbackTokens,
+  callbackMetaOf,
+  serializeReply,
+  type BehaviorCallbackPrincipal,
+  type CallbackMeta,
+} from "./behavior-callback-token.js";
+import type { BehaviorReply } from "./behavior-reply.js";
+import type { RenderOutcome } from "./reply-renderer.js";
 import type { ForwardResult } from "./types.js";
 import type { WebhookForwarder } from "./webhook-forwarder.service.js";
 
@@ -49,10 +61,32 @@ function forwardErrorCode(result: ForwardResult): DeliveryErrorCode {
 /** The payload with `_meta.callback` added. */
 function withCallback(
   payload: Record<string, unknown>,
-  callback: ReturnType<typeof callbackMetaOf>,
+  callback: CallbackMeta,
 ): Record<string, unknown> {
   const meta = (payload._meta ?? {}) as Record<string, unknown>;
   return { ...payload, _meta: { ...meta, callback } };
+}
+
+/**
+ * Show the synchronous answer — in the run's current reply message when
+ * it has a callback principal, and not at all ("superseded") when a
+ * callback `respond` already answered.
+ */
+async function renderAnswer(
+  run: WebhookActionRun,
+  principal: BehaviorCallbackPrincipal | null,
+  reply: BehaviorReply,
+): Promise<RenderOutcome | "superseded"> {
+  if (!principal) return renderReply(reply, run.target, { visibility: run.visibility });
+  return serializeReply(principal, async () => {
+    if (principal.answeredByCallback) return "superseded" as const;
+    const rendered = await renderReply(reply, run.target, {
+      visibility: run.visibility,
+      replyMessage: principal.replyMessage,
+    });
+    if (rendered.ok) principal.replyMessage = rendered.replyMessage ?? null;
+    return rendered;
+  });
 }
 
 export async function runWebhookAction(run: WebhookActionRun): Promise<void> {
@@ -63,6 +97,7 @@ export async function runWebhookAction(run: WebhookActionRun): Promise<void> {
     target.kind === "interaction"
       ? behaviorCallbackTokens.issue({ behaviorId, target, visibility: run.visibility })
       : null;
+  const principal = issued?.principal ?? null;
   const payload = issued ? withCallback(run.payload, callbackMetaOf(issued)) : run.payload;
   let deferred = false;
   const started = performance.now();
@@ -82,12 +117,11 @@ export async function runWebhookAction(run: WebhookActionRun): Promise<void> {
     verified = result.verified ?? null;
     if (!result.ok) errorCode = forwardErrorCode(result);
     // the placeholder stays; the receiver answers with the token
-    if (result.ok && issued && result.reply.defer) deferred = true;
+    if (result.ok && principal && result.reply.defer) deferred = true;
     else if (result.ok) {
-      const rendered = await renderReply(result.reply, target, {
-        visibility: run.visibility,
-      });
-      if (!rendered.ok) {
+      const rendered = await renderAnswer(run, principal, result.reply);
+      if (rendered === "superseded") deferred = true;
+      else if (!rendered.ok) {
         ok = false;
         unreachable = rendered.dmFailed === true;
         errorCode = unreachable ? "dm_failed" : "render_failed";
@@ -118,12 +152,21 @@ export async function runWebhookAction(run: WebhookActionRun): Promise<void> {
     deferred,
   });
   if (ok) return;
-  if (issued) behaviorCallbackTokens.revoke(issued.token);
   botEventLog.record(
     "warn",
     "bot",
     `webhook action of behavior ${behaviorId} failed (${target.kind}): ${error ?? "unknown"}`,
     { behaviorId, via: target.kind },
   );
-  if (!unreachable) await renderFailure(target);
+  if (unreachable) return;
+  if (!principal || !issued) {
+    await renderFailure(target);
+    return;
+  }
+  await serializeReply(principal, async () => {
+    // the receiver answered through the token: that answer stands
+    if (principal.answeredByCallback) return;
+    behaviorCallbackTokens.revoke(issued.token);
+    await renderFailure(target);
+  });
 }
