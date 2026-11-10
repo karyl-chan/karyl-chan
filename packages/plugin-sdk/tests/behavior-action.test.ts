@@ -364,6 +364,35 @@ describe("POST /behavior-actions/:actionKey", () => {
     }
   });
 
+  it("a refused followup the handler caught does not hide a later bug: the fallback still goes out", async () => {
+    const server = serverWith([
+      action({
+        handler: async (ctx) => {
+          await ctx.followup({ content: "refused" }).catch(() => null);
+          throw new Error("a real bug");
+        },
+      }),
+    ]);
+    (globalThis as unknown as { fetch: typeof fetch }).fetch = (async (url: string | URL, init?: RequestInit) => {
+      const path = new URL(String(url)).pathname;
+      calls.push({ path, authorization: null, body: JSON.parse(String(init?.body ?? "{}")) });
+      return path.endsWith("interactions.followup")
+        ? new Response("refused", { status: 400 })
+        : new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    try {
+      await post(server, "/behavior-actions/weather", commandPayload());
+      for (let i = 0; i < 50 && calls.length < 2; i++) await new Promise((r) => setTimeout(r, 10));
+      assert.deepEqual(
+        calls.map((c) => c.path),
+        ["/api/plugin/interactions.followup", "/api/plugin/interactions.respond"],
+      );
+      assert.equal(calls[1]!.body.ephemeral, true);
+    } finally {
+      await server.close();
+    }
+  });
+
   it("refuses an unknown action, a mismatched action_key and a missing callback token", async () => {
     const server = serverWith([action()]);
     try {

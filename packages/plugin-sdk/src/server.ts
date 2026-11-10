@@ -484,7 +484,7 @@ export const BEHAVIOR_ACTION_RPC_PATHS = {
 /** Why the bot refused a behavior action's callback-token call. */
 function callbackHint(status: number): string {
   if (status === 401) return " (the run's callback token expired — 15 minutes — or its run failed)";
-  if (status === 403) return " (a callback token only answers its own run: interactions.respond / followup / edit_followup / delete_followup)";
+  if (status === 403) return " (a callback token only answers its own run: ctx.reply / ctx.followup)";
   if (status === 429) return " (callback calls are limited per run)";
   return "";
 }
@@ -1251,14 +1251,16 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
 
       // the run's own answers: the callback token, never the plugin token
       let replied = false;
-      // a refused answer is not the handler's bug: no fallback line
-      // (it would be refused too) and not logged as a throw
-      let answerFailed = false;
+      // The errors an answer threw, by identity: one that reaches the
+      // catch below is not the handler's bug, so it gets no fallback line
+      // (it would go the same way) and is not logged as a throw. A
+      // handler that caught one and later threw something else is.
+      const answerErrors = new WeakSet<object>();
       const answer = async (path: string, body: BehaviorActionReply) => {
         try {
           return await callBotRpc(server.log, opts.botUrl, callbackToken, path, body, callbackHint);
         } catch (err) {
-          answerFailed = true;
+          if (err && typeof err === "object") answerErrors.add(err);
           throw err;
         }
       };
@@ -1310,8 +1312,12 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
         const result = await handler(ctx);
         if (result && typeof result === "object") await ctxReply(result);
       } catch (err) {
-        if (answerFailed) {
-          server.log.warn({ err, actionKey }, "behavior action reply refused by the bot");
+        if (err && typeof err === "object" && answerErrors.has(err)) {
+          const refused = err instanceof BotRpcError && err.status !== undefined;
+          server.log.warn(
+            { err, actionKey },
+            refused ? "behavior action reply refused by the bot" : "behavior action reply could not reach the bot",
+          );
           return;
         }
         server.log.error({ err, actionKey }, "behavior action handler threw");
