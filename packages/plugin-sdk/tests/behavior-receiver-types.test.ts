@@ -12,6 +12,7 @@ import {
   createNonceStore,
   createReceiver,
   verifyRequest,
+  type BehaviorCallback,
   type BehaviorReply,
   type BehaviorReplyEmbed,
   type BehaviorWebhookAttachment,
@@ -50,6 +51,12 @@ const messageMeta: Required<MessageTriggerMeta> = {
   captures: [],
 };
 
+const callback: Required<BehaviorCallback> = {
+  token: "t",
+  expires_at: "2026-11-10T00:15:00.000Z",
+  api_base: "https://karyl.example",
+};
+
 const commandMeta: Required<CommandTriggerMeta> = {
   interaction_id: "6",
   application_id: "7",
@@ -63,6 +70,7 @@ const commandMeta: Required<CommandTriggerMeta> = {
   options: [],
   behavior_id: 5,
   attachments: [],
+  callback,
 };
 
 const payload: Required<BehaviorWebhookPayload> = {
@@ -91,6 +99,7 @@ const reply: Required<BehaviorReply> = {
   components: [],
   ephemeral: true,
   flags: 0,
+  defer: true,
 };
 
 describe("behavior-receiver types, against the fixtures", () => {
@@ -102,6 +111,7 @@ describe("behavior-receiver types, against the fixtures", () => {
     assert.deepEqual(keys(commandMeta), sorted(request.slashMetaKeys));
     assert.deepEqual(keys(user), sorted(request.userKeys));
     assert.deepEqual(keys(attachment), sorted(request.attachmentKeys));
+    assert.deepEqual(keys(callback), sorted(request.callbackKeys));
   });
 
   it("type the reply's fields and embed whitelist", () => {

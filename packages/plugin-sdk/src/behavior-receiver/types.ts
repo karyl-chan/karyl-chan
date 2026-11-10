@@ -45,6 +45,20 @@ export interface CommandTriggerOption {
   value: string | number | boolean | null;
 }
 
+/**
+ * `_meta.callback`: this run's callback token. Send it as
+ * `Authorization: Bearer <token>` to `<api_base>/api/plugin/interactions.respond`,
+ * `.followup`, `.edit_followup` or `.delete_followup` to answer later
+ * (after `{ defer: true }`, or to follow up). Only this run's reply.
+ */
+export interface BehaviorCallback {
+  token: string;
+  /** ISO 8601; 15 minutes after the run. */
+  expires_at: string;
+  /** The bot's public base URL. */
+  api_base: string;
+}
+
 /** `_meta` of a command. An interaction has no message, so no `message_id`. */
 export interface CommandTriggerMeta {
   interaction_id: string;
@@ -62,6 +76,8 @@ export interface CommandTriggerMeta {
   behavior_id: number;
   /** The invoked leaf's attachment options' files, in option order. */
   attachments: BehaviorWebhookAttachment[];
+  /** Never the Discord interaction token. */
+  callback: BehaviorCallback;
 }
 
 /** `_meta` of an admin test-fire: fixed values, never the admin's identity. */
@@ -127,4 +143,9 @@ export interface BehaviorReply {
   ephemeral?: boolean;
   /** Only SuppressEmbeds (4) and SuppressNotifications (4096) are kept. */
   flags?: number;
+  /**
+   * "Answer later": the command keeps its "thinking…" placeholder and you
+   * reply with `_meta.callback`. The other fields are not shown.
+   */
+  defer?: true;
 }

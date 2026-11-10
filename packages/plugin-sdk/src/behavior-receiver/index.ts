@@ -35,6 +35,7 @@ export {
   type CreateReceiverOptions,
 } from "./receiver.js";
 export type {
+  BehaviorCallback,
   BehaviorReply,
   BehaviorReplyActionRow,
   BehaviorReplyEmbed,
