@@ -2,7 +2,7 @@
  * behavior-routes.ts — admin behaviors REST API（ADR 0003 trigger/action 模型）
  *
  * 路由表：
- *   GET  /api/behaviors                          — { system, commands, messageTriggers }
+ *   GET  /api/behaviors                          — { system, services, commands, messageTriggers }
  *   GET  /api/behaviors/schema                   — the write schemas, for the admin UI's form checks
  *   POST /api/behaviors/:id/test                 — 對 behavior 的 webhook 動作試發
  *   GET  /api/behaviors/:id/deliveries           — behavior 最近的投遞紀錄（#120）
@@ -12,6 +12,7 @@
  *   /api/behavior-commands[/:id[/resync]]        — 指令的寫入與重新註冊（behavior-command-routes.ts）
  *   POST /api/behaviors/:id/convert-trigger      — 自訂 behavior 在訊息觸發與指令觸發間轉換（behavior-trigger-convert.ts）
  *   PUT  /api/behaviors/system/login/trigger     — 切換登入系統列的觸發（system-login-trigger-route.ts）
+ *   GET / POST / PUT / DELETE /api/services[/:id] — 服務與它的 Service Behavior（service-routes.ts，#126）
  *   GET  /api/behavior-groups/:groupName/members — 群組名單
  *   PUT  /api/behavior-groups/:groupName/members — 全量替換群組名單
  *
@@ -69,6 +70,7 @@ import {
   convertTriggerSchema,
   registerTriggerConvertRoute,
 } from "./behavior-trigger-convert.js";
+import { createServiceSchema, registerServiceRoutes } from "./service-routes.js";
 
 export type { BehaviorRoutesOptions };
 
@@ -101,6 +103,7 @@ export async function registerBehaviorRoutes(
     registerBehaviorCommandRoutes(scope, options);
     registerSystemLoginTriggerRoute(scope, options);
     registerTriggerConvertRoute(scope, options);
+    registerServiceRoutes(scope);
     registerGroupMemberRoutes(scope);
   });
 }
@@ -137,6 +140,7 @@ function registerReadAndTestRoutes(
       commandLeaf: addLeafSchema,
       loginTrigger: loginTriggerSchema,
       convertTrigger: convertTriggerSchema,
+      service: createServiceSchema,
     });
   });
 

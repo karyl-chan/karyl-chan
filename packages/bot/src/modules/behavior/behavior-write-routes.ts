@@ -12,6 +12,8 @@
  * Registered inside the behavior scope (strict schemas, uniform errors,
  * the behavior.manage gate — see behavior-routes.ts). The System Behavior
  * is immutable here: its trigger switch is system-login-trigger-route.ts.
+ * A Service Behavior (#126) takes a PATCH of its trigger only
+ * (service-behavior-rules.ts); it is never deleted here.
  */
 
 import type { FastifyInstance } from "fastify";
@@ -34,7 +36,13 @@ import {
   refuseSystem,
 } from "./behavior-write-guards.js";
 import { checkMessageTrigger, type MessageTriggerState } from "./message-trigger-rules.js";
-import { messageTriggerViewOf, nextMessageSortOrder } from "./message-trigger-writes.js";
+import {
+  messageTriggerViewOf,
+  nextMessageSortOrder,
+  serviceBehaviorViewOf,
+} from "./message-trigger-writes.js";
+import { loadBehaviorCatalog } from "./behavior-catalog.js";
+import { checkClearOfLogin, refuseServiceFields } from "./service-behavior-rules.js";
 import { deleteCommandLeaf, patchCommandLeaf, type LeafPatch } from "./command-leaf-writes.js";
 import type { BehaviorCommandRegistrar } from "./command-registration-sync.js";
 import {
@@ -228,6 +236,11 @@ export function registerBehaviorWriteRoutes(
       const body = trimmed(request.body as BehaviorPatch);
       const result = await withBehaviorWriteLock(async () => {
         const row = await loadBehaviorRow(id);
+        if (row.actionSource === "service") {
+          checkNotStale(row, body.ifUpdatedAt, `behavior ${id}`);
+          const { audit } = await patchServiceTrigger(row, body);
+          return { audit, response: { behavior: await serviceBehaviorViewOf(id) } };
+        }
         refuseSystem(row);
         checkNotStale(row, body.ifUpdatedAt, `behavior ${id}`);
         if (row.triggerKind === "command") {
@@ -274,6 +287,24 @@ export function registerBehaviorWriteRoutes(
         : reply.code(204).send();
     },
   );
+}
+
+/**
+ * A Service Behavior's trigger edit: only the trigger keys, and a trigger
+ * that leaves the login reachable (service-behavior-rules.ts). The rest is
+ * a message trigger edit like any other.
+ */
+async function patchServiceTrigger(
+  row: BehaviorDefinitionRow,
+  body: BehaviorPatch,
+): Promise<{ audit: Record<string, unknown> }> {
+  refuseServiceFields(body);
+  checkClearOfLogin(await loadBehaviorCatalog(), {
+    patternKind: body.patternKind ?? row.patternKind ?? "startswith",
+    patternValue: body.patternValue ?? row.patternValue ?? "",
+  });
+  const { audit } = await patchMessageTrigger(row, body);
+  return { audit: { ...audit, kind: "service", serviceId: row.serviceId } };
 }
 
 async function patchMessageTrigger(

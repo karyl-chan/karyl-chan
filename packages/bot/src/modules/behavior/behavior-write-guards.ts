@@ -1,6 +1,7 @@
 /**
  * Checks every behavior write route makes before it changes anything:
- * the row exists, it is not the System Behavior (or its command), the
+ * the row exists, it is not the System Behavior (or its command) or a
+ * Service Behavior, the
  * admin's edit is based on the current version — plus the `{ from, to }`
  * diff the audit records.
  */
@@ -18,7 +19,19 @@ export async function loadBehaviorRow(id: number): Promise<BehaviorDefinitionRow
   return rowOfBehaviorDefinition(model);
 }
 
-export function refuseSystem(row: { systemKey: string | null }): void {
+/**
+ * The System Behavior and the Service Behaviors (#126) are not custom
+ * behaviors: they are never deleted, converted or given another action
+ * here. A Service Behavior's trigger is edited by PATCH /api/behaviors/:id
+ * (service-behavior-rules.ts), and it goes with its service.
+ */
+export function refuseSystem(row: { systemKey: string | null; actionSource: string }): void {
+  if (row.actionSource === "service") {
+    throw new BehaviorApiError(
+      "system_immutable",
+      "a service's behavior cannot be deleted, converted or given another action; only its trigger can be edited (PATCH /api/behaviors/:id), and it is removed with its service (DELETE /api/services/:id)",
+    );
+  }
   if (row.systemKey !== null) {
     throw new BehaviorApiError(
       "system_immutable",

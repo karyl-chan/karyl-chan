@@ -38,6 +38,10 @@
  *        is on the roster)
  *   message → message: a plain row update.
  *
+ * To a message, the sample DM must not be taken by a Service Behavior's
+ * trigger (#126): those are matched before the login
+ * (service-behavior-rules.ts).
+ *
  * Writes serialise like every behavior write (withBehaviorWriteLock, then
  * the reconcile lock — the same order as command writes, so no deadlock);
  * `ifUpdatedAt` refuses an edit based on an outdated view. The catalog
@@ -87,6 +91,7 @@ import type {
   CommandReconciler,
   LockedRegistration,
 } from "../command-system/reconcile.service.js";
+import { checkLoginSampleClearOfServices } from "./service-behavior-rules.js";
 import {
   loginTriggerOf,
   type LoginCommandTrigger,
@@ -298,12 +303,16 @@ async function switchToMessage(
 async function switchLoginTrigger(
   deps: SystemLoginTriggerDeps,
   next: LoginTrigger,
-  ifUpdatedAt: string | undefined,
+  body: Pick<LoginTriggerBody, "ifUpdatedAt" | "sample">,
   loaded: (current: SystemLoginEntry) => void,
 ): Promise<RegistrationReport | null> {
   const run = async (locked: LockedRegistration | null) => {
     const current = await loadSystemLogin();
-    checkNotStale(versionOf(current), ifUpdatedAt, "the system login");
+    checkNotStale(versionOf(current), body.ifUpdatedAt, "the system login");
+    if (next.kind === "message") {
+      // loginTriggerOf made sure a message switch carries its sample
+      checkLoginSampleClearOfServices(await loadBehaviorCatalog(), body.sample!);
+    }
     loaded(current);
     if (next.kind === "command") {
       if (!deps.namespace) throw new Error("CommandNamespace not provided to behavior routes");
@@ -368,7 +377,7 @@ export function registerSystemLoginTriggerRoute(
       let registration: RegistrationReport | null;
       try {
         registration = await withBehaviorWriteLock(() =>
-          switchLoginTrigger(deps, next, body.ifUpdatedAt, (login) => (seen.login = login)),
+          switchLoginTrigger(deps, next, body, (login) => (seen.login = login)),
         );
       } catch (err) {
         const failure = failureOutcome(err);

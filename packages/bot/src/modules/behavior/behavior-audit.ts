@@ -5,7 +5,7 @@
  *
  * Actions are `behavior.<thing>.<verb>`; targets name the row
  * (`behavior:<id>`, `command:<id>`, `group:<name>`, `location:<key>` —
- * a Message Trigger Location).
+ * a Message Trigger Location, `service:<id>`).
  * Contexts carry what changed — never a webhook secret, never a webhook
  * URL in plaintext (a URL often embeds a token): see webhookAuditView.
  */
@@ -27,7 +27,10 @@ export type BehaviorAuditAction =
   | "behavior.command.resync"
   | "behavior.command.convert"
   | "behavior.system.trigger"
-  | "behavior.trigger.convert";
+  | "behavior.trigger.convert"
+  | "behavior.service.create"
+  | "behavior.service.update"
+  | "behavior.service.delete";
 
 /**
  * Record one behavior write. Never throws: it runs after the write is

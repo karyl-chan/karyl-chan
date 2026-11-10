@@ -18,6 +18,9 @@ import { BehaviorCommand } from "./behavior-command.model.js";
  * 動作來源（actionSource）：
  *   - `builtin`：系統動作，只給 System Behavior（systemKey 必填）
  *   - `webhook`：behavior_webhook_actions 的一列
+ *   - `service`：Service Behavior（#126）—— 以觸發者身分簽發服務 token、
+ *     私下回覆登入連結。serviceId 指向 services，動作固定，只有觸發可改；
+ *     觸發只能是與 bot 私訊的 Message Trigger
  *
  * 回覆給誰看（replyVisibility，#140）：回應沒帶 `ephemeral` 時的預設 ——
  * `private`（指令：只有執行的人；伺服器訊息：私訊作者）、`public`（指令：
@@ -27,13 +30,15 @@ import { BehaviorCommand } from "./behavior-command.model.js";
  * 索引一律由 migration 011 建立（理由見 behavior-command.model.ts）：
  *   - (commandId, subcommandGroup, subcommand) 唯一
  *   - systemKey 唯一（非 null）
+ *   - serviceId 唯一（非 null；migration 016）
  *
  * 「根葉節點與子指令不並存」是跨列規則，由寫入路徑與註冊時的子指令樹
  * 組裝（command-registration.ts）把關。
  */
 
 export type BehaviorTriggerKind = "command" | "message";
-export type BehaviorActionSource = "builtin" | "webhook";
+export type BehaviorActionSource = "builtin" | "webhook" | "service";
+export const ACTION_SOURCES: readonly BehaviorActionSource[] = ["builtin", "webhook", "service"];
 export type BehaviorMessageSurface = "bot_dm" | "guild";
 export type BehaviorPatternKind = "startswith" | "endswith" | "regex";
 export type BehaviorAudienceKind = "all" | "user" | "group";
@@ -111,7 +116,13 @@ export const BehaviorDefinition = sequelize.define(
     actionSource: {
       type: DataTypes.STRING,
       allowNull: false,
-      validate: { isIn: [["builtin", "webhook"]] },
+      validate: { isIn: [[...ACTION_SOURCES]] },
+    },
+    // Service Behavior 的服務（actionSource='service' ⇔ 非 null）
+    serviceId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      defaultValue: null,
     },
     // ── command leaf ──
     commandId: {
@@ -287,6 +298,27 @@ export const BehaviorDefinition = sequelize.define(
           throw new Error("the system login's message trigger must be bot_dm");
         }
       },
+      // service ⇔ serviceId；Service Behavior 的觸發只能是與 bot 的私訊
+      serviceShape(this: Record<string, unknown>) {
+        const { actionSource, serviceId } = this;
+        if (actionSource === undefined || serviceId === undefined) return;
+        if ((actionSource === "service") !== (serviceId !== null)) {
+          throw new Error("actionSource 'service' is exactly the rows with a serviceId");
+        }
+        if (serviceId === null) return;
+        if (this["systemKey"] !== undefined && this["systemKey"] !== null) {
+          throw new Error("a service behavior is not a system behavior");
+        }
+        if (this["replyVisibility"] !== undefined && this["replyVisibility"] !== null) {
+          throw new Error("a service behavior's reply visibility is fixed");
+        }
+        if (this["triggerKind"] !== undefined && this["triggerKind"] !== "message") {
+          throw new Error("a service behavior's trigger is a message trigger");
+        }
+        if (this["surface"] !== undefined && this["surface"] !== "bot_dm") {
+          throw new Error("a service behavior's message trigger must be bot_dm");
+        }
+      },
     },
   },
 );
@@ -300,6 +332,8 @@ export interface BehaviorDefinitionRow {
   systemKey: BehaviorSystemKey | null;
   triggerKind: BehaviorTriggerKind;
   actionSource: BehaviorActionSource;
+  /** the service a Service Behavior belongs to; null otherwise */
+  serviceId: number | null;
   commandId: number | null;
   subcommandGroup: string | null;
   subcommand: string | null;
@@ -336,6 +370,7 @@ export function rowOfBehaviorDefinition(
     systemKey: nullable<BehaviorSystemKey>("systemKey"),
     triggerKind: value<BehaviorTriggerKind>("triggerKind"),
     actionSource: value<BehaviorActionSource>("actionSource"),
+    serviceId: nullable<number>("serviceId"),
     commandId: nullable<number>("commandId"),
     subcommandGroup: nullable<string>("subcommandGroup"),
     subcommand: nullable<string>("subcommand"),

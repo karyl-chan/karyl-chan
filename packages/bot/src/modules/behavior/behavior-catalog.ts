@@ -26,11 +26,13 @@ import {
   type BehaviorWebhookActionRow,
 } from "./models/behavior-webhook-action.model.js";
 import { BehaviorGroupMember } from "./models/behavior-group-member.model.js";
+import { Service, rowOfService, type ServiceRow } from "./models/service.model.js";
 import { SYSTEM_BEHAVIOR_KEY_LOGIN } from "./models/behavior-definition.model.js";
 
-/** 一個 behavior 與它的 webhook 動作（actionSource='webhook' 時）。 */
+/** 一個 behavior 與它的動作設定：webhook（actionSource='webhook'）或服務（'service'）。 */
 export interface CatalogBehavior extends BehaviorDefinitionRow {
   webhook: BehaviorWebhookActionRow | null;
+  service: ServiceRow | null;
 }
 
 /** 一個指令與它的葉節點（依 sortOrder、子指令名排序）。 */
@@ -47,7 +49,7 @@ export interface BehaviorCatalog {
 }
 
 export async function loadBehaviorCatalog(): Promise<BehaviorCatalog> {
-  const [commandModels, definitionModels, webhookModels, memberModels] =
+  const [commandModels, definitionModels, webhookModels, memberModels, serviceModels] =
     await Promise.all([
       BehaviorCommand.findAll({ order: [["id", "ASC"]] }),
       BehaviorDefinition.findAll({
@@ -58,6 +60,7 @@ export async function loadBehaviorCatalog(): Promise<BehaviorCatalog> {
       }),
       BehaviorWebhookAction.findAll(),
       BehaviorGroupMember.findAll(),
+      Service.findAll(),
     ]);
 
   const webhooks = new Map(
@@ -66,9 +69,19 @@ export async function loadBehaviorCatalog(): Promise<BehaviorCatalog> {
       return [row.behaviorId, row] as const;
     }),
   );
+  const services = new Map(
+    serviceModels.map((m) => {
+      const row = rowOfService(m);
+      return [row.id, row] as const;
+    }),
+  );
   const behaviors: CatalogBehavior[] = definitionModels.map((m) => {
     const row = rowOfBehaviorDefinition(m);
-    return { ...row, webhook: webhooks.get(row.id) ?? null };
+    return {
+      ...row,
+      webhook: webhooks.get(row.id) ?? null,
+      service: row.serviceId !== null ? (services.get(row.serviceId) ?? null) : null,
+    };
   });
 
   const leavesByCommand = new Map<number, CatalogBehavior[]>();
@@ -114,6 +127,11 @@ export function systemLoginOf(catalog: BehaviorCatalog): SystemLoginEntry | null
   const command = catalog.commands.find((c) => c.leaves.some(isLogin)) ?? null;
   const row = command?.leaves.find(isLogin) ?? catalog.messageTriggers.find(isLogin);
   return row ? { row, command } : null;
+}
+
+/** The Service Behaviors in a catalog, in matching order (each with its service). */
+export function serviceBehaviorsOf(catalog: BehaviorCatalog): CatalogBehavior[] {
+  return catalog.messageTriggers.filter((b) => b.actionSource === "service");
 }
 
 // ── 快照 ────────────────────────────────────────────────────────────────────
@@ -174,6 +192,7 @@ for (const model of [
   BehaviorDefinition,
   BehaviorWebhookAction,
   BehaviorGroupMember,
+  Service,
 ]) {
   for (const hook of WRITE_HOOKS) {
     model.addHook(hook, onWrite);

@@ -6,6 +6,7 @@ import { BehaviorCommand } from "../src/modules/behavior/models/behavior-command
 import { BehaviorDefinition } from "../src/modules/behavior/models/behavior-definition.model.js";
 import { BehaviorWebhookAction } from "../src/modules/behavior/models/behavior-webhook-action.model.js";
 import { BehaviorGroupMember } from "../src/modules/behavior/models/behavior-group-member.model.js";
+import { Service } from "../src/modules/behavior/models/service.model.js";
 import { encryptSecret } from "../src/utils/crypto.js";
 
 export const TEST_WEBHOOK_URL = "https://hooks.example/behavior";
@@ -128,4 +129,5 @@ export async function clearBehaviors(): Promise<void> {
   await BehaviorWebhookAction.destroy({ where: {} });
   await BehaviorDefinition.destroy({ where: {} });
   await BehaviorCommand.destroy({ where: {} });
+  await Service.destroy({ where: {} });
 }

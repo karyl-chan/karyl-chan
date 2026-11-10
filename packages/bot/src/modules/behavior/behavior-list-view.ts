@@ -1,10 +1,12 @@
 /**
  * GET /api/behaviors 的回應形狀：BehaviorCatalog → admin UI 的唯讀視圖。
  *
- *   { system, commands, messageTriggers }
+ *   { system, services, commands, messageTriggers }
  *
  * 每一項帶推導出的 Behavior Section（behaviorSection，唯一的推導規則）。
- * System Behavior 從所屬清單抽出放在 `system`，UI 把它釘在所屬分區最上方。
+ * System Behavior 從所屬清單抽出放在 `system`，UI 把它釘在所屬分區最上方；
+ * Service Behavior（#126）同樣抽出放在 `services`（帶它的服務），UI 在
+ * 「服務」區段列出。
  * webhook 密鑰只回報是否已設定（secretSet），從不回傳明文；網址是 operator
  * 設定，解密後回傳。前端在 frontend/src/api/behavior.ts 鏡像這些型別。
  */
@@ -101,8 +103,22 @@ export interface MessageTriggerView extends BehaviorViewBase {
   section: BehaviorSection;
 }
 
+/** What a Service Behavior shows of its service. */
+export interface ServiceSummaryView {
+  id: number;
+  name: string;
+  audience: string;
+  redirectUrl: string;
+}
+
+/** A Service Behavior: a bot DM message trigger whose action is its service's login. */
+export interface ServiceBehaviorView extends MessageTriggerView {
+  service: ServiceSummaryView;
+}
+
 export interface BehaviorListView {
   system: CommandView | MessageTriggerView | null;
+  services: ServiceBehaviorView[];
   commands: CommandView[];
   messageTriggers: MessageTriggerView[];
 }
@@ -209,6 +225,16 @@ export function messageTriggerView(
   };
 }
 
+/** A Service Behavior's view; null for a row without its service (cannot happen: they go together). */
+export function serviceBehaviorView(
+  b: CatalogBehavior,
+  stats: ReadonlyMap<number, BehaviorStatRow>,
+): ServiceBehaviorView | null {
+  if (!b.service) return null;
+  const { id, name, audience, redirectUrl } = b.service;
+  return { ...messageTriggerView(b, stats), service: { id, name, audience, redirectUrl } };
+}
+
 export function buildBehaviorListView(
   catalog: BehaviorCatalog,
   stats: ReadonlyMap<number, BehaviorStatRow>,
@@ -221,10 +247,16 @@ export function buildBehaviorListView(
     else commands.push(view);
   }
   const messageTriggers: MessageTriggerView[] = [];
+  const services: ServiceBehaviorView[] = [];
   for (const t of catalog.messageTriggers) {
+    if (t.actionSource === "service") {
+      const view = serviceBehaviorView(t, stats);
+      if (view) services.push(view);
+      continue;
+    }
     const view = messageTriggerView(t, stats);
     if (t.systemKey !== null) system = view;
     else messageTriggers.push(view);
   }
-  return { system, commands, messageTriggers };
+  return { system, services, commands, messageTriggers };
 }
