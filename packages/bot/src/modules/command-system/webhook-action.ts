@@ -17,7 +17,8 @@
  * The synchronous answer and the callback calls take turns on the reply
  * (serializeReply); once a callback `respond` has landed, a synchronous
  * answer — or failure line — arriving after it is not shown, and the
- * delivery is marked `deferred` (its reply came through the token).
+ * delivery is ok and marked `deferred` (its reply came through the
+ * token), even when the synchronous request itself failed.
  */
 
 import type { BehaviorWebhookActionRow } from "../behavior/models/behavior-webhook-action.model.js";
@@ -137,6 +138,27 @@ export async function runWebhookAction(run: WebhookActionRun): Promise<void> {
   }
   const durationMs = Math.round(performance.now() - started);
 
+  // A failed run with a callback principal: in the run's turn, either a
+  // callback respond already answered — the user saw a reply, so the
+  // delivery is ok and marked deferred — or the token is revoked and the
+  // user told, before any later callback call can get in.
+  let told = false;
+  if (!ok && principal && issued) {
+    const answered = await serializeReply(principal, async () => {
+      if (principal.answeredByCallback) return true;
+      behaviorCallbackTokens.revoke(issued.token);
+      if (!unreachable) await renderFailure(target);
+      return false;
+    });
+    told = true;
+    if (answered) {
+      ok = true;
+      deferred = true;
+      errorCode = null;
+      error = undefined;
+    }
+  }
+
   // the detail goes to the log, the stats and the delivery log only (#114)
   await recordForwardOutcome(behaviorId, ok, error);
   await recordDelivery({
@@ -158,15 +180,5 @@ export async function runWebhookAction(run: WebhookActionRun): Promise<void> {
     `webhook action of behavior ${behaviorId} failed (${target.kind}): ${error ?? "unknown"}`,
     { behaviorId, via: target.kind },
   );
-  if (unreachable) return;
-  if (!principal || !issued) {
-    await renderFailure(target);
-    return;
-  }
-  await serializeReply(principal, async () => {
-    // the receiver answered through the token: that answer stands
-    if (principal.answeredByCallback) return;
-    behaviorCallbackTokens.revoke(issued.token);
-    await renderFailure(target);
-  });
+  if (!unreachable && !told) await renderFailure(target);
 }

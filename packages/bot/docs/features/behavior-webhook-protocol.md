@@ -381,6 +381,10 @@ to show is refused with `400`; and `defer` means nothing. Who sees it
 follows [the same order](#who-sees-the-reply): a `public` command's
 `respond` fills its public placeholder. `interaction_token`, which the
 plugin form of these methods takes, may be left out and is ignored.
+Each `respond` decides who sees it afresh — its own `ephemeral` first,
+then the behavior's stored visibility — so a `respond` without
+`ephemeral` after a public one goes back to the stored visibility (and
+stays where the reply is when none is stored).
 
 - An unknown, revoked or expired token gets `401`. Any other
   `/api/plugin/*` path gets `403`: the token answers this run and nothing
@@ -389,10 +393,11 @@ plugin form of these methods takes, may be left out and is ignored.
   failure line). Answering synchronously does not revoke it: you may still
   follow up.
 - Once a `respond` has landed, the synchronous answer of the same run is
-  not shown, even if it arrives later (the delivery is marked deferred),
-  and a late failure of that request shows no failure line.
-- Calls are rate-limited per behavior, across all its runs (60 a minute);
-  over it, `429`.
+  not shown, even if it arrives later, and a late failure of that request
+  shows no failure line: the user already has a reply, so the delivery is
+  ok and marked deferred.
+- Calls are rate-limited per token, that is per run (60 a minute); over
+  it, `429`.
 - A call the bot refuses (`callback_invalid`) or Discord refuses
   (`callback_failed`) is a failed delivery of the behavior. A call that
   works is not logged.

@@ -49,8 +49,8 @@ const writeRateLimiter = new RateLimiter({ windowMs: 60_000, max: 30 });
 // far higher ceiling (still enough to stop a runaway).
 const pluginWriteRateLimiter = new RateLimiter({ windowMs: 60_000, max: 600 });
 // A behavior callback token (#113) is held by an external receiver, not
-// trusted plugin code: its calls get a far lower ceiling, per behavior
-// (every run of the behavior shares it).
+// trusted plugin code: its calls get a far lower ceiling, per run (per
+// token) — how many runs a behavior gets is takeBehaviorRun's business.
 const behaviorCallbackRateLimiter = new RateLimiter({ windowMs: 60_000, max: 60 });
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 // Interaction replies/followups must never be throttled — they're the
@@ -357,13 +357,13 @@ export async function createWebServer(
     if (request.url.startsWith("/api/auth/")) return;
     if (!WRITE_METHODS.has(request.method)) return;
     const path = request.url.split("?")[0];
-    // A behavior callback is throttled per behavior, interaction replies
+    // A behavior callback is throttled per run, interaction replies
     // included: the exemption below is for trusted plugin code, and a
     // receiver holds its token for 15 minutes.
     if (request.behaviorCallback) {
       if (
         behaviorCallbackRateLimiter.isRateLimited(
-          `behavior:${request.behaviorCallback.behaviorId}`,
+          `behavior:${request.behaviorCallback.behaviorId}:run:${request.behaviorCallback.runKey}`,
         )
       ) {
         reply.code(429).send({ error: "Too many behavior callback requests, slow down" });

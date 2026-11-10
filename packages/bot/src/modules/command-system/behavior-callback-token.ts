@@ -60,6 +60,13 @@ export interface BehaviorCallbackPrincipal extends CallbackIssue {
   replyMessage: ReplySlot | null;
   /** A callback `respond` landed: a synchronous answer arriving after it is not shown. */
   answeredByCallback: boolean;
+  /**
+   * Revoked (its run failed and the user was told): a call that passed
+   * the auth hook before that is refused when its turn comes.
+   */
+  revoked: boolean;
+  /** This run's key (not the token): what its write throttle counts by. */
+  readonly runKey: string;
   /** The follow-ups sent with this token — the only messages `edit_followup` / `delete_followup` may touch. */
   readonly createdMessageIds: Set<string>;
   /** Tail of the run's reply operations (serializeReply). */
@@ -83,8 +90,10 @@ export class BehaviorCallbackTokenStore {
     this.ensureSweep();
     const token = randomBytes(32).toString("base64url");
     const { interaction } = input.target;
+    const hash = hashToken(token);
     const principal: BehaviorCallbackPrincipal = {
       ...input,
+      runKey: hash,
       expiresAt: startOf(input.target) + CALLBACK_TOKEN_TTL_MS,
       // a webhook's command is deferred before the token is issued
       replyMessage:
@@ -92,10 +101,11 @@ export class BehaviorCallbackTokenStore {
           ? { messageId: "@original", ephemeral: interaction.ephemeral ?? true }
           : null,
       answeredByCallback: false,
+      revoked: false,
       createdMessageIds: new Set(),
       replyQueue: Promise.resolve(),
     };
-    this.byHash.set(hashToken(token), principal);
+    this.byHash.set(hash, principal);
     return { token, expiresAt: new Date(principal.expiresAt), principal };
   }
 
@@ -113,7 +123,10 @@ export class BehaviorCallbackTokenStore {
 
   /** End a token early (its run failed: the user was already told). */
   revoke(token: string): void {
-    this.byHash.delete(hashToken(token));
+    const hash = hashToken(token);
+    const principal = this.byHash.get(hash);
+    if (principal) principal.revoked = true;
+    this.byHash.delete(hash);
   }
 
   /** Tests only. */

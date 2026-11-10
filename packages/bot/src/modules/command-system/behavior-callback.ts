@@ -51,10 +51,13 @@ type Outcome =
   /** The bot refused the call (`callback_invalid`). */
   | { ok: false; refused: true; status: number; error: string }
   /** Discord refused it (`callback_failed`). */
-  | { ok: false; refused: false; error: string };
+  | { ok: false; refused: false; error: string }
+  /** The token was revoked while the call waited its turn: as if unknown. */
+  | { ok: false; gone: true };
 
 const refused = (status: number, error: string): Outcome => ({ ok: false, refused: true, status, error });
 const failed = (error: string): Outcome => ({ ok: false, refused: false, error });
+const GONE: Outcome = { ok: false, gone: true };
 
 type Call = { principal: BehaviorCallbackPrincipal; body: Record<string, unknown> };
 
@@ -81,16 +84,14 @@ async function respond(call: Call): Promise<Outcome> {
   const read = readReply(call.body);
   if (!read.ok) return refused(400, read.error);
   const { principal } = call;
-  return serializeReply(principal, async () => {
-    const rendered = await renderReply(read.reply, principal.target, {
-      visibility: principal.visibility,
-      replyMessage: principal.replyMessage,
-    });
-    if (!rendered.ok) return failed(rendered.error);
-    principal.replyMessage = rendered.replyMessage ?? null;
-    principal.answeredByCallback = true;
-    return { ok: true, body: { ok: true } };
+  const rendered = await renderReply(read.reply, principal.target, {
+    visibility: principal.visibility,
+    replyMessage: principal.replyMessage,
   });
+  if (!rendered.ok) return failed(rendered.error);
+  principal.replyMessage = rendered.replyMessage ?? null;
+  principal.answeredByCallback = true;
+  return { ok: true, body: { ok: true } };
 }
 
 async function followup(call: Call): Promise<Outcome> {
@@ -170,7 +171,12 @@ async function recordFailure(
   }
 }
 
-/** Run one callback call for its principal. Never throws. */
+/**
+ * Run one callback call for its principal, in its run's turn
+ * (serializeReply): never interleaved with the synchronous answer or the
+ * failure line, and refused as 401 when the token was revoked meanwhile.
+ * Never throws.
+ */
 export async function runBehaviorCallback(
   method: BehaviorCallbackMethod,
   principal: BehaviorCallbackPrincipal,
@@ -179,10 +185,12 @@ export async function runBehaviorCallback(
   const firedAt = new Date();
   const started = performance.now();
   const { run, failedAs } = METHODS[method];
-  const outcome = await run({ principal, body }).catch((err: unknown) =>
-    failed(err instanceof Error ? err.message : String(err)),
-  );
+  const outcome = await serializeReply(principal, () =>
+    principal.revoked ? Promise.resolve(GONE) : run({ principal, body }),
+  ).catch((err: unknown) => failed(err instanceof Error ? err.message : String(err)));
   if (outcome.ok) return { status: 200, body: outcome.body };
+  // the auth hook's own answer for a token it no longer knows
+  if ("gone" in outcome) return { status: 401, body: { error: "plugin token invalid or expired" } };
   if (outcome.refused) {
     await recordFailure(principal, method, "callback_invalid", outcome.error, firedAt, started);
     return { status: outcome.status, body: { error: outcome.error } };

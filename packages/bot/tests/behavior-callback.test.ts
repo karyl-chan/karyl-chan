@@ -19,7 +19,8 @@
  *     later respond edits (or replaces) what the user sees
  *   - a token ends 15 minutes after the interaction was created
  *   - a callback respond is never overwritten by the synchronous answer
- *   - writes are throttled per behavior, 60 a minute
+ *   - a call that was waiting when its token was revoked is a 401
+ *   - writes are throttled per run (per token), 60 a minute
  */
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -65,6 +66,7 @@ import { __resetBehaviorRateLimitsForTests } from "../src/modules/command-system
 import {
   CALLBACK_TOKEN_TTL_MS,
   behaviorCallbackTokens,
+  serializeReply,
 } from "../src/modules/command-system/behavior-callback-token.js";
 import { findRecentDeliveries } from "../src/modules/behavior/behavior-deliveries.js";
 import type { ReplyVisibility } from "../src/modules/behavior/models/behavior-definition.model.js";
@@ -163,12 +165,12 @@ async function deferredRun(
 ) {
   const raw = fakeSlash("slow", createdTimestamp);
   await raw.deferReply(visibility === "public" ? {} : { flags: MessageFlags.Ephemeral });
-  const { token } = behaviorCallbackTokens.issue({
+  const { token, principal } = behaviorCallbackTokens.issue({
     behaviorId,
     target: { kind: "interaction", interaction: raw as unknown as ChatInputCommandInteraction },
     visibility,
   });
-  return { raw, token };
+  return { raw, token, principal };
 }
 
 async function seedSlowLeaf(overrides: Record<string, unknown> = {}): Promise<number> {
@@ -501,7 +503,7 @@ describe("a callback respond before the synchronous answer", () => {
     expect(delivery).toMatchObject({ ok: true, deferred: true });
   });
 
-  it("keeps its answer when the synchronous request then fails: no failure line, the token lives on", async () => {
+  it("keeps its answer when the synchronous request then fails: an ok delivery, no failure line, the token lives on", async () => {
     const id = await seedSlowLeaf();
     answer = { status: 500, body: "boom" };
     let token = "";
@@ -515,8 +517,37 @@ describe("a callback respond before the synchronous answer", () => {
 
     expect(raw.editReply).toHaveBeenCalledTimes(1);
     expect(raw.followUp).not.toHaveBeenCalled();
-    expect((await findRecentDeliveries(id))[0]).toMatchObject({ ok: false, errorCode: "http_error" });
+    // the user saw a reply: not a failure
+    expect((await findRecentDeliveries(id))[0]).toMatchObject({
+      ok: true,
+      deferred: true,
+      errorCode: null,
+      error: null,
+    });
     expect((await call("interactions.followup", token, { content: "more" })).statusCode).toBe(200);
+  });
+});
+
+describe("a call waiting when its token is revoked", () => {
+  it("is 401 and touches nothing, though it passed the auth hook", async () => {
+    const id = await seedSlowLeaf();
+    const { raw, token, principal } = await deferredRun(id);
+    // the failed run's turn (revoke + failure line) holds the reply
+    let release!: () => void;
+    const held = serializeReply(principal, () => new Promise<void>((r) => (release = r)));
+
+    const respond = call("interactions.respond", token, { content: "late" });
+    const followup = call("interactions.followup", token, { content: "late too" });
+    await new Promise((r) => setTimeout(r, 50));
+    behaviorCallbackTokens.revoke(token);
+    release();
+    await held;
+
+    expect((await respond).statusCode).toBe(401);
+    expect((await followup).statusCode).toBe(401);
+    expect(raw.editReply).not.toHaveBeenCalled();
+    expect(raw.followUp).not.toHaveBeenCalled();
+    expect(await findRecentDeliveries(id)).toEqual([]);
   });
 });
 
@@ -613,7 +644,7 @@ describe("a refused or failed call", () => {
 // ── throttling ───────────────────────────────────────────────────────────────
 
 describe("write throttling", () => {
-  it("is per behavior: 60 a minute, then 429, while another behavior goes on", async () => {
+  it("is per run: 60 a minute, then 429, while other runs of the same behavior go on", async () => {
     const busy = await seedSlowLeaf();
     const other = await seedLeaf(await seedCommand({ name: "other" }));
     const { token } = await deferredRun(busy);
@@ -623,9 +654,9 @@ describe("write throttling", () => {
       expect(res.statusCode).toBe(200);
     }
     expect((await call("interactions.respond", token, { content: "one more" })).statusCode).toBe(429);
-    // a second run of the same behavior shares the budget
+    // a second run of the same behavior has its own budget
     const { token: sameBehavior } = await deferredRun(busy);
-    expect((await call("interactions.followup", sameBehavior, { content: "x" })).statusCode).toBe(429);
+    expect((await call("interactions.followup", sameBehavior, { content: "x" })).statusCode).toBe(200);
     expect((await call("interactions.respond", otherToken, { content: "fine" })).statusCode).toBe(200);
   });
 });
