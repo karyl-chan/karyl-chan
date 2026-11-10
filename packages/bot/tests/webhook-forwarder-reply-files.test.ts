@@ -9,8 +9,9 @@
  *   - at most 5 files of at most 8 MiB each and 25 MiB together: a
  *     declared Content-Length over the cap and a body that streams past it
  *     are both cut off
- *   - at most 2 batches download at a time across the process; another
- *     waits its turn within its timeout
+ *   - at most 2 batches download at a time across the process, and one
+ *     per behavior (a slow receiver can't starve the others); another
+ *     waits its turn within its timeout, a hung target check included
  *   - a redirect is never followed; a non-2xx, a hang (the timeout) and an
  *     unsafe path fail the whole set
  *   - the real target policy still applies: loopback and metadata never
@@ -153,9 +154,9 @@ function releaseHeld() {
   for (const answer of all) answer();
 }
 
-function action(url = `http://rebind.invalid:${port}/hooks/weather?x=1`): BehaviorWebhookActionRow {
+function action(url = `http://rebind.invalid:${port}/hooks/weather?x=1`, behaviorId = 1): BehaviorWebhookActionRow {
   return {
-    behaviorId: 1,
+    behaviorId,
     url: encryptSecret(url),
     secret: encryptSecret("shared-secret"),
     authMode: "token",
@@ -306,14 +307,16 @@ describe("fetchReplyFiles — the real target policy", () => {
   });
 });
 
-describe("fetchReplyFiles — downloads in flight, process-wide", () => {
-  it("runs at most 2 batches at a time; the next waits its turn", async () => {
+/** A batch of one /hold file for `behaviorId`, with a long timeout. */
+const holdBatch = (behaviorId: number) =>
+  new WebhookForwarder(parseAllowlistEntries([]), 3000).fetchReplyFiles(action(undefined, behaviorId), [
+    { name: "h.bin", path: "/hold" },
+  ]);
+
+describe("fetchReplyFiles — downloads in flight", () => {
+  it("runs at most 2 batches at a time process-wide; the next waits its turn", async () => {
     expect(MAX_DOWNLOAD_BATCHES).toBe(2);
-    const batch = () =>
-      new WebhookForwarder(parseAllowlistEntries([]), 3000).fetchReplyFiles(action(), [
-        { name: "h.bin", path: "/hold" },
-      ]);
-    const runs = [batch(), batch(), batch()];
+    const runs = [holdBatch(11), holdBatch(12), holdBatch(13)];
     await untilHolding(2);
     await new Promise((r) => setTimeout(r, 50));
     expect(holding).toBe(2); // the third has not started
@@ -326,13 +329,9 @@ describe("fetchReplyFiles — downloads in flight, process-wide", () => {
   });
 
   it("fails a batch whose timeout ends while it waits", async () => {
-    const long = () =>
-      new WebhookForwarder(parseAllowlistEntries([]), 3000).fetchReplyFiles(action(), [
-        { name: "h.bin", path: "/hold" },
-      ]);
-    const busy = [long(), long()];
+    const busy = [holdBatch(21), holdBatch(22)];
     await untilHolding(2);
-    const waited = await new WebhookForwarder(parseAllowlistEntries([]), 100).fetchReplyFiles(action(), [
+    const waited = await new WebhookForwarder(parseAllowlistEntries([]), 100).fetchReplyFiles(action(undefined, 23), [
       { name: "a.png", path: "/files/a.png" },
     ]);
     expect(waited).toEqual({
@@ -345,5 +344,37 @@ describe("fetchReplyFiles — downloads in flight, process-wide", () => {
     // the turns came back: a new batch runs at once
     const after = await forwarder().fetchReplyFiles(action(), [{ name: "a.png", path: "/files/a.png" }]);
     expect(after.ok).toBe(true);
+  });
+
+  it("runs one batch per behavior, so a slow receiver can't starve another behavior", async () => {
+    const slow = [holdBatch(31), holdBatch(31)];
+    await untilHolding(1);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(holding).toBe(1); // its second batch waits on its own turn
+    // another behavior still gets a process-wide turn, at once
+    const other = await new WebhookForwarder(parseAllowlistEntries([]), 1000).fetchReplyFiles(action(undefined, 32), [
+      { name: "a.png", path: "/files/a.png" },
+    ]);
+    expect(other.ok).toBe(true);
+    releaseHeld();
+    await untilHolding(1);
+    releaseHeld();
+    expect((await Promise.all(slow)).map((r) => r.ok)).toEqual([true, true]);
+    expect(maxHolding).toBe(1);
+  });
+
+  it("a target check that hangs ends with the timeout and gives its turn back", async () => {
+    vi.mocked(hostPolicy.resolveWebhookTarget).mockImplementationOnce(() => new Promise(() => {}));
+    const started = Date.now();
+    const hung = await new WebhookForwarder(parseAllowlistEntries([]), 100).fetchReplyFiles(action(undefined, 41), [
+      { name: "a.png", path: "/files/a.png" },
+    ]);
+    expect(hung.ok).toBe(false);
+    expect(Date.now() - started).toBeLessThan(1500);
+    // both turns are free again: two other batches run side by side
+    const runs = [holdBatch(42), holdBatch(43)];
+    await untilHolding(2);
+    releaseHeld();
+    expect((await Promise.all(runs)).map((r) => r.ok)).toEqual([true, true]);
   });
 });

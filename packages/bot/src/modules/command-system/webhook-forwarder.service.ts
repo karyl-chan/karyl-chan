@@ -57,6 +57,8 @@ import {
 } from "./behavior-reply.js";
 import type { ReplyFile, ReplyFilesResult } from "./reply-files.js";
 
+const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
 /**
  * Read the body, giving up past `max` bytes (null). A declared
  * Content-Length over the cap is refused before reading anything.
@@ -222,7 +224,7 @@ export class WebhookForwarder {
       webhookUrl = decryptSecret(action.url);
     } catch (err) {
       return fail(
-        `webhookUrl 解密失敗：${err instanceof Error ? err.message : String(err)}`,
+        `webhookUrl 解密失敗：${errorText(err)}`,
       );
     }
 
@@ -281,8 +283,10 @@ export class WebhookForwarder {
    * that can't be had fails them all. Never throws.
    *
    * At most MAX_DOWNLOAD_BATCHES batches download at a time across the
-   * process (each may hold up to the total cap); another waits for a turn
-   * within its own timeout, and fails when the timeout ends first.
+   * process (each may hold up to the total cap), and at most one per
+   * behavior, so one slow receiver can't take every turn. A batch waits
+   * for its turns within its own timeout, and fails when it ends first;
+   * the target check counts against that timeout too.
    */
   async fetchReplyFiles(
     action: BehaviorWebhookActionRow,
@@ -297,19 +301,21 @@ export class WebhookForwarder {
     } catch (err) {
       return {
         ok: false,
-        error: `the webhook URL is unusable: ${err instanceof Error ? err.message : String(err)}`,
+        error: `the webhook URL is unusable: ${errorText(err)}`,
       };
     }
     const signal = AbortSignal.timeout(this.timeoutMs);
-    if (!(await downloadSlots.take(signal))) {
+    const release = await takeDownloadTurn(action.behaviorId, signal);
+    if (!release) {
       return { ok: false, error: "timed out waiting for a download slot (the bot is downloading other replies' files)" };
     }
     try {
       let target: WebhookTarget;
       try {
-        target = await resolveWebhookTarget(origin, this.allowlist);
+        // a lookup that hangs must not keep the turn past the timeout
+        target = await untilAborted(resolveWebhookTarget(origin, this.allowlist), signal);
       } catch (err) {
-        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        return { ok: false, error: errorText(err) };
       }
       const agent = createPinnedAgent(target.addresses);
       const files: ReplyFile[] = [];
@@ -329,7 +335,7 @@ export class WebhookForwarder {
       }
       return { ok: true, files };
     } finally {
-      downloadSlots.release();
+      release();
     }
   }
 
@@ -422,7 +428,7 @@ export class WebhookForwarder {
           // the DOM RequestInit type the project compiles against.
         } as RequestInit);
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = errorText(err);
         return fail(`network error: ${msg}`);
       }
 
@@ -440,7 +446,7 @@ export class WebhookForwarder {
         rawText = await readCapped(res, MAX_REPLY_BODY_BYTES);
       } catch (err) {
         return fail(
-          `could not read the response body: ${err instanceof Error ? err.message : String(err)}`,
+          `could not read the response body: ${errorText(err)}`,
           res.status,
         );
       }
@@ -542,7 +548,7 @@ export class WebhookForwarder {
       botEventLog.record(
         "warn",
         "bot",
-        `webhook-forwarder: behavior ${behaviorId} webhookSecret 解密失敗，以 null 處理：${err instanceof Error ? err.message : String(err)}`,
+        `webhook-forwarder: behavior ${behaviorId} webhookSecret 解密失敗，以 null 處理：${errorText(err)}`,
         { behaviorId },
       );
       return null;
@@ -554,41 +560,102 @@ export class WebhookForwarder {
 export const MAX_DOWNLOAD_BATCHES = 2;
 
 /**
- * Turns for downloading a reply's attachments: at most
- * MAX_DOWNLOAD_BATCHES at a time, the rest wait in order. A waiter whose
- * signal aborts leaves the queue without a turn.
+ * Turns at something, at most `limit` at a time; the rest wait in order.
+ * A waiter whose signal aborts leaves the queue without a turn.
  */
-const downloadSlots = (() => {
-  let inFlight = 0;
-  const waiting: Array<() => void> = [];
-  return {
-    take(signal: AbortSignal): Promise<boolean> {
-      if (signal.aborted) return Promise.resolve(false);
-      if (inFlight < MAX_DOWNLOAD_BATCHES) {
-        inFlight += 1;
-        return Promise.resolve(true);
-      }
-      return new Promise<boolean>((resolve) => {
-        const onAbort = () => {
-          waiting.splice(waiting.indexOf(grant), 1);
-          resolve(false);
-        };
-        // a released turn passes straight to the waiter: inFlight stays
-        const grant = () => {
-          signal.removeEventListener("abort", onAbort);
-          resolve(true);
-        };
-        waiting.push(grant);
-        signal.addEventListener("abort", onAbort, { once: true });
-      });
-    },
-    release(): void {
-      const next = waiting.shift();
-      if (next) next();
-      else inFlight -= 1;
-    },
+class Turns {
+  private inFlight = 0;
+  private readonly waiting: Array<() => void> = [];
+
+  constructor(private readonly limit: number) {}
+
+  take(signal: AbortSignal): Promise<boolean> {
+    if (signal.aborted) return Promise.resolve(false);
+    if (this.inFlight < this.limit) {
+      this.inFlight += 1;
+      return Promise.resolve(true);
+    }
+    return new Promise<boolean>((resolve) => {
+      const onAbort = () => {
+        this.waiting.splice(this.waiting.indexOf(grant), 1);
+        resolve(false);
+      };
+      // a released turn passes straight to the waiter: inFlight stays
+      const grant = () => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(true);
+      };
+      this.waiting.push(grant);
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+
+  release(): void {
+    const next = this.waiting.shift();
+    if (next) next();
+    else this.inFlight -= 1;
+  }
+
+  /** No turn taken and none waited for. */
+  get idle(): boolean {
+    return this.inFlight === 0 && this.waiting.length === 0;
+  }
+}
+
+/** Reply attachment downloads in flight, process-wide (#156). */
+const downloadTurns = new Turns(MAX_DOWNLOAD_BATCHES);
+/** One download in flight per behavior; a key goes when it is idle. */
+const behaviorDownloadTurns = new Map<number, Turns>();
+
+/**
+ * A turn to download a behavior's reply files: the behavior's own first
+ * (so its second batch waits without holding a process-wide turn), then
+ * a process-wide one. Resolves the release, or null when `signal` ended
+ * the wait.
+ */
+async function takeDownloadTurn(behaviorId: number, signal: AbortSignal): Promise<(() => void) | null> {
+  let own = behaviorDownloadTurns.get(behaviorId);
+  if (!own) {
+    own = new Turns(1);
+    behaviorDownloadTurns.set(behaviorId, own);
+  }
+  const forget = () => {
+    if (own.idle && behaviorDownloadTurns.get(behaviorId) === own) behaviorDownloadTurns.delete(behaviorId);
   };
-})();
+  if (!(await own.take(signal))) {
+    forget();
+    return null;
+  }
+  if (!(await downloadTurns.take(signal))) {
+    own.release();
+    forget();
+    return null;
+  }
+  return () => {
+    downloadTurns.release();
+    own.release();
+    forget();
+  };
+}
+
+/** `promise`, or a rejection with the signal's reason once it aborts. */
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (err: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(err);
+      },
+    );
+  });
+}
 
 const MiB = 1024 * 1024;
 
@@ -616,7 +683,7 @@ async function fetchReplyFile(
       signal,
     } as RequestInit);
   } catch (err) {
-    return { ok: false, error: `network error: ${err instanceof Error ? err.message : String(err)}` };
+    return { ok: false, error: `network error: ${errorText(err)}` };
   }
   if (!res.ok) {
     await res.body?.cancel().catch(() => {});
@@ -632,7 +699,7 @@ async function fetchReplyFile(
   try {
     data = await readCappedBytes(res, Math.min(MAX_REPLY_ATTACHMENT_BYTES, budget));
   } catch (err) {
-    return { ok: false, error: `could not read it: ${err instanceof Error ? err.message : String(err)}` };
+    return { ok: false, error: `could not read it: ${errorText(err)}` };
   }
   if (data === null) {
     return {
