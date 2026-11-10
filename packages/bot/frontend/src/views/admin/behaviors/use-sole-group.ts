@@ -1,4 +1,7 @@
 import { computed, ref, watch, type Ref } from 'vue';
+
+/** What the rule needs of a saved trigger: its audience. */
+type SavedAudience = Pick<MessageTriggerView, 'audienceKind' | 'audienceGroupName'>;
 import { getGroupMembers, type MessageTriggerView } from '../../../api/behavior';
 import { toCreateBody, type MessageTriggerDraft } from './message-trigger-draft';
 
@@ -8,7 +11,7 @@ import { toCreateBody, type MessageTriggerDraft } from './message-trigger-draft'
  * the group or is deleted, the bot drops the list. This is the group a
  * trigger is the sole user of — the list its save or delete would drop.
  */
-export function soleGroupOf(trigger: MessageTriggerView, groupUse: ReadonlyMap<string, number>): string | null {
+export function soleGroupOf(trigger: SavedAudience, groupUse: ReadonlyMap<string, number>): string | null {
     const name = trigger.audienceKind === 'group' ? trigger.audienceGroupName : null;
     return name && groupUse.get(name) === 1 ? name : null;
 }
@@ -23,7 +26,7 @@ export function draftLeavesGroup(group: string, draft: MessageTriggerDraft): boo
  * loaded while the card is open (and on demand before a delete).
  */
 export function useSoleGroup(
-    saved: Ref<MessageTriggerView>,
+    saved: Readonly<Ref<SavedAudience>>,
     groupUse: () => ReadonlyMap<string, number>,
     open: Ref<boolean>,
 ) {

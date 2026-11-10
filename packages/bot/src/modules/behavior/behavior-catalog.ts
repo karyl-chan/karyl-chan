@@ -26,11 +26,16 @@ import {
   type BehaviorWebhookActionRow,
 } from "./models/behavior-webhook-action.model.js";
 import { BehaviorGroupMember } from "./models/behavior-group-member.model.js";
-import { SYSTEM_BEHAVIOR_KEY_LOGIN } from "./models/behavior-definition.model.js";
+import { Service, rowOfService, type ServiceRow } from "./models/service.model.js";
+import {
+  SYSTEM_BEHAVIOR_KEY_LOGIN,
+  isServiceBehavior,
+} from "./models/behavior-definition.model.js";
 
-/** 一個 behavior 與它的 webhook 動作（actionSource='webhook' 時）。 */
+/** 一個 behavior 與它的動作設定：webhook（actionSource='webhook'）或服務（'service'）。 */
 export interface CatalogBehavior extends BehaviorDefinitionRow {
   webhook: BehaviorWebhookActionRow | null;
+  service: ServiceRow | null;
 }
 
 /** 一個指令與它的葉節點（依 sortOrder、子指令名排序）。 */
@@ -47,7 +52,7 @@ export interface BehaviorCatalog {
 }
 
 export async function loadBehaviorCatalog(): Promise<BehaviorCatalog> {
-  const [commandModels, definitionModels, webhookModels, memberModels] =
+  const [commandModels, definitionModels, webhookModels, memberModels, serviceModels] =
     await Promise.all([
       BehaviorCommand.findAll({ order: [["id", "ASC"]] }),
       BehaviorDefinition.findAll({
@@ -58,6 +63,7 @@ export async function loadBehaviorCatalog(): Promise<BehaviorCatalog> {
       }),
       BehaviorWebhookAction.findAll(),
       BehaviorGroupMember.findAll(),
+      Service.findAll(),
     ]);
 
   const webhooks = new Map(
@@ -66,9 +72,19 @@ export async function loadBehaviorCatalog(): Promise<BehaviorCatalog> {
       return [row.behaviorId, row] as const;
     }),
   );
+  const services = new Map(
+    serviceModels.map((m) => {
+      const row = rowOfService(m);
+      return [row.id, row] as const;
+    }),
+  );
   const behaviors: CatalogBehavior[] = definitionModels.map((m) => {
     const row = rowOfBehaviorDefinition(m);
-    return { ...row, webhook: webhooks.get(row.id) ?? null };
+    return {
+      ...row,
+      webhook: webhooks.get(row.id) ?? null,
+      service: row.serviceId !== null ? (services.get(row.serviceId) ?? null) : null,
+    };
   });
 
   const leavesByCommand = new Map<number, CatalogBehavior[]>();
@@ -103,17 +119,47 @@ export async function loadBehaviorCatalog(): Promise<BehaviorCatalog> {
   };
 }
 
-/** The System Behavior (login) in a catalog: its row, and its command when its trigger is one. */
-export interface SystemLoginEntry {
+/**
+ * A fixed row in a catalog — the System Behavior or a Service Behavior
+ * (fixed-trigger-switch.ts): its row, and its command when its trigger
+ * is one.
+ */
+export interface FixedRowEntry {
   row: CatalogBehavior;
   command: CatalogCommand | null;
 }
 
-export function systemLoginOf(catalog: BehaviorCatalog): SystemLoginEntry | null {
-  const isLogin = (b: CatalogBehavior) => b.systemKey === SYSTEM_BEHAVIOR_KEY_LOGIN;
-  const command = catalog.commands.find((c) => c.leaves.some(isLogin)) ?? null;
-  const row = command?.leaves.find(isLogin) ?? catalog.messageTriggers.find(isLogin);
+/** The System Behavior (login) in a catalog. */
+export type SystemLoginEntry = FixedRowEntry;
+
+function fixedRowOf(
+  catalog: BehaviorCatalog,
+  isRow: (b: CatalogBehavior) => boolean,
+): FixedRowEntry | null {
+  const command = catalog.commands.find((c) => c.leaves.some(isRow)) ?? null;
+  const row = command?.leaves.find(isRow) ?? catalog.messageTriggers.find(isRow);
   return row ? { row, command } : null;
+}
+
+export function systemLoginOf(catalog: BehaviorCatalog): SystemLoginEntry | null {
+  return fixedRowOf(catalog, (b) => b.systemKey === SYSTEM_BEHAVIOR_KEY_LOGIN);
+}
+
+/** One service's Service Behavior, wherever its trigger is. */
+export function serviceBehaviorOf(catalog: BehaviorCatalog, serviceId: number): FixedRowEntry | null {
+  return fixedRowOf(catalog, (b) => isServiceBehavior(b) && b.serviceId === serviceId);
+}
+
+/** Every Service Behavior, by service id (commands' leaves and message triggers alike). */
+export function serviceBehaviorsOf(catalog: BehaviorCatalog): FixedRowEntry[] {
+  const entries: FixedRowEntry[] = [];
+  for (const command of catalog.commands) {
+    for (const row of command.leaves) if (isServiceBehavior(row)) entries.push({ row, command });
+  }
+  for (const row of catalog.messageTriggers) {
+    if (isServiceBehavior(row)) entries.push({ row, command: null });
+  }
+  return entries.sort((a, b) => (a.row.serviceId ?? 0) - (b.row.serviceId ?? 0));
 }
 
 // ── 快照 ────────────────────────────────────────────────────────────────────
@@ -174,6 +220,7 @@ for (const model of [
   BehaviorDefinition,
   BehaviorWebhookAction,
   BehaviorGroupMember,
+  Service,
 ]) {
   for (const hook of WRITE_HOOKS) {
     model.addHook(hook, onWrite);

@@ -23,7 +23,7 @@ export type BehaviorSection =
   | `guild:${string}`
   | `channel:${string}:${string}`;
 
-export type BehaviorActionSource = "builtin" | "webhook";
+export type BehaviorActionSource = "builtin" | "webhook" | "service";
 export type BehaviorMessageSurface = "bot_dm" | "guild";
 export type BehaviorPatternKind = "startswith" | "endswith" | "regex";
 export type BehaviorAudienceKind = "all" | "user" | "group";
@@ -133,9 +133,29 @@ export interface MessageTriggerView extends BehaviorViewBase {
 
 export type BehaviorItemView = CommandView | MessageTriggerView;
 
+/** What a Service Behavior shows of its service (services.ts has the full view). */
+export interface ServiceSummaryView {
+  id: number;
+  name: string;
+  audience: string;
+  redirectUrl: string;
+}
+
+/**
+ * A Service Behavior (#126): a bot DM message trigger, or the command
+ * whose root leaf it is, with the service whose login it runs. Its action
+ * is fixed; only its trigger switches (switchServiceTrigger), and it
+ * comes and goes with its service.
+ */
+export type ServiceBehaviorView = (CommandView | MessageTriggerView) & {
+  service: ServiceSummaryView;
+};
+
 export interface BehaviorListView {
   /** The System Behavior (login), pinned at the top of its section. */
   system: BehaviorItemView | null;
+  /** The Service Behaviors, listed apart from the custom triggers. */
+  services: ServiceBehaviorView[];
   commands: CommandView[];
   messageTriggers: MessageTriggerView[];
 }
@@ -235,7 +255,8 @@ export type CommandPatch = Partial<CommandInput> & { ifUpdatedAt?: string };
  */
 export type MessageTriggerLocation = Exclude<BehaviorSection, "app">;
 
-function send(method: string, path: string, body?: unknown): Promise<Response> {
+/** A JSON request to the admin API (the services API uses it too). */
+export function send(method: string, path: string, body?: unknown): Promise<Response> {
   return authedFetch(path, {
     method,
     ...(body !== undefined
@@ -452,6 +473,39 @@ export async function switchLoginTrigger(
   input: LoginTriggerInput & { ifUpdatedAt?: string },
 ): Promise<{ system: BehaviorItemView; registration: RegistrationReport | null }> {
   return jsonOrThrow(await send("PUT", "/api/behaviors/system/login/trigger", input));
+}
+
+/**
+ * A Service Behavior's trigger (#126): a bot DM pattern with an audience,
+ * or a global command (no default member permissions).
+ */
+export type ServiceTriggerInput =
+  | {
+      kind: "message";
+      patternKind: BehaviorPatternKind;
+      patternValue: string;
+      audienceKind: BehaviorAudienceKind;
+      audienceUserId: string | null;
+      audienceGroupName: string | null;
+    }
+  | {
+      kind: "command";
+      name: string;
+      description: string;
+      integrationTypes: DiscordIntegrationType[];
+      contexts: DiscordContext[];
+    };
+
+/**
+ * PUT /api/services/:id/trigger (owner only) — the login's switch, for a
+ * service: the new trigger takes effect first, the old one goes after;
+ * `registration_failed` (502) changes nothing.
+ */
+export async function switchServiceTrigger(
+  serviceId: number,
+  input: ServiceTriggerInput & { ifUpdatedAt?: string },
+): Promise<{ behavior: ServiceBehaviorView; registration: RegistrationReport | null }> {
+  return jsonOrThrow(await send("PUT", `/api/services/${serviceId}/trigger`, input));
 }
 
 /**

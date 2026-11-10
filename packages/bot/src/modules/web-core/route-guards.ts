@@ -13,14 +13,22 @@ import { config } from '../../config.js';
  *
  *     if (!requireOwner(request, reply, undefined, 'change the login trigger')) return;
  */
+/** Whether the caller passes requireOwner, without answering for it. */
+export function isOwnerRequest(
+    request: FastifyRequest,
+    ownerIds: readonly string[] = config.bot.ownerIds
+): boolean {
+    if (ownerIds.length === 0) return true;
+    return request.authUserId !== undefined && ownerIds.includes(request.authUserId);
+}
+
 export function requireOwner(
     request: FastifyRequest,
     reply: FastifyReply,
     ownerIds: readonly string[] = config.bot.ownerIds,
     action = 'do this'
 ): boolean {
-    if (ownerIds.length === 0) return true;
-    if (request.authUserId !== undefined && ownerIds.includes(request.authUserId)) return true;
+    if (isOwnerRequest(request, ownerIds)) return true;
     reply.code(403).send({ error: `only the bot owner can ${action}` });
     return false;
 }

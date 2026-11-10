@@ -6,6 +6,7 @@
             "messages": "消息",
             "guilds": "服务器",
             "behaviors": "行为",
+            "services": "服务",
             "plugins": "插件",
             "admin": "权限",
             "profile": "个人资料",
@@ -1206,6 +1207,7 @@
             },
             "loadError": "无法加载行为：{error}",
             "empty": "这里还没有行为。",
+            "services": "服务",
             "commands": "指令",
             "messageTriggers": "消息触发",
             "note": {
@@ -1678,7 +1680,55 @@
                 "commandRemoved": "这是 /{command} 最后一个叶节点：指令会被删除，并从 Discord 移除。",
                 "subcommandRemoved": "/{command} {subcommand} 会从 Discord 上的指令移除。"
             }
+        },
+        "service": {
+            "locked": "服务登录：只能改触发",
+            "tag": "服务登录：匹配在后台登录之前，动作固定",
+            "tagShort": "服务",
+            "toggleProtected": "服务存在时，服务登录始终启用",
+            "notice": "这个触发用来登录服务：能触发的人会收到一次性链接（120 秒）。只能换触发：与 bot 私信的匹配方式与谁能用，或一个指令；服务的改名或删除在服务页。",
+            "manage": "管理服务",
+            "action": "私下发送 {name} 的登录链接（服务 token）给触发的人",
+            "audience": "Audience",
+            "redirectUrl": "跳转网址",
+            "ownerOnly": "只有 bot owner 能改服务的触发：它决定谁拿得到这个服务的登录 token。",
+            "commandNote": "全局指令没有对象筛选：看得到、能执行它的人（依安装方式与可用情境，可能是所有人）都会拿到这个服务的服务 token。可在服务器的集成设置缩小范围，或改用有对象筛选的 bot 私信匹配。回复只有执行的人看得到。",
+            "patternRequired": "请输入匹配内容",
+            "commandName": "小写英文、数字、- 与 _，最多 32 字",
+            "descriptionRequired": "请输入指令说明"
         }
+    },
+    "services": {
+        "title": "服务",
+        "subtitle": "通过 karyl 登录的自建服务。每个服务有一个与 bot 私信的触发；能触发的人会收到带有该服务签名 token 的链接。",
+        "jwks": "服务用这里的公钥验证 token：",
+        "add": "新增服务",
+        "addTitle": "新服务",
+        "addHint": "新增时会一并创建与 bot 私信的触发 {trigger}；谁能使用到 behaviors 页设置。",
+        "empty": "还没有服务。",
+        "edit": "编辑",
+        "delete": "删除",
+        "deleteTitle": "删除服务",
+        "deleteMessage": "删除「{name}」与它的登录触发？已发出的链接在到期前仍然有效。",
+        "created": "已新增 {name}",
+        "trigger": "触发",
+        "editTrigger": "到 behaviors 页修改",
+        "audienceChange": "token 会带新的 audience，服务端必须跟着改。仍是默认值的触发会改成新名称。",
+        "field": {
+            "name": "名称",
+            "audience": "Audience",
+            "audienceHint": "token 的 aud：小写英文、数字与 -",
+            "redirectUrl": "跳转网址",
+            "redirectUrlHint": "https；链接会加上 ?token=…",
+            "audiencePlaceholder": "audience"
+        },
+        "error": {
+            "nameRequired": "请输入服务名称",
+            "audience": "小写英文、数字与 -，不能以 - 开头或结尾",
+            "https": "请输入 https 网址"
+        },
+        "stale": "这个服务刚被别人改过，已重新加载列表。",
+        "noTrigger": "（无）"
     },
     "config": {
         "bot": {

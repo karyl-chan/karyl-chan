@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
-import type { BehaviorStats, WebhookActionView } from '../../../api/behavior';
+import type { BehaviorActionSource, BehaviorStats, WebhookActionView } from '../../../api/behavior';
 import { useRelativeTime } from '../../../composables/use-relative-time';
 
 /** Read-only view of a behavior's action (built-in / webhook) and its stats. */
 defineProps<{
-    actionSource: 'builtin' | 'webhook';
+    actionSource: BehaviorActionSource;
     webhook: WebhookActionView | null;
     stats: BehaviorStats | null;
 }>();

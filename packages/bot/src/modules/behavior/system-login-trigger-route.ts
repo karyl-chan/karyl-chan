@@ -8,35 +8,14 @@
  * The login is the owner's only way into the admin UI and the login
  * provider for other self-hosted services, so the switch never leaves it
  * without a working trigger: the NEW trigger takes effect first, the old
- * one goes after. Only a bot owner may switch it (requireOwner): an
- * admin who is not the owner must not be able to break the owner's way in.
+ * one goes after — the fixed-row switch (fixed-trigger-switch.ts), which
+ * the Service Behaviors share. `/login` is the login's own name. Only a
+ * bot owner may switch it (requireOwner): an admin who is not the owner
+ * must not be able to break the owner's way in.
  *
- *   to a command (from a message, or a changed command):
- *     1. the name must be free in the shared namespace (`/login` is the
- *        login's own)
- *     2. register the command on Discord as it will be stored — holding
- *        the reconcile lock for the rest (withRegistrationLock), so no
- *        reconcileAll sweeps it before its row exists. Steps 2–5 are the
- *        register-first flow command-register-first.ts holds, shared
- *        with converting a message trigger to a command
- *     3. Discord refused, or the bot is not connected → 502
- *        registration_failed, nothing changed (a refused edit of an
- *        existing command leaves Discord's previous version: create /
- *        edit calls are atomic)
- *     4. store it (one transaction): the system row becomes the root
- *        leaf of an `isSystem` command
- *     5. the store failed → take the registration back (release the new
- *        name, or re-register the stored command when only its settings
- *        changed) and fail; the old trigger still holds
- *     6. a renamed command: release the old name (failure: logged, the
- *        next reconcileAll removes it)
- *   to a message (from a command):
- *     1. store first: the system row becomes the bot DM trigger and the
- *        system command row goes — `!login` works from the commit on
- *     2. delete the command from Discord; failure is logged and left to
- *        the next reconcileAll (the command is no longer desired, and it
- *        is on the roster)
- *   message → message: a plain row update.
+ * To a message, neither the pattern nor the sample DM may be taken by a
+ * Service Behavior's trigger (#126): those are matched before the login
+ * (service-behavior-rules.ts).
  *
  * Writes serialise like every behavior write (withBehaviorWriteLock, then
  * the reconcile lock — the same order as command writes, so no deadlock);
@@ -53,8 +32,6 @@
  */
 
 import type { FastifyInstance } from "fastify";
-import type { Transaction } from "sequelize";
-import { botEventLog } from "../bot-events/bot-event-log.js";
 import { requireOwner } from "../web-core/route-guards.js";
 import { BehaviorApiError } from "./behavior-api-error.js";
 import { auditBehaviorWrite } from "./behavior-audit.js";
@@ -65,45 +42,26 @@ import {
 } from "./behavior-catalog.js";
 import { buildBehaviorListView, type BehaviorListView } from "./behavior-list-view.js";
 import { commandFields, ifUpdatedAtSchema, messageTriggerFields } from "./behavior-schemas.js";
-import { checkNotStale } from "./behavior-write-guards.js";
-import { behaviorTransaction, withBehaviorWriteLock } from "./behavior-write-lock.js";
-import type {
-  CommandNamespaceChecker,
-  RegistrationReport,
-} from "./command-registration-sync.js";
-import { asNameConflict, checkNamespaceFree } from "./command-writes.js";
+import { withBehaviorWriteLock } from "./behavior-write-lock.js";
+import type { RegistrationReport } from "./command-registration-sync.js";
+import { StoredAfterRegistrationFailed } from "./command-register-first.js";
 import {
-  StoredAfterRegistrationFailed,
-  commandColumnsOf,
-  leafColumnsOf,
-  proposedCommand,
-  registerThenStore,
-  type CommandRowSettings,
-} from "./command-register-first.js";
-import { BehaviorCommand } from "./models/behavior-command.model.js";
-import { BehaviorDefinition } from "./models/behavior-definition.model.js";
+  failureOutcome,
+  globalCommandSettings,
+  storedSummary,
+  switchFixedTrigger,
+  type FixedTrigger,
+  type FixedTriggerDeps,
+  type FixedTriggerRegistrar,
+} from "./fixed-trigger-switch.js";
 import { findStatsBulk } from "./models/behavior-stats.model.js";
-import type {
-  CommandReconciler,
-  LockedRegistration,
-} from "../command-system/reconcile.service.js";
-import {
-  loginTriggerOf,
-  type LoginCommandTrigger,
-  type LoginMessageTrigger,
-  type LoginTrigger,
-  type LoginTriggerBody,
-} from "./system-login-trigger.js";
+import { checkLoginClearOfServices } from "./service-behavior-rules.js";
+import { loginTriggerOf, type LoginTrigger, type LoginTriggerBody } from "./system-login-trigger.js";
 
 /** What the switch needs of the CommandReconciler (injected, as for command writes). */
-export type SystemLoginRegistrar = Pick<
-  CommandReconciler,
-  "withRegistrationLock" | "releaseRegistration"
->;
+export type SystemLoginRegistrar = FixedTriggerRegistrar;
 
-export interface SystemLoginTriggerDeps {
-  reconciler?: SystemLoginRegistrar;
-  namespace?: CommandNamespaceChecker;
+export interface SystemLoginTriggerDeps extends FixedTriggerDeps {
   /** Bot owners (tests); production reads BOT_OWNER_IDS. */
   ownerIds?: readonly string[];
 }
@@ -132,201 +90,19 @@ async function loadSystemLogin(): Promise<SystemLoginEntry> {
   return login;
 }
 
-/** The version the admin's view showed: the command's, or the trigger row's. */
-function versionOf(current: SystemLoginEntry): { updatedAt: Date } {
-  return current.command ?? current.row;
-}
-
-/** The audit's view of the stored trigger (it holds no secret). */
-function storedSummary({ row, command }: SystemLoginEntry): Record<string, unknown> {
-  return command
-    ? {
-        kind: "command",
-        name: command.name,
-        description: command.description,
-        integrationTypes: command.integrationTypes.split(","),
-        contexts: command.contexts.split(","),
-      }
-    : { kind: "message", patternKind: row.patternKind, patternValue: row.patternValue };
-}
-
-// ── row columns ─────────────────────────────────────────────────────────────
-
-/** The system row's columns as a bot DM message trigger (everyone; it always stops). */
-function messageTriggerColumnsOf(next: LoginMessageTrigger) {
-  return {
-    triggerKind: "message" as const,
-    commandId: null,
-    subcommandGroup: null,
-    subcommand: null,
-    leafDescription: null,
-    options: null,
-    surface: "bot_dm" as const,
-    guildId: null,
-    channelId: null,
-    patternKind: next.patternKind,
-    patternValue: next.patternValue,
-    stopOnMatch: true,
-    ignoreBots: true,
-    audienceKind: "all" as const,
-    audienceUserId: null,
-    audienceGroupName: null,
-  };
-}
-
-/** The system command's settings: always global, never default member permissions. */
-function loginCommandSettingsOf(next: LoginCommandTrigger): CommandRowSettings {
-  return {
-    name: next.name,
-    description: next.description,
-    registration: "global",
-    guildId: null,
-    integrationTypes: next.integrationTypes,
-    contexts: next.contexts,
-    defaultMemberPermissions: null,
-  };
-}
-
-// ── the switch ──────────────────────────────────────────────────────────────
-
-async function storeCommandTrigger(
-  current: SystemLoginEntry,
-  next: LoginCommandTrigger,
-  transaction: Transaction,
-): Promise<void> {
-  if (current.command) {
-    // instance save: the model's cross-field validator needs every field
-    const model = await BehaviorCommand.findByPk(current.command.id, { transaction });
-    model!.set(commandColumnsOf(loginCommandSettingsOf(next), true));
-    await model!.save({ transaction }).catch((err: unknown) => asNameConflict(err, next.name));
-    return;
-  }
-  const command = await BehaviorCommand.create(commandColumnsOf(loginCommandSettingsOf(next), true), {
-    transaction,
-  }).catch(
-    (err: unknown) => asNameConflict(err, next.name),
-  );
-  const row = await BehaviorDefinition.findByPk(current.row.id, { transaction });
-  row!.set(leafColumnsOf(command.getDataValue("id") as number));
-  await row!.save({ transaction });
-}
-
-async function switchToCommand(
-  namespace: CommandNamespaceChecker,
-  locked: LockedRegistration | null,
-  current: SystemLoginEntry,
-  next: LoginCommandTrigger,
-): Promise<RegistrationReport> {
-  await checkNamespaceFree(namespace, { name: next.name, target: "global" }, current.command?.id ?? null);
-  if (!locked) {
-    throw new BehaviorApiError(
-      "registration_failed",
-      "no command reconciler in this process; the login keeps its current trigger",
-      undefined,
-      { targets: [] },
-    );
-  }
-  // a new command has no row yet, so no id: 0 stands in (it only labels the reconciler's result)
-  const id = current.command?.id ?? 0;
-  const { outcomes } = await registerThenStore(locked, {
-    proposed: proposedCommand(id, loginCommandSettingsOf(next), true, [
-      { ...current.row, ...leafColumnsOf(id), webhook: null },
-    ]),
-    at: { name: next.name, target: "global" },
-    keeps: "the login keeps its current trigger",
-    // the old command's own settings when the switch only changed them,
-    // else no registration under the new name
-    restore: current.command && current.command.name === next.name ? current.command : null,
-    takeBackFailed: `system login: storing /${next.name} failed and its registration could not be taken back; the next full reconcile restores Discord to the stored trigger`,
-    store: () => behaviorTransaction((transaction) => storeCommandTrigger(current, next, transaction)),
-  });
-  const previous = current.command?.name;
-  if (previous !== undefined && previous !== next.name) {
-    if ((await locked.releaseRegistration(previous, "global")) === "unavailable") {
-      botEventLog.record(
-        "warn",
-        "bot",
-        `system login: the old /${previous} could not be removed from Discord; the next full reconcile removes it`,
-        { name: previous },
-      );
-    }
-  }
-  return { status: "registered", targets: outcomes };
-}
-
-async function switchToMessage(
-  locked: LockedRegistration | null,
-  current: SystemLoginEntry,
-  next: LoginMessageTrigger,
-): Promise<RegistrationReport | null> {
-  await behaviorTransaction(async (transaction) => {
-    const row = await BehaviorDefinition.findByPk(current.row.id, { transaction });
-    row!.set(messageTriggerColumnsOf(next));
-    await row!.save({ transaction });
-    if (current.command) {
-      await BehaviorCommand.destroy({ where: { id: current.command.id }, transaction });
-    }
-  });
-  if (!current.command) return null;
-
-  const name = current.command.name;
-  const outcome = locked ? await locked.releaseRegistration(name, "global") : "unavailable";
-  if (outcome === "unavailable") {
-    botEventLog.record(
-      "warn",
-      "bot",
-      `system login: switched to a message trigger, but /${name} could not be removed from Discord; the next full reconcile removes it`,
-      { name },
-    );
+/** The login's trigger in the fixed-row switch's terms: everyone may DM it (the action checks who). */
+function fixedTriggerOf(next: LoginTrigger): FixedTrigger {
+  if (next.kind === "message") {
     return {
-      status: "deferred",
-      reason: `/${name} could not be removed from Discord yet; the next full reconcile removes it`,
+      kind: "message",
+      patternKind: next.patternKind,
+      patternValue: next.patternValue,
+      audienceKind: "all",
+      audienceUserId: null,
+      audienceGroupName: null,
     };
   }
-  return { status: "removed" };
-}
-
-/**
- * The whole switch — reading the login, the stale check, the namespace
- * check, every Discord call and the store — inside the reconcile lock
- * (taken after the behavior write lock, like every command write), so
- * nothing registers, sweeps or reconciles in between. Without a
- * reconciler only a message → message change goes through. `loaded`
- * learns the login as it was before the switch, for the audit of a
- * switch that fails.
- */
-async function switchLoginTrigger(
-  deps: SystemLoginTriggerDeps,
-  next: LoginTrigger,
-  ifUpdatedAt: string | undefined,
-  loaded: (current: SystemLoginEntry) => void,
-): Promise<RegistrationReport | null> {
-  const run = async (locked: LockedRegistration | null) => {
-    const current = await loadSystemLogin();
-    checkNotStale(versionOf(current), ifUpdatedAt, "the system login");
-    loaded(current);
-    if (next.kind === "command") {
-      if (!deps.namespace) throw new Error("CommandNamespace not provided to behavior routes");
-      return switchToCommand(deps.namespace, locked, current, next);
-    }
-    return switchToMessage(locked, current, next);
-  };
-  return deps.reconciler ? deps.reconciler.withRegistrationLock(run) : run(null);
-}
-
-/** A switch that failed after it started → what the audit records of it (null: not audited). */
-function failureOutcome(err: unknown): Record<string, unknown> | null {
-  if (err instanceof StoredAfterRegistrationFailed) {
-    return { outcome: "store_failed", registrationTakenBack: err.takenBack, error: err.message };
-  }
-  if (err instanceof BehaviorApiError && (err.code === "name_conflict" || err.code === "registration_failed")) {
-    return {
-      outcome: err.code,
-      error: err.message,
-      ...(err.details !== undefined ? { details: err.details } : {}),
-    };
-  }
-  return null;
+  return { kind: "command", settings: globalCommandSettings(next) };
 }
 
 async function systemView(): Promise<BehaviorListView["system"]> {
@@ -368,7 +144,20 @@ export function registerSystemLoginTriggerRoute(
       let registration: RegistrationReport | null;
       try {
         registration = await withBehaviorWriteLock(() =>
-          switchLoginTrigger(deps, next, body.ifUpdatedAt, (login) => (seen.login = login)),
+          switchFixedTrigger(deps, {
+            load: loadSystemLogin,
+            next: fixedTriggerOf(next),
+            ifUpdatedAt: body.ifUpdatedAt,
+            what: "the system login",
+            ownsReservedNames: true,
+            check: (catalog) => {
+              // loginTriggerOf made sure a message switch carries its sample
+              if (next.kind === "message") {
+                checkLoginClearOfServices(catalog, { patternValue: next.patternValue, sample: body.sample! });
+              }
+            },
+            loaded: (login) => (seen.login = login),
+          }),
         );
       } catch (err) {
         const failure = failureOutcome(err);

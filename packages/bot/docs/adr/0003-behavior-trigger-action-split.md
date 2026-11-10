@@ -45,3 +45,11 @@ Behaviors 最初照早期 Discord bot 的思路設計：每個 behavior 掛在�
 - 系統 behavior 目前在每次開機時自動補建；移除 `manual`、`break` 必須改程式，不能只刪資料。正式站的 `!login` 原樣保留為登入系統列的觸發方式。
 - Track 3 `plugin_commands`（plugin 在 manifest 寫死註冊範圍等三個維度）與「指令觸發 + plugin action」**並存**：前者給想自己掌握指令體驗的 plugin，後者給可被管理員組合的能力。兩者共用 Discord 的指令命名空間，所以同一註冊範圍內的名稱衝突要在存檔與註冊時拒絕，不能讓後註冊的靜默覆蓋。
 - 第二階段需要新版的 plugin 協定與 SDK，三個獨立 plugin repo 要跟著升級。
+
+## 補充（2026-11-10，#126）：第二種固定列「服務」
+
+owner 在 #126 裁示（2026-11-10）：自架服務透過 karyl 登入，觸發沿用 behavior，behavior 除了「系統」再多一種特殊類型「服務」。
+
+- **Service Behavior 是第二種固定列**，資料裡記為 `actionSource: service`（`serviceId` 指向它的服務）。它和系統登入列一樣不能新增、刪除、停用或改動作，只能換觸發，而且只有 bot owner 能換；換觸發走同一套流程（新的觸發先生效，失敗就保留原本的），可選與 bot 私訊的訊息比對或一個全域指令，伺服器裡的訊息比對一樣不能選。它隨服務新增與刪除，數量不限。
+- `systemKey` 仍只代表登入；「固定列」的判斷是 `systemKey` 非空或 `actionSource: service`。
+- 服務列的訊息觸發排在登入之前比對，所以多了一條鎖死保護：任何服務的觸發都不能吃掉登入自己的觸發，兩邊存檔時都檢查。
