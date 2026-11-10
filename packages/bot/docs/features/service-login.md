@@ -26,8 +26,9 @@ Service Behavior, Service Token, JWKS) are defined in the bot's
 
 ## Setting a service up
 
-On the admin UI's **Services** page (`/admin/services`, admin or
-`behavior.manage`), add a service:
+On the admin UI's **Services** page (`/admin/services`, **bot owners
+only**: whoever sets a redirect URL receives the tokens of everyone who
+logs in there), add a service:
 
 | Field | What it is |
 |-------|------------|
@@ -37,10 +38,12 @@ On the admin UI's **Services** page (`/admin/services`, admin or
 
 Adding a service also adds its **Service Behavior**: a bot DM message
 trigger on exactly `!login-<audience>`. It is listed on the behaviors page
-under the bot DM section's *Services* group, where its trigger — the
-pattern and who may use it — can be changed; nothing else about it can.
-Deleting the service deletes the trigger. Changing the audience moves a
-trigger that is still on the default to the new name.
+under its section's *Services* group, where an owner can switch its
+trigger — a bot DM pattern and who may use it, or a global command (its
+reply is ephemeral) — and nothing else about it
+([behaviors.md](behaviors.md#service-behaviors)). Deleting the service
+deletes the trigger. Changing the audience moves a trigger that is still
+on the default to the new name.
 
 ## What the service receives
 
@@ -163,12 +166,15 @@ an operator rotated the key still verifies. Each entry is an OKP key
 ## Who may log in
 
 Whoever can fire the service's trigger gets a link, so the trigger is the
-access rule: set its audience (everyone, one user, or an Audience Group)
-on the behaviors page. Service triggers are checked before the admin
-login's, and the bot refuses a service trigger that would take the
-login's own DMs (and a login trigger whose sample a service trigger would
-take), so a service can never lock the owner out. A user who sends the
-pattern too often is rate-limited like any trigger (5 per 10 seconds).
+access rule: on a DM pattern, its audience (everyone, one user, or an
+Audience Group); on a command, whoever Discord shows it to (its installs
+and contexts, and the server's integration settings). Service triggers
+are checked before the admin login's, and the bot refuses a service
+trigger that would take the login's own DMs (and a login trigger whose
+pattern or sample a service trigger would take), or another service's,
+so a service can never lock the owner out nor take another's users. A
+user who triggers it too often is rate-limited like any trigger (5 per
+10 seconds).
 
 ## Source
 
@@ -176,7 +182,8 @@ pattern too often is rate-limited like any trigger (5 per 10 seconds).
 |------|---------|
 | `src/modules/behavior/models/service.model.ts` | The `services` table. |
 | `src/modules/behavior/service-routes.ts` | `/api/services` (the services page). |
-| `src/modules/behavior/service-behavior-rules.ts` | What a Service Behavior may be; the login guards. |
+| `src/modules/behavior/service-behavior-rules.ts` | What a Service Behavior's trigger may be; the shadowing guards. |
+| `src/modules/behavior/fixed-trigger-switch.ts` | The trigger switch it shares with the system login. |
 | `src/modules/command-system/service-login-action.ts` | Mints the token and sends the link. |
 | `src/modules/web-core/service-token.ts`, `jwt.service.ts`, `jwks-route.ts` | Signing and the key set. |
 | `frontend/src/views/admin/services/` | The services page. |

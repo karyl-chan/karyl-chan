@@ -115,15 +115,15 @@ Behavior 被觸發後要做的事，由一個 Action Source 提供。
 _Avoid_: `source: custom / system`（舊稱）
 
 **System Behavior（系統指令）**:
-系統提供、固定存在的 behavior，目前只有登入；只能改它的觸發方式（與 bot 私訊的訊息比對，或一個全域指令），而且只有 bot owner 能改（它是 owner 進後台唯一的路）；不能新增、刪除或停用。換觸發方式時新的觸發先生效、舊的才停用，任何一步失敗都保留原本的觸發。它的動作在資料裡記為 `actionSource: builtin`，那只是持久化值，不是管理員可選的 Action Source。
+系統提供、固定存在的 behavior，只有登入（另一種固定列是 Service Behavior）；只能改它的觸發方式（與 bot 私訊的訊息比對，或一個全域指令），而且只有 bot owner 能改（它是 owner 進後台唯一的路）；不能新增、刪除或停用。換觸發方式時新的觸發先生效、舊的才停用，任何一步失敗都保留原本的觸發。它的動作在資料裡記為 `actionSource: builtin`，那只是持久化值，不是管理員可選的 Action Source。
 _Avoid_: 內建動作（它不是可選的動作來源）、admin-login
 
 **Service（服務）**:
-透過 karyl 登入的自架服務：名稱、audience（唯一的小寫 slug，就是它收到的 Service Token 的 `aud`）與 redirect URL（https）。在「服務」管理頁新增、修改、刪除，每個服務擁有一個 Service Behavior，同生同滅。
+透過 karyl 登入的自架服務：名稱、audience（唯一的小寫 slug，就是它收到的 Service Token 的 `aud`）與 redirect URL（https）。只有 bot owner 能在「服務」管理頁新增、修改、刪除（redirect URL 收得到登入者的 token），每個服務擁有一個 Service Behavior，同生同滅。
 _Avoid_: OIDC client、SSO app（karyl 不實作 OIDC）
 
 **Service Behavior（服務列）**:
-服務擁有的 behavior：與 bot 私訊的 Message Trigger（預設剛好是 `!login-<audience>`），動作固定為以觸發者身分簽發 Service Token、私下回覆帶 token 的登入連結。能觸發的人就能登入，所以只能改觸發（比對方式與對象）；不能停用、刪除、轉換或改動作。比對排在 System Behavior 之前、一定收尾，因此它的觸發不能蓋過登入的觸發。資料裡記為 `actionSource: service`，不是管理員可選的 Action Source。
+服務擁有的固定列，與 System Behavior 並列：動作固定為以觸發者身分簽發 Service Token、私下回覆帶 token 的登入連結。能觸發的人就能登入，所以只能換觸發，而且只有 bot owner 能換：與 bot 私訊的訊息比對（預設剛好是 `!login-<audience>`，可設對象），或一個全域指令（ephemeral 回覆）；換法與登入相同，新的觸發先生效。不能停用、刪除、轉換或改動作，隨服務新增與刪除。訊息觸發排在 System Behavior 之前比對、一定收尾，因此不能蓋過登入的觸發，也不能蓋過別的服務的。資料裡記為 `actionSource: service`，不是管理員可選的 Action Source。
 _Avoid_: 服務的 webhook（它不呼叫服務）
 
 **Service Token（服務 token）**:
