@@ -170,12 +170,13 @@ export interface ContractFixtures {
       readonly slashMetaKeys: readonly string[];
       readonly userKeys: readonly string[];
       readonly attachmentKeys: readonly string[];
-      /** `_meta.callback` on a command (#113): the run's callback token. */
+      /** `_meta.callback` on both triggers (#113, #200): the run's callback token. */
       readonly callbackKeys: readonly string[];
     };
     /**
-     * The behavior callback token (#113): one per command run, valid for
-     * `ttlSeconds`, sent as `Authorization: Bearer <token>` to
+     * The behavior callback token (#113): one per run of either trigger,
+     * valid for `ttlSeconds` after the command was used or the message
+     * sent, sent as `Authorization: Bearer <token>` to
      * `<api_base>/api/plugin/<method>` for `methods` only (any other
      * /api/plugin/* path is 403; an unknown or expired token is 401).
      */
@@ -574,6 +575,8 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
         // a regex trigger's groups, group 1 first (null = took no part);
         // [] for startswith / endswith
         "captures",
+        // the run's callback token (#113, #200)
+        "callback",
       ],
       slashMetaKeys: [
         "interaction_id",

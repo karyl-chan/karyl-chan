@@ -411,7 +411,7 @@ these codes:
 | `invalid_reply` | A 2xx whose body the bot could not use (too large, not JSON, not a reply object). |
 | `request_failed` | No answer: unreachable, timed out, or an action the bot could not decrypt. |
 | `render_failed` | Discord refused the reply. |
-| `dm_failed` | A private reply to a server message's author could not be sent as a DM. |
+| `dm_failed` | A private reply to a server message's author could not be sent as a DM (by the synchronous answer or a callback call). |
 | `defer_failed` | Discord refused a command's deferral (the interaction had expired): the webhook was never called, and the user sees "interaction failed". It counts as a failure in the statistics too, and is warned about once per leaf in the event log. |
 | `callback_invalid` | A callback call (#113) the bot refused: a component that is not an https link button, nothing to show, or a `message_id` the token did not send. A row of its own, not counted in the statistics. |
 | `callback_failed` | Discord refused a callback call's reply. A row of its own, not counted in the statistics. |

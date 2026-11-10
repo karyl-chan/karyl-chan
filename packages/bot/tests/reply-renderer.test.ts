@@ -50,7 +50,7 @@ describe("renderReply — interaction target", () => {
     expect(out).toEqual({
       ok: true,
       via: "interaction",
-      replyMessage: { messageId: "@original", ephemeral: true },
+      replyMessage: { kind: "interaction", interaction: ix, messageId: "@original", ephemeral: true },
     });
     expect(ix.reply).toHaveBeenCalledWith({
       content: "hi",
@@ -76,7 +76,7 @@ describe("renderReply — interaction target", () => {
     expect(out).toEqual({
       ok: true,
       via: "interaction",
-      replyMessage: { messageId: "@original", ephemeral: true },
+      replyMessage: { kind: "interaction", interaction: ix, messageId: "@original", ephemeral: true },
     });
     // an edit can only carry SuppressEmbeds
     expect(ix.editReply).toHaveBeenCalledWith({
@@ -115,7 +115,7 @@ describe("renderReply — message target", () => {
     for (const ephemeral of [undefined, true, false]) {
       const { message, channelSend, authorSend } = fakeMessage("dm");
       const out = await renderReply({ content: "pong", ephemeral }, { kind: "message", message: message as never });
-      expect(out).toEqual({ ok: true, via: "channel" });
+      expect(out).toEqual({ ok: true, via: "channel", replyMessage: null });
       expect(channelSend).toHaveBeenCalledWith({ content: "pong", allowedMentions: { parse: [] } });
       expect(authorSend).not.toHaveBeenCalled();
     }
@@ -124,7 +124,7 @@ describe("renderReply — message target", () => {
   it("posts in the guild channel by default", async () => {
     const { message, channelSend, authorSend } = fakeMessage("guild");
     const out = await renderReply({ content: "roger", flags: 4096 }, { kind: "message", message: message as never });
-    expect(out).toEqual({ ok: true, via: "channel" });
+    expect(out).toEqual({ ok: true, via: "channel", replyMessage: null });
     expect(channelSend).toHaveBeenCalledWith({ content: "roger", allowedMentions: { parse: [] }, flags: 4096 });
     expect(authorSend).not.toHaveBeenCalled();
   });
@@ -132,7 +132,7 @@ describe("renderReply — message target", () => {
   it("DMs the author instead when a guild reply is ephemeral", async () => {
     const { message, channelSend, authorSend } = fakeMessage("guild");
     const out = await renderReply({ content: "secret", ephemeral: true }, { kind: "message", message: message as never });
-    expect(out).toEqual({ ok: true, via: "dm" });
+    expect(out).toEqual({ ok: true, via: "dm", replyMessage: null });
     expect(authorSend).toHaveBeenCalledWith({ content: "secret", allowedMentions: { parse: [] } });
     expect(channelSend).not.toHaveBeenCalled();
   });
@@ -150,6 +150,7 @@ describe("renderReply — message target", () => {
     expect(await renderReply({ ephemeral: true }, { kind: "message", message: message as never })).toEqual({
       ok: true,
       via: "none",
+      replyMessage: null,
     });
     expect(channelSend).not.toHaveBeenCalled();
   });

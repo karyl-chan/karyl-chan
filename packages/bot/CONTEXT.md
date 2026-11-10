@@ -131,7 +131,7 @@ _Avoid_: relay、轉發內容（舊稱，只有 content / embeds）
 _Avoid_: 事件（那是 bot event log）、forward（只是投遞的一部分）
 
 **Callback Token**:
-bot 每次觸發簽發、只對該次觸發有效的不透明 token，15 分鐘到期，放在 webhook 請求的 `_meta.callback`。receiver 拿它呼叫 `/api/plugin/interactions.respond`／`followup`／`edit_followup`／`delete_followup`，補發、修改或刪除這次的回覆；其他 `/api/plugin/*` 一律 403。它代替 Discord interaction token，後者不離開 bot。目前只有指令觸發有。
+bot 每次觸發簽發、只對該次觸發有效的不透明 token，15 分鐘到期，放在 webhook 請求的 `_meta.callback`。receiver 拿它呼叫 `/api/plugin/interactions.respond`／`followup`／`edit_followup`／`delete_followup`，補發、修改或刪除這次的回覆；其他 `/api/plugin/*` 一律 403。它代替 Discord interaction token，後者不離開 bot。指令觸發與訊息觸發都有；訊息觸發沒有 interaction，bot 以自己送出、修改的訊息模擬回覆。
 _Avoid_: interaction token（那是 Discord 的，從不交給 receiver）、plugin token
 
 **Reply Renderer**:

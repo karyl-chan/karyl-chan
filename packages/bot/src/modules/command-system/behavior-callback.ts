@@ -19,9 +19,14 @@
  * synchronous answer (parseBehaviorReply) — except that a component other
  * than an https link button is refused instead of dropped. Who sees it
  * follows the same order too: the body's `ephemeral`, then the behavior's
- * stored visibility, then the command's default — so without `ephemeral`
- * a public command's reply stays public. `interaction_token` is optional
- * and ignored: the principal knows its interaction.
+ * stored visibility, then the trigger's default — so without `ephemeral`
+ * a public command's reply stays public, and a guild message's private
+ * reply goes to the author's DM. `interaction_token` is optional and
+ * ignored: the principal knows its interaction or message.
+ *
+ * A message trigger has no interaction (#200): its first `respond` sends
+ * the reply (to the channel, or the author's DM), later ones edit that
+ * message, and follow-ups are new messages placed the same way.
  *
  * A call the bot refuses, or one Discord refuses, is a failed delivery of
  * the same behavior (`callback_invalid` / `callback_failed`).
@@ -32,7 +37,13 @@ import { botEventLog } from "../bot-events/bot-event-log.js";
 import { shouldRecord } from "../bot-events/bot-event-dedup.js";
 import { hasVisibleReply, parseBehaviorReply, type BehaviorReply } from "./behavior-reply.js";
 import { serializeReply, type BehaviorCallbackPrincipal } from "./behavior-callback-token.js";
-import { deleteFollowup, editFollowup, renderFollowup, renderReply } from "./reply-renderer.js";
+import {
+  deleteFollowup,
+  editFollowup,
+  renderFollowup,
+  renderReply,
+  type ReplySlot,
+} from "./reply-renderer.js";
 
 /** The HTTP answer for the route to send. */
 export interface CallbackAnswer {
@@ -50,13 +61,14 @@ type Outcome =
   | { ok: true; body: Record<string, unknown> }
   /** The bot refused the call (`callback_invalid`). */
   | { ok: false; refused: true; status: number; error: string }
-  /** Discord refused it (`callback_failed`). */
-  | { ok: false; refused: false; error: string }
+  /** Discord refused it (`callback_failed`), or a private reply could not be DMed (`dm_failed`). */
+  | { ok: false; refused: false; error: string; dmFailed?: true }
   /** The token was revoked while the call waited its turn: as if unknown. */
   | { ok: false; gone: true };
 
 const refused = (status: number, error: string): Outcome => ({ ok: false, refused: true, status, error });
-const failed = (error: string): Outcome => ({ ok: false, refused: false, error });
+const failed = (error: string, dmFailed?: true): Outcome =>
+  dmFailed ? { ok: false, refused: false, error, dmFailed } : { ok: false, refused: false, error };
 const GONE: Outcome = { ok: false, gone: true };
 
 type Call = { principal: BehaviorCallbackPrincipal; body: Record<string, unknown> };
@@ -74,10 +86,10 @@ function readReply(body: Record<string, unknown>): { ok: true; reply: BehaviorRe
   return { ok: true, reply };
 }
 
-/** The `message_id` of a call, when this token sent that message. */
-function ownMessageId({ principal, body }: Call): string | null {
+/** The message a call's `message_id` names, when this token sent it. */
+function ownMessage({ principal, body }: Call): ReplySlot | null {
   const id = body.message_id;
-  return typeof id === "string" && principal.createdMessageIds.has(id) ? id : null;
+  return typeof id === "string" ? (principal.createdMessages.get(id) ?? null) : null;
 }
 
 async function respond(call: Call): Promise<Outcome> {
@@ -88,7 +100,7 @@ async function respond(call: Call): Promise<Outcome> {
     visibility: principal.visibility,
     replyMessage: principal.replyMessage,
   });
-  if (!rendered.ok) return failed(rendered.error);
+  if (!rendered.ok) return failed(rendered.error, rendered.dmFailed);
   principal.replyMessage = rendered.replyMessage ?? null;
   principal.answeredByCallback = true;
   return { ok: true, body: { ok: true } };
@@ -98,29 +110,29 @@ async function followup(call: Call): Promise<Outcome> {
   const read = readReply(call.body);
   if (!read.ok) return refused(400, read.error);
   const { principal } = call;
-  const sent = await renderFollowup(read.reply, principal.target.interaction, {
+  const sent = await renderFollowup(read.reply, principal.target, {
     visibility: principal.visibility,
   });
-  if (!sent.ok) return failed(sent.error);
-  principal.createdMessageIds.add(sent.messageId);
-  return { ok: true, body: { ok: true, id: sent.messageId } };
+  if (!sent.ok) return failed(sent.error, sent.dmFailed);
+  principal.createdMessages.set(sent.sent.messageId, sent.sent);
+  return { ok: true, body: { ok: true, id: sent.sent.messageId } };
 }
 
 async function editOwnFollowup(call: Call): Promise<Outcome> {
-  const messageId = ownMessageId(call);
-  if (!messageId) return refused(403, NOT_OURS);
+  const own = ownMessage(call);
+  if (!own) return refused(403, NOT_OURS);
   const read = readReply(call.body);
   if (!read.ok) return refused(400, read.error);
-  const edited = await editFollowup(read.reply, call.principal.target.interaction, messageId);
+  const edited = await editFollowup(read.reply, own);
   return edited.ok ? { ok: true, body: { ok: true } } : failed(edited.error);
 }
 
 async function deleteOwnFollowup(call: Call): Promise<Outcome> {
-  const messageId = ownMessageId(call);
-  if (!messageId) return refused(403, NOT_OURS);
-  const deleted = await deleteFollowup(call.principal.target.interaction, messageId);
+  const own = ownMessage(call);
+  if (!own) return refused(403, NOT_OURS);
+  const deleted = await deleteFollowup(own);
   if (!deleted.ok) return failed(deleted.error);
-  call.principal.createdMessageIds.delete(messageId);
+  call.principal.createdMessages.delete(own.messageId);
   return { ok: true, body: { ok: true } };
 }
 
@@ -152,8 +164,7 @@ async function recordFailure(
   await recordDelivery({
     behaviorId: principal.behaviorId,
     firedAt,
-    // only command triggers issue tokens so far (#200 adds messages)
-    via: "command",
+    via: principal.target.kind === "interaction" ? "command" : "message",
     ok: false,
     httpStatus: null,
     durationMs: Math.round(performance.now() - started),
@@ -195,6 +206,9 @@ export async function runBehaviorCallback(
     await recordFailure(principal, method, "callback_invalid", outcome.error, firedAt, started);
     return { status: outcome.status, body: { error: outcome.error } };
   }
-  await recordFailure(principal, method, "callback_failed", outcome.error, firedAt, started);
+  // a private reply that could not reach the author is what the
+  // synchronous path calls it too
+  const code = outcome.dmFailed ? "dm_failed" : "callback_failed";
+  await recordFailure(principal, method, code, outcome.error, firedAt, started);
   return { status: 400, body: { error: `${failedAs}: ${outcome.error}` } };
 }

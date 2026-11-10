@@ -11,7 +11,9 @@
  * leaves the bot: the interaction itself stays here, in the token's
  * principal. A token ends when the interaction token does — 15 minutes
  * after the interaction was created — so a late call is a 401, never a
- * Discord refusal.
+ * Discord refusal. A message trigger (#200) has no interaction: its token
+ * keeps the triggering message and ends 15 minutes after it was sent; the
+ * bot answers by sending and editing messages of its own.
  *
  * In memory only, like the plugin defer state and plugin tokens: a token
  * means nothing to another process, and a restart forgets every token
@@ -20,10 +22,9 @@
  */
 
 import { createHash, randomBytes } from "crypto";
-import type { ChatInputCommandInteraction } from "discord.js";
 import type { ReplyVisibility } from "../behavior/models/behavior-definition.model.js";
 import { publicBaseUrl } from "../web-core/public-base-url.js";
-import type { ReplySlot } from "./reply-renderer.js";
+import type { ReplySlot, ReplyTarget } from "./reply-renderer.js";
 
 /** How long a callback token is good for: Discord's interaction token lifetime. */
 export const CALLBACK_TOKEN_TTL_MS = 15 * 60 * 1000;
@@ -31,15 +32,12 @@ export const CALLBACK_TOKEN_TTL_MS = 15 * 60 * 1000;
 const SWEEP_INTERVAL_MS = 60_000;
 
 /**
- * What a callback answers. A command trigger's run keeps its (already
- * deferred) interaction. Message triggers (#200) add their own member.
+ * What the token is issued for: a command trigger's (already deferred)
+ * interaction, or a message trigger's message.
  */
-export type CallbackTarget = { kind: "interaction"; interaction: ChatInputCommandInteraction };
-
-/** What the token is issued for. */
 export interface CallbackIssue {
   behaviorId: number;
-  target: CallbackTarget;
+  target: ReplyTarget;
   /** The behavior's stored reply default (replyVisibility). */
   visibility: ReplyVisibility | null;
 }
@@ -48,14 +46,23 @@ export interface CallbackIssue {
  * The principal a callback token resolves to: one run, and the state its
  * reply is in. Only `serializeReply` callers change `replyMessage` and
  * `answeredByCallback`.
+ *
+ * What it keeps for up to 15 minutes, and what bounds it: a command's
+ * interaction; for a message trigger only the TriggerMessage (ids, a
+ * timestamp, and its channel, author and guild — cache objects the bot
+ * holds anyway), never the message; and per sent message a slot of ids plus its channel. Runs are
+ * capped by takeBehaviorRun (5 per 10 s per command user, per guild
+ * channel, per bot-DM user); a run's follow-ups by the 60-a-minute
+ * callback throttle.
  */
-export interface BehaviorCallbackPrincipal extends CallbackIssue {
+export interface BehaviorCallbackPrincipal extends Readonly<CallbackIssue> {
   readonly expiresAt: number;
   /**
-   * The message that holds the run's reply now: the deferred placeholder
-   * at first, then whatever the synchronous answer or the last `respond`
-   * left; null once it is gone (an empty answer deleted it). `respond`
-   * edits it, or replaces it when the visibility changes.
+   * The message that holds the run's reply now: a command's deferred
+   * placeholder at first (a message trigger has none), then whatever the
+   * synchronous answer or the last `respond` left; null when there is
+   * none (an empty answer deleted it, or nothing was sent yet). `respond`
+   * edits it, replaces it when the visibility changes, or sends one.
    */
   replyMessage: ReplySlot | null;
   /** A callback `respond` landed: a synchronous answer arriving after it is not shown. */
@@ -67,17 +74,18 @@ export interface BehaviorCallbackPrincipal extends CallbackIssue {
   revoked: boolean;
   /** This run's key (not the token): what its write throttle counts by. */
   readonly runKey: string;
-  /** The follow-ups sent with this token — the only messages `edit_followup` / `delete_followup` may touch. */
-  readonly createdMessageIds: Set<string>;
+  /** The follow-ups sent with this token, by id — the only messages `edit_followup` / `delete_followup` may touch. */
+  readonly createdMessages: Map<string, ReplySlot>;
   /** Tail of the run's reply operations (serializeReply). */
   replyQueue: Promise<unknown>;
 }
 
 const hashToken = (token: string): string => createHash("sha256").update(token).digest("hex");
 
-/** When the run's Discord token was born: the interaction's creation, else now. */
-function startOf(target: CallbackTarget): number {
-  const created = target.interaction.createdTimestamp;
+/** When the run began: the interaction's creation or the message's, else now. */
+function startOf(target: ReplyTarget): number {
+  const created =
+    target.kind === "interaction" ? target.interaction.createdTimestamp : target.message.createdTimestamp;
   return typeof created === "number" && Number.isFinite(created) ? created : Date.now();
 }
 
@@ -89,20 +97,40 @@ export class BehaviorCallbackTokenStore {
   issue(input: CallbackIssue): { token: string; expiresAt: Date; principal: BehaviorCallbackPrincipal } {
     this.ensureSweep();
     const token = randomBytes(32).toString("base64url");
-    const { interaction } = input.target;
+    const { target } = input;
     const hash = hashToken(token);
     const principal: BehaviorCallbackPrincipal = {
-      ...input,
+      behaviorId: input.behaviorId,
+      visibility: input.visibility,
+      target:
+        target.kind === "interaction"
+          ? target
+          : {
+              kind: "message",
+              message: {
+                id: target.message.id,
+                guildId: target.message.guildId,
+                createdTimestamp: target.message.createdTimestamp,
+                channel: target.message.channel,
+                author: target.message.author,
+                guild: target.message.guild,
+              },
+            },
       runKey: hash,
-      expiresAt: startOf(input.target) + CALLBACK_TOKEN_TTL_MS,
+      expiresAt: startOf(target) + CALLBACK_TOKEN_TTL_MS,
       // a webhook's command is deferred before the token is issued
       replyMessage:
-        interaction.deferred || interaction.replied
-          ? { messageId: "@original", ephemeral: interaction.ephemeral ?? true }
+        target.kind === "interaction" && (target.interaction.deferred || target.interaction.replied)
+          ? {
+              kind: "interaction",
+              interaction: target.interaction,
+              messageId: "@original",
+              ephemeral: target.interaction.ephemeral ?? true,
+            }
           : null,
       answeredByCallback: false,
       revoked: false,
-      createdMessageIds: new Set(),
+      createdMessages: new Map(),
       replyQueue: Promise.resolve(),
     };
     this.byHash.set(hash, principal);
