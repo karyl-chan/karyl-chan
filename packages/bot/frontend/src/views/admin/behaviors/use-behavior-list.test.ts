@@ -45,7 +45,7 @@ function trigger(id: number, overrides: Partial<MessageTriggerView> = {}): Messa
 }
 
 function list(messageTriggers: MessageTriggerView[]): BehaviorListView {
-    return { system: null, commands: [], messageTriggers };
+    return { system: null, services: [], commands: [], messageTriggers };
 }
 
 beforeEach(() => {

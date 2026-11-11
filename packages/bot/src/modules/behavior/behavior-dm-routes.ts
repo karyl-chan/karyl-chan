@@ -10,7 +10,8 @@
  * guild (any guild for a DM trigger) — behavior-direct-messages.ts. A
  * group a list names is in use (groupInUse), so its members can be set;
  * dropping it from the last list that names it prunes its members, as a
- * message trigger leaving it does. The System Behavior has no list.
+ * message trigger leaving it does. The fixed rows — the System Behavior
+ * and the Service Behaviors (#126) — have no list (refuseFixedRow).
  */
 
 import type { FastifyInstance } from "fastify";
@@ -19,7 +20,7 @@ import { auditBehaviorWrite } from "./behavior-audit.js";
 import { findRecentDmLog } from "./behavior-dm-log.js";
 import { idParams, parseRowId, snowflake } from "./behavior-schemas.js";
 import { behaviorTransaction, withBehaviorWriteLock } from "./behavior-write-lock.js";
-import { loadBehaviorRow, refuseSystem } from "./behavior-write-guards.js";
+import { loadBehaviorRow, refuseFixedRow } from "./behavior-write-guards.js";
 import { findDmAllowlist, replaceDmAllowlist, type DmAllowlist } from "./models/behavior-dm-allowlist.model.js";
 import { pruneUnusedGroupMembers } from "./models/behavior-group-member.model.js";
 
@@ -64,7 +65,7 @@ export function registerBehaviorDmRoutes(server: FastifyInstance): void {
         groupNames: body.groupNames.map((g) => g.trim()),
       };
       const saved = await withBehaviorWriteLock(async () => {
-        refuseSystem(await loadBehaviorRow(id));
+        refuseFixedRow(await loadBehaviorRow(id));
         return behaviorTransaction(async (transaction) => {
           const after = await replaceDmAllowlist(id, list, transaction);
           // a group no list or trigger names any more takes its members along

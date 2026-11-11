@@ -12,6 +12,8 @@
  * Registered inside the behavior scope (strict schemas, uniform errors,
  * the behavior.manage gate — see behavior-routes.ts). The System Behavior
  * is immutable here: its trigger switch is system-login-trigger-route.ts.
+ * Neither is a Service Behavior (#126): its trigger switch is
+ * PUT /api/services/:id/trigger (service-routes.ts).
  */
 
 import type { FastifyInstance } from "fastify";
@@ -31,7 +33,7 @@ import {
   changedFields,
   checkNotStale,
   loadBehaviorRow,
-  refuseSystem,
+  refuseFixedRow,
 } from "./behavior-write-guards.js";
 import { checkMessageTrigger, type MessageTriggerState } from "./message-trigger-rules.js";
 import { messageTriggerViewOf, nextMessageSortOrder } from "./message-trigger-writes.js";
@@ -235,7 +237,7 @@ export function registerBehaviorWriteRoutes(
       const body = trimmed(request.body as BehaviorPatch);
       const result = await withBehaviorWriteLock(async () => {
         const row = await loadBehaviorRow(id);
-        refuseSystem(row);
+        refuseFixedRow(row);
         checkNotStale(row, body.ifUpdatedAt, `behavior ${id}`);
         if (row.triggerKind === "command") {
           refuseForeignFields(body, Object.keys(messageTriggerFields), "command leaf");
@@ -264,7 +266,7 @@ export function registerBehaviorWriteRoutes(
       const id = parseRowId(request.params);
       const result = await withBehaviorWriteLock(async () => {
         const current = await loadBehaviorRow(id);
-        refuseSystem(current);
+        refuseFixedRow(current);
         if (current.triggerKind === "command") {
           return deleteCommandLeaf(reconciler, request, current);
         }

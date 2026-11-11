@@ -16,7 +16,7 @@ import { BehaviorApiError } from "./behavior-api-error.js";
 import { auditBehaviorWrite } from "./behavior-audit.js";
 import { idParams, parseRowId } from "./behavior-schemas.js";
 import { behaviorTransaction, withBehaviorWriteLock } from "./behavior-write-lock.js";
-import { loadBehaviorRow, refuseSystem } from "./behavior-write-guards.js";
+import { loadBehaviorRow, refuseFixedRow } from "./behavior-write-guards.js";
 import { BehaviorWebhookAction } from "./models/behavior-webhook-action.model.js";
 import { generateWebhookSecret } from "./webhook-action-input.js";
 
@@ -31,7 +31,7 @@ export function registerWebhookSecretRotateRoute(server: FastifyInstance): void 
       const id = parseRowId(request.params);
       const secret = generateWebhookSecret();
       const graceEnd = await withBehaviorWriteLock(async () => {
-        refuseSystem(await loadBehaviorRow(id));
+        refuseFixedRow(await loadBehaviorRow(id));
         return behaviorTransaction(async (transaction) => {
           const action = await BehaviorWebhookAction.findByPk(id, { transaction });
           const current = (action?.getDataValue("secret") as string | null) ?? null;

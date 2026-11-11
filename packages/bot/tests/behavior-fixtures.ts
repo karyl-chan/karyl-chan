@@ -9,6 +9,7 @@ import { BehaviorDefinition } from "../src/modules/behavior/models/behavior-defi
 import { BehaviorWebhookAction } from "../src/modules/behavior/models/behavior-webhook-action.model.js";
 import { BehaviorGroupMember } from "../src/modules/behavior/models/behavior-group-member.model.js";
 import { BehaviorPluginAction } from "../src/modules/behavior/models/behavior-plugin-action.model.js";
+import { Service } from "../src/modules/behavior/models/service.model.js";
 import { encryptSecret } from "../src/utils/crypto.js";
 
 export const TEST_WEBHOOK_URL = "https://hooks.example/behavior";
@@ -134,7 +135,7 @@ export async function bindPluginAction(
   await BehaviorPluginAction.create({ behaviorId, pluginKey, actionKey });
 }
 
-/** Remove every behavior row (cascades leaves, webhook actions, stats), group list, DM allowlist and DM log. */
+/** Remove every behavior row (cascades leaves, webhook actions, stats), group list, DM allowlist, DM log and service. */
 export async function clearBehaviors(): Promise<void> {
   await BehaviorGroupMember.destroy({ where: {} });
   await BehaviorDmAllowlist.destroy({ where: {} });
@@ -143,4 +144,5 @@ export async function clearBehaviors(): Promise<void> {
   await BehaviorPluginAction.destroy({ where: {} });
   await BehaviorDefinition.destroy({ where: {} });
   await BehaviorCommand.destroy({ where: {} });
+  await Service.destroy({ where: {} });
 }

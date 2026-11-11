@@ -1,6 +1,7 @@
 /**
  * BehaviorCatalog：behaviors 的唯讀模型 —— 指令（含葉節點）、訊息觸發、
- * 各 behavior 的 webhook / plugin 動作、群組名單 —— 一次讀齊。
+ * 各 behavior 的 webhook / plugin 動作、Service Behavior 的服務、群組名單
+ * —— 一次讀齊。
  *
  *   - loadBehaviorCatalog()：直接讀 DB（admin API 用）
  *   - getBehaviorCatalog()：記憶體快照（每則訊息 / 每次 interaction 的熱
@@ -31,19 +32,31 @@ import {
   type BehaviorPluginActionRow,
 } from "./models/behavior-plugin-action.model.js";
 import { BehaviorGroupMember } from "./models/behavior-group-member.model.js";
-import { SYSTEM_BEHAVIOR_KEY_LOGIN } from "./models/behavior-definition.model.js";
+import { Service, rowOfService, type ServiceRow } from "./models/service.model.js";
+import {
+  SYSTEM_BEHAVIOR_KEY_LOGIN,
+  isServiceBehavior,
+} from "./models/behavior-definition.model.js";
 
-/** 自訂 behavior 的動作，依來源區分（actionSource 'webhook' / 'plugin'）。 */
+/**
+ * 自訂 behavior 的動作，依來源區分（actionSource 'webhook' / 'plugin'）。
+ * Service Behavior（'service'）的動作固定，不在這裡 —— 它的服務見
+ * CatalogBehavior.service。
+ */
 export type CatalogAction =
   | { source: "webhook"; webhook: BehaviorWebhookActionRow }
   | { source: "plugin"; binding: BehaviorPluginActionRow };
 
 /**
- * 一個 behavior 與它的動作。null：內建動作（System Behavior），或來源
- * 對應的那一列不存在（手動改過 DB 等）—— 執行時當成沒有動作。
+ * 一個 behavior 與它的動作。
+ *   - action：webhook / plugin 動作；null = 內建動作（System Behavior）、
+ *     Service Behavior，或來源對應的那一列不存在（手動改過 DB 等）——
+ *     那時執行當成沒有動作。
+ *   - service：Service Behavior（actionSource='service'）的服務；其餘 null。
  */
 export interface CatalogBehavior extends BehaviorDefinitionRow {
   action: CatalogAction | null;
+  service: ServiceRow | null;
 }
 
 function actionOf(
@@ -70,7 +83,7 @@ export interface BehaviorCatalog {
 }
 
 export async function loadBehaviorCatalog(): Promise<BehaviorCatalog> {
-  const [commandModels, definitionModels, webhookModels, pluginActionModels, memberModels] =
+  const [commandModels, definitionModels, webhookModels, pluginActionModels, memberModels, serviceModels] =
     await Promise.all([
       BehaviorCommand.findAll({ order: [["id", "ASC"]] }),
       BehaviorDefinition.findAll({
@@ -82,6 +95,7 @@ export async function loadBehaviorCatalog(): Promise<BehaviorCatalog> {
       BehaviorWebhookAction.findAll(),
       BehaviorPluginAction.findAll(),
       BehaviorGroupMember.findAll(),
+      Service.findAll(),
     ]);
 
   const webhooks = new Map(
@@ -96,9 +110,19 @@ export async function loadBehaviorCatalog(): Promise<BehaviorCatalog> {
       return [row.behaviorId, row] as const;
     }),
   );
+  const services = new Map(
+    serviceModels.map((m) => {
+      const row = rowOfService(m);
+      return [row.id, row] as const;
+    }),
+  );
   const behaviors: CatalogBehavior[] = definitionModels.map((m) => {
     const row = rowOfBehaviorDefinition(m);
-    return { ...row, action: actionOf(row, webhooks.get(row.id), pluginActions.get(row.id)) };
+    return {
+      ...row,
+      action: actionOf(row, webhooks.get(row.id), pluginActions.get(row.id)),
+      service: row.serviceId !== null ? (services.get(row.serviceId) ?? null) : null,
+    };
   });
 
   const leavesByCommand = new Map<number, CatalogBehavior[]>();
@@ -133,17 +157,47 @@ export async function loadBehaviorCatalog(): Promise<BehaviorCatalog> {
   };
 }
 
-/** The System Behavior (login) in a catalog: its row, and its command when its trigger is one. */
-export interface SystemLoginEntry {
+/**
+ * A fixed row in a catalog — the System Behavior or a Service Behavior
+ * (fixed-trigger-switch.ts): its row, and its command when its trigger
+ * is one.
+ */
+export interface FixedRowEntry {
   row: CatalogBehavior;
   command: CatalogCommand | null;
 }
 
-export function systemLoginOf(catalog: BehaviorCatalog): SystemLoginEntry | null {
-  const isLogin = (b: CatalogBehavior) => b.systemKey === SYSTEM_BEHAVIOR_KEY_LOGIN;
-  const command = catalog.commands.find((c) => c.leaves.some(isLogin)) ?? null;
-  const row = command?.leaves.find(isLogin) ?? catalog.messageTriggers.find(isLogin);
+/** The System Behavior (login) in a catalog. */
+export type SystemLoginEntry = FixedRowEntry;
+
+function fixedRowOf(
+  catalog: BehaviorCatalog,
+  isRow: (b: CatalogBehavior) => boolean,
+): FixedRowEntry | null {
+  const command = catalog.commands.find((c) => c.leaves.some(isRow)) ?? null;
+  const row = command?.leaves.find(isRow) ?? catalog.messageTriggers.find(isRow);
   return row ? { row, command } : null;
+}
+
+export function systemLoginOf(catalog: BehaviorCatalog): SystemLoginEntry | null {
+  return fixedRowOf(catalog, (b) => b.systemKey === SYSTEM_BEHAVIOR_KEY_LOGIN);
+}
+
+/** One service's Service Behavior, wherever its trigger is. */
+export function serviceBehaviorOf(catalog: BehaviorCatalog, serviceId: number): FixedRowEntry | null {
+  return fixedRowOf(catalog, (b) => isServiceBehavior(b) && b.serviceId === serviceId);
+}
+
+/** Every Service Behavior, by service id (commands' leaves and message triggers alike). */
+export function serviceBehaviorsOf(catalog: BehaviorCatalog): FixedRowEntry[] {
+  const entries: FixedRowEntry[] = [];
+  for (const command of catalog.commands) {
+    for (const row of command.leaves) if (isServiceBehavior(row)) entries.push({ row, command });
+  }
+  for (const row of catalog.messageTriggers) {
+    if (isServiceBehavior(row)) entries.push({ row, command: null });
+  }
+  return entries.sort((a, b) => (a.row.serviceId ?? 0) - (b.row.serviceId ?? 0));
 }
 
 // ── 快照 ────────────────────────────────────────────────────────────────────
@@ -205,6 +259,7 @@ for (const model of [
   BehaviorWebhookAction,
   BehaviorPluginAction,
   BehaviorGroupMember,
+  Service,
 ]) {
   for (const hook of WRITE_HOOKS) {
     model.addHook(hook, onWrite);

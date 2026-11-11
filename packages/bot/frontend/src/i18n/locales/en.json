@@ -6,6 +6,7 @@
             "messages": "Messages",
             "guilds": "Servers",
             "behaviors": "Behaviors",
+            "services": "Services",
             "plugins": "Plugins",
             "admin": "Permissions",
             "profile": "Profile",
@@ -1206,6 +1207,7 @@
             },
             "loadError": "Could not load behaviors: {error}",
             "empty": "No behaviors here yet.",
+            "services": "Services",
             "commands": "Commands",
             "messageTriggers": "Message triggers",
             "note": {
@@ -1716,7 +1718,55 @@
                 "commandRemoved": "This is the last leaf of /{command}: the command is deleted and removed from Discord.",
                 "subcommandRemoved": "/{command} {subcommand} is removed from the command on Discord."
             }
+        },
+        "service": {
+            "locked": "A service's login: only its trigger can be changed",
+            "tag": "Service login: matched before the admin login, its action is fixed",
+            "tagShort": "Service",
+            "toggleProtected": "A service login is on while its service exists",
+            "notice": "This trigger logs people in to a service: whoever can trigger it gets a one-time link (120 seconds). Only the trigger can change — a bot DM pattern with who may use it, or a command; rename or remove the service on the services page.",
+            "manage": "Manage services",
+            "action": "Send a {name} login link (service token) to whoever triggered it",
+            "audience": "Audience",
+            "redirectUrl": "Redirect URL",
+            "ownerOnly": "Only a bot owner can change a service's trigger: it decides who receives the service's login tokens.",
+            "commandNote": "A global command has no audience: anyone who can see and run it — wherever its installs and contexts reach — gets a service token for this service. Narrow it with the server's integration settings, or use a bot DM pattern with an audience instead. Its reply is shown only to whoever ran it.",
+            "patternRequired": "Enter a pattern",
+            "commandName": "Lower-case letters, digits, - and _, at most 32",
+            "descriptionRequired": "Describe the command"
         }
+    },
+    "services": {
+        "title": "Services",
+        "subtitle": "Self-hosted services that log their users in through karyl. Each one gets a bot DM trigger; whoever can trigger it receives a link carrying a signed token for that service.",
+        "jwks": "Services verify tokens with the public keys at",
+        "add": "Add service",
+        "addTitle": "New service",
+        "addHint": "Adding it also adds a bot DM trigger on {trigger}; set who may use it on the behaviors page.",
+        "empty": "No services yet.",
+        "edit": "Edit",
+        "delete": "Delete",
+        "deleteTitle": "Delete service",
+        "deleteMessage": "Delete \"{name}\" and its login trigger? Links already sent stay valid until they expire.",
+        "created": "Added {name}",
+        "trigger": "Trigger",
+        "editTrigger": "Edit on the behaviors page",
+        "audienceChange": "Tokens will carry the new audience: the service must expect it. A trigger still on the default moves to the new name.",
+        "field": {
+            "name": "Name",
+            "audience": "Audience",
+            "audienceHint": "The token's aud: lower-case letters, digits and -",
+            "redirectUrl": "Redirect URL",
+            "redirectUrlHint": "https; the link adds ?token=…",
+            "audiencePlaceholder": "audience"
+        },
+        "error": {
+            "nameRequired": "Give the service a name",
+            "audience": "Lower-case letters, digits and -, not starting or ending with -",
+            "https": "An https URL"
+        },
+        "stale": "Someone changed this service in the meantime; the list was reloaded.",
+        "noTrigger": "(none)"
     },
     "config": {
         "bot": {

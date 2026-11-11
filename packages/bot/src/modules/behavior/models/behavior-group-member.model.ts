@@ -72,7 +72,23 @@ export const replaceGroupMembers = async (
   );
 };
 
-/** Every group some message trigger's audience names. */
+/**
+ * Whether a Service Behavior's trigger uses this group (#126): its members
+ * are then who may log in to that service, which only an owner decides.
+ */
+export const groupUsedByService = async (
+  groupName: string,
+  transaction: Transaction,
+): Promise<boolean> =>
+  (await BehaviorDefinition.count({
+    where: { triggerKind: "message", actionSource: "service", audienceGroupName: groupName },
+    transaction,
+  })) > 0;
+
+/**
+ * Every group some message trigger's audience names — a Service Behavior's
+ * trigger (#126) is a message trigger, so its audience group is among them.
+ */
 const groupsInTriggerAudiences = async (transaction: Transaction): Promise<Set<string>> => {
   const rows = await BehaviorDefinition.findAll({
     attributes: ["audienceGroupName"],

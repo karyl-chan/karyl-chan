@@ -26,6 +26,11 @@ const props = defineProps<{
      * when it leaves bot DMs, so replies would show in a channel (board 7).
      */
     moved?: { section: string; public: boolean } | null;
+    /**
+     * A Service Behavior's trigger (#126): always a bot DM that ends the
+     * walk, so only the pattern and the audience are shown.
+     */
+    fixedPlacement?: boolean;
 }>();
 
 const emit = defineEmits<{ (e: 'patch', patch: Partial<MessageTriggerDraft>): void }>();
@@ -85,6 +90,7 @@ const captured = computed(() =>
     <Stack gap="2">
         <h4 class="part">{{ t('behaviors.trigger.title') }}</h4>
         <TriggerLocationFields
+            v-if="!fixedPlacement"
             :draft="draft"
             :kinds="kinds"
             :lock-guild="lockGuild"
@@ -132,7 +138,7 @@ const captured = computed(() =>
             <input type="checkbox" :checked="draft.ignoreBots" @change="update({ ignoreBots: ($event.target as HTMLInputElement).checked })" />
             {{ t('behaviors.trigger.ignoreBots') }}
         </label>
-        <label class="check">
+        <label v-if="!fixedPlacement" class="check">
             <input type="checkbox" :checked="draft.stopOnMatch" @change="update({ stopOnMatch: ($event.target as HTMLInputElement).checked })" />
             {{ t('behaviors.trigger.stopOnMatch') }}
         </label>

@@ -69,7 +69,7 @@ import {
 import {
   checkNotStale,
   loadBehaviorRow,
-  refuseSystem,
+  refuseFixedRow,
   refuseSystemCommand,
 } from "./behavior-write-guards.js";
 import { behaviorTransaction, withBehaviorWriteLock } from "./behavior-write-lock.js";
@@ -583,7 +583,7 @@ export function registerTriggerConvertRoute(
       try {
         result = await withBehaviorWriteLock(async () => {
           const row = await loadBehaviorRow(id);
-          refuseSystem(row);
+          refuseFixedRow(row);
           checkNotStale(row, body.ifUpdatedAt, `behavior ${id}`);
           if (row.triggerKind === body.to) {
             refuse("to", `behavior ${id} already has a ${body.to} trigger`);

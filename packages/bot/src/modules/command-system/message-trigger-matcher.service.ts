@@ -8,8 +8,9 @@
  *      （全部 / 指定伺服器 / 指定頻道），再依 ignoreBots 過濾 bot 作者
  *   3. 對誰：audience（所有人 / 使用者 / 群組）只在與 bot 的私訊
  *   4. matchTrigger（startswith/endswith/regex），依 sortOrder 走訪
- *   5. 內建動作（系統登入）→ 內建 handler；webhook → WebhookForwarder；
- *      plugin action → Plugin Dispatch（#203）
+ *   5. 內建動作（系統登入）→ 內建 handler；服務（Service Behavior，#126）→
+ *      service-login-action；webhook → WebhookForwarder；plugin action →
+ *      Plugin Dispatch（#203）
  *
  * onMessage(djsMessage) 暴露給 testing。
  */
@@ -29,6 +30,8 @@ import { shouldRecord } from "../bot-events/bot-event-dedup.js";
 import type { MessageMatchOutcome } from "./types.js";
 import type { WebhookForwarder } from "./webhook-forwarder.service.js";
 import { runLoginAction } from "./builtin-login-action.js";
+import { runServiceLoginAction } from "./service-login-action.js";
+import { isServiceBehavior } from "../behavior/models/behavior-definition.model.js";
 import { actionToRun, runBehaviorAction } from "./behavior-action.js";
 import { defaultPluginActionDeps, type PluginActionDeps } from "./plugin-action.js";
 import { takeBehaviorRun } from "./behavior-rate-limits.js";
@@ -169,7 +172,7 @@ export class MessageTriggerMatcher {
     // 順序恢復執行，也就依到達順序入列。例外只有快照重載途中剛好被寫入
     // 弄失效——後到的訊息自己重載，先載完的話會排到前面。
     const { messageTriggers, groupMembers } = await getBehaviorCatalog();
-    const { webhooks, builtin } = triggersToRun(
+    const { webhooks, closing } = triggersToRun(
       messageTriggers,
       djsMessage,
       userId,
@@ -193,15 +196,13 @@ export class MessageTriggerMatcher {
         );
       }
     }
-    const [forwarded, login] = await Promise.all([
+    const [forwarded, closed] = await Promise.all([
       queued,
-      builtin
-        ? this.handleMatchedSystemBehavior(builtin, djsMessage, userId)
-        : null,
+      closing ? this.handleClosingAction(closing, djsMessage, userId) : null,
     ]);
-    // 依走訪順序合併：webhook 觸發都排在收尾的系統登入之前
-    if (forwarded && login) return mergeOutcomes(forwarded, login);
-    return forwarded ?? login ?? { handled: false };
+    // 依走訪順序合併：webhook 觸發都排在收尾的動作（系統登入、服務登入）之前
+    if (forwarded && closed) return mergeOutcomes(forwarded, closed);
+    return forwarded ?? closed ?? { handled: false };
   }
 
   /** 依序執行一則訊息命中的 webhook 觸發（在對話鎖內）。 */
@@ -255,13 +256,28 @@ export class MessageTriggerMatcher {
     return { handled: true, behaviorId: behavior.id };
   }
 
-  // ── 私有：matched system behavior dispatch（admin-login）────────────────
+  // ── 私有：收尾的動作（admin-login、Service Behavior）──────────────────
 
-  private async handleMatchedSystemBehavior(
+  private async handleClosingAction(
     behavior: CatalogBehavior,
     djsMessage: DjsMessage,
     userId: string,
   ): Promise<MessageMatchOutcome> {
+    if (isServiceBehavior(behavior)) {
+      // 服務登入照一般觸發限速（系統登入不受限）：每則都簽一張 token
+      if (!takeBehaviorRun({ kind: "dm_user", userId })) return { handled: false };
+      if (!behavior.service) {
+        botEventLog.record(
+          "warn",
+          "bot",
+          `message-trigger-matcher: service behavior ${behavior.id} 找不到它的服務，略過`,
+          { behaviorId: behavior.id },
+        );
+        return { handled: true, behaviorId: behavior.id };
+      }
+      await runServiceLoginAction({ kind: "message", message: djsMessage }, behavior.service);
+      return { handled: true, behaviorId: behavior.id };
+    }
     if (behavior.systemKey === "admin-login") {
       await runLoginAction({ kind: "message", message: djsMessage });
       return { handled: true, behaviorId: behavior.id };
@@ -334,14 +350,14 @@ interface MatchedTrigger {
 interface TriggersToRun {
   /** 依 sortOrder 命中的 webhook / plugin action 觸發 */
   webhooks: MatchedTrigger[];
-  /** 命中的內建動作（系統登入）；它一定收尾 */
-  builtin: CatalogBehavior | null;
+  /** 命中的收尾動作（系統登入、Service Behavior）；它一定收尾 */
+  closing: CatalogBehavior | null;
 }
 
 /**
  * 依 sortOrder 走訪（BH-0.3 multi-match），以訊息到達時的快照為準。停止規則：
- *   系統登入 → 必停（登入連結是收尾動作）
- *   其他     → stopOnMatch=true 停；false 繼續比對下一條
+ *   系統登入、Service Behavior → 必停（登入連結是收尾動作）
+ *   其他                       → stopOnMatch=true 停；false 繼續比對下一條
  */
 function triggersToRun(
   triggers: readonly CatalogBehavior[],
@@ -358,11 +374,13 @@ function triggersToRun(
     if (!appliesTo(trigger, djsMessage, userId, isDm, groupMembers)) continue;
     const match = matchTrigger(trigger.patternKind, trigger.patternValue, content);
     if (!match) continue;
-    if (trigger.actionSource === "builtin") return { webhooks, builtin: trigger };
+    if (trigger.actionSource === "builtin" || isServiceBehavior(trigger)) {
+      return { webhooks, closing: trigger };
+    }
     webhooks.push({ trigger, match });
     if (trigger.stopOnMatch) break;
   }
-  return { webhooks, builtin: null };
+  return { webhooks, closing: null };
 }
 
 // ── 觸發是否適用於這則訊息（在哪 + 對誰）────────────────────────────────
