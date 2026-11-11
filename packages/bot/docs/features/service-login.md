@@ -11,7 +11,7 @@ secret.
 This page is for the **service's author**: how to verify the token. Admins
 set services up on the services page (below). The domain terms (Service,
 Service Behavior, Service Token, JWKS) are defined in the bot's
-[CONTEXT.md](../../CONTEXT.md#behaviors).
+[GLOSSARY.md](../../GLOSSARY.md#behaviors).
 
 ## Contents
 

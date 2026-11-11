@@ -1,6 +1,6 @@
 /**
  * PUT /api/behaviors/reorder (#121): order the Message Triggers of one
- * Message Trigger Location (CONTEXT.md) — `bot_dm`, `guild:all`,
+ * Message Trigger Location (GLOSSARY.md) — `bot_dm`, `guild:all`,
  * `guild:<id>` or `channel:<guildId>:<channelId>`.
  *
  * Message triggers are matched in ONE order (sortOrder, then id) across

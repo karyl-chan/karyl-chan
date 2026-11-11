@@ -12,7 +12,7 @@
  *
  * Why the schema comes over the API rather than from a shared package:
  * plugin-wire is the bot↔plugin contract and keeps admin API shapes out
- * (its CONTEXT.md); the bot's schema module pulls in ajv, Fastify and the
+ * (its GLOSSARY.md); the bot's schema module pulls in ajv, Fastify and the
  * models, so the SPA cannot import it; and a new workspace package would
  * add a build step and Docker stages for one object the route already
  * holds. Served, the rules the form checks are the rules the route runs.

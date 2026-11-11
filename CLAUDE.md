@@ -12,4 +12,4 @@ Default label vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `read
 
 ### Domain docs
 
-Multi-context: root `CONTEXT-MAP.md` points at per-package `CONTEXT.md` files under `packages/*`. See `docs/agents/domain.md`.
+Multi-context: root `GLOSSARY-MAP.md` points at per-package `GLOSSARY.md` files under `packages/*`. See `docs/agents/domain.md`.
