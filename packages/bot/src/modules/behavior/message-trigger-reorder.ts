@@ -11,8 +11,10 @@
  * they were relative to everything else. The custom triggers are
  * renumbered 0..n-1 in the process, so slots that used to share one
  * sortOrder become distinct; the System Behavior's row is never written
- * (it keeps its sortOrder, -1000 as seeded, which pins it first), and the
- * renumbering does not bump any row's updatedAt.
+ * (it keeps its sortOrder, -1000 as seeded, which pins it first), nor are
+ * the Service Behaviors' (#126: SERVICE_SORT_ORDER pins them before the
+ * login; the admin UI lists them apart), and the renumbering does not
+ * bump any row's updatedAt.
  *
  * Concurrency: `ids` must be exactly the location's current triggers —
  * a trigger added, moved or deleted by someone else since the admin's list
@@ -30,6 +32,7 @@ import {
 } from "./message-trigger-rules.js";
 import {
   BehaviorDefinition,
+  isServiceBehavior,
   rowOfBehaviorDefinition,
 } from "./models/behavior-definition.model.js";
 
@@ -51,6 +54,11 @@ const reorderSchema = {
 interface ReorderBody {
   location: string;
   ids: number[];
+}
+
+/** Rows this route never moves: the login and the Service Behaviors. */
+function isPinned(row: { systemKey: string | null; actionSource: string }): boolean {
+  return row.systemKey !== null || isServiceBehavior(row);
 }
 
 function sameSet(a: readonly number[], b: readonly number[]): boolean {
@@ -87,15 +95,17 @@ export function registerMessageTriggerReorderRoute(server: FastifyInstance): voi
                 channelId: row.channelId,
               }) === location,
           );
-          const system = atLocation.find(({ row }) => row.systemKey !== null);
-          if (system && ids.includes(system.row.id)) {
+          const pinned = atLocation.find(({ row }) => isPinned(row) && ids.includes(row.id));
+          if (pinned) {
             throw new BehaviorApiError(
               "system_immutable",
-              "the system behavior stays pinned at the top of its location",
+              pinned.row.systemKey !== null
+                ? "the system behavior stays pinned at the top of its location"
+                : "a service's behavior stays pinned before the login",
               "ids",
             );
           }
-          const movable = atLocation.filter(({ row }) => row.systemKey === null);
+          const movable = atLocation.filter(({ row }) => !isPinned(row));
           if (!sameSet(movable.map(({ row }) => row.id), ids)) {
             throw BehaviorApiError.stale(
               "ids",
@@ -109,7 +119,7 @@ export function registerMessageTriggerReorderRoute(server: FastifyInstance): voi
           const byId = new Map(movable.map((entry) => [entry.row.id, entry]));
           const queue = ids.map((id) => byId.get(id)!);
           const reordered = all
-            .filter(({ row }) => row.systemKey === null)
+            .filter(({ row }) => !isPinned(row))
             .map((entry) => (byId.has(entry.row.id) ? queue.shift()! : entry));
           for (const [index, { model, row }] of reordered.entries()) {
             if (row.sortOrder !== index) {

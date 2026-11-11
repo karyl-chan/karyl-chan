@@ -78,6 +78,19 @@ export const groupInUse = async (
     transaction,
   })) > 0;
 
+/**
+ * Whether a Service Behavior's trigger uses this group (#126): its members
+ * are then who may log in to that service, which only an owner decides.
+ */
+export const groupUsedByService = async (
+  groupName: string,
+  transaction: Transaction,
+): Promise<boolean> =>
+  (await BehaviorDefinition.count({
+    where: { triggerKind: "message", actionSource: "service", audienceGroupName: groupName },
+    transaction,
+  })) > 0;
+
 /** Drop the member lists of every group no message trigger uses any more. */
 export const pruneUnusedGroupMembers = async (transaction: Transaction): Promise<void> => {
   const rows = await BehaviorDefinition.findAll({

@@ -2,7 +2,7 @@
  * behavior-routes.ts — admin behaviors REST API（ADR 0003 trigger/action 模型）
  *
  * 路由表：
- *   GET  /api/behaviors                          — { system, commands, messageTriggers }
+ *   GET  /api/behaviors                          — { system, services, commands, messageTriggers }
  *   GET  /api/behaviors/schema                   — the write schemas, for the admin UI's form checks
  *   POST /api/behaviors/:id/test                 — 對 behavior 的 webhook 動作試發
  *   GET  /api/behaviors/:id/deliveries           — behavior 最近的投遞紀錄（#120）
@@ -12,8 +12,10 @@
  *   /api/behavior-commands[/:id[/resync]]        — 指令的寫入與重新註冊（behavior-command-routes.ts）
  *   POST /api/behaviors/:id/convert-trigger      — 自訂 behavior 在訊息觸發與指令觸發間轉換（behavior-trigger-convert.ts）
  *   PUT  /api/behaviors/system/login/trigger     — 切換登入系統列的觸發（system-login-trigger-route.ts）
+ *   GET / POST / PUT / DELETE /api/services[/:id] — 服務與它的 Service Behavior（service-routes.ts，#126；owner 限定）
+ *   PUT  /api/services/:id/trigger               — 切換服務列的觸發（同登入的 fixed-row switch；owner 限定）
  *   GET  /api/behavior-groups/:groupName/members — 群組名單
- *   PUT  /api/behavior-groups/:groupName/members — 全量替換群組名單
+ *   PUT  /api/behavior-groups/:groupName/members — 全量替換群組名單（服務列用到的群組：owner 限定）
  *
  * 權限：requireBehaviorAdmin（behavior.manage 或 admin），在 schema 驗證之前。
  * 拒絕一律是 `{ error: { code, message, field? } }`（behavior-api-error.ts）。
@@ -40,8 +42,10 @@ import { loadBehaviorRow } from "./behavior-write-guards.js";
 import {
   findGroupMembers,
   groupInUse,
+  groupUsedByService,
   replaceGroupMembers,
 } from "./models/behavior-group-member.model.js";
+import { isOwnerRequest, requireOwner } from "../web-core/route-guards.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import {
   BehaviorApiError,
@@ -69,6 +73,11 @@ import {
   convertTriggerSchema,
   registerTriggerConvertRoute,
 } from "./behavior-trigger-convert.js";
+import {
+  createServiceSchema,
+  registerServiceRoutes,
+  serviceTriggerSchema,
+} from "./service-routes.js";
 
 export type { BehaviorRoutesOptions };
 
@@ -101,7 +110,8 @@ export async function registerBehaviorRoutes(
     registerBehaviorCommandRoutes(scope, options);
     registerSystemLoginTriggerRoute(scope, options);
     registerTriggerConvertRoute(scope, options);
-    registerGroupMemberRoutes(scope);
+    registerServiceRoutes(scope, options);
+    registerGroupMemberRoutes(scope, options);
   });
 }
 
@@ -137,6 +147,8 @@ function registerReadAndTestRoutes(
       commandLeaf: addLeafSchema,
       loginTrigger: loginTriggerSchema,
       convertTrigger: convertTriggerSchema,
+      service: createServiceSchema,
+      serviceTrigger: serviceTriggerSchema,
     });
   });
 
@@ -248,7 +260,7 @@ function groupNameOf(params: unknown): string {
   return groupName;
 }
 
-function registerGroupMemberRoutes(server: FastifyInstance): void {
+function registerGroupMemberRoutes(server: FastifyInstance, options: BehaviorRoutesOptions): void {
   // GET /api/behavior-groups/:groupName/members
   server.get(
     "/api/behavior-groups/:groupName/members",
@@ -263,6 +275,8 @@ function registerGroupMemberRoutes(server: FastifyInstance): void {
   // PUT /api/behavior-groups/:groupName/members { userIds: string[] }
   // 全量替換（與 UI 的編輯-儲存模型一致；增/刪都走同一條）。
   // 沒有訊息觸發引用的 group → not_found：先把觸發的對象設成這個群組。
+  // 服務列（#126）引用的 group：成員就是能登入那個服務的人，和服務的觸發
+  // 一樣只有 owner 能改（在寫入鎖內判斷，觸發不會在中途換上這個群組）。
   server.put(
     "/api/behavior-groups/:groupName/members",
     {
@@ -281,7 +295,8 @@ function registerGroupMemberRoutes(server: FastifyInstance): void {
     async (request, reply) => {
       const groupName = groupNameOf(request.params);
       const { userIds } = request.body as { userIds: string[] };
-      await withBehaviorWriteLock(() =>
+      const owner = isOwnerRequest(request, options.ownerIds);
+      const outcome = await withBehaviorWriteLock(() =>
         behaviorTransaction(async (transaction) => {
           if (!(await groupInUse(groupName, transaction))) {
             throw new BehaviorApiError(
@@ -290,9 +305,15 @@ function registerGroupMemberRoutes(server: FastifyInstance): void {
               "groupName",
             );
           }
+          if (!owner && (await groupUsedByService(groupName, transaction))) return "owner_only" as const;
           await replaceGroupMembers(groupName, userIds, transaction);
+          return "replaced" as const;
         }),
       );
+      if (outcome === "owner_only") {
+        requireOwner(request, reply, options.ownerIds, "change a group a service's login uses");
+        return reply;
+      }
       const members = await findGroupMembers(groupName);
       await auditBehaviorWrite(request, "behavior.group_members.replace", `group:${groupName}`, {
         userIds: members,

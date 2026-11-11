@@ -6,6 +6,7 @@
             "messages": "訊息",
             "guilds": "伺服器",
             "behaviors": "行為",
+            "services": "服務",
             "plugins": "外掛",
             "admin": "權限",
             "profile": "個人資料",
@@ -1206,6 +1207,7 @@
             },
             "loadError": "無法載入行為：{error}",
             "empty": "這裡還沒有行為。",
+            "services": "服務",
             "commands": "指令",
             "messageTriggers": "訊息觸發",
             "note": {
@@ -1678,7 +1680,55 @@
                 "commandRemoved": "這是 /{command} 最後一個葉節點：指令會被刪除，並從 Discord 移除。",
                 "subcommandRemoved": "/{command} {subcommand} 會從 Discord 上的指令移除。"
             }
+        },
+        "service": {
+            "locked": "服務登入：只能改觸發",
+            "tag": "服務登入：比對在後台登入之前，動作固定",
+            "tagShort": "服務",
+            "toggleProtected": "服務存在時，服務登入一律啟用",
+            "notice": "這個觸發用來登入服務：能觸發的人會收到一次性連結（120 秒）。只能換觸發：與 bot 私訊的比對方式與誰能用，或一個指令；服務的改名或刪除在服務頁。",
+            "manage": "管理服務",
+            "action": "私下傳送 {name} 的登入連結（服務 token）給觸發的人",
+            "audience": "Audience",
+            "redirectUrl": "導向網址",
+            "ownerOnly": "只有 bot owner 能改服務的觸發：它決定誰拿得到這個服務的登入 token。",
+            "commandNote": "全域指令沒有對象篩選：看得到、能執行它的人（依安裝方式與可用情境，可能是所有人）都會拿到這個服務的服務 token。可在伺服器的整合設定縮小範圍，或改用有對象篩選的 bot 私訊比對。回覆只有執行的人看得到。",
+            "patternRequired": "請輸入比對內容",
+            "commandName": "小寫英文、數字、- 與 _，最多 32 字",
+            "descriptionRequired": "請輸入指令說明"
         }
+    },
+    "services": {
+        "title": "服務",
+        "subtitle": "透過 karyl 登入的自架服務。每個服務有一個與 bot 私訊的觸發；能觸發的人會收到帶有該服務簽章 token 的連結。",
+        "jwks": "服務用這裡的公開金鑰驗證 token：",
+        "add": "新增服務",
+        "addTitle": "新服務",
+        "addHint": "新增時會一併建立與 bot 私訊的觸發 {trigger}；誰能使用到 behaviors 頁設定。",
+        "empty": "還沒有服務。",
+        "edit": "編輯",
+        "delete": "刪除",
+        "deleteTitle": "刪除服務",
+        "deleteMessage": "刪除「{name}」與它的登入觸發？已送出的連結在到期前仍然有效。",
+        "created": "已新增 {name}",
+        "trigger": "觸發",
+        "editTrigger": "到 behaviors 頁修改",
+        "audienceChange": "token 會帶新的 audience，服務端必須跟著改。仍是預設值的觸發會改成新名稱。",
+        "field": {
+            "name": "名稱",
+            "audience": "Audience",
+            "audienceHint": "token 的 aud：小寫英文、數字與 -",
+            "redirectUrl": "導向網址",
+            "redirectUrlHint": "https；連結會加上 ?token=…",
+            "audiencePlaceholder": "audience"
+        },
+        "error": {
+            "nameRequired": "請輸入服務名稱",
+            "audience": "小寫英文、數字與 -，不能以 - 開頭或結尾",
+            "https": "請輸入 https 網址"
+        },
+        "stale": "這個服務剛被別人改過，已重新載入清單。",
+        "noTrigger": "（無）"
     },
     "config": {
         "bot": {

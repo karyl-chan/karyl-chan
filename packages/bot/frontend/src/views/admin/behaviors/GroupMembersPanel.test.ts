@@ -14,8 +14,8 @@ const i18n = createI18n({ legacy: false, locale: 'en', missingWarn: false, fallb
 const A = '111111111111111111';
 const B = '222222222222222222';
 
-function mountPanel(usedBy = 1) {
-    return mount(GroupMembersPanel, { props: { groupName: 'ops', usedBy }, global: { plugins: [i18n] } });
+function mountPanel(usedBy = 1, readonly = false) {
+    return mount(GroupMembersPanel, { props: { groupName: 'ops', usedBy, readonly }, global: { plugins: [i18n] } });
 }
 
 beforeEach(() => {
@@ -57,6 +57,16 @@ describe('GroupMembersPanel', () => {
         await flushPromises();
         expect(wrapper.find('[role="alert"]').text()).toContain('userIds.1 must be a Discord id');
         expect((wrapper.find('input').element as HTMLInputElement).value).toBe('12');
+    });
+
+    it('read-only: lists the members, offers no add or remove', async () => {
+        const wrapper = mountPanel(1, true);
+        await flushPromises();
+        expect(wrapper.findAll('.chip')).toHaveLength(1);
+        expect(wrapper.find('.chip-remove').exists()).toBe(false);
+        expect(wrapper.find('[data-test="add-member"]').exists()).toBe(false);
+        expect(wrapper.find('input').exists()).toBe(false);
+        expect(api.replaceGroupMembers).not.toHaveBeenCalled();
     });
 
     it('says when other triggers share the list', async () => {
