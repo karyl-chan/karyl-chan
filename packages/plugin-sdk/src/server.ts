@@ -9,6 +9,7 @@ import {
   verifyDispatchHmac,
 } from "./hmac.js";
 import type {
+  PluginBehaviorActionDefinition,
   PluginCommandDefinition,
   PluginComponentDefinition,
   PluginModalDefinition,
@@ -16,6 +17,9 @@ import type {
 import type {
   APIApplicationCommandOptionChoice,
   AutocompleteContext,
+  BehaviorActionContext,
+  BehaviorActionPayload,
+  BehaviorActionReply,
   CommandContext,
   CommandReply,
   ComponentContext,
@@ -41,6 +45,8 @@ export interface PluginServerOptions {
   components?: PluginComponentDefinition[];
   /** Plugin modal handler。掛在 `/modals/:modalId`。 */
   modals?: PluginModalDefinition[];
+  /** Behavior action handler（#127）。掛在 `/behavior-actions/:actionKey`。 */
+  behaviorActions?: PluginBehaviorActionDefinition[];
   getToken: () => string | null;
   getDispatchHmacKey?: () => string | null;
   getPublicBaseUrl?: () => string | undefined;
@@ -347,6 +353,11 @@ export async function callBotRpc(
   token: string,
   path: string,
   body: unknown,
+  /**
+   * What to add to a refusal's message for this kind of call, by HTTP
+   * status; unset: the plugin-token hints (rpcMethodsUsed, KV quota).
+   */
+  hintFor?: (status: number) => string,
 ): Promise<unknown> {
   const serialized = JSON.stringify(body ?? {});
   let lastNetworkErr: unknown = null;
@@ -409,8 +420,9 @@ export async function callBotRpc(
       "bot rpc call failed",
     );
     const reason = classifyHttpStatus(res.status);
-    const hint =
-      reason === "forbidden"
+    const hint = hintFor
+      ? hintFor(res.status)
+      : reason === "forbidden"
         ? " (check manifest rpcMethodsUsed / per-guild feature enablement)"
         : reason === "quota_exceeded"
           ? " (per-guild KV quota would be exceeded)"
@@ -457,6 +469,24 @@ export async function callBotRpc(
     "network",
     `bot rpc network error after ${MAX_RPC_RETRIES + 1} attempts: ${msg}`,
   );
+}
+
+/**
+ * The bot RPC paths a behavior action answers its run on, with the
+ * run's callback token (#127). Bound to
+ * CONTRACT_FIXTURES.rpc.behaviorActionPathsCalledBySdk by a test.
+ */
+export const BEHAVIOR_ACTION_RPC_PATHS = {
+  reply: "/api/plugin/interactions.respond",
+  followup: "/api/plugin/interactions.followup",
+} as const;
+
+/** Why the bot refused a behavior action's callback-token call. */
+function callbackHint(status: number): string {
+  if (status === 401) return " (the run's callback token expired — 15 minutes — or its run failed)";
+  if (status === 403) return " (a callback token only answers its own run: ctx.reply / ctx.followup)";
+  if (status === 429) return " (callback calls are limited per run)";
+  return "";
 }
 
 async function respondToInteraction(
@@ -621,6 +651,11 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
   // componentId → handler
   const componentMap = new Map<string, PluginComponentDefinition["handler"]>(
     (opts.components ?? []).map((c) => [c.id, c.handler]),
+  );
+
+  // action key → behavior action handler
+  const behaviorActionMap = new Map<string, PluginBehaviorActionDefinition["handler"]>(
+    (opts.behaviorActions ?? []).map((a) => [a.key, a.handler]),
   );
 
   // modalId → handler
@@ -1170,6 +1205,129 @@ export function createPluginServer(opts: PluginServerOptions): FastifyInstance {
       } catch (err) {
         server.log.error({ err }, "component handler threw");
         await followup("⚠ Internal error while handling the component");
+      }
+    },
+  );
+
+  // ── behavior action dispatch（HMAC 驗證，#127）──────────────────────────
+  // 綁定此 plugin action 的 behavior 觸發時，bot POST 過來：body 是觸發的
+  // behavior webhook `_meta` 加上 `action_key`。驗章後先回 204，再非同步
+  // 跑 handler。回覆（ctx.reply / ctx.followup，或 handler 的回傳值）走
+  // 這次觸發的 callback token（`_meta.callback.token`），不是 plugin 自己
+  // 的 token：bot 只讓它回覆這一次觸發。
+  server.post(
+    "/behavior-actions/:actionKey",
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const signingKey = opts.getDispatchHmacKey?.() ?? null;
+      if (!signingKey) return refuseUnregistered(request, reply);
+      const rawBody = typeof request.body === "string" ? request.body : "";
+      const auth = verifyDispatchAuth(request, rawBody, signingKey);
+      if (!auth.ok) return reply.code(401).send({ error: auth.reason });
+      const notReady = refuseNotReady(request, reply);
+      if (notReady) return notReady;
+
+      let payload: BehaviorActionPayload;
+      try {
+        payload = JSON.parse(rawBody) as BehaviorActionPayload;
+      } catch {
+        return reply.code(400).send({ error: "invalid JSON" });
+      }
+      const { actionKey } = request.params as { actionKey: string };
+      if (!payload || typeof payload !== "object" || !payload.user || typeof payload.user.id !== "string") {
+        return reply.code(400).send({ error: "missing user.id" });
+      }
+      if (payload.action_key !== actionKey) {
+        return reply.code(400).send({ error: "action_key mismatch" });
+      }
+      const callbackToken = payload.callback?.token;
+      if (typeof callbackToken !== "string" || callbackToken === "") {
+        return reply.code(400).send({ error: "missing callback.token" });
+      }
+      const handler = behaviorActionMap.get(actionKey);
+      if (!handler) {
+        return reply.code(404).send({ error: `unknown behavior action "${actionKey}"` });
+      }
+      reply.code(204).send();
+
+      // the run's own answers: the callback token, never the plugin token
+      let replied = false;
+      // The errors an answer threw, by identity: one that reaches the
+      // catch below is not the handler's bug, so it gets no fallback line
+      // (it would go the same way) and is not logged as a throw. A
+      // handler that caught one and later threw something else is.
+      const answerErrors = new WeakSet<object>();
+      const answer = async (path: string, body: BehaviorActionReply) => {
+        try {
+          return await callBotRpc(server.log, opts.botUrl, callbackToken, path, body, callbackHint);
+        } catch (err) {
+          if (err && typeof err === "object") answerErrors.add(err);
+          throw err;
+        }
+      };
+      const ctxReply = async (body: BehaviorActionReply): Promise<void> => {
+        await answer(BEHAVIOR_ACTION_RPC_PATHS.reply, body);
+        replied = true;
+      };
+      const ctxFollowup = async (body: BehaviorActionReply): Promise<string | null> => {
+        const res = (await answer(BEHAVIOR_ACTION_RPC_PATHS.followup, body)) as { id?: unknown };
+        return typeof res?.id === "string" ? res.id : null;
+      };
+      // anything else: the plugin's own token and scopes
+      const callRpc = (path: string, body?: unknown): Promise<unknown> => {
+        const token = opts.getToken();
+        if (!token) {
+          return Promise.reject(new BotRpcError("no_token", "plugin has not registered with the bot yet"));
+        }
+        return callBotRpc(server.log, opts.botUrl, token, path, body);
+      };
+      const rpc = createPluginRpc(callRpc);
+      const ctx: BehaviorActionContext = {
+        ...("interaction_id" in payload
+          ? { trigger: "command" as const, payload }
+          : { trigger: "message" as const, payload }),
+        pluginKey: opts.pluginKey,
+        actionKey,
+        behaviorId: payload.behavior_id,
+        userId: payload.user.id,
+        userDisplayName: payload.user.global_name || payload.user.username || payload.user.id,
+        guildId: payload.guild_id ?? null,
+        channelId: payload.channel_id,
+        reply: ctxReply,
+        followup: ctxFollowup,
+        log: {
+          info: (msg, meta) => server.log.info(meta ?? {}, msg),
+          warn: (msg, meta) => server.log.warn(meta ?? {}, msg),
+          error: (msg, meta) => server.log.error(meta ?? {}, msg),
+        },
+        publicBaseUrl: opts.getPublicBaseUrl?.(),
+        botRpc: callRpc,
+        discord: rpc.discord,
+        voice: rpc.voice,
+        me: rpc.me,
+        kv: rpc.kv,
+        auth: rpc.auth,
+      };
+
+      try {
+        const result = await handler(ctx);
+        if (result && typeof result === "object") await ctxReply(result);
+      } catch (err) {
+        if (err && typeof err === "object" && answerErrors.has(err)) {
+          const refused = err instanceof BotRpcError && err.status !== undefined;
+          server.log.warn(
+            { err, actionKey },
+            refused ? "behavior action reply refused by the bot" : "behavior action reply could not reach the bot",
+          );
+          return;
+        }
+        server.log.error({ err, actionKey }, "behavior action handler threw");
+        // the user would otherwise wait on "thinking…" until it expires
+        if (!replied) {
+          await ctxReply({
+            content: "⚠ Internal error while running this action",
+            ephemeral: true,
+          }).catch(() => {});
+        }
       }
     },
   );

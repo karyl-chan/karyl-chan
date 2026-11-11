@@ -108,6 +108,7 @@ describe("gate", () => {
       "modal",
       "lifecycle",
       "event",
+      "behavior_action",
     ] as const) {
       const result = await d.gate({
         kind,
@@ -572,5 +573,81 @@ describe("dispatch (gate + deliver)", () => {
       payload: { body: build },
     });
     expect(build).not.toHaveBeenCalled();
+  });
+});
+
+describe("behavior_action kind (#203)", () => {
+  it("has no reach check: the binding is the authorization", async () => {
+    reachNo.hasGuildReach.mockClear();
+    reachNo.isFeatureEnabledInGuild.mockClear();
+    const d = makeDispatcher({ reach: reachNo });
+    const g = await d.gate({ kind: "behavior_action", plugin: makePlugin(), guildId: "G1" });
+    expect(g.ok).toBe(true);
+    expect(reachNo.hasGuildReach).not.toHaveBeenCalled();
+    expect(reachNo.isFeatureEnabledInGuild).not.toHaveBeenCalled();
+  });
+
+  it("is refused like the other interaction kinds: offline, no key, bad manifest", async () => {
+    const d = makeDispatcher();
+    expect(await d.gate({ kind: "behavior_action", plugin: makePlugin({ enabled: false }) })).toEqual({
+      ok: false,
+      reason: "plugin_offline",
+    });
+    expect(await d.gate({ kind: "behavior_action", plugin: makePlugin({ dispatchHmacKey: null }) })).toEqual({
+      ok: false,
+      reason: "no_dispatch_key",
+    });
+    expect(await d.gate({ kind: "behavior_action", plugin: makePlugin({ manifestJson: "{nope" }) })).toEqual({
+      ok: false,
+      reason: "manifest_invalid",
+    });
+  });
+
+  it("POSTs signed JSON to /behavior-actions/{action_key}, never reads the body, records health", async () => {
+    const fetchImpl = fakeFetchOk(204);
+    const d = makeDispatcher({ fetchImpl });
+    const outcome = await d.deliver({
+      kind: "behavior_action",
+      plugin: makePlugin(),
+      label: "roll",
+      endpointVars: { action_key: "roll" },
+      payload: { body: () => JSON.stringify({ action_key: "roll" }) },
+    });
+    expect(outcome).toEqual({ status: "ok", httpStatus: 204 });
+    const [url, init] = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://alpha.invalid/behavior-actions/roll");
+    expect(init.redirect).toBe("manual");
+    const headers = init.headers as Record<string, string>;
+    expect(Object.keys(headers).some((h) => h.toLowerCase().includes("signature"))).toBe(true);
+    expect(getDispatchHealth("alpha")?.recent[0]).toMatchObject({ ok: true, source: "behavior_action", status: 204 });
+  });
+
+  it("follows the manifest's endpoints.behavior_action", async () => {
+    const fetchImpl = fakeFetchOk(204);
+    const d = makeDispatcher({ fetchImpl });
+    const manifest = JSON.parse(makePlugin().manifestJson) as Record<string, unknown>;
+    manifest.endpoints = { behavior_action: "/x/actions/{action_key}" };
+    await d.deliver({
+      kind: "behavior_action",
+      plugin: makePlugin({ manifestJson: JSON.stringify(manifest) }),
+      label: "roll",
+      endpointVars: { action_key: "roll" },
+      payload: { body: () => "{}" },
+    });
+    const [url] = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
+    expect(url).toBe("http://alpha.invalid/x/actions/roll");
+  });
+
+  it("records a failed dispatch under its own source", async () => {
+    const d = makeDispatcher({ fetchImpl: fakeFetchOk(500, "boom") });
+    const outcome = await d.deliver({
+      kind: "behavior_action",
+      plugin: makePlugin(),
+      label: "roll",
+      endpointVars: { action_key: "roll" },
+      payload: { body: () => "{}" },
+    });
+    expect(outcome).toMatchObject({ status: "failed", reason: "http_error", httpStatus: 500 });
+    expect(getDispatchHealth("alpha")?.recent[0]).toMatchObject({ ok: false, source: "behavior_action", status: 500 });
   });
 });

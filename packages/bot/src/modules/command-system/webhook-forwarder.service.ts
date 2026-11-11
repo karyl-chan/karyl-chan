@@ -18,6 +18,9 @@
  *   - URL 解密後才用
  *   - 解析 response 成回覆模型（behavior-reply.ts，#140）
  *   - 回 ForwardResult { ok, reply, notes, status?, error?, errorCode?, verified? }
+ *   - 回覆的附件（#156）：fetchReplyFiles 從 webhook URL 的 origin 下載，
+ *     與 POST 同一套 host policy、pinned 連線、不跟 redirect、逾時，並邊讀
+ *     邊限制大小
  */
 
 import type { RESTPostAPIWebhookWithTokenJSONBody } from "discord.js";
@@ -37,29 +40,36 @@ import {
   resolveWebhookTarget,
   type WebhookTarget,
 } from "../../utils/host-policy.js";
-import { createPinnedAgent } from "../../utils/pinned-dispatcher.js";
+import { createPinnedAgent, type PinnedAddress } from "../../utils/pinned-dispatcher.js";
 import { webhookAllowlist } from "../../config.js";
 import type { AllowlistEntry } from "../../utils/webhook-allowlist.js";
 import { decryptSecret } from "../../utils/crypto.js";
 import type { BehaviorWebhookActionRow } from "../behavior/models/behavior-webhook-action.model.js";
 import type { ForwardErrorCode, ForwardResult } from "./types.js";
 import {
+  MAX_REPLY_ATTACHMENT_BYTES,
+  MAX_REPLY_ATTACHMENT_TOTAL_BYTES,
   MAX_REPLY_BODY_BYTES,
+  attachmentsProblem,
   parseBehaviorReply,
+  type ReplyAttachment,
   type ReplyNote,
 } from "./behavior-reply.js";
+import type { ReplyFile, ReplyFilesResult } from "./reply-files.js";
+
+const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
 /**
  * Read the body, giving up past `max` bytes (null). A declared
  * Content-Length over the cap is refused before reading anything.
  */
-async function readCapped(res: Response, max: number): Promise<string | null> {
+async function readCappedBytes(res: Response, max: number): Promise<Buffer | null> {
   const declared = Number(res.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > max) {
     await res.body?.cancel().catch(() => {});
     return null;
   }
-  if (!res.body) return "";
+  if (!res.body) return Buffer.alloc(0);
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -73,7 +83,12 @@ async function readCapped(res: Response, max: number): Promise<string | null> {
     }
     chunks.push(value);
   }
-  return Buffer.concat(chunks).toString("utf8");
+  return Buffer.concat(chunks);
+}
+
+async function readCapped(res: Response, max: number): Promise<string | null> {
+  const bytes = await readCappedBytes(res, max);
+  return bytes === null ? null : bytes.toString("utf8");
 }
 
 /**
@@ -209,7 +224,7 @@ export class WebhookForwarder {
       webhookUrl = decryptSecret(action.url);
     } catch (err) {
       return fail(
-        `webhookUrl 解密失敗：${err instanceof Error ? err.message : String(err)}`,
+        `webhookUrl 解密失敗：${errorText(err)}`,
       );
     }
 
@@ -253,6 +268,48 @@ export class WebhookForwarder {
       secret: rawSecret,
       previous: rawPrevious,
       scheme: opts.test ? TEST_SCHEME : REAL_SCHEME,
+    });
+  }
+
+  /**
+   * Download a reply's attachments (#156) from the webhook URL's origin:
+   * each `path` (checked by attachmentsProblem: no `//host`, no absolute
+   * URL, no backslash) is resolved against it and fetched with a GET under
+   * the same rules as the POST — the target policy (private addresses only
+   * when allowlisted), a connection pinned to the checked addresses, no
+   * redirects, and one timeout for the whole batch. Each body is cut off
+   * as it streams, past MAX_REPLY_ATTACHMENT_BYTES or past what is left of
+   * MAX_REPLY_ATTACHMENT_TOTAL_BYTES. No credentials are sent. One file
+   * that can't be had fails them all. Never throws.
+   *
+   * At most MAX_DOWNLOAD_BATCHES batches download at a time across the
+   * process (each may hold up to the total cap), and at most one per
+   * behavior, so one slow receiver can't take every turn. A batch waits
+   * for its turns within its own timeout, and fails when it ends first;
+   * the target check counts against that timeout too.
+   */
+  async fetchReplyFiles(
+    action: BehaviorWebhookActionRow,
+    attachments: readonly ReplyAttachment[],
+  ): Promise<ReplyFilesResult> {
+    const problem = attachmentsProblem(attachments);
+    if (problem) return { ok: false, error: problem };
+    if (attachments.length === 0) return { ok: true, files: [] };
+    let origin: URL;
+    try {
+      origin = new URL(new URL(decryptSecret(action.url)).origin);
+    } catch (err) {
+      return {
+        ok: false,
+        error: `the webhook URL is unusable: ${errorText(err)}`,
+      };
+    }
+    return downloadReplyFiles({
+      behaviorId: action.behaviorId,
+      base: origin,
+      attachments,
+      timeoutMs: this.timeoutMs,
+      resolveAddresses: async (o) => (await resolveWebhookTarget(o, this.allowlist)).addresses,
     });
   }
 
@@ -345,7 +402,7 @@ export class WebhookForwarder {
           // the DOM RequestInit type the project compiles against.
         } as RequestInit);
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = errorText(err);
         return fail(`network error: ${msg}`);
       }
 
@@ -363,7 +420,7 @@ export class WebhookForwarder {
         rawText = await readCapped(res, MAX_REPLY_BODY_BYTES);
       } catch (err) {
         return fail(
-          `could not read the response body: ${err instanceof Error ? err.message : String(err)}`,
+          `could not read the response body: ${errorText(err)}`,
           res.status,
         );
       }
@@ -465,10 +522,249 @@ export class WebhookForwarder {
       botEventLog.record(
         "warn",
         "bot",
-        `webhook-forwarder: behavior ${behaviorId} webhookSecret 解密失敗，以 null 處理：${err instanceof Error ? err.message : String(err)}`,
+        `webhook-forwarder: behavior ${behaviorId} webhookSecret 解密失敗，以 null 處理：${errorText(err)}`,
         { behaviorId },
       );
       return null;
     }
   }
+}
+
+/** The most reply attachment downloads in flight at once, process-wide (#156). */
+export const MAX_DOWNLOAD_BATCHES = 2;
+
+/**
+ * Turns at something, at most `limit` at a time; the rest wait in order.
+ * A waiter whose signal aborts leaves the queue without a turn.
+ */
+class Turns {
+  private inFlight = 0;
+  private readonly waiting: Array<() => void> = [];
+
+  constructor(private readonly limit: number) {}
+
+  take(signal: AbortSignal): Promise<boolean> {
+    if (signal.aborted) return Promise.resolve(false);
+    if (this.inFlight < this.limit) {
+      this.inFlight += 1;
+      return Promise.resolve(true);
+    }
+    return new Promise<boolean>((resolve) => {
+      const onAbort = () => {
+        this.waiting.splice(this.waiting.indexOf(grant), 1);
+        resolve(false);
+      };
+      // a released turn passes straight to the waiter: inFlight stays
+      const grant = () => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(true);
+      };
+      this.waiting.push(grant);
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+
+  release(): void {
+    const next = this.waiting.shift();
+    if (next) next();
+    else this.inFlight -= 1;
+  }
+
+  /** No turn taken and none waited for. */
+  get idle(): boolean {
+    return this.inFlight === 0 && this.waiting.length === 0;
+  }
+}
+
+/** Reply attachment downloads in flight, process-wide (#156). */
+const downloadTurns = new Turns(MAX_DOWNLOAD_BATCHES);
+/** One download in flight per behavior; a key goes when it is idle. */
+const behaviorDownloadTurns = new Map<number, Turns>();
+
+/**
+ * A turn to download a behavior's reply files: the behavior's own first
+ * (so its second batch waits without holding a process-wide turn), then
+ * a process-wide one. Resolves the release, or null when `signal` ended
+ * the wait.
+ */
+async function takeDownloadTurn(behaviorId: number, signal: AbortSignal): Promise<(() => void) | null> {
+  let own = behaviorDownloadTurns.get(behaviorId);
+  if (!own) {
+    own = new Turns(1);
+    behaviorDownloadTurns.set(behaviorId, own);
+  }
+  const forget = () => {
+    if (own.idle && behaviorDownloadTurns.get(behaviorId) === own) behaviorDownloadTurns.delete(behaviorId);
+  };
+  if (!(await own.take(signal))) {
+    forget();
+    return null;
+  }
+  if (!(await downloadTurns.take(signal))) {
+    own.release();
+    forget();
+    return null;
+  }
+  return () => {
+    downloadTurns.release();
+    own.release();
+    forget();
+  };
+}
+
+/** One batch of a reply's attachments to download from one base URL. */
+export interface ReplyFilesDownload {
+  behaviorId: number;
+  /**
+   * What every path is appended to: a webhook URL's origin, or a plugin's
+   * registered URL with its path prefix (#203), as the plugin RPC's own
+   * attachments are (`<plugin.url><path>`). A file must stay under it.
+   */
+  base: URL;
+  attachments: readonly ReplyAttachment[];
+  timeoutMs: number;
+  /** The target policy of the base's host: the addresses to connect to, or a throw. */
+  resolveAddresses: (base: URL) => Promise<PinnedAddress[]>;
+}
+
+/**
+ * Download a reply's attachments from under `base` (#156) under the rules
+ * of fetchReplyFiles — a download turn, the base's target policy, a
+ * connection pinned to the vetted addresses, no redirects, the caps, one
+ * timeout for the batch. Shared by a webhook's run and a plugin action's
+ * (#203), which differ only in the base and its policy. Never throws.
+ */
+export async function downloadReplyFiles(batch: ReplyFilesDownload): Promise<ReplyFilesResult> {
+  const { base, attachments } = batch;
+  const problem = attachmentsProblem(attachments);
+  if (problem) return { ok: false, error: problem };
+  if (attachments.length === 0) return { ok: true, files: [] };
+  const signal = AbortSignal.timeout(batch.timeoutMs);
+  const release = await takeDownloadTurn(batch.behaviorId, signal);
+  if (!release) {
+    return { ok: false, error: "timed out waiting for a download slot (the bot is downloading other replies' files)" };
+  }
+  try {
+    let addresses: PinnedAddress[];
+    try {
+      // a lookup that hangs must not keep the turn past the timeout
+      addresses = await untilAborted(batch.resolveAddresses(base), signal);
+    } catch (err) {
+      return { ok: false, error: errorText(err) };
+    }
+    const agent = createPinnedAgent(addresses);
+    const files: ReplyFile[] = [];
+    let total = 0;
+    try {
+      for (const [i, attachment] of attachments.entries()) {
+        const got = await fetchReplyFile(base, attachment, agent, signal, MAX_REPLY_ATTACHMENT_TOTAL_BYTES - total);
+        if (!got.ok) {
+          return { ok: false, error: `attachment ${i + 1} (${JSON.stringify(attachment.name)}): ${got.error}` };
+        }
+        total += got.file.data.byteLength;
+        files.push(got.file);
+      }
+    } finally {
+      // one-shot agent, as for the POST
+      void agent.destroy().catch(() => {});
+    }
+    return { ok: true, files };
+  } finally {
+    release();
+  }
+}
+
+/** `promise`, or a rejection with the signal's reason once it aborts. */
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (err: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(err);
+      },
+    );
+  });
+}
+
+const MiB = 1024 * 1024;
+
+/**
+ * `path` (a single leading `/`, checked by attachmentsProblem) appended to
+ * `base` — `<base without trailing slashes><path>` — or null when the
+ * result is not under the base: another origin, or `..` segments that
+ * climb out of its path prefix. For an origin base this is `path` on the
+ * origin.
+ */
+export function fileUrl(base: URL, path: string): URL | null {
+  const prefix = base.pathname.replace(/\/+$/, "");
+  let url: URL;
+  try {
+    url = new URL(`${base.origin}${prefix}${path}`);
+  } catch {
+    return null;
+  }
+  if (url.origin !== base.origin) return null;
+  if (prefix !== "" && url.pathname !== prefix && !url.pathname.startsWith(`${prefix}/`)) return null;
+  return url;
+}
+
+/**
+ * GET one attachment over the pinned connection, cut off past the per-file
+ * cap or past `budget`, what is left of the batch's total.
+ */
+async function fetchReplyFile(
+  base: URL,
+  { name, path }: ReplyAttachment,
+  agent: ReturnType<typeof createPinnedAgent>,
+  signal: AbortSignal,
+  budget: number,
+): Promise<{ ok: true; file: ReplyFile } | { ok: false; error: string }> {
+  const url = fileUrl(base, path);
+  // attachmentsProblem lets only a plain path through; this is the backstop
+  if (!url) return { ok: false, error: "the path leaves the base URL" };
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "GET",
+      dispatcher: agent,
+      // a Location is the receiver's to choose: never followed (SSRF)
+      redirect: "manual",
+      signal,
+    } as RequestInit);
+  } catch (err) {
+    return { ok: false, error: `network error: ${errorText(err)}` };
+  }
+  if (!res.ok) {
+    await res.body?.cancel().catch(() => {});
+    return {
+      ok: false,
+      error:
+        res.status >= 300 && res.status < 400
+          ? `a redirect (HTTP ${res.status}); redirects are not followed`
+          : `HTTP ${res.status}`,
+    };
+  }
+  let data: Buffer | null;
+  try {
+    data = await readCappedBytes(res, Math.min(MAX_REPLY_ATTACHMENT_BYTES, budget));
+  } catch (err) {
+    return { ok: false, error: `could not read it: ${errorText(err)}` };
+  }
+  if (data === null) {
+    return {
+      ok: false,
+      error:
+        budget < MAX_REPLY_ATTACHMENT_BYTES
+          ? `the files together are larger than ${MAX_REPLY_ATTACHMENT_TOTAL_BYTES / MiB} MiB`
+          : `larger than ${MAX_REPLY_ATTACHMENT_BYTES / MiB} MiB`,
+    };
+  }
+  return { ok: true, file: { name, data } };
 }

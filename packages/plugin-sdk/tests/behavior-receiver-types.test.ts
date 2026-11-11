@@ -12,7 +12,10 @@ import {
   createNonceStore,
   createReceiver,
   verifyRequest,
+  type BehaviorCallback,
   type BehaviorReply,
+  type BehaviorReplyAttachment,
+  type BehaviorDirectMessage,
   type BehaviorReplyEmbed,
   type BehaviorWebhookAttachment,
   type BehaviorWebhookPayload,
@@ -40,6 +43,12 @@ const attachment: Required<BehaviorWebhookAttachment> = {
   size: 1,
 };
 
+const callback: Required<BehaviorCallback> = {
+  token: "t",
+  expires_at: "2026-11-10T00:15:00.000Z",
+  api_base: "https://karyl.example",
+};
+
 const messageMeta: Required<MessageTriggerMeta> = {
   user,
   message_id: "3",
@@ -48,6 +57,7 @@ const messageMeta: Required<MessageTriggerMeta> = {
   behavior_id: 5,
   attachments: [attachment],
   captures: [],
+  callback,
 };
 
 const commandMeta: Required<CommandTriggerMeta> = {
@@ -63,6 +73,7 @@ const commandMeta: Required<CommandTriggerMeta> = {
   options: [],
   behavior_id: 5,
   attachments: [],
+  callback,
 };
 
 const payload: Required<BehaviorWebhookPayload> = {
@@ -85,12 +96,25 @@ const embed: Required<BehaviorReplyEmbed> = {
   fields: [],
 };
 
+const replyAttachment: Required<BehaviorReplyAttachment> = { name: "", path: "" };
+
 const reply: Required<BehaviorReply> = {
   content: "",
   embeds: [embed],
   components: [],
   ephemeral: true,
   flags: 0,
+  defer: true,
+  attachments: [replyAttachment],
+  direct_messages: [],
+};
+
+const directMessage: Required<BehaviorDirectMessage> = {
+  user_id: "",
+  content: "",
+  embeds: [],
+  components: [],
+  attachments: [],
 };
 
 describe("behavior-receiver types, against the fixtures", () => {
@@ -102,11 +126,14 @@ describe("behavior-receiver types, against the fixtures", () => {
     assert.deepEqual(keys(commandMeta), sorted(request.slashMetaKeys));
     assert.deepEqual(keys(user), sorted(request.userKeys));
     assert.deepEqual(keys(attachment), sorted(request.attachmentKeys));
+    assert.deepEqual(keys(callback), sorted(request.callbackKeys));
   });
 
-  it("type the reply's fields and embed whitelist", () => {
+  it("type the reply's fields, embed whitelist and attachment keys", () => {
     assert.deepEqual(keys(reply), sorted(response.fields));
     assert.deepEqual(keys(embed), sorted(response.embedWhitelist));
+    assert.deepEqual(keys(replyAttachment), sorted(response.attachmentKeys));
+    assert.deepEqual(keys(directMessage), sorted(response.directMessageKeys));
   });
 });
 

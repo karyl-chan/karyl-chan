@@ -35,6 +35,7 @@ function trigger(id: number, section: MessageTriggerView['section']): MessageTri
         systemKey: null,
         actionSource: 'webhook',
         webhook: null,
+        pluginAction: null,
         stats: null,
         updatedAt: '2026-10-26T00:00:00.000Z',
         replyVisibility: null,

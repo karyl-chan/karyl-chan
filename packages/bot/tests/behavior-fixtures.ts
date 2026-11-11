@@ -2,10 +2,13 @@
  * Seed helpers for the trigger/action behavior tables. Every custom
  * behavior gets a webhook action (url encrypted with the test key).
  */
+import { BehaviorDmAllowlist } from "../src/modules/behavior/models/behavior-dm-allowlist.model.js";
+import { BehaviorDmLog } from "../src/modules/behavior/models/behavior-dm-log.model.js";
 import { BehaviorCommand } from "../src/modules/behavior/models/behavior-command.model.js";
 import { BehaviorDefinition } from "../src/modules/behavior/models/behavior-definition.model.js";
 import { BehaviorWebhookAction } from "../src/modules/behavior/models/behavior-webhook-action.model.js";
 import { BehaviorGroupMember } from "../src/modules/behavior/models/behavior-group-member.model.js";
+import { BehaviorPluginAction } from "../src/modules/behavior/models/behavior-plugin-action.model.js";
 import { Service } from "../src/modules/behavior/models/service.model.js";
 import { encryptSecret } from "../src/utils/crypto.js";
 
@@ -123,10 +126,22 @@ export async function seedLeaf(
   return id;
 }
 
-/** Remove every behavior row (cascades leaves, webhook actions, stats) and group list. */
+/** Bind `behaviorId` (seeded with `actionSource: "plugin"`, webhook null) to a plugin action (#203). */
+export async function bindPluginAction(
+  behaviorId: number,
+  pluginKey: string,
+  actionKey: string,
+): Promise<void> {
+  await BehaviorPluginAction.create({ behaviorId, pluginKey, actionKey });
+}
+
+/** Remove every behavior row (cascades leaves, webhook actions, stats), group list, DM allowlist, DM log and service. */
 export async function clearBehaviors(): Promise<void> {
   await BehaviorGroupMember.destroy({ where: {} });
+  await BehaviorDmAllowlist.destroy({ where: {} });
+  await BehaviorDmLog.destroy({ where: {} });
   await BehaviorWebhookAction.destroy({ where: {} });
+  await BehaviorPluginAction.destroy({ where: {} });
   await BehaviorDefinition.destroy({ where: {} });
   await BehaviorCommand.destroy({ where: {} });
   await Service.destroy({ where: {} });

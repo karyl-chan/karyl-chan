@@ -24,5 +24,6 @@ export type {
   ManifestCommand,
   ManifestPluginCommand,
   ManifestCapability,
+  ManifestBehaviorAction,
   PluginManifest,
 } from "@karyl-chan/plugin-wire";

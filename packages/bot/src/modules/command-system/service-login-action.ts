@@ -4,7 +4,7 @@
  * A Service Behavior's action (#126): log whoever triggered it in to the
  * service. A Service Token is minted for them (service-token.ts: `sub`,
  * `name`, `avatar`, `aud` = the service's audience, 120 s, one `jti`) and
- * the reply — a BehaviorReply, delivered by the ReplyRenderer like the
+ * the reply — a RenderableReply, delivered by the ReplyRenderer like the
  * login's — is an embed and a link button to the service's redirect URL
  * with the token as its `token` parameter. The URL is only the button's
  * target, never in the text, so a link preview or a log line can't pick
@@ -24,7 +24,7 @@ import { moduleLogger } from "../../logger.js";
 import { serviceBehaviorTitle, type ServiceRow } from "../behavior/models/service.model.js";
 import { mintServiceToken, type ServiceTokenUser } from "../web-core/service-token.js";
 import { SERVICE_TOKEN_TTL_SECONDS } from "../web-core/jwt.service.js";
-import type { BehaviorReply } from "./behavior-reply.js";
+import type { RenderableReply } from "./reply-files.js";
 import { renderFailure, renderReply, type ReplyTarget } from "./reply-renderer.js";
 
 const log = moduleLogger("service-login");
@@ -53,7 +53,7 @@ export function serviceLoginLink(redirectUrl: string, token: string): string {
   return url.toString();
 }
 
-export function serviceLoginReply(service: ServiceLoginTarget, link: string): BehaviorReply {
+export function serviceLoginReply(service: ServiceLoginTarget, link: string): RenderableReply {
   return {
     embeds: [
       {

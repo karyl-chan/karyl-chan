@@ -10,6 +10,7 @@ import {
     type RegistrationReport,
 } from '../../../api/behavior';
 import BehaviorDeliveries from './BehaviorDeliveries.vue';
+import BehaviorDirectMessages from './BehaviorDirectMessages.vue';
 import CommandLeafFields from './CommandLeafFields.vue';
 import WebhookTestResult from './WebhookTestResult.vue';
 import { NO_ERRORS, errorsFromRefusal, hasErrors, isStale, type FormErrors } from './behavior-errors';
@@ -130,7 +131,7 @@ async function testFire() {
             <AppBadge v-if="dirty" size="sm" tone="warn" icon="material-symbols:edit-outline-rounded">
                 {{ t('behaviors.card.unsaved') }}
             </AppBadge>
-            <AppBadge size="sm">{{ t('behaviors.action.sourceWebhook') }}</AppBadge>
+            <AppBadge size="sm">{{ t(leaf.actionSource === 'plugin' ? 'behaviors.action.sourcePlugin' : 'behaviors.action.sourceWebhook') }}</AppBadge>
             <AppToggle
                 size="sm"
                 :model-value="leaf.enabled"
@@ -145,7 +146,7 @@ async function testFire() {
                         <Icon icon="material-symbols:more-vert" width="16" height="16" />
                     </button>
                 </template>
-                <AppMenuItem data-test="leaf-test-fire" @click="testFire">
+                <AppMenuItem v-if="leaf.actionSource === 'webhook'" data-test="leaf-test-fire" @click="testFire">
                     <Icon icon="material-symbols:send-outline-rounded" width="16" height="16" />
                     {{ t('behaviors.card.test') }}
                 </AppMenuItem>
@@ -172,6 +173,7 @@ async function testFire() {
                 />
 
                 <BehaviorDeliveries :behavior-id="leaf.id" />
+                <BehaviorDirectMessages :behavior-id="leaf.id" />
 
                 <div v-if="conflict" class="conflict" role="alert" data-test="leaf-conflict">
                     <span>{{ t('behaviors.card.conflict') }}</span>
@@ -182,7 +184,7 @@ async function testFire() {
                 <p v-if="errors.general" class="error" role="alert" data-test="leaf-general-error">{{ errors.general }}</p>
 
                 <footer class="footer">
-                    <AppButton variant="secondary" size="sm" class="test" data-test="leaf-test" @click="testFire">
+                    <AppButton v-if="leaf.actionSource === 'webhook'" variant="secondary" size="sm" class="test" data-test="leaf-test" @click="testFire">
                         {{ t('behaviors.card.test') }}
                     </AppButton>
                     <AppButton variant="secondary" :disabled="!dirty || saving" @click="discard">

@@ -2,14 +2,22 @@ import type {
     BehaviorAudienceKind,
     BehaviorPatch,
     BehaviorPatternKind,
-    BehaviorWebhookAuthMode,
     MessageTriggerInput,
     MessageTriggerView,
     ReplyVisibility,
 } from '../../../api/behavior';
 import type { DraftModel } from './draft-rebase';
 import { kindHasGuild, locationKindOf, type LocationKind, type TriggerLocation } from './message-trigger-location';
-import { NEW_WEBHOOK, savedWebhookBody, webhookBody, webhookDraftOf, type WebhookDraft } from './webhook-draft';
+import {
+    NEW_ACTION,
+    actionBody,
+    actionChanged,
+    actionDraftOf,
+    actionPartOf,
+    savedActionBody,
+    type ActionBody,
+    type ActionDraft,
+} from './webhook-draft';
 
 /**
  * The edit draft of a Message Trigger: what the trigger and action forms
@@ -22,7 +30,7 @@ import { NEW_WEBHOOK, savedWebhookBody, webhookBody, webhookDraftOf, type Webhoo
  * are kept by construction, the per-field rules by the server's schema.
  */
 
-export interface MessageTriggerDraft extends WebhookDraft {
+export interface MessageTriggerDraft extends ActionDraft {
     title: string;
     description: string;
     locationKind: LocationKind;
@@ -54,7 +62,7 @@ export function draftFromTrigger(t: MessageTriggerView): MessageTriggerDraft {
         audienceUserId: t.audienceUserId ?? '',
         audienceGroupName: t.audienceGroupName ?? '',
         replyVisibility: t.replyVisibility,
-        ...webhookDraftOf(t.webhook),
+        ...actionDraftOf(t),
     };
 }
 
@@ -73,7 +81,7 @@ export function emptyDraft(location: { kind: LocationKind; guildId?: string; cha
         audienceUserId: '',
         audienceGroupName: '',
         replyVisibility: null,
-        ...NEW_WEBHOOK,
+        ...NEW_ACTION,
     };
 }
 
@@ -108,8 +116,8 @@ export function draftLocation(d: MessageTriggerDraft): TriggerLocation | null {
     }
 }
 
-/** The trigger fields of a request body (everything but the webhook). */
-type TriggerBody = Omit<MessageTriggerInput, 'webhook' | 'enabled'> & {
+/** The trigger fields of a request body (everything but the action). */
+type TriggerBody = Omit<MessageTriggerInput, 'webhook' | 'pluginAction' | 'enabled'> & {
     description: string;
     guildId: string | null;
     channelId: string | null;
@@ -121,7 +129,7 @@ type TriggerBody = Omit<MessageTriggerInput, 'webhook' | 'enabled'> & {
     replyVisibility: ReplyVisibility | null;
 };
 
-export type MessageTriggerBody = TriggerBody & { webhook: { url: string; authMode: BehaviorWebhookAuthMode | null } };
+export type MessageTriggerBody = TriggerBody & ActionBody;
 
 export function toCreateBody(d: MessageTriggerDraft): MessageTriggerBody {
     const inDm = d.locationKind === 'bot_dm';
@@ -142,7 +150,7 @@ export function toCreateBody(d: MessageTriggerDraft): MessageTriggerBody {
         audienceGroupName: audienceKind === 'group' ? d.audienceGroupName.trim() : null,
         // nothing to choose in a DM with the bot
         replyVisibility: inDm ? null : d.replyVisibility,
-        webhook: webhookBody(d),
+        ...actionBody(d),
     };
 }
 
@@ -161,26 +169,25 @@ function savedBody(t: MessageTriggerView): MessageTriggerBody {
         audienceUserId: t.audienceUserId,
         audienceGroupName: t.audienceGroupName,
         replyVisibility: t.replyVisibility,
-        webhook: savedWebhookBody(t.webhook),
+        ...savedActionBody(t),
     };
 }
 
 /**
  * The PATCH for saving `draft` over `saved`: only the changed fields, the
- * whole webhook when its URL or authentication changed, and the version
- * the edit is based on. Null when the draft changes nothing.
+ * whole action when it changed (its URL or authentication, its plugin
+ * action, or its source — the other kind converts the behavior, #203),
+ * and the version the edit is based on. Null when the draft changes nothing.
  */
 export function toPatchBody(saved: MessageTriggerView, draft: MessageTriggerDraft): BehaviorPatch | null {
     const before = savedBody(saved);
     const after = toCreateBody(draft);
     const patch: Record<string, unknown> = {};
     for (const key of Object.keys(after) as Array<keyof MessageTriggerBody>) {
-        if (key === 'webhook') continue;
+        if (key === 'webhook' || key === 'pluginAction') continue;
         if (after[key] !== before[key]) patch[key] = after[key];
     }
-    if (after.webhook.url !== before.webhook.url || after.webhook.authMode !== before.webhook.authMode) {
-        patch.webhook = after.webhook;
-    }
+    if (actionChanged(actionPartOf(after), actionPartOf(before))) Object.assign(patch, actionPartOf(after));
     if (Object.keys(patch).length === 0) return null;
     return { ...(patch as BehaviorPatch), ifUpdatedAt: saved.updatedAt };
 }

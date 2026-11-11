@@ -3,8 +3,12 @@
  * read a behavior's recent ones, prune the rest.
  *
  * Every webhook delivery of a behavior (runWebhookAction, and a command
- * whose deferral Discord refused) leaves one row in behavior_deliveries.
- * A test-fire does not: its result goes straight back to the admin.
+ * whose deferral Discord refused) and every plugin action dispatch
+ * (runPluginAction, #203) leaves one row in behavior_deliveries.
+ * A test-fire does not: its result goes straight back to the admin. A
+ * deferred delivery (#113) is ok and marked `deferred`; a later callback
+ * call that fails leaves a row of its own (`callback_*`), a callback that
+ * works leaves none.
  *
  * Retention: the last 20 per behavior, none older than 7 days. The write
  * path only INSERTs; a background pruner (every 10 minutes, like
@@ -14,6 +18,7 @@
 
 import { Op, col, fn, where } from "sequelize";
 import { moduleLogger } from "../../logger.js";
+import { startPruner } from "./behavior-pruner.js";
 import type { ForwardErrorCode } from "../command-system/types.js";
 import { BehaviorDelivery, type DeliveryVia } from "./models/behavior-delivery.model.js";
 
@@ -25,8 +30,6 @@ const log = moduleLogger("behavior-deliveries");
 export const DELIVERIES_PER_BEHAVIOR = 20;
 /** The oldest delivery kept. */
 export const DELIVERY_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-/** How often the pruner runs. */
-const PRUNE_INTERVAL_MS = 10 * 60 * 1000;
 /** The longest `error` stored (behavior_stats.lastError keeps 500). */
 export const DELIVERY_ERROR_MAX = 300;
 
@@ -40,6 +43,17 @@ export const DELIVERY_ERROR_MAX = 300;
  *   render_failed     Discord refused the reply
  *   dm_failed         a private reply to a message author could not be DMed
  *   defer_failed      Discord refused a command's deferral; nothing was forwarded
+ *   callback_invalid  the bot refused a callback call's body (#113)
+ *   callback_failed   Discord refused a callback call's reply (#113)
+ *   attachment_failed a reply's attachments could not be had (#156): too
+ *                     many, an unsafe path or name, too large, a redirect,
+ *                     a non-2xx, or the download failed
+ *   plugin_unavailable a plugin action's plugin could not take the run
+ *                     (#203): not installed, disabled or inactive, not
+ *                     ready, no dispatch key, or its address refused;
+ *                     nothing was dispatched
+ *   action_undeclared a plugin action the plugin's manifest no longer
+ *                     declares (#203); nothing was dispatched
  */
 export type DeliveryErrorCode =
   | ForwardErrorCode
@@ -48,7 +62,12 @@ export type DeliveryErrorCode =
   | "request_failed"
   | "render_failed"
   | "dm_failed"
-  | "defer_failed";
+  | "defer_failed"
+  | "callback_invalid"
+  | "callback_failed"
+  | "attachment_failed"
+  | "plugin_unavailable"
+  | "action_undeclared";
 
 export interface DeliveryInput {
   behaviorId: number;
@@ -60,11 +79,14 @@ export interface DeliveryInput {
   errorCode: DeliveryErrorCode | null;
   error: string | null;
   verified: "hmac" | "token" | null;
+  /** The receiver deferred its reply to the callback token (#113); default false. */
+  deferred?: boolean;
 }
 
 /** A delivery as the admin API returns it (its behavior is the one asked for). */
-export interface DeliveryRow extends Omit<DeliveryInput, "behaviorId" | "firedAt"> {
+export interface DeliveryRow extends Omit<DeliveryInput, "behaviorId" | "firedAt" | "deferred"> {
   id: number;
+  deferred: boolean;
   /** ISO 8601. */
   firedAt: string;
 }
@@ -77,6 +99,7 @@ export async function recordDelivery(input: DeliveryInput): Promise<void> {
   try {
     await BehaviorDelivery.create({
       ...input,
+      deferred: input.deferred ?? false,
       error: input.error === null ? null : input.error.slice(0, DELIVERY_ERROR_MAX),
     });
   } catch (err) {
@@ -96,6 +119,7 @@ function deliveryRowOf(model: InstanceType<typeof BehaviorDelivery>): DeliveryRo
     errorCode: get<DeliveryErrorCode | null>("errorCode") ?? null,
     error: get<string | null>("error") ?? null,
     verified: get<"hmac" | "token" | null>("verified") ?? null,
+    deferred: Boolean(get<boolean>("deferred")),
   };
 }
 
@@ -147,21 +171,10 @@ export async function pruneDeliveries(now: Date = new Date()): Promise<void> {
   if (byAge + byCount > 0) log.info({ byAge, byCount }, "pruned behavior deliveries");
 }
 
-let pruneTimer: ReturnType<typeof setInterval> | null = null;
-
-function pruneQuietly(): void {
-  pruneDeliveries().catch((err: unknown) => {
-    log.error({ err }, "behavior_deliveries prune failed");
-  });
-}
-
 /**
  * Start the pruner (runtime startup, after the DB is ready): once now,
- * then every 10 minutes. Idempotent; the timer is unref'd.
+ * then every 10 minutes (behavior-pruner.ts). Idempotent.
  */
 export function startDeliveryPruner(): void {
-  if (pruneTimer) return;
-  pruneQuietly();
-  pruneTimer = setInterval(pruneQuietly, PRUNE_INTERVAL_MS);
-  pruneTimer.unref();
+  startPruner("behavior_deliveries", () => pruneDeliveries(), log);
 }

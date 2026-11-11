@@ -2,6 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  BEHAVIOR_ACTION_KEY_PATTERN,
+  MAX_BEHAVIOR_ACTIONS,
+  MAX_BEHAVIOR_ACTION_DESCRIPTION,
+  MAX_BEHAVIOR_ACTION_NAME,
   MAX_PLUGIN_CAPABILITIES,
   isSupportedSchemaVersion,
   validateManifestProtocol,
@@ -159,6 +163,7 @@ test("V-04: list fields must be arrays when present", () => {
     "guild_features",
     "capabilities",
     "events_subscribed_global",
+    "behavior_actions",
   ]) {
     assert.match(
       fail({ ...base(), [k]: "nope" }),
@@ -491,6 +496,72 @@ test("web_ui.manage_path is a rooted, traversal-free path", () => {
   for (const mp of ["/manage", "/a/b_c-d0"]) {
     pass({ ...base(), web_ui: { manage_path: mp } });
   }
+});
+
+// ─── behavior_actions[] (V-09 ~ V-12) ──────────────────────────────────
+
+function action(key: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return { key, name: `Action ${key}`, description: `Does ${key}`, ...extra };
+}
+
+test("behavior_actions: well-formed declarations pass", () => {
+  pass({
+    ...base(),
+    behavior_actions: [action("weather"), action("0-day_report"), action("a".repeat(32))],
+  });
+});
+
+test("V-09: an action is an object whose key matches the pattern", () => {
+  assert.match(fail({ ...base(), behavior_actions: ["weather"] }), /behavior_actions\[0\] must be an object \(V-09\)/);
+  for (const key of ["", "Weather", "-lead", "_lead", "has space", "dot.ted", "a".repeat(33), 5]) {
+    const error = fail({ ...base(), behavior_actions: [action(key as string)] });
+    assert.match(error, /behavior_actions\[0\]\.key .* must match/, String(key));
+    assert.match(error, /\(V-09\)$/, String(key));
+  }
+  assert.equal(BEHAVIOR_ACTION_KEY_PATTERN.source, "^[a-z0-9][a-z0-9_-]{0,31}$");
+});
+
+test("V-10: name and description are required, non-empty and capped", () => {
+  const cases: Array<[Record<string, unknown>, RegExp]> = [
+    [{ name: undefined }, /behavior_actions\[go\]\.name must be a non-empty string \(V-10\)/],
+    [{ name: "  " }, /\.name must be a non-empty string \(V-10\)/],
+    [{ name: "n".repeat(MAX_BEHAVIOR_ACTION_NAME + 1) }, new RegExp(`\\.name must be ≤${MAX_BEHAVIOR_ACTION_NAME} chars \\(V-10\\)`)],
+    [{ description: 3 }, /\.description must be a non-empty string \(V-10\)/],
+    [{ description: "" }, /\.description must be a non-empty string \(V-10\)/],
+    [
+      { description: "d".repeat(MAX_BEHAVIOR_ACTION_DESCRIPTION + 1) },
+      new RegExp(`\\.description must be ≤${MAX_BEHAVIOR_ACTION_DESCRIPTION} chars \\(V-10\\)`),
+    ],
+  ];
+  for (const [extra, re] of cases) {
+    assert.match(fail({ ...base(), behavior_actions: [action("go", extra)] }), re);
+  }
+  pass({
+    ...base(),
+    behavior_actions: [
+      action("go", {
+        name: "n".repeat(MAX_BEHAVIOR_ACTION_NAME),
+        description: "d".repeat(MAX_BEHAVIOR_ACTION_DESCRIPTION),
+      }),
+    ],
+  });
+});
+
+test("V-11: a key is declared once", () => {
+  assert.match(
+    fail({ ...base(), behavior_actions: [action("go"), action("stop"), action("go")] }),
+    /behavior_actions\[go\]\.key is declared more than once \(V-11\)/,
+  );
+});
+
+test(`V-12: at most ${MAX_BEHAVIOR_ACTIONS} actions`, () => {
+  const many = (n: number) => Array.from({ length: n }, (_, i) => action(`a${i}`));
+  pass({ ...base(), behavior_actions: many(MAX_BEHAVIOR_ACTIONS) });
+  assert.match(
+    fail({ ...base(), behavior_actions: many(MAX_BEHAVIOR_ACTIONS + 1) }),
+    new RegExp(`manifest\\.behavior_actions: at most ${MAX_BEHAVIOR_ACTIONS} allowed \\(got ${MAX_BEHAVIOR_ACTIONS + 1}\\) \\(V-12\\)`),
+  );
+  assert.equal(MAX_BEHAVIOR_ACTIONS, 25);
 });
 
 // ─── Success shape ─────────────────────────────────────────────────────

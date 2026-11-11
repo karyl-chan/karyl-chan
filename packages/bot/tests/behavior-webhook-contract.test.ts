@@ -39,6 +39,10 @@ import { MessageTriggerMatcher } from "../src/modules/command-system/message-tri
 import { InteractionDispatcher } from "../src/modules/command-system/interaction-dispatcher.service.js";
 import {
   ALLOWED_REPLY_FLAGS,
+  MAX_REPLY_ATTACHMENT_BYTES,
+  MAX_REPLY_ATTACHMENT_TOTAL_BYTES,
+  MAX_REPLY_ATTACHMENTS,
+  MAX_DIRECT_MESSAGES,
   MAX_REPLY_BODY_BYTES,
   MAX_REPLY_CONTENT,
   MAX_REPLY_EMBED_CHARS,
@@ -52,6 +56,10 @@ import {
   seedMessageTrigger,
 } from "./behavior-fixtures.js";
 import { CONTRACT_FIXTURES } from "@karyl-chan/plugin-wire";
+import { CALLBACK_TOKEN_TTL_MS } from "../src/modules/command-system/behavior-callback-token.js";
+import { config } from "../src/config.js";
+import { DM_OUTCOMES } from "../src/modules/behavior/models/behavior-dm-log.model.js";
+import { BEHAVIOR_CALLBACK_METHODS } from "../src/modules/command-system/behavior-callback.js";
 import { signBody, verifyInboundSignature } from "../src/utils/hmac.js";
 import { encryptSecret } from "../src/utils/crypto.js";
 import {
@@ -191,6 +199,10 @@ describe("behavior webhook contract (BH-2.3)", () => {
     expect(Object.keys(meta.user as object).sort()).toEqual(
       [...C.request.userKeys].sort(),
     );
+    // the run's own callback token stands in for it (#113)
+    expect(Object.keys(meta.callback as object).sort()).toEqual(
+      [...C.request.callbackKeys].sort(),
+    );
   });
 
   it("a slash attachment option's file matches the attachment fixture, tied by id", async () => {
@@ -276,6 +288,11 @@ describe("behavior webhook contract (BH-2.3)", () => {
     expect(meta.interaction_id).toBe("ix");
   });
 
+  it("the callback token's lifetime and methods are the bot's (#113)", () => {
+    expect(C.callback.ttlSeconds * 1000).toBe(CALLBACK_TOKEN_TTL_MS);
+    expect([...BEHAVIOR_CALLBACK_METHODS]).toEqual([...C.callback.methods]);
+  });
+
   it("the response fields are the reply model's", () => {
     const parsed = parseBehaviorReply({
       content: "c",
@@ -283,8 +300,25 @@ describe("behavior webhook contract (BH-2.3)", () => {
       components: [{ type: 1, components: [{ type: 2, style: 5, label: "l", url: "https://x.example" }] }],
       ephemeral: false,
       flags: 4,
+      defer: true,
+      attachments: [{ name: "a.png", path: "/a.png" }],
+      direct_messages: [
+        {
+          user_id: "111111111111111111",
+          content: "c",
+          embeds: [{ title: "t" }],
+          components: [{ type: 1, components: [{ type: 2, style: 5, label: "l", url: "https://x.example" }] }],
+          attachments: [{ name: "a.png", path: "/a.png" }],
+        },
+      ],
     });
     expect(parsed.ok && Object.keys(parsed.reply).sort()).toEqual([...C.response.fields].sort());
+    expect(parsed.ok && Object.keys(parsed.reply.direct_messages![0]!).sort()).toEqual(
+      [...C.response.directMessageKeys].sort(),
+    );
+    expect(parsed.ok && Object.keys(parsed.reply.attachments![0]!).sort()).toEqual(
+      [...C.response.attachmentKeys].sort(),
+    );
     expect(C.response.allowedFlags.reduce((a, b) => a | b, 0)).toBe(ALLOWED_REPLY_FLAGS);
     const row = {
       type: 1,
@@ -300,6 +334,15 @@ describe("behavior webhook contract (BH-2.3)", () => {
     expect(MAX_REPLY_CONTENT).toBe(C.response.maxContentLength);
     expect(MAX_REPLY_EMBED_CHARS).toBe(C.response.maxEmbedTotalLength);
     expect(MAX_REPLY_BODY_BYTES).toBe(C.response.maxBodyBytes);
+    expect(MAX_REPLY_ATTACHMENTS).toBe(C.response.maxAttachments);
+    expect(MAX_REPLY_ATTACHMENT_BYTES).toBe(C.response.maxAttachmentBytes);
+    expect(MAX_REPLY_ATTACHMENT_TOTAL_BYTES).toBe(C.response.maxAttachmentTotalBytes);
+    expect(MAX_DIRECT_MESSAGES).toBe(C.response.maxDirectMessages);
+    // the defaults (no env in tests)
+    expect(config.behavior.dmPerMinute).toBe(C.response.directMessagesPerMinute);
+    expect(config.behavior.dmPerRecipient).toBe(C.response.directMessagesPerRecipient);
+    expect(config.behavior.dmPerRecipientWindowMs).toBe(C.response.directMessagesPerRecipientWindowSeconds * 1000);
+    expect([...DM_OUTCOMES]).toEqual([...C.response.directMessageOutcomes]);
     const long = parseBehaviorReply({ content: "x".repeat(C.response.maxContentLength + 1) });
     expect(long.ok && long.reply.content!.length).toBe(C.response.maxContentLength);
   });

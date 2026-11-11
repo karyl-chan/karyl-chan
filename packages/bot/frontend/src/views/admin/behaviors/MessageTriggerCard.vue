@@ -16,6 +16,7 @@ import {
 } from '@karyl-chan/ui';
 import { deleteBehavior, updateBehavior, type CommandView, type MessageTriggerView } from '../../../api/behavior';
 import BehaviorDeliveries from './BehaviorDeliveries.vue';
+import BehaviorDirectMessages from './BehaviorDirectMessages.vue';
 import ConvertToCommandDialog from './ConvertToCommandDialog.vue';
 import GroupMembersPanel from './GroupMembersPanel.vue';
 import MessageTriggerFields from './MessageTriggerFields.vue';
@@ -283,7 +284,7 @@ const savedGroup = computed(() =>
                             <Icon icon="material-symbols:more-vert" width="16" height="16" />
                         </button>
                     </template>
-                    <AppMenuItem data-test="test-fire" @click="testFire">
+                    <AppMenuItem v-if="trigger.actionSource === 'webhook'" data-test="test-fire" @click="testFire">
                         <Icon icon="material-symbols:send-outline-rounded" width="16" height="16" />
                         {{ t('behaviors.card.test') }}
                     </AppMenuItem>
@@ -340,6 +341,7 @@ const savedGroup = computed(() =>
                     />
 
                     <BehaviorDeliveries :behavior-id="trigger.id" />
+                    <BehaviorDirectMessages :behavior-id="trigger.id" />
 
                     <p v-if="groupDropWarning" class="warning" role="status" data-test="group-drop">{{ groupDropWarning }}</p>
 

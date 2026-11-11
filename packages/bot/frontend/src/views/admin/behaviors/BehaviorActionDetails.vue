@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
-import type { BehaviorActionSource, BehaviorStats, WebhookActionView } from '../../../api/behavior';
+import type { BehaviorActionSource, BehaviorStats, PluginActionView, WebhookActionView } from '../../../api/behavior';
 import { useRelativeTime } from '../../../composables/use-relative-time';
 
-/** Read-only view of a behavior's action (built-in / webhook) and its stats. */
+/** Read-only view of a behavior's action (built-in / webhook / plugin action) and its stats. */
 defineProps<{
     actionSource: BehaviorActionSource;
     webhook: WebhookActionView | null;
+    pluginAction?: PluginActionView | null;
     stats: BehaviorStats | null;
 }>();
 
@@ -18,6 +19,9 @@ const { relativeTime } = useRelativeTime();
     <dl class="details">
         <dt>{{ t('behaviors.card.action') }}</dt>
         <dd v-if="actionSource === 'builtin'">{{ t('behaviors.card.actionBuiltin') }}</dd>
+        <dd v-else-if="actionSource === 'plugin' && pluginAction">
+            <code class="url">{{ pluginAction.pluginKey }} / {{ pluginAction.actionKey }}</code>
+        </dd>
         <dd v-else-if="webhook">
             <code class="url">{{ webhook.url ?? t('behaviors.card.webhookUrlUnreadable') }}</code>
             <span class="muted">

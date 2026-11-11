@@ -23,7 +23,7 @@ export type BehaviorSection =
   | `guild:${string}`
   | `channel:${string}:${string}`;
 
-export type BehaviorActionSource = "builtin" | "webhook" | "service";
+export type BehaviorActionSource = "builtin" | "webhook" | "plugin" | "service";
 export type BehaviorMessageSurface = "bot_dm" | "guild";
 export type BehaviorPatternKind = "startswith" | "endswith" | "regex";
 export type BehaviorAudienceKind = "all" | "user" | "group";
@@ -59,6 +59,16 @@ export interface WebhookActionView {
   previousSecretExpiresAt: string | null;
 }
 
+/**
+ * A plugin action binding (#203): the plugin and one of the actions its
+ * manifest declares. Names and whether it is still declared come from
+ * getPluginBehaviorActions().
+ */
+export interface PluginActionView {
+  pluginKey: string;
+  actionKey: string;
+}
+
 export interface BehaviorCommandOption {
   type:
     | "string"
@@ -84,6 +94,8 @@ interface BehaviorViewBase {
   systemKey: string | null;
   actionSource: BehaviorActionSource;
   webhook: WebhookActionView | null;
+  /** actionSource 'plugin' only */
+  pluginAction: PluginActionView | null;
   stats: BehaviorStats | null;
   /** ISO time of the last write; send back as `ifUpdatedAt` to refuse a stale edit. */
   /** null = the trigger's own default; see ReplyVisibility */
@@ -207,7 +219,9 @@ export interface MessageTriggerInput {
   audienceUserId?: string | null;
   audienceGroupName?: string | null;
   replyVisibility?: ReplyVisibility | null;
-  webhook: WebhookInput;
+  /** The action: `webhook` or `pluginAction`, exactly one (#203). */
+  webhook?: WebhookInput;
+  pluginAction?: PluginActionView;
 }
 
 export interface CommandOptionInput {
@@ -226,7 +240,9 @@ export interface CommandLeafInput {
   leafDescription?: string | null;
   options?: CommandOptionInput[];
   replyVisibility?: ReplyVisibility | null;
-  webhook: WebhookInput;
+  /** The action: `webhook` or `pluginAction`, exactly one (#203). */
+  webhook?: WebhookInput;
+  pluginAction?: PluginActionView;
 }
 
 export interface CommandInput {
@@ -239,10 +255,12 @@ export interface CommandInput {
   defaultMemberPermissions?: string | null;
 }
 
-/** PATCH /api/behaviors/:id — a message trigger's or a leaf's own fields. */
-export type BehaviorPatch = Partial<Omit<MessageTriggerInput, "webhook">> &
-  Partial<Omit<CommandLeafInput, "webhook">> & {
-    webhook?: WebhookInput;
+/**
+ * PATCH /api/behaviors/:id — a message trigger's or a leaf's own fields.
+ * Naming the other kind of action converts the behavior to it (#203).
+ */
+export type BehaviorPatch = Partial<MessageTriggerInput> &
+  Partial<CommandLeafInput> & {
     ifUpdatedAt?: string;
   };
 
@@ -372,13 +390,16 @@ export interface BehaviorDelivery {
   durationMs: number | null;
   /**
    * A host-policy code, `response_signature`, `http_error`,
-   * `invalid_reply`, `request_failed`, `render_failed`, `dm_failed` or
-   * `defer_failed`; null on success.
+   * `invalid_reply`, `request_failed`, `render_failed`, `dm_failed`,
+   * `defer_failed`, `callback_invalid`, `callback_failed` or
+   * `attachment_failed`; null on success.
    */
   errorCode: string | null;
   /** At most 300 characters; null on success. */
   error: string | null;
   verified: "hmac" | "token" | null;
+  /** The receiver answered `{"defer": true}`: its reply comes through the callback token (#113). */
+  deferred: boolean;
 }
 
 /** A behavior's last 20 deliveries, newest first. */
@@ -386,6 +407,46 @@ export async function getBehaviorDeliveries(
   id: number,
 ): Promise<{ deliveries: BehaviorDelivery[] }> {
   return jsonOrThrow(await send("GET", `/api/behaviors/${id}/deliveries`));
+}
+
+/**
+ * Who a behavior's replies may DM besides the triggerer (#157), from
+ * GET /api/behaviors/:id/dm-allowlist. Both empty: no list — then members
+ * of the triggering server (any server the bot is in, for a DM trigger).
+ */
+export interface BehaviorDmAllowlist {
+  userIds: string[];
+  groupNames: string[];
+}
+
+export async function getBehaviorDmAllowlist(id: number): Promise<BehaviorDmAllowlist> {
+  return jsonOrThrow(await send("GET", `/api/behaviors/${id}/dm-allowlist`));
+}
+
+/** Replace the list; both empty removes it. */
+export async function replaceBehaviorDmAllowlist(
+  id: number,
+  list: BehaviorDmAllowlist,
+): Promise<BehaviorDmAllowlist> {
+  return jsonOrThrow(await send("PUT", `/api/behaviors/${id}/dm-allowlist`, list));
+}
+
+/** What came of one direct message — mirrors behavior-dm-log.model.ts. */
+export type BehaviorDmOutcome = "sent" | "not_allowed" | "rate_limited" | "attachment_failed" | "failed";
+
+/** One direct message of a behavior (#157), from GET /api/behaviors/:id/dm-log. Never its content. */
+export interface BehaviorDmLogEntry {
+  id: number;
+  recipientUserId: string;
+  triggererUserId: string;
+  outcome: BehaviorDmOutcome;
+  /** ISO 8601. */
+  at: string;
+}
+
+/** A behavior's last 50 direct messages, newest first (kept 30 days). */
+export async function getBehaviorDmLog(id: number): Promise<{ entries: BehaviorDmLogEntry[] }> {
+  return jsonOrThrow(await send("GET", `/api/behaviors/${id}/dm-log`));
 }
 
 export async function createBehaviorCommand(
@@ -586,6 +647,23 @@ export interface BehaviorSchemas {
   loginTrigger?: Record<string, unknown>;
   /** POST /api/behaviors/:id/convert-trigger. */
   convertTrigger?: Record<string, unknown>;
+}
+
+/** An installed plugin and the behavior actions its manifest declares (#203). */
+export interface PluginBehaviorActions {
+  pluginKey: string;
+  pluginName: string;
+  enabled: boolean;
+  status: "active" | "inactive";
+  actions: Array<{ key: string; name: string; description: string }>;
+}
+
+/** The plugin action picker's choices: installed plugins that declare behavior actions. */
+export async function getPluginBehaviorActions(): Promise<PluginBehaviorActions[]> {
+  const { plugins } = await jsonOrThrow<{ plugins: PluginBehaviorActions[] }>(
+    await send("GET", "/api/behaviors/plugin-actions"),
+  );
+  return plugins;
 }
 
 let schemas: Promise<BehaviorSchemas> | null = null;

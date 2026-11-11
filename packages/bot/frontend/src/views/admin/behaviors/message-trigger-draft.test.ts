@@ -26,6 +26,7 @@ function trigger(overrides: Partial<MessageTriggerView> = {}): MessageTriggerVie
         systemKey: null,
         actionSource: 'webhook',
         webhook: { url: 'https://hook.example/w', authMode: null, secretSet: false, previousSecretExpiresAt: null },
+        pluginAction: null,
         stats: null,
         updatedAt: '2026-10-27T00:00:00.000Z',
         replyVisibility: null,

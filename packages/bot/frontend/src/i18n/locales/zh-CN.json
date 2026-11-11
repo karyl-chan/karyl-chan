@@ -1365,7 +1365,18 @@
             "title": "转发设置",
             "source": "动作来源",
             "sourceWebhook": "Webhook",
-            "sourcePluginLater": "Plugin 动作会在第二阶段开放。",
+            "sourcePlugin": "Plugin 动作",
+            "sourcePluginHint": "Plugin 会收到触发的信息（指令的参数原样转交），再用这次执行的 callback token 回复。",
+            "plugin": {
+                "label": "Plugin 动作",
+                "placeholder": "选择一个动作",
+                "loading": "正在加载 plugin 的动作…",
+                "none": "目前没有已安装的 plugin 声明 behavior 动作。",
+                "loadFailed": "无法加载 plugin 的动作。",
+                "offline": "这个 plugin 已停用或离线，恢复之前这个 behavior 都会失败。",
+                "undeclared": "Plugin 已不再声明这个动作，改选其他动作之前每次执行都会失败。",
+                "undeclaredOption": "{plugin} / {action}（已不再声明）"
+            },
             "url": "Webhook URL",
             "urlHint": "公开网址需用 https；局域网地址需在 bot 的局域网白名单上。",
             "authLabel": "验证模式",
@@ -1631,11 +1642,38 @@
             "empty": "还没有投递记录。",
             "ok": "成功",
             "failed": "失败",
+            "deferred": "延后回复",
+            "deferredHint": "receiver 之后会用 callback token 补上回复。",
             "verified": {
                 "hmac": "签名已验证（HMAC）",
                 "token": "签名已验证（token）"
             },
             "retention": "保留最近 20 条、最多 7 天内的投递；测试 webhook 不计入。"
+        },
+        "directMessages": {
+            "title": "私信其他用户",
+            "refresh": "刷新",
+            "loading": "加载中…",
+            "allowlistTitle": "回复可以私信谁",
+            "ruleNone": "没有名单：触发所在服务器的成员（在与 bot 的私信中触发时，是 bot 所在任一服务器的成员）。",
+            "ruleList": "只有这些用户与这些群组的成员。",
+            "userPlaceholder": "用户 ID",
+            "addUser": "添加用户",
+            "groupPlaceholder": "behavior 群组名称",
+            "addGroup": "添加群组",
+            "remove": "移除 {name}",
+            "badUserId": "用户 ID 是 17–20 位数字。",
+            "logTitle": "最近的私信",
+            "logEmpty": "还没有私信。",
+            "logLine": "给 {to}，由 {by} 触发",
+            "outcome": {
+                "sent": "已发送",
+                "not_allowed": "不允许",
+                "rate_limited": "超出速率",
+                "attachment_failed": "附件失败",
+                "failed": "失败"
+            },
+            "retention": "保留最近 50 条、最多 30 天内的私信。触发者本人一律可以私信。默认每个 behavior 每分钟最多 10 条，同一人每 10 分钟最多 3 条。"
         },
         "convertTrigger": {
             "menuTitle": "触发方式",

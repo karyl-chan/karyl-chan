@@ -69,6 +69,8 @@ const valid = computed(() => name.value.trim() !== '' && nameError.value === nul
 
 const root = computed(() => props.command.leaves[0]);
 const action = computed(() => {
+    const plugin = root.value?.actionSource === 'plugin' ? root.value.pluginAction : null;
+    if (plugin) return `${t('behaviors.action.sourcePlugin')} · ${plugin.pluginKey} / ${plugin.actionKey}`;
     const url = root.value?.webhook?.url;
     if (!url) return t('behaviors.action.sourceWebhook');
     try {

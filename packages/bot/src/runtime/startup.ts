@@ -28,6 +28,7 @@ import {
 } from "../modules/bot-events/bot-event-log.js";
 import { ensureSystemBehaviors } from "../modules/behavior/system-seed.service.js";
 import { startDeliveryPruner } from "../modules/behavior/behavior-deliveries.js";
+import { startDmLogPruner } from "../modules/behavior/behavior-dm-log.js";
 import { checkRegexTriggersAtBoot } from "../modules/behavior/regex-trigger-boot-check.js";
 import { runMigrations } from "../db-migrations.js";
 import { initJwtSigningAuthority } from "../modules/web-core/jwt.service.js";
@@ -119,6 +120,8 @@ export async function runStartup(ctx: RuntimeContext): Promise<void> {
     // Bound behavior_deliveries the same way: the last 20 per behavior,
     // at most 7 days (behavior-deliveries.ts).
     startDeliveryPruner();
+    // and behavior_dm_log: 30 days (behavior-dm-log.ts, #157)
+    startDmLogPruner();
     // Probe each plugin's /health/detail endpoint every 60 s and stash
     // the result in plugin-health-store for the admin UI to read. Runs
     // in-process; unref'd timer.

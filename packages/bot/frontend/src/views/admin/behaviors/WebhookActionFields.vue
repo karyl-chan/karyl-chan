@@ -4,18 +4,22 @@ import { useI18n } from 'vue-i18n';
 import { AppSelectField, AppTextField, Stack, type SelectOption } from '@karyl-chan/ui';
 import type { ReplyVisibility, WebhookActionView } from '../../../api/behavior';
 import SecretField from './SecretField.vue';
-import type { AuthChoice, WebhookDraft } from './webhook-draft';
+import PluginActionPicker from './PluginActionPicker.vue';
+import type { ActionDraft, ActionSourceChoice, AuthChoice } from './webhook-draft';
 import type { ReplyTargetKind } from './reply-preview';
 
 /**
  * The action half of a behavior form (board 7 「轉發設定」): the Action
- * Source — webhook for now; plugin actions come with phase 2 — its URL
- * and authentication, and the write-only secret of a saved webhook.
- * Shared by every form with a webhook action (message triggers, command
- * leaves).
+ * Source — a webhook or a plugin action (#203) — and that source's
+ * settings: a webhook's URL and authentication and the write-only secret
+ * of a saved one, or the plugin action picked from what the installed
+ * plugins declare. Switching keeps what was typed on the other side; only
+ * the chosen source is saved, and saving the other one converts the
+ * behavior. Shared by every form with an action (message triggers,
+ * command leaves).
  */
 const props = defineProps<{
-    draft: WebhookDraft;
+    draft: ActionDraft;
     errors: Record<string, string>;
     /** The saved webhook (null while creating). */
     saved: WebhookActionView | null;
@@ -33,11 +37,21 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-    (e: 'patch', patch: Partial<WebhookDraft & { replyVisibility: ReplyVisibility | null }>): void;
+    (e: 'patch', patch: Partial<ActionDraft & { replyVisibility: ReplyVisibility | null }>): void;
     (e: 'rotated'): void;
 }>();
 
 const { t } = useI18n();
+
+const sourceOptions = computed<SelectOption<ActionSourceChoice>[]>(() => [
+    { value: 'webhook', label: t('behaviors.action.sourceWebhook') },
+    { value: 'plugin', label: t('behaviors.action.sourcePlugin') },
+]);
+
+const pluginError = computed(
+    () =>
+        props.errors['pluginAction.actionKey'] ?? props.errors['pluginAction.pluginKey'] ?? props.errors['pluginAction']
+);
 
 const authOptions = computed<SelectOption<AuthChoice>[]>(() =>
     (['hmac', 'token', 'none'] as const).map((k) => ({ value: k, label: t(`behaviors.action.auth.${k}`) }))
@@ -86,12 +100,25 @@ const authNote = computed(() => {
     <Stack gap="2">
         <h4 class="part">{{ t('behaviors.action.title') }}</h4>
         <div class="grid">
-            <div class="field">
+            <label class="field" data-test="action-source">
                 <span class="field-label">{{ t('behaviors.action.source') }}</span>
-                <span class="fixed">{{ t('behaviors.action.sourceWebhook') }}</span>
-                <span class="field-hint">{{ t('behaviors.action.sourcePluginLater') }}</span>
-            </div>
+                <AppSelectField
+                    :model-value="draft.actionSource"
+                    :options="sourceOptions"
+                    :drawer-title="t('behaviors.action.source')"
+                    @update:model-value="emit('patch', { actionSource: $event })"
+                />
+                <span v-if="draft.actionSource === 'plugin'" class="field-hint">{{ t('behaviors.action.sourcePluginHint') }}</span>
+            </label>
+            <PluginActionPicker
+                v-if="draft.actionSource === 'plugin'"
+                :plugin-key="draft.pluginKey"
+                :action-key="draft.actionKey"
+                :error="pluginError"
+                @pick="emit('patch', $event)"
+            />
             <AppTextField
+                v-if="draft.actionSource === 'webhook'"
                 class="mono"
                 :model-value="draft.webhookUrl"
                 :label="t('behaviors.action.url')"
@@ -101,7 +128,7 @@ const authNote = computed(() => {
                 inputmode="url"
                 @update:model-value="emit('patch', { webhookUrl: String($event) })"
             />
-            <label class="field">
+            <label v-if="draft.actionSource === 'webhook'" class="field">
                 <span class="field-label">{{ t('behaviors.action.authLabel') }}</span>
                 <AppSelectField
                     :model-value="draft.authMode"
@@ -127,7 +154,7 @@ const authNote = computed(() => {
                 <span class="fixed">{{ t('behaviors.action.replyVisibility.notApplicable') }}</span>
             </div>
             <SecretField
-                v-if="behaviorId !== null && (saved?.secretSet || issuedSecret)"
+                v-if="draft.actionSource === 'webhook' && behaviorId !== null && (saved?.secretSet || issuedSecret)"
                 :behavior-id="behaviorId"
                 :secret-set="saved?.secretSet ?? false"
                 :previous-secret-expires-at="saved?.previousSecretExpiresAt ?? null"

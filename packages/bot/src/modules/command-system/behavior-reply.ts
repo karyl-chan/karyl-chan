@@ -21,6 +21,17 @@
  *     in action rows (type 1); at most 5 rows of 5
  *   - flags: only SuppressEmbeds and SuppressNotifications; visibility is
  *     the `ephemeral` field, never the Ephemeral bit
+ *   - defer: `true` only (#113); it means "answer later", so the renderer
+ *     never sees it — runWebhookAction does
+ *   - attachments (#156): `{ name, path }` entries, files the bot downloads
+ *     from the receiver's origin (reply-files.ts, through
+ *     WebhookForwarder.fetchReplyFiles, which applies attachmentsProblem
+ *     first). Never dropped: a malformed list fails the reply, and a file
+ *     that cannot be had fails the action
+ *   - direct_messages (#157): at most MAX_DIRECT_MESSAGES `{ user_id,
+ *     content?, embeds?, components?, attachments? }`, each read with the
+ *     rules above; a malformed list fails the reply (behavior-direct-
+ *     messages.ts decides who may be DMed)
  *   - any other top-level field is ignored (and named in a note)
  *   - the body itself is capped at MAX_REPLY_BODY_BYTES by the forwarder
  *
@@ -28,6 +39,7 @@
  */
 
 import type { SanitizedEmbed } from "./types.js";
+import { SNOWFLAKE_PATTERN } from "../behavior/behavior-api-error.js";
 
 // ── the model ────────────────────────────────────────────────────────────────
 
@@ -56,6 +68,35 @@ export interface BehaviorReply {
   ephemeral?: boolean;
   /** SuppressEmbeds (4) | SuppressNotifications (4096) only. */
   flags?: number;
+  /**
+   * A webhook's synchronous answer only (#113): "no reply now, I will
+   * answer with the callback token". The command keeps its "thinking…"
+   * placeholder; the rest of the reply is not shown. Only `true` is kept.
+   */
+  defer?: true;
+  /**
+   * Files to attach (#156): `path` is resolved against the webhook URL's
+   * origin and downloaded by the bot before the reply is rendered
+   * (reply-files.ts). An attachments-only reply is a visible reply.
+   */
+  attachments?: ReplyAttachment[];
+  /**
+   * Messages to DM to other users (#157), besides the reply itself. Who
+   * may be DMed is the behavior's rule, checked when they are sent.
+   */
+  direct_messages?: DirectMessage[];
+}
+
+/** One direct message a reply asks for: who to, and what. */
+export type DirectMessage = { user_id: string } & Pick<
+  BehaviorReply,
+  "content" | "embeds" | "components" | "attachments"
+>;
+
+/** One file a reply asks for: its name in Discord, and where on the receiver it is. */
+export interface ReplyAttachment {
+  name: string;
+  path: string;
 }
 
 /** What parseBehaviorReply dropped or changed, for the admin and the log. */
@@ -81,7 +122,33 @@ export const MAX_REPLY_BODY_BYTES = 64 * 1024;
 /** Ends content that was cut to MAX_REPLY_CONTENT. */
 export const TRUNCATION_MARK = "\n…(truncated)";
 
-const KNOWN_FIELDS = new Set(["content", "embeds", "components", "ephemeral", "flags"]);
+const KNOWN_FIELDS = new Set([
+  "content",
+  "embeds",
+  "components",
+  "ephemeral",
+  "flags",
+  "defer",
+  "attachments",
+  "direct_messages",
+]);
+
+/** The most direct messages one reply may ask for (#157). */
+export const MAX_DIRECT_MESSAGES = 5;
+const DIRECT_MESSAGE_FIELDS = ["content", "embeds", "components", "attachments"] as const;
+// a Discord id, as the behavior admin routes check one
+const SNOWFLAKE = new RegExp(SNOWFLAKE_PATTERN);
+
+/**
+ * The most files a reply may attach, the largest one and the most they
+ * may weigh together (#156). The first two are also the plugin
+ * attachment limits (plugin-rpc-routes.ts).
+ */
+export const MAX_REPLY_ATTACHMENTS = 5;
+export const MAX_REPLY_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+export const MAX_REPLY_ATTACHMENT_TOTAL_BYTES = 25 * 1024 * 1024;
+const MAX_ATTACHMENT_NAME = 200;
+const MAX_ATTACHMENT_PATH = 2048;
 
 const MAX_ROWS = 5;
 const MAX_BUTTONS_PER_ROW = 5;
@@ -232,12 +299,116 @@ function sanitizeComponents(raw: unknown[]): { rows: LinkButtonRow[]; dropped: n
   return { rows, dropped };
 }
 
+// ── attachments (#156) ───────────────────────────────────────────────────────
+
+/** `{ name, path }` entries as given, or null when the list is malformed. */
+function attachmentsOf(raw: unknown[]): ReplyAttachment[] | null {
+  const out: ReplyAttachment[] = [];
+  for (const item of raw) {
+    if (typeof item !== "object" || item === null) return null;
+    const { name, path } = item as Record<string, unknown>;
+    if (typeof name !== "string" || typeof path !== "string") return null;
+    out.push({ name, path });
+  }
+  return out;
+}
+
+// control characters and whitespace (a path is sent as is, never re-encoded)
+// eslint-disable-next-line no-control-regex
+const UNSAFE_PATH_CHARS = /[\u0000-\u0020\u007f\\]/;
+// an encoded slash or backslash a receiver might decode into another host
+const ENCODED_SEPARATOR = /%(2f|5c)/i;
+// eslint-disable-next-line no-control-regex
+const UNSAFE_NAME_CHARS = /[\u0000-\u001f\u007f/\\]/;
+
+function pathProblem(path: string): string | null {
+  if (!path.startsWith("/") || path.startsWith("//")) {
+    return "path must start with a single / (a path on the webhook's origin)";
+  }
+  if (path.length > MAX_ATTACHMENT_PATH) return `path is longer than ${MAX_ATTACHMENT_PATH} characters`;
+  if (UNSAFE_PATH_CHARS.test(path)) return "path has a backslash, a space or a control character";
+  if (ENCODED_SEPARATOR.test(path)) return "path has an encoded slash or backslash";
+  return null;
+}
+
+function nameProblem(name: string): string | null {
+  if (name.trim() === "") return "name is empty";
+  if (name.length > MAX_ATTACHMENT_NAME) return `name is longer than ${MAX_ATTACHMENT_NAME} characters`;
+  if (UNSAFE_NAME_CHARS.test(name)) return "name has a slash, a backslash or a control character";
+  return null;
+}
+
+/**
+ * Why a reply's attachments may not be fetched, or null: more than
+ * MAX_REPLY_ATTACHMENTS, a name Discord can't take, or a path that is not
+ * a plain path on the receiver's origin — `//host`, an absolute URL, a
+ * relative path, a backslash or an encoded slash.
+ */
+export function attachmentsProblem(attachments: readonly ReplyAttachment[]): string | null {
+  if (attachments.length > MAX_REPLY_ATTACHMENTS) {
+    return `at most ${MAX_REPLY_ATTACHMENTS} attachments, got ${attachments.length}`;
+  }
+  for (const [i, { name, path }] of attachments.entries()) {
+    const problem = nameProblem(name) ?? pathProblem(path);
+    if (problem) return `attachment ${i + 1}: ${problem}`;
+  }
+  return null;
+}
+
+// ── direct messages (#157) ───────────────────────────────────────────────────
+
+/**
+ * `direct_messages` → the messages, each read with the reply's own rules
+ * (and their notes, fields named `direct_messages[i].…`), or why the list
+ * can't be used: not an array, more than MAX_DIRECT_MESSAGES, an entry
+ * without a user id, or one with nothing to send.
+ */
+function directMessagesOf(
+  raw: unknown,
+): { ok: true; messages: DirectMessage[]; notes: ReplyNote[] } | { ok: false; error: string } {
+  if (!Array.isArray(raw)) return { ok: false, error: "must be an array" };
+  if (raw.length > MAX_DIRECT_MESSAGES) {
+    return { ok: false, error: `at most ${MAX_DIRECT_MESSAGES} messages, got ${raw.length}` };
+  }
+  const messages: DirectMessage[] = [];
+  const notes: ReplyNote[] = [];
+  for (const [i, item] of raw.entries()) {
+    const at = `direct_messages[${i}]`;
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      return { ok: false, error: `entry ${i + 1} is not an object` };
+    }
+    const entry = item as Record<string, unknown>;
+    if (typeof entry.user_id !== "string" || !SNOWFLAKE.test(entry.user_id)) {
+      return { ok: false, error: `entry ${i + 1}: user_id must be a Discord user id` };
+    }
+    const fields: Record<string, unknown> = {};
+    for (const key of DIRECT_MESSAGE_FIELDS) if (key in entry) fields[key] = entry[key];
+    const parsed = parseBehaviorReply(fields);
+    if (!parsed.ok) return { ok: false, error: `entry ${i + 1}: ${parsed.error}` };
+    if (!hasVisibleReply(parsed.reply)) {
+      return { ok: false, error: `entry ${i + 1}: content, embeds, components or attachments required` };
+    }
+    messages.push({ user_id: entry.user_id, ...parsed.reply });
+    for (const note of parsed.notes) {
+      notes.push(note.kind === "invalid_field" ? { ...note, field: `${at}.${note.field}` } : note);
+    }
+    const unknown = Object.keys(entry)
+      .filter((k) => k !== "user_id" && !(DIRECT_MESSAGE_FIELDS as readonly string[]).includes(k))
+      .sort();
+    if (unknown.length > 0) notes.push({ kind: "unknown_fields", fields: unknown.map((k) => `${at}.${k}`) });
+  }
+  return { ok: true, messages, notes };
+}
+
 // ── parse ────────────────────────────────────────────────────────────────────
 
 /**
  * A response body (already JSON-decoded) → the reply to render. `ok: false`
- * only when the body is not an object at all; anything inside an object
- * that phase 1 can't carry is dropped with a note instead.
+ * when the body is not an object at all, its `attachments` is not a
+ * list of `{ name, path }` strings (files are never dropped), or its
+ * `direct_messages` can't be read (directMessagesOf); anything
+ * else inside an object that phase 1 can't carry is dropped with a note
+ * instead.
  */
 export function parseBehaviorReply(raw: unknown): ReplyParse {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
@@ -296,17 +467,49 @@ export function parseBehaviorReply(raw: unknown): ReplyParse {
     }
   }
 
+  if (body.defer !== undefined && body.defer !== null) {
+    if (typeof body.defer !== "boolean") invalid("defer");
+    else if (body.defer) reply.defer = true;
+  }
+
+  if (body.attachments !== undefined && body.attachments !== null) {
+    const attachments = Array.isArray(body.attachments) ? attachmentsOf(body.attachments) : null;
+    // files are never dropped quietly: a list the bot can't read fails the reply
+    if (!attachments) {
+      return { ok: false, error: "attachments: must be an array of { name, path } with string values" };
+    }
+    if (attachments.length > 0) reply.attachments = attachments;
+  }
+
+  if (body.direct_messages !== undefined && body.direct_messages !== null) {
+    // a DM is never dropped quietly either: a list the bot can't read fails the reply
+    const read = directMessagesOf(body.direct_messages);
+    if (!read.ok) return { ok: false, error: `direct_messages: ${read.error}` };
+    if (read.messages.length > 0) reply.direct_messages = read.messages;
+    notes.push(...read.notes);
+  }
+
   const unknown = Object.keys(body).filter((k) => !KNOWN_FIELDS.has(k)).sort();
   if (unknown.length > 0) notes.push({ kind: "unknown_fields", fields: unknown });
 
   return { ok: true, reply, notes };
 }
 
-/** Whether the reply has anything Discord would show. */
-export function hasVisibleReply(reply: BehaviorReply): boolean {
+/**
+ * Whether the reply has anything Discord would show: attachments count,
+ * as descriptors or (a reply ready to render, reply-files.ts) as files.
+ */
+export function hasVisibleReply(
+  reply: Pick<BehaviorReply, "content" | "embeds" | "components"> & {
+    attachments?: readonly unknown[];
+    files?: readonly unknown[];
+  },
+): boolean {
   return Boolean(
     reply.content ||
       (reply.embeds && reply.embeds.length > 0) ||
-      (reply.components && reply.components.length > 0),
+      (reply.components && reply.components.length > 0) ||
+      (reply.attachments && reply.attachments.length > 0) ||
+      (reply.files && reply.files.length > 0),
   );
 }

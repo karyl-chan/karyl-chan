@@ -6,6 +6,7 @@ export {
   defineWebUI,
   definePluginComponent,
   definePluginModal,
+  definePluginBehaviorAction,
   componentCustomId,
   modalCustomId,
 } from "./plugin.js";
@@ -17,6 +18,7 @@ export type {
   WebUIDefinition,
   PluginComponentDefinition,
   PluginModalDefinition,
+  PluginBehaviorActionDefinition,
   PluginInstance,
   StartedPlugin,
   StartOptions,
@@ -27,6 +29,7 @@ export type {
   PluginManifest,
   ManifestPluginCommand,
   ManifestCapability,
+  ManifestBehaviorAction,
   ManifestGuildFeature,
   ManifestConfigField,
   ManifestCommandOption,
@@ -35,6 +38,10 @@ export type {
 
 export type {
   AutocompleteContext,
+  BehaviorActionContext,
+  BehaviorActionPayload,
+  BehaviorActionReply,
+  BehaviorActionResult,
   CommandContext,
   CommandReply,
   CommandOption,

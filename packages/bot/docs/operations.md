@@ -57,8 +57,9 @@ docker compose start bot
 | `RoleReceiveMessages` | Watched messages for role-emoji. |
 | `RconForwardChannels` | RCON forward settings (with encrypted password). |
 | `behavior_commands`, `behavior_definitions`, `behavior_webhook_actions` | Behaviors: commands, triggers + action sources, webhook actions (encrypted). |
+| `behavior_plugin_actions` | A behavior's plugin action binding (pluginKey, actionKey). Made by `sync()`; no migration. |
 | `behavior_stats`, `behavior_group_members` | Per-behavior forward stats; audience group lists. |
-| `behavior_deliveries` | Per-behavior delivery log: the last 20 webhook deliveries, at most 7 days, pruned every 10 minutes. Made by `sync()`; no migration. |
+| `behavior_deliveries` | Per-behavior delivery log: the last 20 webhook deliveries or plugin action dispatches, at most 7 days, pruned every 10 minutes. Made by `sync()`; no migration. |
 | `services` | [Services](features/service-login.md) that log in through karyl (name, audience, redirect URL); each owns one `behavior_definitions` row (`serviceId`, migration 016). Made by `sync()`. |
 | `plugins` and `plugin_commands` | Plugin registry and commands. |
 | `admin_roles` and `admin_role_capabilities` | Admin roles and capability tokens. |

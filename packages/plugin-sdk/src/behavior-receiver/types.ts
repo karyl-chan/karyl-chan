@@ -36,6 +36,7 @@ export interface MessageTriggerMeta {
   attachments: BehaviorWebhookAttachment[];
   /** A regex trigger's groups, group 1 first (null: took no part); [] otherwise. */
   captures: (string | null)[];
+  callback: BehaviorCallback;
 }
 
 /** One `_meta.options` entry. `type` is Discord's numeric option type. */
@@ -43,6 +44,20 @@ export interface CommandTriggerOption {
   name: string;
   type: number;
   value: string | number | boolean | null;
+}
+
+/**
+ * `_meta.callback` (both triggers): this run's callback token. Send it as
+ * `Authorization: Bearer <token>` to `<api_base>/api/plugin/interactions.respond`,
+ * `.followup`, `.edit_followup` or `.delete_followup` to answer later
+ * (after `{ defer: true }`, or to follow up). Only this run's reply.
+ */
+export interface BehaviorCallback {
+  token: string;
+  /** ISO 8601; 15 minutes after the command was used or the message sent. */
+  expires_at: string;
+  /** The bot's public base URL. */
+  api_base: string;
 }
 
 /** `_meta` of a command. An interaction has no message, so no `message_id`. */
@@ -62,6 +77,8 @@ export interface CommandTriggerMeta {
   behavior_id: number;
   /** The invoked leaf's attachment options' files, in option order. */
   attachments: BehaviorWebhookAttachment[];
+  /** Never the Discord interaction token. */
+  callback: BehaviorCallback;
 }
 
 /** `_meta` of an admin test-fire: fixed values, never the admin's identity. */
@@ -127,4 +144,44 @@ export interface BehaviorReply {
   ephemeral?: boolean;
   /** Only SuppressEmbeds (4) and SuppressNotifications (4096) are kept. */
   flags?: number;
+  /**
+   * "Answer later": a command keeps its "thinking…" placeholder, a message
+   * trigger shows typing, and you reply with `_meta.callback`. The other
+   * fields are not shown.
+   */
+  defer?: true;
+  /**
+   * Files to attach: the bot GETs each `path` from your webhook URL's
+   * origin (at most 5 files of 8 MiB, 25 MiB together; no redirects, no
+   * credentials sent).
+   * A file it can't get fails the reply. A reply of only attachments is a
+   * reply.
+   */
+  attachments?: BehaviorReplyAttachment[];
+  /**
+   * DMs to other users (at most 5), sent after the reply is shown. The
+   * triggerer may always be DMed; anyone else by the behavior's rule (its DM
+   * allowlist, else members of the triggering guild — any guild the bot is
+   * in for a DM trigger). Rate-limited per behavior and per recipient
+   * (by default 10 a minute, 3 per 10 minutes). A DM that is refused or
+   * fails does not fail the reply.
+   */
+  direct_messages?: BehaviorDirectMessage[];
+}
+
+/** One direct message a reply asks for. */
+export interface BehaviorDirectMessage {
+  /** The Discord user id to DM. */
+  user_id: string;
+  content?: string;
+  embeds?: BehaviorReplyEmbed[];
+  components?: BehaviorReplyActionRow[];
+  attachments?: BehaviorReplyAttachment[];
+}
+
+/** A file a reply attaches: its name in Discord, and a path on your webhook's origin. */
+export interface BehaviorReplyAttachment {
+  name: string;
+  /** A plain path (`/files/chart.png`), never `//host` or a full URL. */
+  path: string;
 }

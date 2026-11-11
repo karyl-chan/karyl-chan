@@ -48,6 +48,10 @@ const writeRateLimiter = new RateLimiter({ windowMs: 60_000, max: 30 });
 // throttle that into a death spiral, so plugin tokens get their own,
 // far higher ceiling (still enough to stop a runaway).
 const pluginWriteRateLimiter = new RateLimiter({ windowMs: 60_000, max: 600 });
+// A behavior callback token (#113) is held by an external receiver, not
+// trusted plugin code: its calls get a far lower ceiling, per run (per
+// token) — how many runs a behavior gets is takeBehaviorRun's business.
+const behaviorCallbackRateLimiter = new RateLimiter({ windowMs: 60_000, max: 60 });
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 // Interaction replies/followups must never be throttled — they're the
 // response to a user action (at most 1 + 5 followups per interaction),
@@ -100,6 +104,11 @@ import {
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { shouldRecord } from "../bot-events/bot-event-dedup.js";
 import { recordAuthThrottled } from "../bot-events/auth-throttle-log.js";
+import {
+  behaviorCallbackTokens,
+  type BehaviorCallbackPrincipal,
+} from "../command-system/behavior-callback-token.js";
+import { BEHAVIOR_CALLBACK_METHODS } from "../command-system/behavior-callback.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -112,8 +121,19 @@ declare module "fastify" {
      * route handlers to scope writes.
      */
     pluginAuth?: PluginAuthRecord;
+    /**
+     * Set instead of pluginAuth when the bearer is a behavior callback
+     * token (#113): one run of one behavior, allowed only
+     * BEHAVIOR_CALLBACK_PATHS. Never both.
+     */
+    behaviorCallback?: BehaviorCallbackPrincipal;
   }
 }
+
+/** The /api/plugin/* paths a behavior callback principal may call; anything else is 403. */
+const BEHAVIOR_CALLBACK_PATHS = new Set<string>(
+  BEHAVIOR_CALLBACK_METHODS.map((m) => `/api/plugin/${m}`),
+);
 
 export interface WebServerOptions {
   port: number;
@@ -246,15 +266,31 @@ export async function createWebServer(
       // here and stash the plugin auth record on the request so route
       // handlers can scope writes. We do NOT fall through to admin
       // auth — plugin tokens never satisfy admin capabilities.
+      //
+      // A bearer that is no plugin token may be a behavior callback
+      // token (#113): that principal may only answer its own run, so
+      // every path but the four interaction replies is refused here,
+      // before any handler (or a route added later) can see it.
       if (path.startsWith("/api/plugin/")) {
         const header = request.headers.authorization;
         const token = header?.startsWith("Bearer ") ? header.slice(7) : null;
         const rec = token ? pluginAuthStore.verify(token) : null;
-        if (!rec) {
+        if (rec) {
+          request.pluginAuth = rec;
+          return;
+        }
+        const callback = token ? behaviorCallbackTokens.resolve(token) : null;
+        if (!callback) {
           reply.code(401).send({ error: "plugin token invalid or expired" });
           return;
         }
-        request.pluginAuth = rec;
+        if (!BEHAVIOR_CALLBACK_PATHS.has(path)) {
+          reply.code(403).send({
+            error: `a behavior callback token may only call ${BEHAVIOR_CALLBACK_METHODS.join(", ")}`,
+          });
+          return;
+        }
+        request.behaviorCallback = callback;
         return;
       }
     }
@@ -322,6 +358,19 @@ export async function createWebServer(
     if (request.url.startsWith("/api/auth/")) return;
     if (!WRITE_METHODS.has(request.method)) return;
     const path = request.url.split("?")[0];
+    // A behavior callback is throttled per run, interaction replies
+    // included: the exemption below is for trusted plugin code, and a
+    // receiver holds its token for 15 minutes.
+    if (request.behaviorCallback) {
+      if (
+        behaviorCallbackRateLimiter.isRateLimited(
+          `behavior:${request.behaviorCallback.behaviorId}:run:${request.behaviorCallback.runKey}`,
+        )
+      ) {
+        reply.code(429).send({ error: "Too many behavior callback requests, slow down" });
+      }
+      return;
+    }
     if (THROTTLE_EXEMPT_PATHS.has(path)) return;
     if (request.pluginAuth) {
       if (
@@ -721,7 +770,7 @@ export async function createWebServer(
       // this path returns 404 there too — endpoint enumeration only
       // matters once auth is on.
       if (request.url.startsWith("/api")) {
-        if (request.authUserId || request.pluginAuth) {
+        if (request.authUserId || request.pluginAuth || request.behaviorCallback) {
           reply.code(404).send({ error: "Not Found" });
         } else {
           reply.code(401).send({ error: "Unauthorized" });

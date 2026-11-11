@@ -244,6 +244,12 @@ export interface PluginManifest {
   /** RBAC capabilities the plugin declares for itself. */
   capabilities?: ManifestCapability[];
   /**
+   * Behavior actions (#127): what the plugin can do when a behavior
+   * fires. An admin binds one to any trigger — a command or a message
+   * — and the bot dispatches it to `endpoints.behavior_action`.
+   */
+  behavior_actions?: ManifestBehaviorAction[];
+  /**
    * Browser-facing manage WebUI declaration. Present iff the plugin
    * declared `webUI`. The admin UI shows a "Manage" link to
    * `<publicBaseUrl><manage_path>` only when present; `manage_path`
@@ -270,12 +276,33 @@ export interface PluginManifest {
      *  and on demand; the response is a HealthReport. Distinct from the
      *  lightweight `plugin.healthcheck_path` liveness probe. */
     health?: string;
+    /**
+     * Behavior action dispatch (#127); `{action_key}` is the action's
+     * key. Defaults `/behavior-actions/{action_key}`. Present only when
+     * the plugin declares `behavior_actions`.
+     */
+    behavior_action?: string;
     /** SDK-managed lifecycle dispatch. The bot POSTs synthetic
      *  `plugin.guild.enabled` / `plugin.guild.disabled` events here
      *  (HMAC-signed) when an admin toggles a guild-feature flag. Distinct
      *  from `events` so plugins own that route for their own subs. */
     plugin_lifecycle?: string;
   };
+}
+
+/**
+ * A behavior action (#127): a plugin capability an admin can bind to any
+ * behavior trigger. The binding is the authorization — no Feature or
+ * Guild Reach applies — and the plugin answers through the run's
+ * callback token, not its own.
+ */
+export interface ManifestBehaviorAction {
+  /** Unique within the plugin; `^[a-z0-9][a-z0-9_-]{0,31}$` (V-09, V-11). */
+  key: string;
+  /** What the admin picks from (V-10). */
+  name: string;
+  /** What it does, for the admin (V-10). */
+  description: string;
 }
 
 /**

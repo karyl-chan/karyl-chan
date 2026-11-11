@@ -10,7 +10,7 @@
  * A change Discord sees (enabled, subcommand, leafDescription, options,
  * a subcommand's title as its fallback description) is re-registered and
  * restored when refused (command-registration-sync.ts); a change it does
- * not see (admin note, webhook) is only stored.
+ * not see (admin note, its action) is only stored.
  */
 
 import type { FastifyRequest } from "fastify";
@@ -37,15 +37,19 @@ import {
   type BehaviorDefinitionRow,
 } from "./models/behavior-definition.model.js";
 import { BehaviorStat } from "./models/behavior-stats.model.js";
+import { destroyDmAllowlists } from "./models/behavior-dm-allowlist.model.js";
+import { pruneUnusedGroupMembers } from "./models/behavior-group-member.model.js";
+import { BehaviorWebhookAction } from "./models/behavior-webhook-action.model.js";
+import { destroyPluginActions } from "./models/behavior-plugin-action.model.js";
 import {
-  BehaviorWebhookAction,
-  rowOfBehaviorWebhookAction,
-} from "./models/behavior-webhook-action.model.js";
-import { prepareWebhookWrite } from "./webhook-action-input.js";
+  actionAuditOf,
+  issuedSecretOf,
+  prepareActionWrite,
+  storeActionWrite,
+  type PluginActionCatalog,
+} from "./behavior-action-input.js";
 
-export type LeafPatch = Partial<Omit<LeafInput, "webhook">> & {
-  webhook?: LeafInput["webhook"];
-};
+export type LeafPatch = Partial<LeafInput>;
 
 export interface LeafWriteResult {
   behavior: CommandLeafView;
@@ -73,6 +77,7 @@ function discordFacing(leaf: LeafShape & { enabled: boolean }): string {
 
 export async function patchCommandLeaf(
   registrar: BehaviorCommandRegistrar | undefined,
+  plugins: PluginActionCatalog | undefined,
   request: FastifyRequest,
   row: BehaviorDefinitionRow,
   body: LeafPatch,
@@ -118,10 +123,7 @@ export async function patchCommandLeaf(
     (i) => (i === index ? "" : "leaves"),
   );
 
-  const action = await BehaviorWebhookAction.findByPk(row.id);
-  const webhook = body.webhook
-    ? await prepareWebhookWrite(body.webhook, action ? rowOfBehaviorWebhookAction(action) : null)
-    : null;
+  const action = await prepareActionWrite(body, { behaviorId: row.id, plugins }, false);
 
   const before = {
     title: row.title,
@@ -153,18 +155,21 @@ export async function patchCommandLeaf(
       leafDescription: after.leafDescription,
       options: after.options.length > 0 ? JSON.stringify(after.options) : null,
       replyVisibility: after.replyVisibility,
+      ...(action ? { actionSource: action.source } : {}),
     });
     await model!.save({ transaction });
-    if (webhook) {
-      await BehaviorWebhookAction.upsert({ behaviorId: row.id, ...webhook.values }, { transaction });
-    }
+    if (action) await storeActionWrite(row.id, action, transaction);
   };
   const audit = {
     kind: "command_leaf",
     commandId,
     changed: changedFields(before, after),
-    ...(webhook ? { webhook: webhook.audit } : {}),
+    ...(action ? actionAuditOf(action) : {}),
+    ...(action && action.source !== row.actionSource
+      ? { actionSource: { from: row.actionSource, to: action.source } }
+      : {}),
   };
+  const secret = issuedSecretOf(action);
   let registration: RegistrationReport | undefined;
   if (reregister) {
     ({ registration } = await rewriteCommand(registrar, command, write, () => ({
@@ -182,7 +187,7 @@ export async function patchCommandLeaf(
     behavior: leafOf(view, row.id),
     command: view,
     ...(registration ? { registration } : {}),
-    ...(webhook?.issuedSecret ? { secret: webhook.issuedSecret } : {}),
+    ...(secret ? { secret } : {}),
     audit: {
       ...audit,
       ...(registration ? { registration: registration.status } : {}),
@@ -217,8 +222,12 @@ export async function deleteCommandLeaf(
     command,
     async (transaction) => {
       await BehaviorWebhookAction.destroy({ where: { behaviorId: row.id }, transaction });
+      await destroyPluginActions(row.id, transaction);
       await BehaviorStat.destroy({ where: { behaviorId: row.id }, transaction });
+      await destroyDmAllowlists(row.id, transaction);
       await BehaviorDefinition.destroy({ where: { id: row.id }, transaction });
+      // a group only its DM allowlist named goes with it (#157)
+      await pruneUnusedGroupMembers(transaction);
     },
     () => ({ request, action: "behavior.delete", target: `behavior:${row.id}`, context: audit }),
   );

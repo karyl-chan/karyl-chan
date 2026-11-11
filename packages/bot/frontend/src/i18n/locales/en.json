@@ -1365,7 +1365,18 @@
             "title": "Forwarding",
             "source": "Action source",
             "sourceWebhook": "Webhook",
-            "sourcePluginLater": "Plugin actions arrive in phase 2.",
+            "sourcePlugin": "Plugin action",
+            "sourcePluginHint": "The plugin gets the trigger's details (a command's options as they are) and replies through this run's callback token.",
+            "plugin": {
+                "label": "Plugin action",
+                "placeholder": "Pick an action",
+                "loading": "Loading the plugins' actions…",
+                "none": "No installed plugin declares a behavior action.",
+                "loadFailed": "Could not load the plugins' actions.",
+                "offline": "This plugin is disabled or offline: the behavior fails until it is back.",
+                "undeclared": "The plugin no longer declares this action: every run fails until you pick another.",
+                "undeclaredOption": "{plugin} / {action} (no longer declared)"
+            },
             "url": "Webhook URL",
             "urlHint": "Public URLs need https; LAN addresses must be on the bot’s LAN allowlist.",
             "authLabel": "Authentication",
@@ -1631,11 +1642,38 @@
             "empty": "No deliveries yet.",
             "ok": "OK",
             "failed": "Failed",
+            "deferred": "Deferred",
+            "deferredHint": "The receiver answers later with its callback token.",
             "verified": {
                 "hmac": "signature verified (HMAC)",
                 "token": "signature verified (token)"
             },
             "retention": "The last 20 deliveries, at most 7 days old. Test webhooks are not listed."
+        },
+        "directMessages": {
+            "title": "Direct messages to others",
+            "refresh": "Refresh",
+            "loading": "Loading…",
+            "allowlistTitle": "Who replies may DM",
+            "ruleNone": "No list: members of the server the behavior was triggered in (any server the bot is in, for a trigger in a DM with the bot).",
+            "ruleList": "Only these users and the members of these groups.",
+            "userPlaceholder": "User ID",
+            "addUser": "Add user",
+            "groupPlaceholder": "Behavior group name",
+            "addGroup": "Add group",
+            "remove": "Remove {name}",
+            "badUserId": "A user ID is 17–20 digits.",
+            "logTitle": "Recent direct messages",
+            "logEmpty": "No direct messages yet.",
+            "logLine": "to {to}, triggered by {by}",
+            "outcome": {
+                "sent": "Sent",
+                "not_allowed": "Not allowed",
+                "rate_limited": "Rate limited",
+                "attachment_failed": "Attachment failed",
+                "failed": "Failed"
+            },
+            "retention": "The last 50, at most 30 days old. The triggering user may always be DMed. By default at most 10 direct messages a minute per behavior, and 3 per 10 minutes to one user."
         },
         "convertTrigger": {
             "menuTitle": "Trigger kind",

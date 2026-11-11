@@ -4,6 +4,7 @@
  * 路由表：
  *   GET  /api/behaviors                          — { system, services, commands, messageTriggers }
  *   GET  /api/behaviors/schema                   — the write schemas, for the admin UI's form checks
+ *   GET  /api/behaviors/plugin-actions           — 已安裝 plugin 宣告的 behavior action（#203，動作選單）
  *   POST /api/behaviors/:id/test                 — 對 behavior 的 webhook 動作試發
  *   GET  /api/behaviors/:id/deliveries           — behavior 最近的投遞紀錄（#120）
  *   POST / PATCH / DELETE /api/behaviors[/:id]   — 訊息觸發的寫入（behavior-write-routes.ts）
@@ -16,6 +17,8 @@
  *   PUT  /api/services/:id/trigger               — 切換服務列的觸發（同登入的 fixed-row switch；owner 限定）
  *   GET  /api/behavior-groups/:groupName/members — 群組名單
  *   PUT  /api/behavior-groups/:groupName/members — 全量替換群組名單（服務列用到的群組：owner 限定）
+ *   GET / PUT /api/behaviors/:id/dm-allowlist     — 私訊白名單（#157，behavior-dm-routes.ts）
+ *   GET  /api/behaviors/:id/dm-log               — 最近的私訊紀錄（#157）
  *
  * 權限：requireBehaviorAdmin（behavior.manage 或 admin），在 schema 驗證之前。
  * 拒絕一律是 `{ error: { code, message, field? } }`（behavior-api-error.ts）。
@@ -59,6 +62,7 @@ import {
 } from "./behavior-write-routes.js";
 import { registerMessageTriggerReorderRoute } from "./message-trigger-reorder.js";
 import { registerWebhookSecretRotateRoute } from "./webhook-secret-rotate.js";
+import { registerBehaviorDmRoutes } from "./behavior-dm-routes.js";
 import {
   addLeafSchema,
   createCommandSchema,
@@ -104,7 +108,7 @@ export async function registerBehaviorRoutes(
       if (!requireBehaviorAdmin(request, reply)) return reply;
     });
     registerReadAndTestRoutes(scope, options);
-    registerBehaviorWriteRoutes(scope, options.reconciler);
+    registerBehaviorWriteRoutes(scope, options.reconciler, options.plugins);
     registerMessageTriggerReorderRoute(scope);
     registerWebhookSecretRotateRoute(scope);
     registerBehaviorCommandRoutes(scope, options);
@@ -112,6 +116,7 @@ export async function registerBehaviorRoutes(
     registerTriggerConvertRoute(scope, options);
     registerServiceRoutes(scope, options);
     registerGroupMemberRoutes(scope, options);
+    registerBehaviorDmRoutes(scope);
   });
 }
 
@@ -152,6 +157,17 @@ function registerReadAndTestRoutes(
     });
   });
 
+  // ── GET /api/behaviors/plugin-actions（#203）────────────────────────────────
+  // 動作選單：已安裝、manifest 宣告了 behavior_actions 的 plugin 與它們的
+  // action。停用或離線的 plugin 也列出（綁定照樣可存，執行時才回失敗），
+  // 由 UI 標示狀態。寫入時以同一份清單驗證綁定（behavior-action-input.ts）。
+
+  server.get("/api/behaviors/plugin-actions", async (_request, reply) => {
+    const plugins = options.plugins;
+    if (!plugins) throw new Error("PluginActionCatalog not provided to behavior routes");
+    return reply.send({ plugins: await plugins.list() });
+  });
+
   // ── 投遞紀錄（#120）─────────────────────────────────────────────────────────
   // 最近 20 筆，最新的在前。系統登入沒有 webhook 動作，所以永遠是空的。
   // 只是讀取，不放進 /api/behaviors/schema。
@@ -188,7 +204,9 @@ function registerReadAndTestRoutes(
       if (behavior.actionSource !== "webhook" || !action) {
         throw new BehaviorApiError(
           "validation_failed",
-          "this behavior has no webhook action to test (the system behavior runs a built-in action)",
+          behavior.actionSource === "plugin"
+            ? "this behavior runs a plugin action, which has no test-fire; only a webhook action can be tested"
+            : "this behavior has no webhook action to test (the system behavior runs a built-in action)",
         );
       }
       // injected (runtime.ts builds the one WebhookForwarder): behavior
@@ -240,8 +258,8 @@ function registerReadAndTestRoutes(
 //
 // group 以名字為單位（訊息觸發的 audienceGroupName），名單存
 // behavior_group_members，同名 group 的 behaviors 共享。group 沒有自己的
-// 列：只有被訊息觸發引用的 group 能設名單，沒有觸發用了名單就清掉
-// （behavior-group-member.model.ts），不會留下孤兒名單（#137）。
+// 列：只有被訊息觸發或私訊白名單（#157）引用的 group 能設名單，沒有人用了
+// 名單就清掉（behavior-group-member.model.ts），不會留下孤兒名單（#137）。
 
 const groupParams = {
   type: "object",
@@ -301,7 +319,7 @@ function registerGroupMemberRoutes(server: FastifyInstance, options: BehaviorRou
           if (!(await groupInUse(groupName, transaction))) {
             throw new BehaviorApiError(
               "not_found",
-              `no message trigger uses group '${groupName}'; set a trigger's audience to it first`,
+              `no message trigger or DM allowlist uses group '${groupName}'; set a trigger's audience or a behavior's DM allowlist to it first`,
               "groupName",
             );
           }

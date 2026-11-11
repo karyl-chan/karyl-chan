@@ -7,7 +7,12 @@
  * what it had to drop.
  */
 import { describe, expect, it } from "vitest";
-import { parseBehaviorReply, TRUNCATION_MARK } from "../src/modules/command-system/behavior-reply.js";
+import {
+  attachmentsProblem,
+  hasVisibleReply,
+  parseBehaviorReply,
+  TRUNCATION_MARK,
+} from "../src/modules/command-system/behavior-reply.js";
 
 function parsed(raw: unknown) {
   const out = parseBehaviorReply(raw);
@@ -127,14 +132,151 @@ describe("parseBehaviorReply — phase-1 size limits", () => {
   });
 
   it("ignores fields it does not know and names them", () => {
-    const { reply, notes } = parsed({ content: "x", tts: true, attachments: [], version: 2 });
+    const { reply, notes } = parsed({ content: "x", tts: true, files: [], version: 2 });
     expect(reply).toEqual({ content: "x" });
-    expect(notes).toEqual([{ kind: "unknown_fields", fields: ["attachments", "tts", "version"] }]);
+    expect(notes).toEqual([{ kind: "unknown_fields", fields: ["files", "tts", "version"] }]);
   });
 
   it("refuses a body that is not a JSON object", () => {
     for (const raw of [null, [], "text", 5]) {
       expect(parseBehaviorReply(raw)).toEqual({ ok: false, error: "response body is not a JSON object" });
+    }
+  });
+});
+
+describe("parseBehaviorReply — attachments (#156)", () => {
+  it("keeps { name, path } entries, and nothing else of them", () => {
+    const { reply, notes } = parsed({
+      attachments: [
+        { name: "chart.png", path: "/files/chart.png", extra: 1 },
+        { name: "a.txt", path: "/a.txt?v=2" },
+      ],
+    });
+    expect(reply.attachments).toEqual([
+      { name: "chart.png", path: "/files/chart.png" },
+      { name: "a.txt", path: "/a.txt?v=2" },
+    ]);
+    expect(notes).toEqual([]);
+  });
+
+  it("treats an empty list, or null, as none", () => {
+    expect(parsed({ content: "x", attachments: [] }).reply).toEqual({ content: "x" });
+    expect(parsed({ content: "x", attachments: null }).reply).toEqual({ content: "x" });
+  });
+
+  it("refuses the reply when the list is malformed, instead of dropping files", () => {
+    for (const attachments of [
+      "chart.png",
+      { name: "a", path: "/a" },
+      ["/a"],
+      [{ name: "a" }],
+      [{ path: "/a" }],
+      [{ name: 1, path: "/a" }],
+      [null],
+    ]) {
+      const out = parseBehaviorReply({ content: "x", attachments });
+      expect(out.ok, JSON.stringify(attachments)).toBe(false);
+      expect(!out.ok && out.error).toMatch(/^attachments: /);
+    }
+  });
+
+  it("an attachments-only reply is a visible reply", () => {
+    const { reply } = parsed({ attachments: [{ name: "a.png", path: "/a.png" }] });
+    expect(hasVisibleReply(reply)).toBe(true);
+    expect(hasVisibleReply({})).toBe(false);
+  });
+});
+
+describe("attachmentsProblem — what may be fetched (#156)", () => {
+  const one = (path: string, name = "f.png") => [{ name, path }];
+
+  it("passes up to 5 files with paths on the receiver's origin", () => {
+    expect(attachmentsProblem([])).toBeNull();
+    expect(attachmentsProblem(one("/f.png"))).toBeNull();
+    expect(attachmentsProblem(one("/dir/f.png?size=2&v=%20"))).toBeNull();
+    expect(attachmentsProblem(Array.from({ length: 5 }, (_, i) => ({ name: `${i}.png`, path: `/${i}` })))).toBeNull();
+  });
+
+  it("refuses more than 5 files", () => {
+    const six = Array.from({ length: 6 }, (_, i) => ({ name: `${i}.png`, path: `/${i}` }));
+    expect(attachmentsProblem(six)).toMatch(/at most 5/);
+  });
+
+  it("refuses a path that could leave the origin", () => {
+    for (const path of [
+      "https://evil.example/x.png",
+      "http:/x.png",
+      "//evil.example/x.png",
+      "x.png",
+      "",
+      "/\\evil.example/x.png",
+      "/a\\b.png",
+      "/%2F%2Fevil.example/x.png",
+      "/a%5cb.png",
+      "/a b.png",
+      "/a\tb.png",
+      "/a\nb.png",
+      "/" + "a".repeat(2048),
+    ]) {
+      expect(attachmentsProblem(one(path)), path).toMatch(/path/);
+    }
+  });
+
+  it("refuses a name that is empty, too long, or names a directory", () => {
+    for (const name of ["", " ", "a/b.png", "a\\b.png", "a\u0000.png", "x".repeat(201)]) {
+      expect(attachmentsProblem(one("/f.png", name)), JSON.stringify(name)).toMatch(/name/);
+    }
+  });
+});
+
+describe("parseBehaviorReply — direct_messages (#157)", () => {
+  const U1 = "111111111111111111";
+  const U2 = "222222222222222222";
+
+  it("reads each message with the reply's own rules", () => {
+    const { reply, notes } = parsed({
+      content: "done",
+      direct_messages: [
+        { user_id: U1, content: " hi ", attachments: [{ name: "a.png", path: "/a.png" }] },
+        { user_id: U2, embeds: [{ title: "t" }], components: [linkRow("https://ok.example")], ephemeral: true },
+      ],
+    });
+    expect(reply.direct_messages).toEqual([
+      { user_id: U1, content: "hi", attachments: [{ name: "a.png", path: "/a.png" }] },
+      { user_id: U2, embeds: [{ title: "t" }], components: [linkRow("https://ok.example")] },
+    ]);
+    expect(notes).toEqual([{ kind: "unknown_fields", fields: ["direct_messages[1].ephemeral"] }]);
+  });
+
+  it("names a dropped component under its message", () => {
+    const { reply, notes } = parsed({
+      direct_messages: [{ user_id: U1, content: "x", components: [linkRow("http://plain.example")] }],
+    });
+    expect(reply.direct_messages).toEqual([{ user_id: U1, content: "x" }]);
+    expect(notes).toEqual([{ kind: "components_dropped", count: 1 }]);
+  });
+
+  it("an empty list, or null, is none; a reply of only DMs has nothing visible", () => {
+    expect(parsed({ content: "x", direct_messages: [] }).reply).toEqual({ content: "x" });
+    expect(parsed({ content: "x", direct_messages: null }).reply).toEqual({ content: "x" });
+    expect(hasVisibleReply(parsed({ direct_messages: [{ user_id: U1, content: "x" }] }).reply)).toBe(false);
+  });
+
+  it("refuses the reply when the list can't be used, instead of dropping DMs", () => {
+    const one = { user_id: U1, content: "x" };
+    for (const [direct_messages, error] of [
+      ["x", "direct_messages: must be an array"],
+      [Array.from({ length: 6 }, () => one), "direct_messages: at most 5 messages, got 6"],
+      [[null], "direct_messages: entry 1 is not an object"],
+      [[{ content: "x" }], "direct_messages: entry 1: user_id must be a Discord user id"],
+      [[{ user_id: "<@1>", content: "x" }], "direct_messages: entry 1: user_id must be a Discord user id"],
+      [[one, { user_id: U2 }], "direct_messages: entry 2: content, embeds, components or attachments required"],
+      [
+        [{ user_id: U1, attachments: ["/a.png"] }],
+        "direct_messages: entry 1: attachments: must be an array of { name, path } with string values",
+      ],
+    ] as const) {
+      expect(parseBehaviorReply({ content: "x", direct_messages })).toEqual({ ok: false, error });
     }
   });
 });

@@ -118,6 +118,14 @@ export interface AppConfig {
      * utils/host-policy.ts `resolveWebhookTarget`.
      */
     webhookPrivateAllowlist: string[];
+    /**
+     * Direct messages to other users (#157): how many one behavior may
+     * send a minute (every attempt counts, allowed or not), and how many
+     * one recipient may get from one behavior per `dmPerRecipientWindowMs`.
+     */
+    dmPerMinute: number;
+    dmPerRecipient: number;
+    dmPerRecipientWindowMs: number;
   };
   admin: {
     profileCacheTtlMs: number;
@@ -335,6 +343,9 @@ function loadConfig(): AppConfig {
         5 * 60 * 1000,
       ),
       webhookPrivateAllowlist: parseCidrListEnv("WEBHOOK_PRIVATE_ALLOWLIST"),
+      dmPerMinute: parseIntEnv("BEHAVIOR_DM_PER_MINUTE", 10),
+      dmPerRecipient: parseIntEnv("BEHAVIOR_DM_PER_RECIPIENT", 3),
+      dmPerRecipientWindowMs: parseIntEnv("BEHAVIOR_DM_PER_RECIPIENT_WINDOW_MS", 10 * 60 * 1000),
     },
     admin: {
       profileCacheTtlMs: parseIntEnv(
@@ -393,6 +404,13 @@ function loadConfig(): AppConfig {
   // makes the bucket always-empty and silently disables the limiter. Reject both
   // at boot so a misconfigured deployment can't quietly lose the SSRF / DM-spam
   // protection.
+  for (const [env, value] of [
+    ["BEHAVIOR_DM_PER_MINUTE", cfg.behavior.dmPerMinute],
+    ["BEHAVIOR_DM_PER_RECIPIENT", cfg.behavior.dmPerRecipient],
+    ["BEHAVIOR_DM_PER_RECIPIENT_WINDOW_MS", cfg.behavior.dmPerRecipientWindowMs],
+  ] as const) {
+    if (value < 1) throw new Error(`Config error: ${env} must be >= 1 (got ${value})`);
+  }
   if (cfg.plugin.dmRatePerSec < 1) {
     throw new Error(
       `Config error: PLUGIN_DM_PER_SEC must be >= 1 (got ${cfg.plugin.dmRatePerSec})`,

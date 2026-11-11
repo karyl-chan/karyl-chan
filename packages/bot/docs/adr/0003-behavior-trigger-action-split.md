@@ -46,6 +46,17 @@ Behaviors 最初照早期 Discord bot 的思路設計：每個 behavior 掛在�
 - Track 3 `plugin_commands`（plugin 在 manifest 寫死註冊範圍等三個維度）與「指令觸發 + plugin action」**並存**：前者給想自己掌握指令體驗的 plugin，後者給可被管理員組合的能力。兩者共用 Discord 的指令命名空間，所以同一註冊範圍內的名稱衝突要在存檔與註冊時拒絕，不能讓後註冊的靜默覆蓋。
 - 第二階段需要新版的 plugin 協定與 SDK，三個獨立 plugin repo 要跟著升級。
 
+## Addendum (2026-11-10): plugin action dispatch
+
+Owner 於 2026-11-10 裁示第二階段（plugin action）改為現在做（#127，取代 2026-11-05「先不做」），並回答了上面「plugin 只宣告動作」留下的兩個問題。實作見 #201（契約與 SDK）、#203（bot 端）。
+
+- **派送方式**：Plugin Dispatch（ADR 0001）新增一種 `behavior_action` kind，指令觸發和訊息觸發都用它。payload 是該觸發的 webhook `_meta` 加上 `action_key`，並帶 #113 的 callback token；plugin 先回 2xx，再憑 token 經 `interactions.respond` / `followup` 回覆該次觸發，與延後回覆的 webhook receiver 走同一條路、同一個回覆模型。plugin 自己的 token 與 scope 不參與回覆。
+- **授權**：這條路**不經過** Feature Reach 或 Guild Reach（kind 的 reach 為 `none`）—— 管理員把 action 綁到某個觸發，這個綁定本身就是授權；誰能觸發，照觸發的規則由 Discord 與管理員決定。因此不與 #129 的 plugin 元件授權模型耦合。
+- **宣告**：plugin 在 manifest 宣告 `behavior_actions: [{ key, name, description }]`（plugin-wire V-09 ~ V-12）。管理員在 behavior 的動作裡選 plugin 和 action；存檔時驗證該 plugin 目前的 manifest 確實宣告了它，每次執行時再驗一次（plugin 可能已經拿掉）。綁定以 pluginKey 為鍵，plugin 重新註冊或重裝後仍有效。
+- **第一版沒有每個綁定的設定值**：指令參數、訊息內容與擷取群組原樣轉給 plugin。上面「每個綁定可以有的設定」與「支援哪些觸發種類」留待日後有實際需求再加；目前每個 action 都可綁到兩種觸發。
+- **失敗**：plugin 離線、尚未就緒、未安裝，或 manifest 已不再宣告該 action 時，不派送；使用者看到失敗訊息，投遞紀錄分別記為 `plugin_unavailable` / `action_undeclared`。派送被拒或逾時則撤銷 token、顯示失敗訊息，與 webhook 相同。
+- Track 1（ADR 原「待決定」第 2 項）維持 2026-11-05 的結論：不處理。SDK 何時發版由 owner 決定。
+
 ## 補充（2026-11-10，#126）：第二種固定列「服務」
 
 owner 在 #126 裁示（2026-11-10）：自架服務透過 karyl 登入，觸發沿用 behavior，behavior 除了「系統」再多一種特殊類型「服務」。

@@ -18,9 +18,12 @@ import { BehaviorCommand } from "./behavior-command.model.js";
  * 動作來源（actionSource）：
  *   - `builtin`：系統動作，只給 System Behavior（systemKey 必填）
  *   - `webhook`：behavior_webhook_actions 的一列
+ *   - `plugin`：behavior_plugin_actions 的一列 —— 某個 plugin 在 manifest
+ *     宣告的 behavior action（#127 第二階段）
  *   - `service`：Service Behavior（#126）—— 以觸發者身分簽發服務 token、
  *     私下回覆登入連結。serviceId 指向 services，動作固定，只有觸發可改：
  *     與 bot 私訊的 Message Trigger，或 `isSystem` 指令的根葉節點（同登入）
+ *   STRING + isIn，DB 端沒有 enum / CHECK，加值不需要 migration。
  *
  * 回覆給誰看（replyVisibility，#140）：回應沒帶 `ephemeral` 時的預設 ——
  * `private`（指令：只有執行的人；伺服器訊息：私訊作者）、`public`（指令：
@@ -37,8 +40,13 @@ import { BehaviorCommand } from "./behavior-command.model.js";
  */
 
 export type BehaviorTriggerKind = "command" | "message";
-export type BehaviorActionSource = "builtin" | "webhook" | "service";
-const ACTION_SOURCES: readonly BehaviorActionSource[] = ["builtin", "webhook", "service"];
+export type BehaviorActionSource = "builtin" | "webhook" | "plugin" | "service";
+export const ACTION_SOURCES: readonly BehaviorActionSource[] = [
+  "builtin",
+  "webhook",
+  "plugin",
+  "service",
+];
 
 /** A Service Behavior (#126): the row a service owns. */
 export function isServiceBehavior(row: { actionSource: string }): boolean {

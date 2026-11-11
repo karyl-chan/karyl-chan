@@ -27,6 +27,8 @@ wiring examples are not tested.
 - [Test-fires](#test-fires)
 - [Secret rotation](#secret-rotation)
 - [The reply (contract v1)](#the-reply-contract-v1)
+- [Answering later](#answering-later)
+- [Plugin actions](#plugin-actions)
 - [Failures](#failures)
 - [Reference receiver](#reference-receiver)
 - [Changes in bot 2.0.0](#changes-in-bot-200)
@@ -39,7 +41,9 @@ wiring examples are not tested.
   and per command user; over that it sends nothing
   ([behaviors.md](behaviors.md#matching-order)).
 - The answer's body is the **reply**: what the bot shows the user. An empty
-  body means "say nothing".
+  body means "say nothing". A command's receiver may also answer
+  `{"defer": true}` and reply later with the run's
+  [callback token](#answering-later).
 - With authentication on, every request is signed (`hmac`) or carries a
   shared token (`token`). In `hmac` mode **your response must be signed too**,
   over the request's nonce.
@@ -91,6 +95,7 @@ guild, as in `guild_id`.)
 | `_meta.behavior_id` | The behavior that fired. |
 | `_meta.attachments` | `[{ id, url, filename, content_type, size }]`, empty when the message has none. `id` is the Discord attachment id; `url` is Discord's CDN link, signed and valid for a limited time, so download the file soon. |
 | `_meta.captures` | A regex trigger's capture groups, group 1 first. A named group counts by its position, and an optional group that took no part is `null`. `天氣 台北` against `^天氣\s+(.+)` sends `["台北"]`. Always `[]` for `startswith` / `endswith`. |
+| `_meta.callback` | This run's callback token, `{ token, expires_at, api_base }`, to answer later ([Answering later](#answering-later)). |
 
 One message can fire more than one behavior, unless a behavior stops the
 walk ([behaviors.md](behaviors.md#matching-order)). Each behavior sends its
@@ -118,9 +123,10 @@ A command fires when a user runs one of the behavior's Discord commands.
 | `_meta.options` | The invoked command's or subcommand's options, `[{ name, type, value }]`. `type` is Discord's numeric option type. An `attachment` option's (type 11) `value` is the attachment id: its file is the `_meta.attachments` entry with that `id`. |
 | `_meta.behavior_id` | The behavior (command leaf) that fired. |
 | `_meta.attachments` | The files of the invoked command's or subcommand's `attachment` options, in option order: `[{ id, url, filename, content_type, size }]`, the same shape as a message trigger's. Empty when it has none. |
+| `_meta.callback` | This run's callback token, `{ token, expires_at, api_base }`, to answer later ([Answering later](#answering-later)). |
 
 The interaction token is **not** sent: the bot answers the interaction
-itself, with your reply. A command's payload has no `message_id`, not
+itself, with your reply, and `_meta.callback` stands in for it. A command's payload has no `message_id`, not
 even a `null` one: an interaction has no message. To tell one invocation
 from another, use `_meta.interaction_id`.
 
@@ -308,9 +314,13 @@ subset of this shape, so there is no version field.
 | `components` | array | Action rows (`type: 1`) of **link buttons only** (`type: 2`, `style: 5`, a non-empty `label` cut to 80 characters, an `https://` `url` of at most 512 characters). At most 5 rows of 5 buttons. Anything else is dropped. |
 | `ephemeral` | boolean | Who sees the reply. See below. |
 | `flags` | integer | Only `SuppressEmbeds` (4) and `SuppressNotifications` (4096) are kept. Who sees the reply is never a flag. |
+| `defer` | boolean | `true`: answer later with the callback token. A command keeps its "thinking…" placeholder, a message trigger shows "typing…", and the other fields are not shown. See [Answering later](#answering-later). |
+| `attachments` | array | `[{ name, path }]`: files to send with the reply. See [Attachments](#attachments). |
+| `direct_messages` | array | DMs to other users, sent after the reply. See [Direct messages](#direct-messages). |
 
-- A field of the wrong type is ignored. Any other top-level field is
-  ignored too. The bot logs either once per behavior, so you can see it.
+- A field of the wrong type is ignored, except `attachments`: files are
+  never dropped. Any other top-level field is ignored too. The bot logs
+  either once per behavior, so you can see it.
 - Mentions in a reply are never turned into pings: `<@id>` shows as a
   mention but notifies no one.
 - The body may be at most **64 KiB**. A larger body fails the action.
@@ -321,6 +331,102 @@ subset of this shape, so there is no version field.
   of the `flags`.
 
 The test-fire result shows what these rules changed in your reply.
+
+### Attachments
+
+`attachments` is `[{ name, path }]`, the same shape a plugin gives
+`interactions.respond`. `name` is the file's name in Discord (an embed
+can show it as `attachment://<name>`); `path` is where the file is on
+your receiver. The bot resolves `path` against the **origin** of the
+webhook URL (scheme, host and port; not the URL's own path) and
+downloads each file with a `GET`, before it shows the reply:
+
+```json
+{ "content": "Today's chart", "attachments": [{ "name": "chart.png", "path": "/files/chart.png" }] }
+```
+
+With the webhook URL `https://hooks.example/weather`, the bot fetches
+`https://hooks.example/files/chart.png`.
+
+- At most 5 files of at most **8 MiB** each, and **25 MiB** together.
+  A file past either limit is cut off as it streams in.
+- `path` is a plain path starting with a single `/`. `//host`, a full URL,
+  a relative path, a backslash, a space or control character, and an
+  encoded slash (`%2F`, `%5C`) are refused. `name` must not be empty or
+  longer than 200 characters, and has no slash, backslash or control
+  character.
+- The download follows the webhook URL's rules: the same target rules
+  (a private address only when the operator's allowlist has it), the
+  checked address only, and no redirects — a 3xx is a failure.
+- **Anything on that origin can be fetched.** The bot does not limit
+  `path` to the webhook URL's own path, so whoever holds a run's callback
+  token can have any path of your origin attached to a reply (a `respond`
+  with `attachments`). Serve on that origin only what you mean to share
+  — for example, put the webhook on a host or port of its own rather than
+  beside an admin panel or internal API.
+- The bot sends no credentials with the `GET`: use paths nobody can
+  guess, or files that may be public.
+- One 10-second limit covers the whole download of a reply — all its
+  files together, not each one.
+- The bot downloads at most 2 replies' files at a time. Another reply
+  waits for its turn within its own 10 seconds, and fails if they run
+  out first.
+- A reply of only attachments is a reply, not "no reply".
+- An `attachments` that is not an array of `{ name, path }` strings fails
+  the action as a bad reply. A file the bot can't get — too many, a
+  refused path or name, too large, a redirect, a non-2xx answer, or no
+  answer in time — fails the action too (`attachment_failed` in the
+  delivery log): the user gets the failure line, never the reply without
+  its files.
+- An edit that has files (a `respond` that edits the reply, or
+  `edit_followup`) replaces **all** the message's earlier files with
+  its own; an edit without `attachments` keeps them.
+- A test-fire does not download the files.
+
+### Direct messages
+
+`direct_messages` is `[{ user_id, content, embeds, components, attachments }]`
+(all but `user_id` optional): messages the bot DMs to users — other than
+the person who triggered the behavior, or them too — after it showed the
+reply. Each is read with the reply's rules above; its `attachments` come
+from the webhook URL's origin like the reply's.
+
+```json
+{
+  "content": "Ticket #42 opened.",
+  "direct_messages": [{ "user_id": "123456789012345678", "content": "New ticket #42 from Mika." }]
+}
+```
+
+- At most **5** direct messages per reply. A list that is not an array,
+  is longer, or has an entry without a Discord user id in `user_id` or
+  with nothing to send fails the action as a bad reply.
+- The user who triggered the behavior may always be DMed. Anyone else is
+  the behavior's rule, set by the admin. With a **DM allowlist** (users
+  and behavior groups): only them. Without one: a member of the server
+  the behavior was triggered in; for a trigger in a DM with the bot, a
+  member of any server the bot is in.
+- At most **10 a minute** per behavior by default, every DM asked for
+  counted — allowed or not. And at most **3 per 10 minutes** from one
+  behavior to one user by default. A DM past either is not sent. The
+  operator sets both (`BEHAVIOR_DM_PER_MINUTE`, `BEHAVIOR_DM_PER_RECIPIENT`,
+  `BEHAVIOR_DM_PER_RECIPIENT_WINDOW_MS`).
+- The DMs go only once the reply was shown: not with `{"defer": true}`, a
+  superseded answer, or a failed one. A reply of only `direct_messages`
+  shows nothing to the user (on a command, the "thinking…" placeholder is
+  removed, as for an empty reply).
+- A test-fire sends no direct messages.
+- Each DM has its own outcome; none fails the reply or the delivery. The
+  bot keeps one row per DM in the behavior's DM log (who to, who
+  triggered it, the outcome; 30 days), which the admin UI shows:
+
+| Outcome | Meaning |
+|---------|---------|
+| `sent` | Discord took it. |
+| `not_allowed` | The rule above does not allow this user. |
+| `rate_limited` | Past the behavior's DMs a minute, or the user's from this behavior. |
+| `attachment_failed` | Its attachments could not be downloaded. |
+| `failed` | Discord refused it (the user's DMs are closed, unknown user, …). |
 
 ### Who sees the reply
 
@@ -344,6 +450,127 @@ any other command a private one. When your `ephemeral` differs from the
 placeholder, the bot sends your reply as a new message and deletes the
 placeholder.
 
+## Answering later
+
+A receiver that needs longer than 10 seconds, or wants to follow up, uses
+the run's **callback token**. Every run, of a command or a message
+trigger, gets one in `_meta.callback`:
+
+| Key | Value |
+|-----|-------|
+| `token` | An opaque token for this run only. Not the Discord interaction token, which never leaves the bot. |
+| `expires_at` | When it stops working (ISO 8601): **15 minutes** after the command was used (when Discord's own interaction token ends) or the message was sent. |
+| `api_base` | The bot's public base URL. |
+
+1. Answer the request within 10 seconds with `{"defer": true}`. On a
+   command the user keeps seeing "thinking…"; on a message trigger the bot
+   shows "typing…" where the reply will most likely go (the author's DM
+   for a guild message whose stored visibility is private, else the
+   channel). Anything else in that answer is not shown, and the delivery
+   log marks the delivery *deferred*.
+2. Then call the bot with `Authorization: Bearer <token>`, a JSON body and
+   `POST <api_base>/api/plugin/<method>`:
+
+| Method | Body | Does |
+|--------|------|------|
+| `interactions.respond` | a reply | The run's reply: fills a command's "thinking…" placeholder, or edits the reply already shown (your synchronous answer or an earlier `respond`). When the reply's visibility changes, or there is no reply yet (a message trigger, or an empty answer removed it), a new message takes its place. |
+| `interactions.followup` | a reply | Sends a new message, placed like a reply. Answers `{ ok: true, id }`. |
+| `interactions.edit_followup` | `message_id` and a reply | Edits a message this token sent with `followup`. |
+| `interactions.delete_followup` | `message_id` | Deletes a message this token sent with `followup`. |
+
+The body is a [reply](#the-reply-contract-v1) under the same rules as your
+synchronous answer, with three differences: a component that is not a
+link button is refused with `400` instead of dropped; a reply with nothing
+to show is refused with `400`; and `defer` means nothing. Who sees it
+follows [the same order](#who-sees-the-reply): a `public` command's
+`respond` fills its public placeholder. `interaction_token`, which the
+plugin form of these methods takes, may be left out and is ignored.
+Each `respond` decides who sees it afresh — its own `ephemeral` first,
+then the behavior's stored visibility — so a `respond` without
+`ephemeral` after a public one goes back to the stored visibility (and
+stays where the reply is when none is stored).
+
+`respond` and `followup` take [`direct_messages`](#direct-messages) too,
+sent after the reply, and answer their outcomes as
+`direct_messages: [{ user_id, outcome }]`. One of only `direct_messages`
+leaves the reply as it is (a `followup` then answers no `id`), and
+is allowed only once the run's reply was shown — the synchronous answer
+or an earlier `respond`; before that it is refused with `400`, so nobody
+is DMed while the user still sees "thinking…".
+`edit_followup` refuses them with `400`.
+
+A message trigger has no interaction, so the bot answers with messages of
+its own: the first `respond` sends the reply — to the channel, or for a
+private reply in a guild to the author's DM, never the channel — and
+later ones edit that message (or, when the reply moves between the
+channel and the DM, send it anew and delete the old one). In a DM with
+the bot everything goes to that DM.
+
+An edit — a `respond` that edits the reply, or `edit_followup` — changes
+only the fields its body has: it cannot clear one the body leaves out,
+and an empty one (`""`, `[]`) counts as left out.
+
+- An unknown, revoked or expired token gets `401`. Any other
+  `/api/plugin/*` path gets `403`: the token answers this run and nothing
+  else.
+- The token is revoked when the run fails (the user has already seen the
+  failure line). Answering synchronously does not revoke it: you may still
+  follow up.
+- Once a `respond` has landed, the synchronous answer of the same run is
+  not shown, even if it arrives later, and a late failure of that request
+  shows no failure line: the user already has a reply, so the delivery is
+  ok and marked deferred.
+- Calls are rate-limited per token, that is per run (60 a minute); over
+  it, `429`.
+- A call the bot refuses (`callback_invalid`) or Discord refuses
+  (`callback_failed`; `dm_failed` when a private reply could not be sent
+  to the author as a DM) is a failed delivery of the behavior, and so is
+  a call whose [attachments](#attachments) the bot can't get
+  (`attachment_failed`, `400`, nothing shown). Attachments come from the
+  run's webhook URL origin, as for the synchronous answer (a
+  [plugin action](#plugin-actions)'s from under the plugin's URL). A call that
+  works is not logged.
+- The token lives in the bot's memory: after a restart it is unknown.
+
+## Plugin actions
+
+A behavior's action may be a **plugin action** instead of a webhook: an
+action a plugin declares in its manifest (`behavior_actions`), bound by
+an admin ([behaviors.md](behaviors.md#plugin-actions)). The plugin is
+not a webhook receiver — it gets a Plugin Dispatch — but it answers the
+run exactly as a receiver answers later:
+
+- The bot `POST`s to the plugin's `endpoints.behavior_action` (default
+  `/behavior-actions/{action_key}`), signed with the plugin's dispatch
+  key like every Plugin Dispatch (not with a webhook secret). The body is
+  the trigger's [`_meta`](#the-request) at the top level — `behavior_id`,
+  `user`, `channel_id`, `guild_id`, `attachments`, and a command's
+  `options` or a message's `captures` — plus `action_key` and `callback`
+  (the run's callback token, as above). It carries no `content`,
+  `username` or `avatar_url`, and never the Discord interaction token.
+- The plugin answers `2xx` at once; the body is not read. A command is
+  already deferred ("thinking…"), a message trigger shows typing, and
+  the delivery is ok and marked *deferred*.
+- It replies with `Authorization: Bearer <callback.token>` on
+  `interactions.respond` / `followup` / `edit_followup` /
+  `delete_followup`, under every rule of
+  [answering later](#answering-later). A reply's attachments are
+  downloaded from `<plugin URL><path>` — the plugin's **registered URL,
+  path prefix included**, as for the attachments a plugin sends with its
+  own token; a path that climbs out of that prefix is refused.
+- A dispatch the plugin refuses (non-2xx) or does not answer in time
+  fails the run: the user gets the failure line and the token is
+  revoked. A plugin that is offline, or that no longer declares the
+  action, gets nothing at all (`plugin_unavailable`,
+  `action_undeclared` in the delivery log).
+- No Feature or Guild Reach applies: the admin's binding is the
+  authorization.
+
+With the SDK, declare one with `definePluginBehaviorAction`; its
+`ctx.reply` / `ctx.followup` use the callback token for you
+([SDK README](../../../plugin-sdk/README.md#behavior-actions)). The
+dispatch's shape is `CONTRACT_FIXTURES.dispatchEnvelope.payloads.behavior_action`.
+
 ## Failures
 
 The action fails when:
@@ -356,6 +583,7 @@ The action fails when:
 - the body is too large, is not JSON, or is not a JSON object;
 - in `hmac` mode, the response signature is missing, stale or wrong (in
   `token` mode, only when a signature is present and wrong);
+- the reply's [attachments](#attachments) can't all be downloaded;
 - Discord refuses the reply, or an `ephemeral` reply in a guild cannot be
   sent to the author as a DM.
 
@@ -573,5 +801,11 @@ changes the protocol. Update a receiver **before** the bot is upgraded:
 - New: secret rotation with the `-Previous` headers (#99).
 - New: `id` on each `_meta.attachments` entry, and `_meta.attachments` on
   commands, with the files of the `attachment` options (#152).
+- New: `_meta.callback` on commands and message triggers, and the `defer`
+  reply field, to answer later (#113).
+- New: the `attachments` reply field, files the bot downloads from the
+  webhook URL's origin (#156).
+- New: the `direct_messages` reply field, DMs to other users under the
+  behavior's DM allowlist or server membership (#157).
 - Removed: conversation sessions and the `[BEHAVIOR:END]` marker. A reply
   never starts or ends a session.

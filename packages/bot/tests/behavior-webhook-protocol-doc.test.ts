@@ -170,6 +170,16 @@ describe("the protocol document, against the contract fixtures", () => {
     }
   });
 
+  it("states the callback token's keys, lifetime and methods (#113)", () => {
+    const section = docSection("Answering later");
+    for (const key of contract.request.callbackKeys) expect(section, key).toContain(`| \`${key}\` |`);
+    expect(section).toContain(`**${contract.callback.ttlSeconds / 60} minutes**`);
+    for (const method of contract.callback.methods) expect(section, method).toContain(`| \`${method}\` |`);
+    expect(docSection("From a command", 3)).toContain(
+      `\`{ ${contract.request.callbackKeys.join(", ")} }\``,
+    );
+  });
+
   it("states the reply fields and limits the fixtures define", () => {
     const section = docSection("The reply (contract v1)");
     const r = contract.response;
@@ -181,6 +191,18 @@ describe("the protocol document, against the contract fixtures", () => {
     expect(section).toContain(`At most ${r.maxComponentRows} rows of ${r.maxButtonsPerRow} buttons`);
     expect(section).toContain(`**${r.maxBodyBytes / 1024} KiB**`);
     for (const flag of r.allowedFlags) expect(section).toContain(`(${flag})`);
+    expect(section).toContain(`\`[{ ${r.attachmentKeys.join(", ")} }]\``);
+    expect(section).toContain(
+      `At most ${r.maxAttachments} files of at most **${r.maxAttachmentBytes / 1024 / 1024} MiB** each`,
+    );
+    expect(section).toContain(`**${r.maxAttachmentTotalBytes / 1024 / 1024} MiB** together`);
+    expect(section).toContain(`\`[{ ${r.directMessageKeys.join(", ")} }]\``);
+    expect(section).toContain(`At most **${r.maxDirectMessages}** direct messages`);
+    expect(section).toContain(`**${r.directMessagesPerMinute} a minute**`);
+    expect(section).toContain(
+      `**${r.directMessagesPerRecipient} per ${r.directMessagesPerRecipientWindowSeconds / 60} minutes**`,
+    );
+    for (const outcome of r.directMessageOutcomes) expect(section, outcome).toContain(`| \`${outcome}\` |`);
   });
 });
 

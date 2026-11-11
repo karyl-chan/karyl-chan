@@ -30,6 +30,7 @@ export type DispatchSource =
   | "modal"
   | "event"
   | "lifecycle"
+  | "behavior_action"
   | "probe";
 
 export type DispatchFailureClass =

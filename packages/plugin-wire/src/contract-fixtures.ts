@@ -94,10 +94,23 @@ export interface ContractFixtures {
       readonly autocomplete: DispatchPayloadContract;
       readonly component: DispatchPayloadContract;
       readonly modal: DispatchPayloadContract;
+      /**
+       * A behavior action (#127): the fields both triggers' webhook
+       * `_meta` share, plus `action_key`. The rest of the body is that
+       * trigger's `_meta` (behaviorWebhook.request slashMetaKeys /
+       * patternMetaKeys), `callback` included.
+       */
+      readonly behavior_action: DispatchPayloadContract;
     };
   };
   readonly rpc: {
     readonly pathsCalledBySdk: readonly string[];
+    /**
+     * The RPC paths the SDK's behavior action context calls with the
+     * run's callback token (not the plugin's own): each must be one the
+     * callback principal may reach (behaviorWebhook.callback.methods).
+     */
+    readonly behaviorActionPathsCalledBySdk: readonly string[];
   };
   readonly register: {
     readonly endpoint: string;
@@ -170,6 +183,19 @@ export interface ContractFixtures {
       readonly slashMetaKeys: readonly string[];
       readonly userKeys: readonly string[];
       readonly attachmentKeys: readonly string[];
+      /** `_meta.callback` on both triggers (#113, #200): the run's callback token. */
+      readonly callbackKeys: readonly string[];
+    };
+    /**
+     * The behavior callback token (#113): one per run of either trigger,
+     * valid for `ttlSeconds` after the command was used or the message
+     * sent, sent as `Authorization: Bearer <token>` to
+     * `<api_base>/api/plugin/<method>` for `methods` only (any other
+     * /api/plugin/* path is 403; an unknown or expired token is 401).
+     */
+    readonly callback: {
+      readonly ttlSeconds: number;
+      readonly methods: readonly string[];
     };
     readonly response: {
       readonly fields: readonly string[];
@@ -187,6 +213,31 @@ export interface ContractFixtures {
       readonly maxButtonsPerRow: number;
       /** MessageFlags a response may set; visibility is `ephemeral`, never a flag. */
       readonly allowedFlags: readonly number[];
+      /**
+       * `attachments` (#156): `[{ name, path }]`, the plugin
+       * `interactions.respond` shape. The bot GETs each `path` (a plain
+       * path, never `//host` or a URL) from the webhook URL's origin,
+       * follows no redirect, and fails the action past these limits (per
+       * file, and all of a reply's files together).
+       */
+      readonly attachmentKeys: readonly string[];
+      readonly maxAttachments: number;
+      readonly maxAttachmentBytes: number;
+      readonly maxAttachmentTotalBytes: number;
+      /**
+       * `direct_messages` (#157): DMs to other users, each
+       * `{ user_id, content?, embeds?, components?, attachments? }` read
+       * like the reply. Who may be DMed is the behavior's rule; each DM's
+       * outcome is its own (logged, and answered by a callback
+       * respond / followup as `direct_messages: [{ user_id, outcome }]`).
+       */
+      readonly directMessageKeys: readonly string[];
+      readonly maxDirectMessages: number;
+      /** Defaults; the operator may change them. */
+      readonly directMessagesPerMinute: number;
+      readonly directMessagesPerRecipient: number;
+      readonly directMessagesPerRecipientWindowSeconds: number;
+      readonly directMessageOutcomes: readonly string[];
     };
   };
 }
@@ -393,6 +444,23 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
         userFields: ["id", "username", "global_name"],
         memberFields: ["permissions", "capabilities"],
       },
+      behavior_action: {
+        endpointTemplate: "/behavior-actions/{action_key}",
+        requiredFields: [
+          "action_key",
+          "behavior_id",
+          "user",
+          "guild_id",
+          "channel_id",
+          "attachments",
+          // the run's callback token: how the plugin answers
+          "callback",
+        ],
+        // the webhook `_meta.user`
+        userFields: ["id", "username", "global_name", "discriminator", "avatar"],
+        // a webhook `_meta` has no member
+        memberFields: null,
+      },
     },
   },
 
@@ -403,6 +471,10 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
    * reach paths not listed here.
    */
   rpc: {
+    behaviorActionPathsCalledBySdk: [
+      "/api/plugin/interactions.respond",
+      "/api/plugin/interactions.followup",
+    ],
     pathsCalledBySdk: [
       "/api/plugin/messages.send",
       "/api/plugin/messages.edit",
@@ -562,6 +634,8 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
         // a regex trigger's groups, group 1 first (null = took no part);
         // [] for startswith / endswith
         "captures",
+        // the run's callback token (#113, #200)
+        "callback",
       ],
       slashMetaKeys: [
         "interaction_id",
@@ -580,10 +654,23 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
         // the invoked leaf's attachment options' files, in option order;
         // no message_id: an interaction has no message
         "attachments",
+        // the run's callback token (#113); never the interaction token
+        "callback",
       ],
       userKeys: ["id", "username", "global_name", "discriminator", "avatar"],
       // `id` maps a command's attachment option (its `value`) to its file
       attachmentKeys: ["id", "url", "filename", "content_type", "size"],
+      // expires_at is ISO 8601; api_base is the bot's public base URL
+      callbackKeys: ["token", "expires_at", "api_base"],
+    },
+    callback: {
+      ttlSeconds: 900,
+      methods: [
+        "interactions.respond",
+        "interactions.followup",
+        "interactions.edit_followup",
+        "interactions.delete_followup",
+      ],
     },
     /**
      * The reply model (#140) — the plugin `interactions.respond` body
@@ -594,7 +681,19 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
      * with the bot.
      */
     response: {
-      fields: ["content", "embeds", "components", "ephemeral", "flags"],
+      // `defer: true` (#113): answer later with the callback token;
+      // `attachments` (#156): files the bot fetches from the receiver
+      fields: [
+        "content",
+        "embeds",
+        "components",
+        "ephemeral",
+        "flags",
+        "defer",
+        "attachments",
+        // DMs to other users (#157)
+        "direct_messages",
+      ],
       embedWhitelist: [
         "title",
         "description",
@@ -616,6 +715,19 @@ export const CONTRACT_FIXTURES: ContractFixtures = {
       maxButtonsPerRow: 5,
       // SuppressEmbeds, SuppressNotifications
       allowedFlags: [4, 4096],
+      attachmentKeys: ["name", "path"],
+      maxAttachments: 5,
+      // 8 MiB per file and 25 MiB per reply, counted as they stream
+      maxAttachmentBytes: 8388608,
+      maxAttachmentTotalBytes: 26214400,
+      directMessageKeys: ["user_id", "content", "embeds", "components", "attachments"],
+      maxDirectMessages: 5,
+      // per behavior, every DM asked for counted
+      directMessagesPerMinute: 10,
+      // per (behavior, recipient)
+      directMessagesPerRecipient: 3,
+      directMessagesPerRecipientWindowSeconds: 600,
+      directMessageOutcomes: ["sent", "not_allowed", "rate_limited", "attachment_failed", "failed"],
     },
   },
 };

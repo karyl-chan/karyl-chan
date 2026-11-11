@@ -109,7 +109,7 @@ function loginCommand(name = "login"): CatalogCommand {
         replyVisibility: null,
         serviceId: null,
         updatedAt: now,
-        webhook: null,
+        action: null,
         service: null,
       },
     ],
