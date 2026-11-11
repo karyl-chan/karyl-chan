@@ -2,7 +2,7 @@ import type { BehaviorSection, MessageTriggerLocation, MessageTriggerView } from
 import { parseSection } from './behavior-sections';
 
 /**
- * Message Trigger Locations (CONTEXT.md) as the UI handles them: a kind
+ * Message Trigger Locations (GLOSSARY.md) as the UI handles them: a kind
  * plus its ids, never a string to take apart. The key form
  * (`bot_dm`, `guild:all`, `guild:<id>`, `channel:<g>:<c>`) is only built
  * for the reorder API and to compare with a trigger's section.
@@ -31,7 +31,7 @@ export function kindHasGuild(kind: LocationKind): boolean {
 /**
  * The location a section's message triggers are at — null for App 指令,
  * which holds commands only. A section is presentation; this is the one
- * place it turns into a location (CONTEXT.md: sections are not write units).
+ * place it turns into a location (GLOSSARY.md: sections are not write units).
  */
 export function locationOfSection(section: BehaviorSection): TriggerLocation | null {
     const s = parseSection(section);

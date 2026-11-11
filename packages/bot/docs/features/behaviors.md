@@ -10,7 +10,7 @@ This page is the admin's and operator's view. If you are writing the
 service a webhook calls, read the
 [behavior webhook protocol](behavior-webhook-protocol.md) instead. The
 domain terms (Behavior, Command Leaf, Message Trigger Location, …) are
-defined in the bot's [CONTEXT.md](../../CONTEXT.md#behaviors).
+defined in the bot's [GLOSSARY.md](../../GLOSSARY.md#behaviors).
 
 ## Contents
 

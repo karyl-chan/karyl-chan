@@ -1,6 +1,6 @@
 /**
  * `@karyl-chan/plugin-wire` — the single home for the bot↔plugin wire
- * contract. See `packages/plugin-wire/CONTEXT.md` for the glossary
+ * contract. See `packages/plugin-wire/GLOSSARY.md` for the glossary
  * (Wire Contract, Canonical Event, Event Ceiling, Compat Floor).
  *
  * Workspace-private, never published: the bot and frontend import it via

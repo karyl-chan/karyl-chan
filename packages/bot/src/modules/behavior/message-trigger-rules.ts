@@ -39,7 +39,7 @@ function refuse(field: string, message: string): never {
 
 /**
  * A Message Trigger Location's key: `bot_dm`, `guild:all`, `guild:<id>` or
- * `channel:<guildId>:<channelId>` (CONTEXT.md). The unit triggers are
+ * `channel:<guildId>:<channelId>` (GLOSSARY.md). The unit triggers are
  * ordered in (message-trigger-reorder.ts).
  */
 export type MessageTriggerLocation =
