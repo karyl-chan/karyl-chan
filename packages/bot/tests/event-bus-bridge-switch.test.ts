@@ -37,13 +37,12 @@ vi.hoisted(() => {
 // failing a real DNS lookup of plugin.invalid.
 vi.mock(
   "../src/modules/plugin-system/plugin-dispatch-util.js",
-  async (orig) => {
-    const real = (await orig()) as Record<string, unknown>;
-    return {
-      ...real,
-      preflightPluginTarget: vi.fn().mockResolvedValue({ ok: true }),
-    };
-  },
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("../src/modules/plugin-system/plugin-dispatch-util.js")
+    >()),
+    preflightPluginTarget: vi.fn().mockResolvedValue({ ok: true }),
+  }),
 );
 
 import { sequelize } from "../src/db.js";
@@ -186,9 +185,7 @@ describe("dispatchEventToPlugins transport switch", () => {
     dispatchEventToPlugins("guild.message_create", { hi: 1 });
     await vi.waitFor(() => expect(calls.length).toBe(1));
     expect(calls[0].key).toBe("karyl:plugin:alpha:events");
-    // Streams path must NOT touch the HTTP fan-out. The bus branch
-    // returns before the pool, so once the XADD is in, a POST for this
-    // dispatch can no longer follow.
+    // Streams path must NOT touch the HTTP fan-out.
     expect(postSpy).not.toHaveBeenCalled();
   });
 
@@ -214,9 +211,7 @@ describe("dispatchEventToPlugins transport switch", () => {
     // No plugin seeded → no subscribers.
     await rebuildEventIndex();
 
-    // The subscription gate drops the event synchronously, before the
-    // background fan-out is even started — there is no in-flight work
-    // to wait for, so asserting right after the call is exact.
+    // The gate drops the event synchronously: nothing is in flight.
     dispatchEventToPlugins("guild.message_create", { hi: 1 });
     expect(calls.length).toBe(0);
     expect(postSpy).not.toHaveBeenCalled();

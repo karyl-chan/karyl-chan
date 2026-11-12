@@ -20,11 +20,9 @@ import { sequelize } from "../src/db.js";
 import { invalidateBehaviorCatalog } from "../src/modules/behavior/behavior-catalog.js";
 import { registerLoginTriggerHintRoute } from "../src/modules/behavior/login-trigger-hint-route.js";
 import { RateLimiter } from "../src/utils/rate-limiter.js";
-// Static on purpose: the web server's module graph is large, and a
-// dynamic import inside the test body bills its whole load to the
-// test's 5s timeout (it timed out under full-suite load, #181). At
-// module scope it loads during collection, and the beforeAll sync
-// below also creates every table that graph defines.
+// Static on purpose: a dynamic import in the test body bills the large
+// web-server graph to the 5s test timeout (#181); loaded here, the
+// beforeAll sync also creates every table that graph defines.
 import { createWebServer } from "../src/modules/web-core/server.js";
 import { clearBehaviors, seedCommand, seedLeaf, seedSystemLogin } from "./behavior-fixtures.js";
 
