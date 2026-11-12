@@ -112,6 +112,12 @@ const { RconQueueService } = await import(
 );
 
 const mockedLookup = vi.mocked(lookup);
+
+/** Every retry runs out its 10 s, with 2 s / 4 s / 8 s backoff before each. */
+const EVERY_RETRY_TIMES_OUT_MS = 2000 + 10_000 + 4000 + 10_000 + 8000 + 10_000;
+/** The first attempt runs out its 10 s too, then every retry. */
+const EVERY_ATTEMPT_TIMES_OUT_MS = 10_000 + EVERY_RETRY_TIMES_OUT_MS;
+
 type LookupResult = Awaited<ReturnType<typeof lookup>>;
 
 function answer(...addresses: string[]): LookupResult {
@@ -591,8 +597,7 @@ describe("RCON connect timeout (#180)", () => {
     const channel = makeChannel();
     const result = startConnect(channel);
 
-    // 10 s each attempt, with 2 s / 4 s / 8 s backoff in between.
-    await vi.advanceTimersByTimeAsync(10_000 + 2000 + 10_000 + 4000 + 10_000 + 8000 + 10_000);
+    await vi.advanceTimersByTimeAsync(EVERY_ATTEMPT_TIMES_OUT_MS);
 
     await expect(result).resolves.toBe(false);
     expect(instances).toHaveLength(4);
@@ -669,8 +674,7 @@ describe("RCON host resolution timeout (#239)", () => {
     const result = startConnect(channel);
     const waiterResult = startConnect(waiter);
 
-    // 10 s each attempt, with 2 s / 4 s / 8 s backoff in between.
-    await vi.advanceTimersByTimeAsync(10_000 + 2000 + 10_000 + 4000 + 10_000 + 8000 + 10_000);
+    await vi.advanceTimersByTimeAsync(EVERY_ATTEMPT_TIMES_OUT_MS);
 
     await expect(result).resolves.toBe(false);
     await expect(waiterResult).resolves.toBe(false);
@@ -765,7 +769,7 @@ describe("RCON host resolution timeout (#239)", () => {
     mockedLookup.mockImplementation(hang);
     instances[0].emit("end");
 
-    await vi.advanceTimersByTimeAsync(2000 + 10_000 + 4000 + 10_000 + 8000 + 10_000);
+    await vi.advanceTimersByTimeAsync(EVERY_RETRY_TIMES_OUT_MS);
 
     expect(instances).toHaveLength(1);
     expect(RconConnectionService.getConnection("c1")).toBeUndefined();
@@ -788,7 +792,7 @@ describe("RCON host resolution timeout (#239)", () => {
     // a direct initializeConnection replaces it and must not hang either.
     const second = makeChannel("channel-2");
     const result = startConnect(second);
-    await vi.advanceTimersByTimeAsync(10_000 + 2000 + 10_000 + 4000 + 10_000 + 8000 + 10_000);
+    await vi.advanceTimersByTimeAsync(EVERY_ATTEMPT_TIMES_OUT_MS);
 
     await expect(result).resolves.toBe(false);
     expect(embedTitles(second).at(-1)).toBe("Connection Failed");
@@ -970,7 +974,7 @@ describe("RCON first connect (#180)", () => {
     RconConnectionService.joinChannel(RconConnectionService.getConnection("c1")!, makeChannel("channel-1"));
 
     instances[0].emit("error", new Error("ECONNREFUSED"));
-    await vi.advanceTimersByTimeAsync(2000 + 10_000 + 4000 + 10_000 + 8000 + 10_000);
+    await vi.advanceTimersByTimeAsync(EVERY_RETRY_TIMES_OUT_MS);
 
     await expect(result).resolves.toBe(false);
     await expect(waiterResult).resolves.toBe(false);

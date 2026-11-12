@@ -192,11 +192,8 @@ export class RconConnectionService {
 
       this.dropClient(connectionName);
 
-      rconInstance =
-        addresses && new PinnedRcon(host, port, password, addresses);
-
       const connection: RconConnection = {
-        conn: rconInstance,
+        conn: undefined,
         // Shared with the lock: callers that wait later join it too.
         channels: lock.channels,
         authenticated: false,
@@ -216,12 +213,14 @@ export class RconConnectionService {
       });
       // Settled by the client's events, possibly before it is awaited.
       authenticated.catch(() => {});
-      if (rconInstance) {
-        this.setupEventListeners(
+      if (addresses) {
+        rconInstance = this.startClient(
           connectionName,
+          connection,
           host,
           port,
           password,
+          addresses,
           deadline,
         );
         // Returns once the socket is opening; the client's events (and the
@@ -230,9 +229,12 @@ export class RconConnectionService {
       } else {
         // Like a connect timeout: the Lost / Failed notices only. The
         // retries settle the wait.
-        this.handleConnectionError(connectionName, host, port, password).catch(
-          (e: unknown) =>
-            log.error({ err: e, connectionName }, "處理連接超時時發生錯誤"),
+        this.retryInBackground(
+          connectionName,
+          host,
+          port,
+          password,
+          "處理連接超時時發生錯誤",
         );
       }
       await authenticated;
@@ -407,21 +409,40 @@ export class RconConnectionService {
   }
 
   /**
-   * Attach the handlers for the connection's current client, and start
-   * its connect timeout: the client has until the attempt's `deadline`
-   * to authenticate. A failure, before or after authenticating, starts
-   * or continues the retries.
+   * Retire the connection's client and schedule the next attempt without
+   * waiting for it; a failure of the retry handling itself is logged as
+   * `failedMsg`.
    */
-  private static setupEventListeners(
+  private static retryInBackground(
     connectionName: string,
     host: string,
     port: number,
     password: string,
-    deadline: number,
+    failedMsg: string,
   ) {
-    const connection = this.connectionMap[connectionName];
-    const client = connection?.conn;
-    if (!connection || !client) return;
+    this.handleConnectionError(connectionName, host, port, password).catch(
+      (e: unknown) => log.error({ err: e, connectionName }, failedMsg),
+    );
+  }
+
+  /**
+   * Make a client pinned to `addresses` the connection's current client,
+   * attach its handlers and start its connect timeout: the client has
+   * until the attempt's `deadline` to authenticate. A failure, before or
+   * after authenticating, starts or continues the retries. The caller
+   * connects the returned client.
+   */
+  private static startClient(
+    connectionName: string,
+    connection: RconConnection,
+    host: string,
+    port: number,
+    password: string,
+    addresses: PinnedAddress[],
+    deadline: number,
+  ): PinnedRcon {
+    const client = new PinnedRcon(host, port, password, addresses);
+    connection.conn = client;
     // A client acts on the connection only while it is that connection's
     // client: a replaced client's late events are ignored.
     const isCurrent = () =>
@@ -430,9 +451,7 @@ export class RconConnectionService {
 
     // Retires this client and schedules the next attempt.
     const reconnect = (failedMsg: string) =>
-      this.handleConnectionError(connectionName, host, port, password).catch(
-        (e: unknown) => log.error({ err: e, connectionName }, failedMsg),
-      );
+      this.retryInBackground(connectionName, host, port, password, failedMsg);
 
     const onError = (err: Error) => {
       if (!isCurrent()) return;
@@ -546,6 +565,7 @@ export class RconConnectionService {
         log.info({ connectionName }, "Connection closed by the server");
         reconnect("處理連接關閉時發生錯誤");
       });
+    return client;
   }
 
   /**
@@ -633,16 +653,15 @@ export class RconConnectionService {
         const deadline = Date.now() + CONNECT_ATTEMPT_TIMEOUT_MS;
         const addresses = await this.resolveBefore(host, port, deadline);
         if (this.connectionMap[connectionName] !== connection) return;
-        const client = new PinnedRcon(host, port, password, addresses);
-        connection.conn = client;
-        this.setupEventListeners(
+        await this.startClient(
           connectionName,
+          connection,
           host,
           port,
           password,
+          addresses,
           deadline,
-        );
-        await client.connect();
+        ).connect();
       } catch (error) {
         log.error(
           { err: error, connectionName, attempt: connection.reconnectAttempts },
