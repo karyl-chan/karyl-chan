@@ -488,21 +488,27 @@ export async function createWebServer(
       // other future flow (e.g., account-link DMs) from being walked
       // up to a full session here. Tampered / stale / wrong-purpose
       // all collapse into a generic 401 so we don't hand probers a
-      // useful distinction.
-      const claims = jwt.verify(loginToken, { purpose: "login" });
-      if (!claims) {
+      // useful distinction. A login link is single-use (#216), which
+      // needs its `jti`; links minted before that change have none and
+      // are refused the same way — the user just asks for a new link.
+      const verified = jwt.verifyWithExpiry(loginToken, { purpose: "login" });
+      const jti = verified?.claims.jti;
+      if (!verified || !jti) {
         const ip = clientKey(request);
-        if (shouldRecord(`jwtReject:${ip}`)) {
+        if (shouldRecord(`${verified ? "jwtNoJti" : "jwtReject"}:${ip}`)) {
           botEventLog.record(
             "warn",
             "auth",
-            "Login token rejected (invalid/expired)",
-            { ip },
+            verified
+              ? "Login token rejected (no jti)"
+              : "Login token rejected (invalid/expired)",
+            verified ? { ip, userId: verified.claims.userId } : { ip },
           );
         }
         reply.code(401).send({ error: "Invalid or expired token" });
         return;
       }
+      const { claims } = verified;
       // Stage 2 — JWT info (the user) must still be permitted to log
       // in. Authorization can change between issuance and exchange
       // (role demotion, account removal); resolveLoginRole reflects
@@ -530,6 +536,24 @@ export async function createWebServer(
           },
         );
         reply.code(401).send({ error: "User no longer authorized" });
+        return;
+      }
+      // Stage 3 — the link must not have been exchanged before. Only
+      // now is the jti used up: a forged signature or a deauthorized
+      // user (both refused above) leaves it untouched.
+      if (!(await auth.consumeLoginJti(jti, verified.expiresAt))) {
+        botEventLog.record(
+          "warn",
+          "auth",
+          `Login link reused: ${claims.userId}`,
+          {
+            userId: claims.userId,
+            jti,
+            guildId: claims.guildId,
+            channelId: claims.channelId,
+          },
+        );
+        reply.code(401).send({ error: "Invalid or expired token" });
         return;
       }
       try {
