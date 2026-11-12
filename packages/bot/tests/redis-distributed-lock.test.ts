@@ -5,7 +5,7 @@
  * exercised end-to-end.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   setRedisClientForTests,
   __resetRedisClientForTests,
@@ -102,6 +102,8 @@ beforeEach(() => {
   setRedisClientForTests(makeStub());
 });
 afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
   setRedisClientForTests(null);
   __resetRedisClientForTests();
 });
@@ -159,20 +161,42 @@ describe("RedisDistributedLock", () => {
     // running fn even though the caller asked us to give up.
     //
     // Hold for 100 ms; with timeoutMs 30 ms the second `run` MUST
-    // reject roughly at the deadline, NOT after the holder
-    // happens to release.
+    // reject at the deadline, BEFORE the holder releases. Fake timers
+    // make this an ordering check on virtual time instead of a
+    // wall-clock bound (which flaked under full-suite load, #237).
+    // Math.random is pinned so jitterDelay lands at its 495 ms
+    // ceiling: the pre-fix loop then always sleeps past the holder's
+    // release and steals the lock, rather than only sometimes.
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0.99);
     const lock = new RedisDistributedLock();
-    const slow = lock.run("k", () => new Promise((r) => setTimeout(r, 100)));
-    const start = Date.now();
-    await expect(
-      lock.run("k", async () => "stolen", { timeoutMs: 30 }),
-    ).rejects.toThrow(/timed out/);
-    const elapsed = Date.now() - start;
-    // Upper bound: 30 ms timeout + 70 ms slack for CI scheduling
-    // jitter. Without the fix this would be ≥ 100 ms (waits for
-    // the holder to release).
-    expect(elapsed).toBeLessThan(100);
-    await slow;
+    const events: string[] = [];
+    const slow = lock
+      .run("k", () => new Promise((r) => setTimeout(r, 100)))
+      .then(() => events.push("holder released"));
+    const waiter = lock
+      .run(
+        "k",
+        async () => {
+          events.push("waiter acquired");
+          return "stolen";
+        },
+        { timeoutMs: 30 },
+      )
+      .then(
+        () => events.push("waiter resolved"),
+        (err: Error) => events.push(`waiter rejected: ${err.message}`),
+      );
+
+    await vi.advanceTimersByTimeAsync(30);
+    expect(events).toEqual(["waiter rejected: lock 'k' acquire timed out"]);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await Promise.all([waiter, slow]);
+    expect(events).toEqual([
+      "waiter rejected: lock 'k' acquire timed out",
+      "holder released",
+    ]);
   });
 
   it("isLeader elects the first claimant per key", async () => {
