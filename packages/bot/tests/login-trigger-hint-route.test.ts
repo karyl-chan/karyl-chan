@@ -16,16 +16,41 @@ vi.mock("../src/modules/bot-events/bot-event-log.js", () => ({
 }));
 
 import Fastify, { type FastifyInstance } from "fastify";
-import { sequelize } from "../src/db.js";
 import { invalidateBehaviorCatalog } from "../src/modules/behavior/behavior-catalog.js";
 import { registerLoginTriggerHintRoute } from "../src/modules/behavior/login-trigger-hint-route.js";
+import { Service } from "../src/modules/behavior/models/service.model.js";
+import { BehaviorCommand } from "../src/modules/behavior/models/behavior-command.model.js";
+import { BehaviorDefinition } from "../src/modules/behavior/models/behavior-definition.model.js";
+import { BehaviorWebhookAction } from "../src/modules/behavior/models/behavior-webhook-action.model.js";
+import { BehaviorPluginAction } from "../src/modules/behavior/models/behavior-plugin-action.model.js";
+import { BehaviorDmAllowlist } from "../src/modules/behavior/models/behavior-dm-allowlist.model.js";
+import { BehaviorGroupMember } from "../src/modules/behavior/models/behavior-group-member.model.js";
+import { BehaviorDmLog } from "../src/modules/behavior/models/behavior-dm-log.model.js";
 import { RateLimiter } from "../src/utils/rate-limiter.js";
+// Static on purpose: a dynamic import in the test body bills the large
+// web-server graph to the 5s test timeout (#181).
+import { createWebServer } from "../src/modules/web-core/server.js";
 import { clearBehaviors, seedCommand, seedLeaf, seedSystemLogin } from "./behavior-fixtures.js";
 
 let server: FastifyInstance;
 
 beforeAll(async () => {
-  await sequelize.sync({ force: true });
+  // Only the behavior tables, not sequelize.sync(): the web-core import
+  // above registers every model (32 tables, ~185 serial SQLite round
+  // trips), and under full-suite CPU load each round trip waits on the
+  // scheduler, which pushed this hook past its 10s timeout (#181).
+  for (const model of [
+    Service,
+    BehaviorCommand,
+    BehaviorDefinition,
+    BehaviorWebhookAction,
+    BehaviorPluginAction,
+    BehaviorDmAllowlist,
+    BehaviorGroupMember,
+    BehaviorDmLog,
+  ]) {
+    await model.sync({ force: true });
+  }
   server = Fastify({ logger: false });
   registerLoginTriggerHintRoute(server, { limiter: new RateLimiter({ windowMs: 60_000, max: 3 }) });
   await server.ready();
@@ -73,7 +98,6 @@ describe("GET /api/auth/login-trigger", () => {
 
 describe("on the web server", () => {
   it("is served without a session, while the admin API still asks for one", async () => {
-    const { createWebServer } = await import("../src/modules/web-core/server.js");
     const web = await createWebServer({ ownerIds: ["111111111111111111"], staticRoot: undefined });
     try {
       await seedSystemLogin();

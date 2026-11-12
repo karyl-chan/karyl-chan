@@ -4,8 +4,15 @@
  * `dispatchEventToPlugins` must route to the Redis Streams bus when
  * EVENT_BUS=redis-streams, and fall back to HTTP fan-out otherwise. We
  * assert the routing decision by injecting a stub Redis client (so the
- * bus XADDs into a capture array) and spying on global fetch (the HTTP
- * path). The subscription gate must still apply on both transports.
+ * bus XADDs into a capture array) and spying on the dispatch pool (the
+ * HTTP path posts via undici, not global fetch; host-policy is mocked
+ * open so the HTTP path reaches the pool without a DNS lookup). The
+ * subscription gate must still apply on both transports.
+ *
+ * The fan-out runs in the background (a DB read, then the transport),
+ * so each test waits on the transport it expects to see rather than on
+ * a fixed sleep: the bus and the pool are mutually exclusive per
+ * dispatch, so observing one is also proof the other was not chosen.
  */
 
 import {
@@ -20,7 +27,23 @@ import {
 
 vi.hoisted(() => {
   process.env.SQLITE_DB_PATH = ":memory:";
+  // bot_events has its own SQLite file; unset, it resolves to the
+  // package's real data/bot-events.sqlite (shared by every parallel run,
+  // and table-less in a fresh checkout → "no such table: bot_events").
+  process.env.BOT_EVENTS_SQLITE_DB_PATH = ":memory:";
 });
+
+// Open the SSRF gate so the HTTP path reaches the pool spy instead of
+// failing a real DNS lookup of plugin.invalid.
+vi.mock(
+  "../src/modules/plugin-system/plugin-dispatch-util.js",
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("../src/modules/plugin-system/plugin-dispatch-util.js")
+    >()),
+    preflightPluginTarget: vi.fn().mockResolvedValue({ ok: true }),
+  }),
+);
 
 import { sequelize } from "../src/db.js";
 import { Plugin } from "../src/modules/plugin-system/models/plugin.model.js";
@@ -34,6 +57,7 @@ import {
   type RedisLike,
 } from "../src/adapters/redis/client.js";
 import { pluginEndpointRegistry } from "../src/modules/plugin-system/plugin-endpoint-registry.js";
+import { pluginDispatcher } from "../src/modules/plugin-system/plugin-dispatch.service.js";
 import type { PluginManifest } from "@karyl-chan/plugin-wire";
 
 interface XaddCall {
@@ -121,6 +145,8 @@ async function seedSubscriber(): Promise<void> {
   await rebuildEventIndex();
 }
 
+let postSpy: ReturnType<typeof vi.spyOn>;
+
 beforeAll(async () => {
   await sequelize.sync({ force: true });
 });
@@ -135,9 +161,13 @@ beforeEach(async () => {
   delete process.env.REDIS_URL;
   setRedisClientForTests(null);
   await rebuildEventIndex();
+  postSpy = vi
+    .spyOn(pluginDispatcher.pool, "post")
+    .mockResolvedValue({ ok: true, status: 204, bodyText: "" });
 });
 
 afterEach(() => {
+  postSpy.mockRestore();
   __resetAdaptersForTests();
   setRedisClientForTests(null);
   delete process.env.EVENT_BUS;
@@ -152,19 +182,11 @@ describe("dispatchEventToPlugins transport switch", () => {
     process.env.REDIS_URL = "redis://localhost:6379";
     await seedSubscriber();
 
-    const fetchSpy = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(new Response(null, { status: 204 }));
-    try {
-      dispatchEventToPlugins("guild.message_create", { hi: 1 });
-      await new Promise((r) => setTimeout(r, 10));
-      expect(calls.length).toBe(1);
-      expect(calls[0].key).toBe("karyl:plugin:alpha:events");
-      // Streams path must NOT touch the HTTP fan-out.
-      expect(fetchSpy).not.toHaveBeenCalled();
-    } finally {
-      fetchSpy.mockRestore();
-    }
+    dispatchEventToPlugins("guild.message_create", { hi: 1 });
+    await vi.waitFor(() => expect(calls.length).toBe(1));
+    expect(calls[0].key).toBe("karyl:plugin:alpha:events");
+    // Streams path must NOT touch the HTTP fan-out.
+    expect(postSpy).not.toHaveBeenCalled();
   });
 
   it("uses HTTP fan-out (no XADD) when EVENT_BUS is unset (default)", async () => {
@@ -173,19 +195,12 @@ describe("dispatchEventToPlugins transport switch", () => {
     // EVENT_BUS unset → default HTTP path.
     await seedSubscriber();
 
-    const fetchSpy = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(new Response(null, { status: 204 }));
-    try {
-      dispatchEventToPlugins("guild.message_create", { hi: 1 });
-      await new Promise((r) => setTimeout(r, 10));
-      // No XADD — the bus was never constructed.
-      expect(calls.length).toBe(0);
-      // HTTP path attempted (host-policy may block plugin.invalid, but
-      // the point is the Streams bus was NOT used).
-    } finally {
-      fetchSpy.mockRestore();
-    }
+    dispatchEventToPlugins("guild.message_create", { hi: 1 });
+    // HTTP path taken: the pool received the POST for alpha.
+    await vi.waitFor(() => expect(postSpy).toHaveBeenCalledTimes(1));
+    expect(String(postSpy.mock.calls[0][1])).toContain("plugin.invalid");
+    // No XADD — the bus was never constructed.
+    expect(calls.length).toBe(0);
   });
 
   it("drops events with no subscribers before reaching the bus", async () => {
@@ -196,8 +211,9 @@ describe("dispatchEventToPlugins transport switch", () => {
     // No plugin seeded → no subscribers.
     await rebuildEventIndex();
 
+    // The gate drops the event synchronously: nothing is in flight.
     dispatchEventToPlugins("guild.message_create", { hi: 1 });
-    await new Promise((r) => setTimeout(r, 10));
     expect(calls.length).toBe(0);
+    expect(postSpy).not.toHaveBeenCalled();
   });
 });
