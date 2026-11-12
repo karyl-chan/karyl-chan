@@ -199,6 +199,41 @@ describe("RedisDistributedLock", () => {
     ]);
   });
 
+  it("does not acquire at the deadline even if holder released before it", async () => {
+    // The other half of the same fix: the deadline is checked BEFORE
+    // each SET. The waiter's first SET fails against the holder, then
+    // its sleep is capped at the remaining budget, so it wakes exactly
+    // at the deadline. The holder released at 20 ms, so a SET at that
+    // point would succeed and run fn after the caller's timeout. The
+    // pre-SET check must reject instead.
+    vi.useFakeTimers();
+    const lock = new RedisDistributedLock();
+    const events: string[] = [];
+    const holder = lock
+      .run("k", () => new Promise((r) => setTimeout(r, 20)))
+      .then(() => events.push("holder released"));
+    const waiter = lock
+      .run(
+        "k",
+        async () => {
+          events.push("waiter acquired");
+          return "late";
+        },
+        { timeoutMs: 30 },
+      )
+      .then(
+        () => events.push("waiter resolved"),
+        (err: Error) => events.push(`waiter rejected: ${err.message}`),
+      );
+
+    await vi.advanceTimersByTimeAsync(30);
+    await Promise.all([waiter, holder]);
+    expect(events).toEqual([
+      "holder released",
+      "waiter rejected: lock 'k' acquire timed out",
+    ]);
+  });
+
   it("isLeader elects the first claimant per key", async () => {
     const stub = makeStub();
     const a = new RedisDistributedLock(stub, "shard:A");
