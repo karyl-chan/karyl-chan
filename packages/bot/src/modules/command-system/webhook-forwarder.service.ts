@@ -195,6 +195,9 @@ export interface ForwardOptions {
   test?: boolean;
 }
 
+/** A webhook's default forward timeout: one POST, or one batch of its reply's files. */
+const FORWARD_TIMEOUT_MS = 10_000;
+
 // ── WebhookForwarder ─────────────────────────────────────────────────────────
 
 export class WebhookForwarder {
@@ -207,7 +210,7 @@ export class WebhookForwarder {
    */
   constructor(
     private readonly allowlist: readonly AllowlistEntry[] = webhookAllowlist,
-    private readonly timeoutMs: number = 10_000,
+    private readonly timeoutMs: number = FORWARD_TIMEOUT_MS,
   ) {}
 
   /**
@@ -288,9 +291,9 @@ export class WebhookForwarder {
    * At most MAX_DOWNLOAD_BATCHES batches download at a time across the
    * process (each may hold up to the total cap), and at most one per
    * behavior (or plugin: DownloadOwner), so one slow receiver can't take
-   * every turn. A batch waits
-   * for its turns within its own timeout, and fails when it ends first;
-   * the target check counts against that timeout too.
+   * every turn. A batch waits for its turns within its own timeout, and
+   * fails when it ends first; the target check counts against that
+   * timeout too.
    */
   async fetchReplyFiles(
     action: BehaviorWebhookActionRow,
@@ -691,8 +694,8 @@ export async function downloadReplyFiles(batch: ReplyFilesDownload): Promise<Rep
   }
 }
 
-/** How long one batch of a plugin's files may take: a webhook's forward timeout. */
-export const PLUGIN_FILE_TIMEOUT_MS = 10_000;
+/** How long one batch of a plugin's files may take: a webhook's default forward timeout. */
+export const PLUGIN_FILE_TIMEOUT_MS = FORWARD_TIMEOUT_MS;
 
 /**
  * Files from a plugin come from under its registered URL, path prefix
