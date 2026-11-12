@@ -25,6 +25,7 @@ vi.hoisted(() => {
 });
 
 import { sequelize } from "../src/db.js";
+import { AuthorizedUser } from "../src/modules/admin/models/authorized-user.model.js";
 import { createWebServer } from "../src/modules/web-core/server.js";
 import { AuthStore } from "../src/modules/web-core/auth-store.service.js";
 import {
@@ -264,8 +265,11 @@ describe("web server", () => {
     beforeAll(async () => {
       // resolveLoginRole hits authorized_users for any non-owner
       // userId; the table needs to exist even though the test only
-      // expects to find it empty.
-      await sequelize.sync({ force: true });
+      // expects to find it empty. Only that table: a full
+      // sequelize.sync() is ~185 serial SQLite round trips for the 32
+      // models createWebServer registers, each waiting on the scheduler
+      // under full-suite load (#181, #235).
+      await AuthorizedUser.sync({ force: true });
       store = new AuthStore();
       __setSessionStoreForTests(store);
       jwt = new JwtService(generateKeyPairSync("ed25519").privateKey);

@@ -62,8 +62,8 @@ vi.mock(
 );
 
 import { createHash, createPublicKey } from "crypto";
+import Fastify, { type FastifyInstance } from "fastify";
 import { config } from "../src/config.js";
-import { sequelize } from "../src/db.js";
 import {
   Plugin,
   upsertPluginRegistration,
@@ -71,6 +71,13 @@ import {
 } from "../src/modules/plugin-system/models/plugin.model.js";
 import { pluginEndpointRegistry } from "../src/modules/plugin-system/plugin-endpoint-registry.js";
 import { pluginAuthStore } from "../src/modules/plugin-system/plugin-auth.service.js";
+import { PluginCapability } from "../src/modules/plugin-system/models/plugin-capability.model.js";
+import { AdminAuditLog } from "../src/modules/admin/models/admin-audit-log.model.js";
+import { AdminRoleCapability } from "../src/modules/admin/models/admin-role-capability.model.js";
+// Static on purpose: imported inside beforeAll, the plugin-routes graph
+// loaded on the hook's 10s budget, and under full-suite load the hook
+// timed out (#235).
+import { registerPluginRoutes } from "../src/modules/plugin-system/plugin-routes.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -93,16 +100,20 @@ function hashSecret(cleartext: string): string {
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
 
-let server: import("fastify").FastifyInstance;
+let server: FastifyInstance;
 
 beforeAll(async () => {
-  await sequelize.sync({ force: true });
+  // The tables register and its audit touch, named: sequelize.sync()
+  // only creates the models registered so far, and run before the
+  // routes were imported it left the audit and capability tables out
+  // ("no such table" on every register). After the static import a full
+  // sync would cover all 21 models, every SQLite round trip waiting on
+  // the scheduler under full-suite load (#181, #235).
+  for (const model of [Plugin, PluginCapability, AdminRoleCapability, AdminAuditLog]) {
+    await model.sync({ force: true });
+  }
 
-  const fastify = (await import("fastify")).default;
-  const { registerPluginRoutes } =
-    await import("../src/modules/plugin-system/plugin-routes.js");
-
-  server = fastify({ logger: false });
+  server = Fastify({ logger: false });
 
   // Inject admin auth on every request.
   server.addHook("onRequest", (req, _reply, done) => {

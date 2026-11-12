@@ -19,7 +19,7 @@ vi.mock("../src/modules/bot-events/bot-event-log.js", () => ({
 
 import type { Client } from "discord.js";
 import Fastify, { type FastifyInstance } from "fastify";
-import { sequelize } from "../src/db.js";
+import { syncBehaviorRouteTables } from "./behavior-route-tables.js";
 import { registerBehaviorRoutes } from "../src/modules/behavior/behavior-routes.js";
 import { listAudit } from "../src/modules/admin/admin-audit.service.js";
 import { ReconcilerOwnedCommand } from "../src/modules/command-system/models/reconciler-owned-command.model.js";
@@ -89,7 +89,7 @@ function registered(): string[] | "root" | null {
 let server: FastifyInstance;
 
 beforeAll(async () => {
-  await sequelize.sync({ force: true });
+  await syncBehaviorRouteTables();
   server = Fastify({ logger: false });
   server.addHook("onRequest", async (request) => {
     request.authUserId = "admin";
@@ -395,26 +395,34 @@ describe("POST /api/behavior-commands/:id/convert-to-subcommands", () => {
   });
 });
 
+// One write flow per test: every admin write is ~30 serial SQLite round
+// trips, and under full-suite load the conversion and the three leaf
+// writes together (155) ran past the 5s test timeout (#235).
 describe("audit", () => {
-  it("records leaf writes and the conversion", async () => {
+  it("records the conversion", async () => {
     const { id, leafId } = await createCommand([leaf("")]);
     await server.inject({
       method: "POST",
       url: `/api/behavior-commands/${id}/convert-to-subcommands`,
       payload: { subcommand: "wake" },
     });
+    const [entry] = await listAudit({ limit: 1 });
+    expect([entry!.action, entry!.target]).toEqual(["behavior.command.convert", `command:${id}`]);
+    expect(entry!.context).toMatchObject({ behaviorId: leafId(""), subcommand: "wake" });
+  });
+
+  it("records leaf writes", async () => {
+    const { id } = await createCommand([leaf("wake")]);
     const added = (await addLeaf(id, leaf("status"))).json().behavior.id;
     await patchLeaf(added, { leafDescription: "Status" });
     await deleteLeaf(added);
-    const entries = (await listAudit({ limit: 4 })).reverse();
+    const entries = (await listAudit({ limit: 3 })).reverse();
     expect(entries.map((e) => [e.action, e.target])).toEqual([
-      ["behavior.command.convert", `command:${id}`],
       ["behavior.create", `behavior:${added}`],
       ["behavior.update", `behavior:${added}`],
       ["behavior.delete", `behavior:${added}`],
     ]);
-    expect(entries[0]!.context).toMatchObject({ behaviorId: leafId(""), subcommand: "wake" });
-    expect(entries[2]!.context).toMatchObject({
+    expect(entries[1]!.context).toMatchObject({
       kind: "command_leaf",
       changed: { leafDescription: { from: null, to: "Status" } },
       registration: "registered",
