@@ -37,10 +37,12 @@ import {
 import { shouldRecord } from "../bot-events/bot-event-dedup.js";
 import {
   HostPolicyError,
+  resolvePluginTarget,
   resolveWebhookTarget,
   type WebhookTarget,
 } from "../../utils/host-policy.js";
 import { createPinnedAgent, type PinnedAddress } from "../../utils/pinned-dispatcher.js";
+import { effectivePort } from "@karyl-chan/voice/net";
 import { webhookAllowlist } from "../../config.js";
 import type { AllowlistEntry } from "../../utils/webhook-allowlist.js";
 import { decryptSecret } from "../../utils/crypto.js";
@@ -55,7 +57,8 @@ import {
   type ReplyAttachment,
   type ReplyNote,
 } from "./behavior-reply.js";
-import type { ReplyFile, ReplyFilesResult } from "./reply-files.js";
+import type { ReplyFile, ReplyFileFetcher, ReplyFilesResult } from "./reply-files.js";
+import type { PluginRow } from "../plugin-system/models/plugin.model.js";
 
 const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
@@ -192,6 +195,9 @@ export interface ForwardOptions {
   test?: boolean;
 }
 
+/** A webhook's default forward timeout: one POST, or one batch of its reply's files. */
+const FORWARD_TIMEOUT_MS = 10_000;
+
 // ── WebhookForwarder ─────────────────────────────────────────────────────────
 
 export class WebhookForwarder {
@@ -204,7 +210,7 @@ export class WebhookForwarder {
    */
   constructor(
     private readonly allowlist: readonly AllowlistEntry[] = webhookAllowlist,
-    private readonly timeoutMs: number = 10_000,
+    private readonly timeoutMs: number = FORWARD_TIMEOUT_MS,
   ) {}
 
   /**
@@ -284,9 +290,10 @@ export class WebhookForwarder {
    *
    * At most MAX_DOWNLOAD_BATCHES batches download at a time across the
    * process (each may hold up to the total cap), and at most one per
-   * behavior, so one slow receiver can't take every turn. A batch waits
-   * for its turns within its own timeout, and fails when it ends first;
-   * the target check counts against that timeout too.
+   * behavior (or plugin: DownloadOwner), so one slow receiver can't take
+   * every turn. A batch waits for its turns within its own timeout, and
+   * fails when it ends first; the target check counts against that
+   * timeout too.
    */
   async fetchReplyFiles(
     action: BehaviorWebhookActionRow,
@@ -305,7 +312,7 @@ export class WebhookForwarder {
       };
     }
     return downloadReplyFiles({
-      behaviorId: action.behaviorId,
+      owner: { behaviorId: action.behaviorId },
       base: origin,
       attachments,
       timeoutMs: this.timeoutMs,
@@ -576,25 +583,36 @@ class Turns {
   }
 }
 
+/**
+ * Whose files a batch downloads, for its turn: a behavior's run (a
+ * webhook's or a plugin action's reply), or a plugin's own RPC message
+ * (#214). Each has one batch in flight at a time.
+ */
+export type DownloadOwner = { behaviorId: number } | { pluginId: number };
+
 /** Reply attachment downloads in flight, process-wide (#156). */
 const downloadTurns = new Turns(MAX_DOWNLOAD_BATCHES);
-/** One download in flight per behavior; a key goes when it is idle. */
-const behaviorDownloadTurns = new Map<number, Turns>();
+/** One download in flight per owner (ownerKey); a key goes when it is idle. */
+const ownerDownloadTurns = new Map<string, Turns>();
+
+const ownerKey = (owner: DownloadOwner): string =>
+  "behaviorId" in owner ? `behavior:${owner.behaviorId}` : `plugin:${owner.pluginId}`;
 
 /**
- * A turn to download a behavior's reply files: the behavior's own first
- * (so its second batch waits without holding a process-wide turn), then
- * a process-wide one. Resolves the release, or null when `signal` ended
+ * A turn to download an owner's files: the owner's own first (so its
+ * second batch waits without holding a process-wide turn), then a
+ * process-wide one. Resolves the release, or null when `signal` ended
  * the wait.
  */
-async function takeDownloadTurn(behaviorId: number, signal: AbortSignal): Promise<(() => void) | null> {
-  let own = behaviorDownloadTurns.get(behaviorId);
+async function takeDownloadTurn(owner: DownloadOwner, signal: AbortSignal): Promise<(() => void) | null> {
+  const key = ownerKey(owner);
+  let own = ownerDownloadTurns.get(key);
   if (!own) {
     own = new Turns(1);
-    behaviorDownloadTurns.set(behaviorId, own);
+    ownerDownloadTurns.set(key, own);
   }
   const forget = () => {
-    if (own.idle && behaviorDownloadTurns.get(behaviorId) === own) behaviorDownloadTurns.delete(behaviorId);
+    if (own.idle && ownerDownloadTurns.get(key) === own) ownerDownloadTurns.delete(key);
   };
   if (!(await own.take(signal))) {
     forget();
@@ -614,11 +632,12 @@ async function takeDownloadTurn(behaviorId: number, signal: AbortSignal): Promis
 
 /** One batch of a reply's attachments to download from one base URL. */
 export interface ReplyFilesDownload {
-  behaviorId: number;
+  /** Whose turn the batch takes. */
+  owner: DownloadOwner;
   /**
    * What every path is appended to: a webhook URL's origin, or a plugin's
    * registered URL with its path prefix (#203), as the plugin RPC's own
-   * attachments are (`<plugin.url><path>`). A file must stay under it.
+   * attachments are (`<plugin.url><path>`, #214). A file must stay under it.
    */
   base: URL;
   attachments: readonly ReplyAttachment[];
@@ -631,8 +650,9 @@ export interface ReplyFilesDownload {
  * Download a reply's attachments from under `base` (#156) under the rules
  * of fetchReplyFiles — a download turn, the base's target policy, a
  * connection pinned to the vetted addresses, no redirects, the caps, one
- * timeout for the batch. Shared by a webhook's run and a plugin action's
- * (#203), which differ only in the base and its policy. Never throws.
+ * timeout for the batch. Shared by a webhook's run, a plugin action's
+ * (#203) and a plugin's RPC messages (#214), which differ only in the
+ * owner, the base and its policy. Never throws.
  */
 export async function downloadReplyFiles(batch: ReplyFilesDownload): Promise<ReplyFilesResult> {
   const { base, attachments } = batch;
@@ -640,7 +660,7 @@ export async function downloadReplyFiles(batch: ReplyFilesDownload): Promise<Rep
   if (problem) return { ok: false, error: problem };
   if (attachments.length === 0) return { ok: true, files: [] };
   const signal = AbortSignal.timeout(batch.timeoutMs);
-  const release = await takeDownloadTurn(batch.behaviorId, signal);
+  const release = await takeDownloadTurn(batch.owner, signal);
   if (!release) {
     return { ok: false, error: "timed out waiting for a download slot (the bot is downloading other replies' files)" };
   }
@@ -672,6 +692,51 @@ export async function downloadReplyFiles(batch: ReplyFilesDownload): Promise<Rep
   } finally {
     release();
   }
+}
+
+/** How long one batch of a plugin's files may take: a webhook's default forward timeout. */
+export const PLUGIN_FILE_TIMEOUT_MS = FORWARD_TIMEOUT_MS;
+
+/**
+ * Files from a plugin come from under its registered URL, path prefix
+ * included — `<plugin.url><path>` — under the plugin target policy,
+ * pinned to the addresses it vetted, with a webhook's caps, turns and
+ * timeout; a path that climbs out of the prefix is refused. A plugin
+ * action's reply attachments (#203, owner: the behavior) and a plugin
+ * RPC's own (plugin-rpc-routes.ts, #214, owner: the plugin) both come
+ * through here.
+ */
+export function pluginReplyFileFetcher(
+  plugin: PluginRow,
+  owner: DownloadOwner,
+  timeoutMs: number,
+): ReplyFileFetcher {
+  // parsed once, so the fetcher (a callback token may keep it) holds only the base
+  const base = pluginFileBase(plugin.url);
+  return async (attachments) => {
+    if (typeof base === "string") return { ok: false, error: base };
+    return downloadReplyFiles({
+      owner,
+      base,
+      attachments,
+      timeoutMs,
+      resolveAddresses: (o) => resolvePluginTarget(o.hostname, effectivePort(o)),
+    });
+  };
+}
+
+/** A plugin URL without its query and hash, or why it can't be a file base. */
+function pluginFileBase(url: string): URL | string {
+  let base: URL;
+  try {
+    base = new URL(url);
+  } catch {
+    return "the plugin's URL is unusable";
+  }
+  if (base.protocol !== "http:" && base.protocol !== "https:") return "the plugin's URL is not http(s)";
+  base.search = "";
+  base.hash = "";
+  return base;
 }
 
 /** `promise`, or a rejection with the signal's reason once it aborts. */
