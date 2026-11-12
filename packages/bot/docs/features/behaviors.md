@@ -309,7 +309,9 @@ from, where it went and the command it joined or left.
 ## The system login
 
 The **system login** (the System Behavior) is a fixed behavior that
-sends a one-time login link for the admin UI. It is the owner's only way
+sends a short-lived login link for the admin UI (`JWT_LOGIN_LINK_TTL_MS`,
+5 minutes by default; it works more than once until it expires). It is
+the owner's only way
 in, and Karyl-chan is also the login provider for other self-hosted
 services, so it is protected against changes that would lock the owner
 out.

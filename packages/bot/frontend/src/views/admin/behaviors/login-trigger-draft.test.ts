@@ -32,7 +32,7 @@ describe('login trigger draft', () => {
     });
 
     it("offers the login command's own description", () => {
-        expect(DEFAULT_LOGIN_COMMAND.description).toBe('取得 admin 後台一次性登入連結(僅授權使用者)');
+        expect(DEFAULT_LOGIN_COMMAND.description).toBe('取得 admin 後台登入連結(僅授權使用者)');
     });
 
     it('a command login keeps `!login` ready for switching back', () => {

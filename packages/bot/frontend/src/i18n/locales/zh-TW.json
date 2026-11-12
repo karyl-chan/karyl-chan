@@ -306,7 +306,7 @@
         "noTokenLead": "如要登入,請傳私訊給機器人:",
         "noTokenLeadCommand": "如要登入，請使用機器人的這個指令：",
         "noTokenLeadUnknown": "如要登入，請照管理員設定的方式向機器人取得登入連結。",
-        "noTokenHint": "機器人會回覆一次性登入連結,請在此瀏覽器開啟。",
+        "noTokenHint": "機器人會回覆短時間內有效的登入連結,請在此瀏覽器開啟。",
         "errorHint": "請再次傳 {login} 給機器人以取得新連結。",
         "errorHintCommand": "請再次使用 {login} 以取得新連結。",
         "errorHintUnknown": "請再次向機器人取得新連結。",

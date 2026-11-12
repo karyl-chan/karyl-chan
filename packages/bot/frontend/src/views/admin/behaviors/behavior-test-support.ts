@@ -191,7 +191,7 @@ export function systemLoginCommand(overrides: Partial<CommandView> = {}): Comman
     return savedCommand({
         id: 9,
         name: 'login',
-        description: '取得 admin 後台一次性登入連結(僅授權使用者)',
+        description: '取得 admin 後台登入連結(僅授權使用者)',
         isSystem: true,
         leaves: [
             savedLeaf({

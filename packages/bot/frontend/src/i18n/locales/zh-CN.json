@@ -306,7 +306,7 @@
         "noTokenLead": "如需登录,请向机器人发送私信:",
         "noTokenLeadCommand": "如需登录，请使用机器人的这个指令：",
         "noTokenLeadUnknown": "如需登录，请按管理员设置的方式向机器人获取登录链接。",
-        "noTokenHint": "机器人会回复一次性登录链接,请在此浏览器打开。",
+        "noTokenHint": "机器人会回复短时间内有效的登录链接,请在此浏览器打开。",
         "errorHint": "再次向机器人发送 {login} 以获取新链接。",
         "errorHintCommand": "请再次使用 {login} 以获取新链接。",
         "errorHintUnknown": "请再次向机器人获取新链接。",

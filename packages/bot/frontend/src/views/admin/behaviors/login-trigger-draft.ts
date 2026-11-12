@@ -64,7 +64,7 @@ export const LOGIN_COMMAND_REQUIRED = {
 export const DEFAULT_LOGIN_MESSAGE = { patternKind: 'startswith', patternValue: '!login' } as const;
 export const DEFAULT_LOGIN_COMMAND = {
     name: 'login',
-    description: '取得 admin 後台一次性登入連結(僅授權使用者)',
+    description: '取得 admin 後台登入連結(僅授權使用者)',
     integrationTypes: LOGIN_COMMAND_REQUIRED.integrationTypes,
     contexts: LOGIN_COMMAND_REQUIRED.contexts,
 };

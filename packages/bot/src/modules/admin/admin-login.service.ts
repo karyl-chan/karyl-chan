@@ -4,7 +4,7 @@ import { botEventLog } from "../bot-events/bot-event-log.js";
 import { publicBaseUrl } from "../web-core/public-base-url.js";
 
 /**
- * Admin login link issuance: resolve the caller's role, sign a one-time
+ * Admin login link issuance: resolve the caller's role, sign a short-lived
  * login token, build the admin URL. The system login's built-in action
  * (command-system/builtin-login-action.ts) turns the result into a
  * behavior reply; the ReplyRenderer delivers it like any other reply.
