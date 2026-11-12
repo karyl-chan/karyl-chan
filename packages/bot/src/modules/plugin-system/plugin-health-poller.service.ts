@@ -15,6 +15,7 @@ import {
   assertPluginTarget,
   HostPolicyError,
 } from "../../utils/host-policy.js";
+import { effectivePort } from "@karyl-chan/voice/net";
 
 /**
  * Periodic health prober.
@@ -59,13 +60,8 @@ async function probeOne(plugin: PluginRow): Promise<void> {
   const url = resolveHealthUrl(plugin, manifest);
   if (!url) return;
   const parsedUrl = new URL(url);
-  const port = parsedUrl.port
-    ? Number(parsedUrl.port)
-    : parsedUrl.protocol === "https:"
-      ? 443
-      : 80;
   try {
-    await assertPluginTarget(parsedUrl.hostname, port);
+    await assertPluginTarget(parsedUrl.hostname, effectivePort(parsedUrl));
   } catch (err) {
     if (!(err instanceof HostPolicyError)) throw err;
     // Treat host-policy refusal as unhealthy — operators see this in

@@ -41,6 +41,7 @@ import {
   type PluginDispatcher,
 } from "../plugin-system/plugin-dispatch.service.js";
 import { declaredBehaviorActions } from "../plugin-system/plugin-behavior-actions.js";
+import { effectivePort } from "@karyl-chan/voice/net";
 import { resolvePluginTarget } from "../../utils/host-policy.js";
 import { behaviorCallbackTokens, callbackMetaOf } from "./behavior-callback-token.js";
 import { failRun, recordRun, showDeferred } from "./behavior-run.js";
@@ -102,8 +103,7 @@ export function pluginReplyFileFetcher(
       base,
       attachments,
       timeoutMs,
-      resolveAddresses: (o) =>
-        resolvePluginTarget(o.hostname, o.port ? Number(o.port) : o.protocol === "https:" ? 443 : 80),
+      resolveAddresses: (o) => resolvePluginTarget(o.hostname, effectivePort(o)),
     });
   };
 }

@@ -6,6 +6,7 @@ import {
   assertPluginTarget,
   HostPolicyError,
 } from "../../utils/host-policy.js";
+import { effectivePort } from "@karyl-chan/voice/net";
 import { getServiceDiscovery } from "../../adapters/registry.js";
 
 /** Regex that matches valid pluginKey values (same constraint as plugin.id at register time). */
@@ -278,13 +279,8 @@ export async function registerPluginProxy(
       // The check runs on the resolved endpoint (an IP under DNS-SD), so
       // host-policy still vets the concrete address being connected to.
       const parsedUrl = new URL(chosenBase);
-      const upstreamPort = parsedUrl.port
-        ? Number(parsedUrl.port)
-        : parsedUrl.protocol === "https:"
-          ? 443
-          : 80;
       try {
-        await assertPluginTarget(parsedUrl.hostname, upstreamPort);
+        await assertPluginTarget(parsedUrl.hostname, effectivePort(parsedUrl));
       } catch (err) {
         if (err instanceof HostPolicyError) {
           reply.code(502).send({ error: "plugin target not allowed" });
