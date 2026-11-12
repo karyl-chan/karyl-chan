@@ -63,6 +63,15 @@ export class AuthStore {
   private refresh = new Map<string, RefreshRecord>();
   private sseTickets = new Map<string, SseTicketRecord>();
   /**
+   * `jti`s of login links already exchanged, mapped to the link's own
+   * expiry (ms). A login link is single-use (#216): once exchanged its
+   * `jti` stays here until the token could no longer verify anyway, so
+   * a replay inside the link's lifetime is refused. Not owner-scoped —
+   * {@link revokeOwner} leaves it alone, or a revoke would reopen used
+   * links.
+   */
+  private usedLoginJtis = new Map<string, number>();
+  /**
    * Hashes of recently-rotated refresh tokens, keyed by the
    * pre-rotation hash. If a caller presents one of these we know
    * (a) it WAS valid recently and (b) it isn't valid now — i.e. an
@@ -204,6 +213,24 @@ export class AuthStore {
     return record.ownerId;
   }
 
+  /**
+   * Use up a login link's `jti`. True the first time a given `jti` is
+   * presented (it is then remembered until `expiresAt`, the link's own
+   * expiry); false while it is remembered. Like {@link consumeSseTicket}
+   * the check-and-record is one synchronous step, so two concurrent
+   * exchanges of one link can't both win.
+   */
+  consumeLoginJti(
+    jti: string,
+    expiresAt: number,
+    now: number = Date.now(),
+  ): boolean {
+    const usedUntil = this.usedLoginJtis.get(jti);
+    if (usedUntil !== undefined && usedUntil > now) return false;
+    this.usedLoginJtis.set(jti, expiresAt);
+    return true;
+  }
+
   revokeAccess(token: string): boolean {
     // In-process access tokens give us the luxury real JWTs don't — a
     // logout can actually invalidate the presented access token, not
@@ -243,6 +270,9 @@ export class AuthStore {
     }
     for (const [key, record] of this.rotatedRefresh) {
       if (record.expiresAt <= now) this.rotatedRefresh.delete(key);
+    }
+    for (const [jti, expiresAt] of this.usedLoginJtis) {
+      if (expiresAt <= now) this.usedLoginJtis.delete(jti);
     }
     if (this.adapter) {
       void this.adapter.deleteExpired(now).catch(() => {});

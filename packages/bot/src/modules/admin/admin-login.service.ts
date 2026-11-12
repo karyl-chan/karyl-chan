@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { jwtService } from "../web-core/jwt.service.js";
 import { resolveLoginRole } from "./authorized-user.service.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
@@ -43,6 +44,8 @@ export async function mintLoginLink(
     // shouldn't conflate). Easiest fix: synthesize a stable sentinel
     // so the audit trail still has SOMETHING the verify side accepts.
     messageId: ctx.messageId ?? `slash:${ctx.channelId}:${userId}`,
+    // Single-use: /api/auth/exchange takes each jti once (#216).
+    jti: randomUUID(),
   });
   const url = `${publicBaseUrl()}/admin/auth?token=${encodeURIComponent(token)}`;
   const minutesUntilExpiry = Math.max(

@@ -30,6 +30,7 @@ import {
   createDecipheriv,
   createHash,
   createPrivateKey,
+  randomUUID,
   sign as cryptoSign,
 } from "node:crypto";
 import { createServer } from "node:net";
@@ -164,6 +165,8 @@ function mintLoginJwt(privateKeyB64Der: string, userId: string): string {
     purpose: "login",
     userId,
     guildId: null,
+    // Login links are single-use (#216): each carries its own jti.
+    jti: randomUUID(),
     iat: Math.floor(now / 1000),
     exp: Math.floor((now + 5 * 60_000) / 1000),
   };
@@ -278,6 +281,12 @@ describe("admin auth + builtin feature E2E (PM-2.2, paths 1+2)", { skip: !DB_URL
       token: loginJwt,
     });
     assert.equal(exchange.status, 200, `exchange: ${JSON.stringify(exchange.body)}`);
+    // The same link again is refused: login links are single-use (#216).
+    assert.equal(
+      (await api("POST", `${botUrl}/api/auth/exchange`, { token: loginJwt })).status,
+      401,
+      "a login link must not exchange twice",
+    );
     const tokens = exchange.body as {
       accessToken: string;
       refreshToken: string;

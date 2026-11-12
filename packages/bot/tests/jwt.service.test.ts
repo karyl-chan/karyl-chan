@@ -203,6 +203,48 @@ describe("JwtService (Ed25519)", () => {
     });
   });
 
+  describe("jti (#216)", () => {
+    it("round-trips a jti, and leaves it out when none was signed", () => {
+      const svc = new JwtService(newKey());
+      const withJti = svc.sign({ ...loginClaims, jti: "link-1" }).token;
+      expect(svc.verify(withJti)).toEqual({ ...loginClaims, jti: "link-1" });
+      expect(svc.verify(svc.sign(loginClaims).token)).not.toHaveProperty("jti");
+    });
+
+    it("rejects a signed token whose jti is not a non-empty string", () => {
+      const key = newKey();
+      const svc = new JwtService(key);
+      const signRaw = (body: object) => {
+        const h = b64u(JSON.stringify({ alg: "EdDSA", typ: "JWT" }));
+        const b = b64u(JSON.stringify(body));
+        const sig = b64u(cryptoSign(null, Buffer.from(`${h}.${b}`), key));
+        return `${h}.${b}.${sig}`;
+      };
+      const exp = Math.floor(Date.now() / 1000) + 60;
+      for (const jti of [42, "", null]) {
+        expect(svc.verify(signRaw({ ...loginClaims, jti, exp }))).toBeNull();
+      }
+      expect(svc.verify(signRaw({ ...loginClaims, jti: "ok", exp }))).toEqual({
+        ...loginClaims,
+        jti: "ok",
+      });
+    });
+
+    it("verifyWithExpiry also returns exp in ms", () => {
+      const svc = new JwtService(newKey());
+      const now = 1_700_000_000_000;
+      const { token, expiresAt } = svc.sign(
+        { ...loginClaims, jti: "link-2" },
+        { now, ttlMs: 60_000 },
+      );
+      expect(svc.verifyWithExpiry(token, { now: now + 1000 })).toEqual({
+        claims: { ...loginClaims, jti: "link-2" },
+        expiresAt,
+      });
+      expect(svc.verifyWithExpiry(token, { now: expiresAt })).toBeNull();
+    });
+  });
+
   describe("per-plugin session keys", () => {
     // Mirror what @karyl-chan/plugin-sdk's verifyPluginSession does at the
     // crypto layer: verify the JWS signature of `header.body` against an

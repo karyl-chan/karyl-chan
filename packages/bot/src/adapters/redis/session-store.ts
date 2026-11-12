@@ -17,6 +17,8 @@
  *                                          PX = (expiresAt - now)
  *   karyl:session:rotated:<tokenHash>    → JSON `{ ownerId, expiresAt }`
  *                                          PX = REFRESH_REUSE_WINDOW_MS
+ *   karyl:session:loginjti:<jti>         → "1", SET NX
+ *                                          PX = (login link exp - now)
  *   karyl:session:owner:<ownerId>:tokens → Set of `access:|refresh:|ssetkt:` keys
  *
  * The owner→tokens index is what lets `revokeOwner(ownerId)` work
@@ -60,6 +62,7 @@ const accessKey = (hash: string) => `${PREFIX}access:${hash}`;
 const refreshKey = (hash: string) => `${PREFIX}refresh:${hash}`;
 const sseKey = (hash: string) => `${PREFIX}ssetkt:${hash}`;
 const rotatedKey = (hash: string) => `${PREFIX}rotated:${hash}`;
+const loginJtiKey = (jti: string) => `${PREFIX}loginjti:${jti}`;
 const ownerIndexKey = (ownerId: string) =>
   `${PREFIX}owner:${ownerId}:tokens`;
 
@@ -243,6 +246,20 @@ export class RedisSessionStore implements SessionStore {
     if (!rec) return null;
     if (rec.expiresAt <= now) return null;
     return rec.ownerId;
+  }
+
+  async consumeLoginJti(
+    jti: string,
+    expiresAt: number,
+    now: number = Date.now(),
+  ): Promise<boolean> {
+    // A link past its expiry no longer verifies, so there is nothing
+    // to remember; keep at least 1 ms so PX stays valid.
+    const ttlMs = Math.max(1, expiresAt - now);
+    // SET NX is the atomic check-and-record: only the first exchange
+    // of a jti gets "OK".
+    const res = await this.redis.set(loginJtiKey(jti), "1", "PX", ttlMs, "NX");
+    return res === "OK";
   }
 
   stop(): void {

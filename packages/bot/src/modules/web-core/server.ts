@@ -489,8 +489,8 @@ export async function createWebServer(
       // up to a full session here. Tampered / stale / wrong-purpose
       // all collapse into a generic 401 so we don't hand probers a
       // useful distinction.
-      const claims = jwt.verify(loginToken, { purpose: "login" });
-      if (!claims) {
+      const verified = jwt.verifyWithExpiry(loginToken, { purpose: "login" });
+      if (!verified) {
         const ip = clientKey(request);
         if (shouldRecord(`jwtReject:${ip}`)) {
           botEventLog.record(
@@ -498,6 +498,24 @@ export async function createWebServer(
             "auth",
             "Login token rejected (invalid/expired)",
             { ip },
+          );
+        }
+        reply.code(401).send({ error: "Invalid or expired token" });
+        return;
+      }
+      const { claims } = verified;
+      // A login link is single-use (#216), which needs its `jti`. Links
+      // minted before that change have none — refuse them like any
+      // invalid token; the user just asks for a new link.
+      const jti = claims.jti;
+      if (!jti) {
+        const ip = clientKey(request);
+        if (shouldRecord(`jwtNoJti:${ip}`)) {
+          botEventLog.record(
+            "warn",
+            "auth",
+            "Login token rejected (no jti)",
+            { ip, userId: claims.userId },
           );
         }
         reply.code(401).send({ error: "Invalid or expired token" });
@@ -530,6 +548,24 @@ export async function createWebServer(
           },
         );
         reply.code(401).send({ error: "User no longer authorized" });
+        return;
+      }
+      // Stage 3 — the link must not have been exchanged before. Only
+      // now is the jti used up: a forged signature or a deauthorized
+      // user (both refused above) leaves it untouched.
+      if (!(await auth.consumeLoginJti(jti, verified.expiresAt))) {
+        botEventLog.record(
+          "warn",
+          "auth",
+          `Login link reused: ${claims.userId}`,
+          {
+            userId: claims.userId,
+            jti,
+            guildId: claims.guildId,
+            channelId: claims.channelId,
+          },
+        );
+        reply.code(401).send({ error: "Invalid or expired token" });
         return;
       }
       try {
