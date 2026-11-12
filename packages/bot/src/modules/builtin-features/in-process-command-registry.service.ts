@@ -438,16 +438,7 @@ export async function dispatchInProcessInteraction(
         `in-process command '${interaction.commandName}' threw: ${msg}`,
         { commandName: interaction.commandName, userId: interaction.user.id },
       );
-      // Best-effort error reply if we haven't already replied — keeps
-      // the interaction from hanging on "loading…".
-      if (!interaction.replied && !interaction.deferred) {
-        await interaction
-          .reply({
-            content: tForInteraction(interaction, "common.command-failed"),
-            flags: "Ephemeral",
-          })
-          .catch(() => {});
-      }
+      await sendFailureReply(interaction, "common.command-failed");
     }
     return true;
   }
@@ -464,18 +455,37 @@ export async function dispatchInProcessInteraction(
         `in-process modal '${interaction.customId}' threw: ${msg}`,
         { customId: interaction.customId, userId: interaction.user.id },
       );
-      if (!interaction.replied && !interaction.deferred) {
-        await interaction
-          .reply({
-            content: tForInteraction(interaction, "common.modal-failed"),
-            flags: "Ephemeral",
-          })
-          .catch(() => {});
-      }
+      await sendFailureReply(interaction, "common.modal-failed");
     }
     return true;
   }
   return false;
+}
+
+/**
+ * Best-effort failure message after a handler threw — keeps the
+ * interaction from hanging on "loading…" / "thinking…".
+ *   - already replied → leave the handler's reply alone.
+ *   - deferred (deferReply, not yet edited) → editReply the deferred
+ *     message; a fresh reply() would throw InteractionAlreadyReplied
+ *     and the user would stare at "thinking…" until Discord times out
+ *     (#179). Ephemerality was fixed at defer time, so no flags here.
+ *   - not acked → ephemeral reply.
+ * Note: discord.js reports deferUpdate() as `deferred` too, where
+ * editReply would overwrite the source message. No in-process handler
+ * deferUpdate()s today; revisit if one starts to.
+ */
+async function sendFailureReply(
+  interaction: ChatInputCommandInteraction | ModalSubmitInteraction,
+  key: "common.command-failed" | "common.modal-failed",
+): Promise<void> {
+  if (interaction.replied) return;
+  const content = tForInteraction(interaction, key);
+  if (interaction.deferred) {
+    await interaction.editReply({ content }).catch(() => {});
+    return;
+  }
+  await interaction.reply({ content, flags: "Ephemeral" }).catch(() => {});
 }
 
 /** Test-only — clear all registered handlers between tests. */
