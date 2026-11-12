@@ -3,7 +3,6 @@ import {
   afterAll,
   afterEach,
   beforeAll,
-  beforeEach,
   describe,
   expect,
   it,
@@ -13,7 +12,7 @@ import type { Client } from "discord.js";
 import { mkdtempSync, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { generateKeyPairSync, randomUUID } from "crypto";
+import { generateKeyPairSync } from "crypto";
 
 // Pin the shared sequelize singleton to in-memory SQLite *before* any
 // import below pulls db.ts into the module graph. Without this, the
@@ -325,7 +324,7 @@ describe("web server", () => {
     });
 
     it("exchanges a valid login JWT for access + refresh tokens", async () => {
-      const { token } = jwt.sign({ ...baseClaims, jti: randomUUID() });
+      const { token } = jwt.sign(baseClaims);
       const response = await server.inject({
         method: "POST",
         url: "/api/auth/exchange",
@@ -372,82 +371,6 @@ describe("web server", () => {
         payload: { token },
       });
       expect(response.statusCode).toBe(401);
-    });
-
-    // #216: a login link is single-use — a successful exchange uses up
-    // its jti.
-    describe("single-use login links (#216)", () => {
-      // The exchange rate limit is module-level and per IP (10/min);
-      // each test gets its own source IP so the file's exchanges don't
-      // add up to it.
-      let testIndex = 0;
-      let remoteAddress = "";
-      beforeEach(() => {
-        testIndex += 1;
-        remoteAddress = `198.51.100.${100 + testIndex}`;
-      });
-      afterEach(() => {
-        vi.restoreAllMocks();
-      });
-
-      const exchange = (token: string) =>
-        server.inject({
-          method: "POST",
-          url: "/api/auth/exchange",
-          payload: { token },
-          remoteAddress,
-        });
-
-      it("accepts a login link once and refuses the second exchange", async () => {
-        const { token } = jwt.sign({ ...baseClaims, jti: randomUUID() });
-        expect((await exchange(token)).statusCode).toBe(200);
-        const again = await exchange(token);
-        expect(again.statusCode).toBe(401);
-      });
-
-      it("records a bot event with userId and jti when a link is reused", async () => {
-        const jti = randomUUID();
-        const { token } = jwt.sign({ ...baseClaims, jti });
-        expect((await exchange(token)).statusCode).toBe(200);
-        const recordSpy = vi.spyOn(botEventLog, "record");
-        expect((await exchange(token)).statusCode).toBe(401);
-        const reuse = recordSpy.mock.calls.filter(
-          (call) =>
-            call[1] === "auth" &&
-            (call[3] as { jti?: string } | undefined)?.jti === jti,
-        );
-        expect(reuse).toHaveLength(1);
-        expect(reuse[0][0]).toBe("warn");
-        expect(reuse[0][3]).toMatchObject({ userId: OWNER_ID, jti });
-      });
-
-      it("refuses a login token without a jti", async () => {
-        const { token } = jwt.sign(baseClaims);
-        expect((await exchange(token)).statusCode).toBe(401);
-      });
-
-      it("does not use up the jti when the signature fails", async () => {
-        const jti = randomUUID();
-        const otherJwt = new JwtService(
-          generateKeyPairSync("ed25519").privateKey,
-        );
-        const forged = otherJwt.sign({ ...baseClaims, jti }).token;
-        expect((await exchange(forged)).statusCode).toBe(401);
-        const { token } = jwt.sign({ ...baseClaims, jti });
-        expect((await exchange(token)).statusCode).toBe(200);
-      });
-
-      it("does not use up the jti when the user is no longer authorized", async () => {
-        const jti = randomUUID();
-        const denied = jwt.sign({
-          ...baseClaims,
-          userId: "someone-else",
-          jti,
-        }).token;
-        expect((await exchange(denied)).statusCode).toBe(401);
-        const { token } = jwt.sign({ ...baseClaims, jti });
-        expect((await exchange(token)).statusCode).toBe(200);
-      });
     });
 
     it("rejects a JWT minted for a different purpose", async () => {
@@ -648,7 +571,7 @@ describe("web server", () => {
       );
       const recordSpy = vi.spyOn(botEventLog, "record");
 
-      const { token } = jwt.sign({ ...baseClaims, jti: randomUUID() });
+      const { token } = jwt.sign(baseClaims);
       const response = await server.inject({
         method: "POST",
         url: "/api/auth/exchange",

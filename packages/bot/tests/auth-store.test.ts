@@ -92,37 +92,6 @@ describe('AuthStore', () => {
         });
     });
 
-    describe('login link jti (#216)', () => {
-        it('takes a jti once and refuses it while the link could still verify', () => {
-            const now = Date.now();
-            expect(store.consumeLoginJti('jti-1', now + 60_000, now)).toBe(true);
-            expect(store.consumeLoginJti('jti-1', now + 60_000, now + 59_999)).toBe(false);
-            expect(store.consumeLoginJti('jti-2', now + 60_000, now)).toBe(true);
-        });
-
-        it('forgets a jti once the link has expired', () => {
-            const now = Date.now();
-            expect(store.consumeLoginJti('jti-1', now + 60_000, now)).toBe(true);
-            expect(store.consumeLoginJti('jti-1', now + 120_000, now + 60_000)).toBe(true);
-        });
-
-        it('the expiry sweep drops expired jtis only', () => {
-            const now = Date.now();
-            store.consumeLoginJti('old', now + 1_000, now);
-            store.consumeLoginJti('live', now + 60_000, now);
-            (store as unknown as { purgeExpired(now: number): void }).purgeExpired(now + 1_000);
-            const used = (store as unknown as { usedLoginJtis: Map<string, number> }).usedLoginJtis;
-            expect([...used.keys()]).toEqual(['live']);
-        });
-
-        it('revokeOwner does not reopen a used link', async () => {
-            const now = Date.now();
-            store.consumeLoginJti('jti-1', now + 60_000, now);
-            await store.revokeOwner(OWNER);
-            expect(store.consumeLoginJti('jti-1', now + 60_000, now)).toBe(false);
-        });
-    });
-
     describe('persistence via RefreshStoreAdapter', () => {
         function makeAdapter(): RefreshStoreAdapter & { records: Map<string, { ownerId: string; expiresAt: number }> } {
             const records = new Map<string, { ownerId: string; expiresAt: number }>();

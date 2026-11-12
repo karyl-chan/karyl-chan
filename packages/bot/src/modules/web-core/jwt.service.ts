@@ -77,9 +77,7 @@ const PLUGIN_SESSION_KEY_SALT = Buffer.from("karyl-plugin-session-sign-v1");
  * point of rotating a signing key.
  *
  * Stateless: a token validates iff its EdDSA signature checks out, its
- * `purpose` matches (when required), and its `exp` hasn't passed. That a
- * login link is taken only once is `/api/auth/exchange`'s job (it records
- * each used `jti`, #216), not this verifier's.
+ * `purpose` matches (when required), and its `exp` hasn't passed.
  *
  * Service tokens (#126) are the one other shape: tokens for self-hosted
  * services that log in through karyl. They are signed with the same
@@ -111,19 +109,6 @@ export interface JwtClaims {
    * can authorize offline; absent on other token kinds.
    */
   capabilities?: string[];
-  /**
-   * Token id (RFC 7519 `jti`). Login tokens carry a fresh one so
-   * `/api/auth/exchange` can take each link only once (#216); other
-   * token kinds leave it out.
-   */
-  jti?: string;
-}
-
-/** A verified token's claims plus its `exp`, for callers that track it. */
-export interface VerifiedJwt {
-  claims: JwtClaims;
-  /** `exp` in ms since epoch. */
-  expiresAt: number;
 }
 
 interface SignedPayload extends JwtClaims {
@@ -439,17 +424,6 @@ export class JwtService {
   }
 
   verify(token: string, options: VerifyOptions = {}): JwtClaims | null {
-    return this.verifyWithExpiry(token, options)?.claims ?? null;
-  }
-
-  /**
-   * {@link verify}, also returning the token's `exp` — for a caller that
-   * remembers the token (e.g. a used login `jti`) until it would expire.
-   */
-  verifyWithExpiry(
-    token: string,
-    options: VerifyOptions = {},
-  ): VerifiedJwt | null {
     const now = options.now ?? Date.now();
     if (typeof token !== "string") return null;
     const parts = token.split(".");
@@ -514,8 +488,6 @@ export class JwtService {
     ) {
       return null;
     }
-    if (p.jti !== undefined && (typeof p.jti !== "string" || !p.jti))
-      return null;
 
     // Purpose check is stricter than the structural ones — a token
     // minted for one flow (e.g., 'login') must not be presented at
@@ -523,7 +495,7 @@ export class JwtService {
     if (options.purpose !== undefined && p.purpose !== options.purpose)
       return null;
 
-    const claims: JwtClaims = {
+    return {
       purpose: p.purpose,
       userId: p.userId,
       guildId: p.guildId as string | null,
@@ -536,9 +508,7 @@ export class JwtService {
       ...(p.capabilities !== undefined
         ? { capabilities: p.capabilities as string[] }
         : {}),
-      ...(p.jti !== undefined ? { jti: p.jti as string } : {}),
     };
-    return { claims, expiresAt: p.exp * 1000 };
   }
 }
 
