@@ -51,7 +51,7 @@ import {
 // attachments download as a plugin action reply's do (#203, #214)
 import type { ReplyAttachment } from "../command-system/behavior-reply.js";
 import type { ReplyFile } from "../command-system/reply-files.js";
-import { pluginReplyFileFetcher } from "../command-system/plugin-action.js";
+import { pluginReplyFileFetcher } from "../command-system/webhook-forwarder.service.js";
 import {
   formatPluginRpcSchemaError,
   installPluginRpcSchemaErrors,

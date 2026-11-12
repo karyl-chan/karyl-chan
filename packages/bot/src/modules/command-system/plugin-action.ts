@@ -41,12 +41,10 @@ import {
   type PluginDispatcher,
 } from "../plugin-system/plugin-dispatch.service.js";
 import { declaredBehaviorActions } from "../plugin-system/plugin-behavior-actions.js";
-import { resolvePluginTarget } from "../../utils/host-policy.js";
 import { behaviorCallbackTokens, callbackMetaOf } from "./behavior-callback-token.js";
 import { failRun, recordRun, showDeferred } from "./behavior-run.js";
 import { renderFailure, type ReplyTarget } from "./reply-renderer.js";
-import type { ReplyFileFetcher } from "./reply-files.js";
-import { downloadReplyFiles, type DownloadOwner } from "./webhook-forwarder.service.js";
+import { pluginReplyFileFetcher } from "./webhook-forwarder.service.js";
 
 /** What a plugin action run needs from the plugin system; tests inject their own. */
 export interface PluginActionDeps {
@@ -71,42 +69,6 @@ export interface PluginActionRun {
   target: ReplyTarget;
   /** The behavior's stored reply default (replyVisibility). */
   visibility: ReplyVisibility | null;
-}
-
-/**
- * A plugin action's reply attachments (#156) come from under the plugin's
- * registered URL, path prefix included — `<plugin.url><path>`, as the
- * plugin RPC's own attachments (plugin-rpc-routes.ts, #214, which fetch
- * through here too, as the plugin's `owner`) — under the plugin target
- * policy, pinned to the addresses it vetted, with a webhook's caps, turns
- * and timeout; a path that climbs out of the prefix is refused.
- */
-export function pluginReplyFileFetcher(
-  plugin: PluginRow,
-  owner: DownloadOwner,
-  timeoutMs: number,
-): ReplyFileFetcher {
-  return async (attachments) => {
-    let base: URL;
-    try {
-      base = new URL(plugin.url);
-    } catch {
-      return { ok: false, error: "the plugin's URL is unusable" };
-    }
-    if (base.protocol !== "http:" && base.protocol !== "https:") {
-      return { ok: false, error: "the plugin's URL is not http(s)" };
-    }
-    base.search = "";
-    base.hash = "";
-    return downloadReplyFiles({
-      owner,
-      base,
-      attachments,
-      timeoutMs,
-      resolveAddresses: (o) =>
-        resolvePluginTarget(o.hostname, o.port ? Number(o.port) : o.protocol === "https:" ? 443 : 80),
-    });
-  };
 }
 
 /** Why a plugin can't take the run, before anything is dispatched; null when it can. */

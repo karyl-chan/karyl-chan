@@ -37,6 +37,7 @@ import {
 import { shouldRecord } from "../bot-events/bot-event-dedup.js";
 import {
   HostPolicyError,
+  resolvePluginTarget,
   resolveWebhookTarget,
   type WebhookTarget,
 } from "../../utils/host-policy.js";
@@ -55,7 +56,8 @@ import {
   type ReplyAttachment,
   type ReplyNote,
 } from "./behavior-reply.js";
-import type { ReplyFile, ReplyFilesResult } from "./reply-files.js";
+import type { ReplyFile, ReplyFileFetcher, ReplyFilesResult } from "./reply-files.js";
+import type { PluginRow } from "../plugin-system/models/plugin.model.js";
 
 const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
@@ -686,6 +688,43 @@ export async function downloadReplyFiles(batch: ReplyFilesDownload): Promise<Rep
   } finally {
     release();
   }
+}
+
+/**
+ * Files from a plugin come from under its registered URL, path prefix
+ * included — `<plugin.url><path>` — under the plugin target policy,
+ * pinned to the addresses it vetted, with a webhook's caps, turns and
+ * timeout; a path that climbs out of the prefix is refused. A plugin
+ * action's reply attachments (#203, owner: the behavior) and a plugin
+ * RPC's own (plugin-rpc-routes.ts, #214, owner: the plugin) both come
+ * through here.
+ */
+export function pluginReplyFileFetcher(
+  plugin: PluginRow,
+  owner: DownloadOwner,
+  timeoutMs: number,
+): ReplyFileFetcher {
+  return async (attachments) => {
+    let base: URL;
+    try {
+      base = new URL(plugin.url);
+    } catch {
+      return { ok: false, error: "the plugin's URL is unusable" };
+    }
+    if (base.protocol !== "http:" && base.protocol !== "https:") {
+      return { ok: false, error: "the plugin's URL is not http(s)" };
+    }
+    base.search = "";
+    base.hash = "";
+    return downloadReplyFiles({
+      owner,
+      base,
+      attachments,
+      timeoutMs,
+      resolveAddresses: (o) =>
+        resolvePluginTarget(o.hostname, o.port ? Number(o.port) : o.protocol === "https:" ? 443 : 80),
+    });
+  };
 }
 
 /** `promise`, or a rejection with the signal's reason once it aborts. */
