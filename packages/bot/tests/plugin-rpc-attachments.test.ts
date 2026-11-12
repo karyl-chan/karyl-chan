@@ -14,7 +14,7 @@
  *   - one batch per plugin at a time: a plugin's second call waits on its
  *     own turn without holding a process-wide one
  */
-import { createServer, type IncomingMessage, type Server } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -67,8 +67,30 @@ let port: number;
 const received: Array<{ url?: string; host?: string }> = [];
 /** Answers to /p/hold requests, sent when a test releases them, by `?who=`. */
 let held: Array<{ who: string; answer: () => void }> = [];
-/** Whether the 9 MiB stream was written out to the end. */
-let streamedToTheEnd = false;
+/** The streamed paths the plugin got to write out to the end. */
+const streamedToTheEnd = new Set<string>();
+
+/**
+ * Stream `mibs` MiB in 1 MiB chunks without a Content-Length (so a cap
+ * has to be counted while streaming), honouring backpressure: a reader
+ * that stops early leaves the rest unwritten.
+ */
+function streamMiBs(res: ServerResponse, path: string, mibs: number) {
+  res.writeHead(200, { "transfer-encoding": "chunked" });
+  res.on("error", () => {});
+  const chunk = Buffer.alloc(MiB, 2);
+  let sent = 0;
+  const pump = () => {
+    while (sent < mibs) {
+      sent += 1;
+      if (!res.write(chunk)) return void res.once("drain", pump);
+    }
+    res.end(() => {
+      streamedToTheEnd.add(path);
+    });
+  };
+  pump();
+}
 
 beforeAll(async () => {
   files = createServer((req: IncomingMessage, res) => {
@@ -79,24 +101,18 @@ beforeAll(async () => {
         res.writeHead(200, { "content-type": "image/png" });
         res.end("PNG-A");
         return;
-      case "/p/streamed-big": {
-        // no Content-Length: the cap has to be counted while streaming
-        res.writeHead(200, { "transfer-encoding": "chunked" });
-        const chunk = Buffer.alloc(MiB, 2);
-        let sent = 0;
-        const pump = () => {
-          while (sent < 9) {
-            sent += 1;
-            if (!res.write(chunk)) return void res.once("drain", pump);
-          }
-          res.end(() => {
-            streamedToTheEnd = true;
-          });
-        };
-        res.on("error", () => {});
-        pump();
+      case "/p/streamed-big":
+        streamMiBs(res, path, 9);
         return;
-      }
+      case "/p/seven-streamed":
+        streamMiBs(res, path, 7);
+        return;
+      case "/p/stall":
+        // headers and the start of a body, then nothing more
+        res.writeHead(200, { "transfer-encoding": "chunked" });
+        res.on("error", () => {});
+        res.write(Buffer.alloc(1024, 4));
+        return;
       case "/p/seven":
         res.writeHead(200, { "transfer-encoding": "chunked" });
         res.on("error", () => {});
@@ -170,7 +186,7 @@ beforeEach(async () => {
   vi.clearAllMocks();
   received.length = 0;
   held = [];
-  streamedToTheEnd = false;
+  streamedToTheEnd.clear();
   vi.spyOn(pluginAuthStore, "verify").mockImplementation((token: string) =>
     PLUGINS[token] === undefined
       ? null
@@ -311,7 +327,7 @@ describe("plugin RPC attachments — the download rules", () => {
     expect(res.statusCode).toBe(400);
     expect(res.json()).toEqual({ error: 'attachment error: attachment 1 ("x.bin"): larger than 8 MiB' });
     // the read stopped at the cap: the plugin never got to write all 9 MiB
-    expect(streamedToTheEnd).toBe(false);
+    expect(streamedToTheEnd.has("/p/streamed-big")).toBe(false);
     expect(send).not.toHaveBeenCalled();
   });
 
@@ -324,6 +340,24 @@ describe("plugin RPC attachments — the download rules", () => {
     expect(res.json()).toEqual({
       error: 'attachment error: attachment 4 ("3.bin"): the files together are larger than 25 MiB',
     });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("cuts the last file off mid-stream once the files together pass 25 MiB", async () => {
+    // 3 × 7 MiB fit; the fourth, each under 8 MiB, crosses the total 4 MiB in
+    const files = [
+      ...Array.from({ length: 3 }, (_, i) => ({ name: `${i}.bin`, path: "/seven" })),
+      { name: "3.bin", path: "/seven-streamed" },
+    ];
+    const res = await sendWith(files);
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({
+      error: 'attachment error: attachment 4 ("3.bin"): the files together are larger than 25 MiB',
+    });
+    expect(received.map((r) => r.url)).toEqual(["/p/seven", "/p/seven", "/p/seven", "/p/seven-streamed"]);
+    // the read stopped at the budget: the plugin never got to write all 7 MiB
+    expect(streamedToTheEnd.has("/p/seven-streamed")).toBe(false);
     expect(send).not.toHaveBeenCalled();
   });
 
@@ -351,6 +385,16 @@ describe("plugin RPC attachments — the download rules", () => {
 
     expect(res.statusCode).toBe(400);
     expect(res.json().error).toMatch(/^attachment error: attachment 1 \("x"\): network error: /);
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("gives up on a body that stalls mid-stream once the call's timeout passes", async () => {
+    const started = Date.now();
+    const res = await sendWith([{ name: "x", path: "/stall" }]);
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toMatch(/^attachment error: attachment 1 \("x"\): could not read it: /);
     expect(Date.now() - started).toBeLessThan(5000);
     expect(send).not.toHaveBeenCalled();
   });
