@@ -64,15 +64,23 @@ vi.mock(
   }),
 );
 
+import Fastify, { type FastifyInstance } from "fastify";
 import { sequelize } from "../src/db.js";
 import {
   Plugin,
   upsertPluginRegistration,
 } from "../src/modules/plugin-system/models/plugin.model.js";
 import { PluginKv } from "../src/modules/plugin-system/models/plugin-kv.model.js";
+import { PluginCommand } from "../src/modules/plugin-system/models/plugin-command.model.js";
+import { PluginConfig } from "../src/modules/plugin-system/models/plugin-config.model.js";
+import { PluginGuildFeature } from "../src/modules/feature-toggle/models/plugin-guild-feature.model.js";
 import { pluginEndpointRegistry } from "../src/modules/plugin-system/plugin-endpoint-registry.js";
+// Static on purpose: imported inside beforeAll, the plugin-routes graph
+// loaded on the hook's 10s budget, and under full-suite load the hook
+// timed out (#235).
+import { registerPluginRoutes } from "../src/modules/plugin-system/plugin-routes.js";
 
-let server: import("fastify").FastifyInstance;
+let server: FastifyInstance;
 
 const PLUGIN_KEY = "admin-reads-plugin";
 
@@ -109,14 +117,13 @@ async function seedPlugin(): Promise<number> {
 }
 
 beforeAll(async () => {
-  const fastify = (await import("fastify")).default;
-  // Import the routes BEFORE sync so every model they touch (plugin
-  // config, plugin commands, feature rows) is registered on the
-  // sequelize instance when the tables are created.
-  const { registerPluginRoutes } =
-    await import("../src/modules/plugin-system/plugin-routes.js");
-  await sequelize.sync({ force: true });
-  server = fastify({ logger: false });
+  // Only the tables these reads touch, not sequelize.sync(): the routes
+  // register 21 models, and every SQLite round trip of a full sync waits
+  // on the scheduler under full-suite load (#181, #235).
+  for (const model of [Plugin, PluginKv, PluginCommand, PluginConfig, PluginGuildFeature]) {
+    await model.sync({ force: true });
+  }
+  server = Fastify({ logger: false });
   server.addHook("onRequest", (req, _reply, done) => {
     (req as unknown as { authUserId: string }).authUserId = "admin-user";
     (req as unknown as { authCapabilities: Set<string> }).authCapabilities =
