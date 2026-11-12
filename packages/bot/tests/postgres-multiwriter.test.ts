@@ -34,9 +34,8 @@ describe.skipIf(!PG_URL)("PR-2.1 Postgres multi-writer", () => {
   let grantRoleCapability: (role: string, cap: string) => Promise<void>;
   let AdminRole: any;
   let AdminRoleCapability: any;
-  let seedMessageTrigger: typeof import("./behavior-fixtures.js").seedMessageTrigger;
-  let recordForwardOutcome: typeof import("../src/modules/behavior/models/behavior-stats.model.js").recordForwardOutcome;
-  let findStatsBulk: typeof import("../src/modules/behavior/models/behavior-stats.model.js").findStatsBulk;
+  let behaviorFixtures: typeof import("./behavior-fixtures.js");
+  let behaviorStats: typeof import("../src/modules/behavior/models/behavior-stats.model.js");
 
   beforeAll(async () => {
     // MUST be set before db.js is imported — it builds the Sequelize
@@ -61,10 +60,10 @@ describe.skipIf(!PG_URL)("PR-2.1 Postgres multi-writer", () => {
 
     // Behavior models register on import, so they must load before sync()
     // or their tables never get created on the fresh schema.
-    ({ seedMessageTrigger } = await import("./behavior-fixtures.js"));
-    ({ recordForwardOutcome, findStatsBulk } = await import(
+    behaviorFixtures = await import("./behavior-fixtures.js");
+    behaviorStats = await import(
       "../src/modules/behavior/models/behavior-stats.model.js"
-    ));
+    );
 
     // Fresh schema on the throwaway DB.
     await sequelize.sync({ force: true });
@@ -132,7 +131,8 @@ describe.skipIf(!PG_URL)("PR-2.1 Postgres multi-writer", () => {
     // Every relay records its outcome via recordForwardOutcome(); one hot
     // behavior fired from many shards must count each forward exactly once,
     // including the first burst that races the stats row's creation.
-    const id = await seedMessageTrigger();
+    const { recordForwardOutcome, findStatsBulk } = behaviorStats;
+    const id = await behaviorFixtures.seedMessageTrigger();
 
     await Promise.all(
       Array.from({ length: WRITERS }, () => recordForwardOutcome(id, true)),
