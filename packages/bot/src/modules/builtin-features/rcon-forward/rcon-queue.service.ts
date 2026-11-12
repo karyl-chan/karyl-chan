@@ -77,9 +77,10 @@ export class RconQueueService {
         connection = RconConnectionService.getConnection(connectionName);
       } else {
         connection.lastUsed = new Date();
-        if (!connection.channels.has(message.channel as TextChannel)) {
-          connection.channels.add(message.channel as TextChannel);
-        }
+        RconConnectionService.joinChannel(
+          connection,
+          message.channel as TextChannel,
+        );
       }
 
       if (!connection) {

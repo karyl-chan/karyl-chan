@@ -5,6 +5,9 @@
  * reused client never emitted `auth` after reconnecting and the
  * attempt count never reset. The service, PinnedRcon and the host
  * policy are real; the server is a loopback Source-RCON listener.
+ *
+ * #180 — a server that closes the connection gracefully (FIN, `end`
+ * without `error`) is reconnected the same way.
  */
 import net from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -79,11 +82,16 @@ afterEach(async () => {
 });
 
 describe("RCON reconnect with the real client", () => {
-  it("authenticates again after a reset and resets the attempt count", async () => {
+  it.each([
+    // The client sees ECONNRESET, not `end`.
+    ["a reset", (socket: net.Socket) => socket.resetAndDestroy()],
+    // FIN: the client sees `end`, no `error`.
+    ["a graceful close", (socket: net.Socket) => socket.end()],
+  ])("authenticates again after %s and resets the attempt count", async (_, drop) => {
     await RconConnectionService.initializeConnection("c1", "127.0.0.1", ctx.port, "pw", makeChannel());
     await vi.waitFor(() => expect(RconConnectionService.getConnection("c1")?.authenticated).toBe(true));
 
-    ctx.sockets[0].resetAndDestroy(); // the client sees ECONNRESET, not `end`
+    drop(ctx.sockets[0]);
     await vi.waitFor(() =>
       expect(RconConnectionService.getConnection("c1")?.reconnectAttempts).toBe(1),
     );
