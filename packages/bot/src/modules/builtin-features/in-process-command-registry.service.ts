@@ -9,6 +9,7 @@ import {
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { shouldRecord } from "../bot-events/bot-event-dedup.js";
 import { tForInteraction } from "../../i18n/index.js";
+import { editReplyWithLocale, replyWithLocale } from "../../i18n/helpers.js";
 import {
   findAllStateRows,
   resolveBuiltinFeatureEnabled,
@@ -480,12 +481,8 @@ async function sendFailureReply(
   key: "common.command-failed" | "common.modal-failed",
 ): Promise<void> {
   if (interaction.replied) return;
-  const content = tForInteraction(interaction, key);
-  if (interaction.deferred) {
-    await interaction.editReply({ content }).catch(() => {});
-    return;
-  }
-  await interaction.reply({ content, flags: "Ephemeral" }).catch(() => {});
+  const send = interaction.deferred ? editReplyWithLocale : replyWithLocale;
+  await send(interaction, key).catch(() => {});
 }
 
 /** Test-only — clear all registered handlers between tests. */

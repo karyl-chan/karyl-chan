@@ -24,20 +24,15 @@ import { t } from "../src/i18n/index.js";
  *   - already replied     → leave it alone
  */
 
-interface FakeState {
-  replied: boolean;
-  deferred: boolean;
-}
+type Kind = "command" | "modal";
 
-function fakeInteraction(kind: "command" | "modal", state: FakeState) {
+function fakeInteraction(kind: Kind) {
+  const state = { replied: false, deferred: false };
   const reply = vi.fn(async () => {
     state.replied = true;
   });
   const editReply = vi.fn(async () => {
     state.replied = true;
-  });
-  const deferReply = vi.fn(async () => {
-    state.deferred = true;
   });
   const interaction = {
     locale: "en-US",
@@ -56,9 +51,34 @@ function fakeInteraction(kind: "command" | "modal", state: FakeState) {
     },
     reply,
     editReply,
-    deferReply,
+    deferReply: vi.fn(async () => {
+      state.deferred = true;
+    }),
+  } as unknown as Interaction;
+  return { interaction, reply, editReply };
+}
+
+/** Register a handler of `kind` that runs `before`, then throws. */
+function registerThrowing(
+  kind: Kind,
+  before: (i: {
+    deferReply: (o?: unknown) => Promise<void>;
+    reply: (o?: unknown) => Promise<void>;
+  }) => Promise<void>,
+) {
+  const handler = async (i: unknown) => {
+    await before(i as never);
+    throw new Error("kaboom");
   };
-  return { interaction, reply, editReply, deferReply };
+  if (kind === "command") {
+    registerInProcessCommand({
+      data: { name: "boom", description: "boom" },
+      scope: "global",
+      handler,
+    });
+  } else {
+    registerInProcessModal({ prefix: "boom-modal", handler });
+  }
 }
 
 const COMMAND_FAILED = t("en", "common.command-failed");
@@ -69,117 +89,55 @@ describe("in-process handler failure reply", () => {
     _resetInProcessRegistry();
   });
 
-  describe("chat-input command", () => {
-    function registerThrowing(
-      before: (i: {
-        deferReply: (o?: unknown) => Promise<void>;
-        reply: (o?: unknown) => Promise<void>;
-      }) => Promise<void>,
-    ) {
-      registerInProcessCommand({
-        data: { name: "boom", description: "boom" },
-        scope: "global",
-        handler: async (i) => {
-          await before(i as never);
-          throw new Error("kaboom");
-        },
-      });
-    }
-
+  describe.each([
+    ["command", COMMAND_FAILED],
+    ["modal", MODAL_FAILED],
+  ] as const)("%s", (kind, failed) => {
     it("edits the deferred reply when the handler throws after deferReply", async () => {
-      registerThrowing((i) => i.deferReply({ flags: "Ephemeral" }));
-      const f = fakeInteraction("command", { replied: false, deferred: false });
+      registerThrowing(kind, (i) => i.deferReply({ flags: "Ephemeral" }));
+      const f = fakeInteraction(kind);
 
-      const handled = await dispatchInProcessInteraction(
-        f.interaction as unknown as Interaction,
-      );
+      const handled = await dispatchInProcessInteraction(f.interaction);
 
       expect(handled).toBe(true);
       expect(f.editReply).toHaveBeenCalledTimes(1);
-      expect(f.editReply).toHaveBeenCalledWith({ content: COMMAND_FAILED });
+      expect(f.editReply).toHaveBeenCalledWith({ content: failed });
       expect(f.reply).not.toHaveBeenCalled();
     });
 
     it("replies ephemerally when the handler throws before acking", async () => {
-      registerThrowing(async () => {});
-      const f = fakeInteraction("command", { replied: false, deferred: false });
+      registerThrowing(kind, async () => {});
+      const f = fakeInteraction(kind);
 
-      await dispatchInProcessInteraction(
-        f.interaction as unknown as Interaction,
-      );
+      await dispatchInProcessInteraction(f.interaction);
 
       expect(f.reply).toHaveBeenCalledWith({
-        content: COMMAND_FAILED,
+        content: failed,
         flags: "Ephemeral",
       });
       expect(f.editReply).not.toHaveBeenCalled();
     });
+  });
 
+  describe("command", () => {
     it("sends nothing more when the handler already replied", async () => {
-      registerThrowing((i) => i.reply({ content: "ok" }));
-      const f = fakeInteraction("command", { replied: false, deferred: false });
+      registerThrowing("command", (i) => i.reply({ content: "ok" }));
+      const f = fakeInteraction("command");
 
-      await dispatchInProcessInteraction(
-        f.interaction as unknown as Interaction,
-      );
+      await dispatchInProcessInteraction(f.interaction);
 
       expect(f.reply).toHaveBeenCalledTimes(1); // the handler's own reply
       expect(f.editReply).not.toHaveBeenCalled();
     });
 
     it("swallows a failing editReply (interaction token may be gone)", async () => {
-      registerThrowing((i) => i.deferReply());
-      const f = fakeInteraction("command", { replied: false, deferred: false });
+      registerThrowing("command", (i) => i.deferReply());
+      const f = fakeInteraction("command");
       f.editReply.mockRejectedValueOnce(new Error("Unknown interaction"));
 
-      await expect(
-        dispatchInProcessInteraction(f.interaction as unknown as Interaction),
-      ).resolves.toBe(true);
-    });
-  });
-
-  describe("modal submit", () => {
-    function registerThrowing(
-      before: (i: {
-        deferReply: (o?: unknown) => Promise<void>;
-      }) => Promise<void>,
-    ) {
-      registerInProcessModal({
-        prefix: "boom-modal",
-        handler: async (i) => {
-          await before(i as never);
-          throw new Error("kaboom");
-        },
-      });
-    }
-
-    it("edits the deferred reply when the handler throws after deferReply", async () => {
-      registerThrowing((i) => i.deferReply({ flags: "Ephemeral" }));
-      const f = fakeInteraction("modal", { replied: false, deferred: false });
-
-      const handled = await dispatchInProcessInteraction(
-        f.interaction as unknown as Interaction,
+      await expect(dispatchInProcessInteraction(f.interaction)).resolves.toBe(
+        true,
       );
-
-      expect(handled).toBe(true);
-      expect(f.editReply).toHaveBeenCalledTimes(1);
-      expect(f.editReply).toHaveBeenCalledWith({ content: MODAL_FAILED });
-      expect(f.reply).not.toHaveBeenCalled();
-    });
-
-    it("replies ephemerally when the handler throws before acking", async () => {
-      registerThrowing(async () => {});
-      const f = fakeInteraction("modal", { replied: false, deferred: false });
-
-      await dispatchInProcessInteraction(
-        f.interaction as unknown as Interaction,
-      );
-
-      expect(f.reply).toHaveBeenCalledWith({
-        content: MODAL_FAILED,
-        flags: "Ephemeral",
-      });
-      expect(f.editReply).not.toHaveBeenCalled();
     });
   });
 });
