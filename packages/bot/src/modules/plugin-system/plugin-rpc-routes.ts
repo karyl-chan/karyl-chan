@@ -34,7 +34,6 @@ import { featureReachResolver } from "../feature-toggle/feature-reach-resolver.j
 import { hasGuildReach } from "./plugin-guild-reach.js";
 import { jwtService } from "../web-core/jwt.service.js";
 import { discordErrorStatus } from "../web-core/discord-error.js";
-import { assertPluginTarget } from "../../utils/host-policy.js";
 import {
   describeOwnershipFailure,
   findUnownedCustomId,
@@ -49,12 +48,10 @@ import {
   runBehaviorCallback,
   type BehaviorCallbackMethod,
 } from "../command-system/behavior-callback.js";
-// max attachments per message and per-file byte cap: one set with the
-// behavior reply's (#156)
-import {
-  MAX_REPLY_ATTACHMENT_BYTES as MAX_ATTACHMENT_BYTES,
-  MAX_REPLY_ATTACHMENTS as MAX_ATTACHMENTS,
-} from "../command-system/behavior-reply.js";
+// attachments download as a plugin action reply's do (#203, #214)
+import type { ReplyAttachment } from "../command-system/behavior-reply.js";
+import type { ReplyFile } from "../command-system/reply-files.js";
+import { pluginReplyFileFetcher } from "../command-system/plugin-action.js";
 import {
   formatPluginRpcSchemaError,
   installPluginRpcSchemaErrors,
@@ -138,7 +135,12 @@ export interface PluginRpcOptions {
   bot?: Client;
   /** Injected for tests; production uses the module-level singleton. */
   dmLimiter?: { isRateLimited(key: string): boolean };
+  /** How long one call's attachment downloads may take; tests inject a short one. */
+  attachmentTimeoutMs?: number;
 }
+
+/** A plugin action reply's download timeout (plugin-action.ts), for a call's attachments. */
+const DEFAULT_ATTACHMENT_TIMEOUT_MS = 10_000;
 
 /** Module-level singleton — one limiter shared across all requests. */
 const defaultDmLimiter = new RateLimiter({
@@ -237,59 +239,41 @@ const MEMBERS_GET_MAX = 25;
  * (`attachment://<name>`) without needing a Discord-reachable public
  * URL — the fetch happens over the internal bot↔plugin network.
  *
- * SSRF is bounded: the fetch base is the plugin's own registered
- * `url`, run through the same `assertPluginTarget` host policy used
- * by the interaction dispatcher; `path` is forced to a leading-slash
- * relative path so it can't swap the host.
+ * The download is a plugin action reply's (#203, #214):
+ * `pluginReplyFileFetcher` → `downloadReplyFiles` — the descriptors
+ * checked by `attachmentsProblem`, the plugin target policy, a
+ * connection pinned to the addresses it vetted, no redirects, no path
+ * out of the plugin URL's prefix, 8 MiB a file and 25 MiB together cut
+ * off as they stream, one timeout for the call and a download turn,
+ * one at a time per plugin.
  *
- * Throws on any malformed descriptor / disallowed host / oversize
- * body so the caller can surface a 400.
+ * Throws on any malformed descriptor / disallowed host / failed or
+ * oversize download so the caller can surface a 400.
  */
 async function resolvePluginAttachments(
   pluginId: number,
   raw: unknown,
-): Promise<Array<{ name: string; data: Buffer }>> {
+  timeoutMs: number,
+): Promise<ReplyFile[]> {
   if (raw === undefined) return [];
   if (!Array.isArray(raw)) throw new Error("attachments must be an array");
-  if (raw.length === 0) return [];
-  if (raw.length > MAX_ATTACHMENTS) {
-    throw new Error(`at most ${MAX_ATTACHMENTS} attachments`);
+  const descriptors: ReplyAttachment[] = [];
+  for (const [i, entry] of raw.entries()) {
+    if (!entry || typeof entry !== "object") {
+      throw new Error(`attachment ${i + 1}: must be an object`);
+    }
+    const { name, path } = entry as Record<string, unknown>;
+    if (typeof name !== "string" || typeof path !== "string") {
+      throw new Error(`attachment ${i + 1}: name and path must be strings`);
+    }
+    descriptors.push({ name, path });
   }
+  if (descriptors.length === 0) return [];
   const plugin = await findPluginById(pluginId);
   if (!plugin) throw new Error("plugin not found");
-  const base = plugin.url.replace(/\/+$/, "");
-  const parsedBase = new URL(base);
-  const port = parsedBase.port
-    ? Number(parsedBase.port)
-    : parsedBase.protocol === "https:"
-      ? 443
-      : 80;
-  await assertPluginTarget(parsedBase.hostname, port);
-
-  const out: Array<{ name: string; data: Buffer }> = [];
-  for (const entry of raw) {
-    if (!entry || typeof entry !== "object") {
-      throw new Error("attachment entry must be an object");
-    }
-    const e = entry as { name?: unknown; path?: unknown };
-    if (typeof e.name !== "string" || e.name.length === 0) {
-      throw new Error("attachment.name required");
-    }
-    if (typeof e.path !== "string" || !e.path.startsWith("/")) {
-      throw new Error("attachment.path must be a leading-slash path");
-    }
-    // Don't follow redirects past the assertPluginTarget host check (SSRF).
-    const res = await fetch(`${base}${e.path}`, { redirect: "manual" });
-    if (!res.ok) {
-      throw new Error(`attachment fetch ${e.path} → ${res.status}`);
-    }
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.byteLength > MAX_ATTACHMENT_BYTES) {
-      throw new Error(`attachment ${e.name} exceeds size cap`);
-    }
-    out.push({ name: e.name, data: buf });
-  }
-  return out;
+  const got = await pluginReplyFileFetcher(plugin, { pluginId }, timeoutMs)(descriptors);
+  if (!got.ok) throw new Error(got.error);
+  return got.files;
 }
 
 /** Fetch a channel for a plugin RPC. `undefined` = the 404 was already sent;
@@ -502,6 +486,8 @@ function registerRpcRoutes(
 ): void {
   const bot = options.bot;
   const dmLimiter = options.dmLimiter ?? defaultDmLimiter;
+  const attachmentTimeoutMs =
+    options.attachmentTimeoutMs ?? DEFAULT_ATTACHMENT_TIMEOUT_MS;
 
   // ─── messages.send ────────────────────────────────────────────────
   /**
@@ -591,11 +577,12 @@ function registerRpcRoutes(
           return;
         }
       }
-      let attachments: Array<{ name: string; data: Buffer }>;
+      let attachments: ReplyFile[];
       try {
         attachments = await resolvePluginAttachments(
           ctx.pluginId,
           body.attachments,
+          attachmentTimeoutMs,
         );
       } catch (err) {
         const m = err instanceof Error ? err.message : String(err);
@@ -1534,11 +1521,12 @@ function registerRpcRoutes(
         return;
       }
     }
-    let attachments: Array<{ name: string; data: Buffer }>;
+    let attachments: ReplyFile[];
     try {
       attachments = await resolvePluginAttachments(
         ctx.pluginId,
         body.attachments,
+        attachmentTimeoutMs,
       );
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
@@ -1704,11 +1692,12 @@ function registerRpcRoutes(
         return;
       }
     }
-    let attachments: Array<{ name: string; data: Buffer }>;
+    let attachments: ReplyFile[];
     try {
       attachments = await resolvePluginAttachments(
         ctx.pluginId,
         body.attachments,
+        attachmentTimeoutMs,
       );
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);

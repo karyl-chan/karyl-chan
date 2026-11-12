@@ -46,7 +46,7 @@ import { behaviorCallbackTokens, callbackMetaOf } from "./behavior-callback-toke
 import { failRun, recordRun, showDeferred } from "./behavior-run.js";
 import { renderFailure, type ReplyTarget } from "./reply-renderer.js";
 import type { ReplyFileFetcher } from "./reply-files.js";
-import { downloadReplyFiles } from "./webhook-forwarder.service.js";
+import { downloadReplyFiles, type DownloadOwner } from "./webhook-forwarder.service.js";
 
 /** What a plugin action run needs from the plugin system; tests inject their own. */
 export interface PluginActionDeps {
@@ -76,13 +76,14 @@ export interface PluginActionRun {
 /**
  * A plugin action's reply attachments (#156) come from under the plugin's
  * registered URL, path prefix included — `<plugin.url><path>`, as the
- * plugin RPC's own attachments (plugin-rpc-routes.ts) — under the plugin
- * target policy, pinned to the addresses it vetted, with a webhook's
- * caps, turns and timeout; a path that climbs out of the prefix is refused.
+ * plugin RPC's own attachments (plugin-rpc-routes.ts, #214, which fetch
+ * through here too, as the plugin's `owner`) — under the plugin target
+ * policy, pinned to the addresses it vetted, with a webhook's caps, turns
+ * and timeout; a path that climbs out of the prefix is refused.
  */
 export function pluginReplyFileFetcher(
   plugin: PluginRow,
-  behaviorId: number,
+  owner: DownloadOwner,
   timeoutMs: number,
 ): ReplyFileFetcher {
   return async (attachments) => {
@@ -98,7 +99,7 @@ export function pluginReplyFileFetcher(
     base.search = "";
     base.hash = "";
     return downloadReplyFiles({
-      behaviorId,
+      owner,
       base,
       attachments,
       timeoutMs,
@@ -180,7 +181,7 @@ export async function runPluginAction(run: PluginActionRun): Promise<void> {
       behaviorId,
       target,
       visibility: run.visibility,
-      fetchFiles: pluginReplyFileFetcher(plugin, behaviorId, run.deps.fileTimeoutMs),
+      fetchFiles: pluginReplyFileFetcher(plugin, { behaviorId }, run.deps.fileTimeoutMs),
     });
     const { principal } = issued;
     const body = JSON.stringify({

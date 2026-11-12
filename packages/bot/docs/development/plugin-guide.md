@@ -336,6 +336,16 @@ controls the Docker network's DNS. If that ever needs closing, a `Pool`
 with a pinned `connect.lookup` (`src/utils/pinned-dispatcher.ts`),
 rebuilt when the vetted address set changes, is an additive change.
 
+Attachment downloads are the exception: they are one-shot requests with
+no `Pool` to keep, so they connect only to the addresses the check
+vetted. An RPC's `attachments` (`messages.send`, `interactions.respond`,
+`interactions.followup`, #214) download like a plugin action reply's
+(#203): from under the plugin's URL, path prefix included (a `..` out
+of it is refused), no redirects, at most 5 files of 8 MiB each and
+25 MiB together, cut off as they stream, one 10-second timeout for the
+call, and one batch per plugin at a time. A failure is a 400
+`attachment error: …`.
+
 ## Related files
 
 - **Bot side.** `src/modules/plugin-system/`
