@@ -48,18 +48,35 @@ const MAX_CONNECTIONS = config.rcon.maxConnections;
  */
 const CONNECT_ATTEMPT_TIMEOUT_MS = 10_000;
 
-class ConnectAttemptTimeoutError extends Error {
+/** The retries ran out; giveUpReconnecting notifies the channels. */
+class ReconnectExhaustedError extends Error {
   constructor() {
-    super("連接超時");
-    this.name = "ConnectAttemptTimeoutError";
+    super("重連次數已達上限");
+    this.name = "ReconnectExhaustedError";
   }
 }
 
-/** A client that has not authenticated yet. */
-interface ConnectAttempt {
-  timer: ReturnType<typeof setTimeout>;
-  /** initializeConnection's client only: ends that call's wait. */
-  settle?: (error?: Error) => void;
+/** The connection was closed on our side (cleanup) before it authenticated. */
+class ConnectionClosedError extends Error {
+  constructor() {
+    super("連接已關閉");
+    this.name = "ConnectionClosedError";
+  }
+}
+
+/** An initializeConnection in flight, and the channels waiting on it. */
+interface ConnectionLock {
+  done: Promise<void>;
+  /** Becomes the connection's `channels`, so every waiter gets its notices. */
+  channels: Set<TextChannel>;
+}
+
+/** Add a channel once: the same Discord channel can arrive as another object. */
+function addChannel(channels: Set<TextChannel>, channel: TextChannel) {
+  for (const known of channels) {
+    if (known.id === channel.id) return;
+  }
+  channels.add(channel);
 }
 
 export class RconLimitError extends Error {
@@ -73,17 +90,25 @@ export class RconLimitError extends Error {
 
 export class RconConnectionService {
   private static connectionMap: RconConnectionManager = {};
-  private static connectionLocks = new Map<string, Promise<void>>();
-  private static connectAttempts = new WeakMap<PinnedRcon, ConnectAttempt>();
+  private static connectionLocks = new Map<string, ConnectionLock>();
+  /** The connect timeout of each client still connecting. */
+  private static connectTimers = new WeakMap<
+    PinnedRcon,
+    ReturnType<typeof setTimeout>
+  >();
+  /** Ends initializeConnection's wait for a connection's first auth. */
+  private static firstAuthWaits = new WeakMap<
+    RconConnection,
+    (error?: Error) => void
+  >();
 
   /**
-   * Connect the named connection and wait until its client authenticates
-   * (true) or the attempt fails (false, with "Connection Error" sent to
-   * `channel`): a socket error, the server closing the connection, the
-   * connect timeout, or the connection cleaned up meanwhile. A first
-   * connect is not retried; the reconnect policy starts once it has
-   * authenticated. A call made while another one connects the same name
-   * shares that call's outcome.
+   * Connect the named connection and wait until it authenticates (true)
+   * or gives up (false). A first connect that fails (socket error, server
+   * close, connect timeout) is retried like any drop; the channels waiting
+   * get the same notices, ending in "Connection Failed". A call made while
+   * another one connects the same name waits with it and shares its
+   * result. Every false leaves the waiting channels notified.
    */
   static async initializeConnection(
     connectionName: string,
@@ -94,28 +119,32 @@ export class RconConnectionService {
   ): Promise<boolean> {
     const inFlight = this.connectionLocks.get(connectionName);
     if (inFlight) {
+      addChannel(inFlight.channels, channel);
       try {
-        await inFlight;
+        await inFlight.done;
       } catch (error) {
         if (error instanceof RconLimitError) throw error;
-        // This caller's command is not sent either: tell its channel too.
-        await this.sendConnectionError(channel, error);
+        // The call that took the lock notified every waiting channel.
         return false;
       }
-      // Authenticated, or reconnecting since: the caller sends or queues.
       const connection = this.connectionMap[connectionName];
-      if (!connection) return false;
-      connection.channels.add(channel);
+      if (!connection) {
+        // Cleaned up between authenticating and this call resuming.
+        await this.sendConnectionError(channel, new ConnectionClosedError());
+        return false;
+      }
+      addChannel(connection.channels, channel);
       return true;
     }
 
     let settleLock: (error?: Error) => void = () => {};
-    const lock = new Promise<void>((resolve, reject) => {
+    const done = new Promise<void>((resolve, reject) => {
       settleLock = (error) => (error ? reject(error) : resolve());
     });
     // Waiters see a failure through their own await; without this, a
     // failed connect nobody waited on is an unhandled rejection.
-    lock.catch(() => {});
+    done.catch(() => {});
+    const lock: ConnectionLock = { done, channels: new Set([channel]) };
     this.connectionLocks.set(connectionName, lock);
 
     let rconInstance: PinnedRcon | undefined;
@@ -138,9 +167,10 @@ export class RconConnectionService {
 
       rconInstance = new PinnedRcon(host, port, password, addresses);
 
-      this.connectionMap[connectionName] = {
+      const connection: RconConnection = {
         conn: rconInstance,
-        channels: new Set([channel]),
+        // Shared with the lock: callers that wait later join it too.
+        channels: lock.channels,
         authenticated: false,
         queuedCommands: [],
         lastUsed: new Date(),
@@ -149,23 +179,19 @@ export class RconConnectionService {
         host: host,
         port: port,
       };
+      this.connectionMap[connectionName] = connection;
 
-      let settleAttempt: (error?: Error) => void = () => {};
       const authenticated = new Promise<void>((resolve, reject) => {
-        settleAttempt = (error) => (error ? reject(error) : resolve());
+        this.firstAuthWaits.set(connection, (error) =>
+          error ? reject(error) : resolve(),
+        );
       });
       // Settled by the client's events, possibly before it is awaited.
       authenticated.catch(() => {});
-      this.setupEventListeners(
-        connectionName,
-        host,
-        port,
-        password,
-        settleAttempt,
-      );
+      this.setupEventListeners(connectionName, host, port, password);
 
-      // Returns once the socket is opening; the client's events (and its
-      // connect timeout) settle the attempt.
+      // Returns once the socket is opening; the client's events (and the
+      // retries after a failure) settle the wait.
       await rconInstance.connect();
       await authenticated;
 
@@ -183,6 +209,8 @@ export class RconConnectionService {
       if (error instanceof RconLimitError) {
         throw error;
       }
+      // giveUpReconnecting sends every channel "Connection Failed".
+      if (error instanceof ReconnectExhaustedError) return false;
       log.error({ err: error, connectionName }, "Connection init failed");
       botEventLog.record(
         "error",
@@ -192,20 +220,26 @@ export class RconConnectionService {
           host,
           port,
           errorType:
-            error instanceof HostPolicyError
-              ? "HostPolicyError"
-              : error instanceof ConnectAttemptTimeoutError
-                ? "timeout"
-                : "other",
+            error instanceof HostPolicyError ? "HostPolicyError" : "other",
         },
       );
-      await this.sendConnectionError(channel, error);
+      for (const waiting of lock.channels) {
+        await this.sendConnectionError(waiting, error);
+      }
       return false;
     } finally {
       if (this.connectionLocks.get(connectionName) === lock) {
         this.connectionLocks.delete(connectionName);
       }
     }
+  }
+
+  /**
+   * Let `channel` share a connection: it gets the connection's responses
+   * and notices, once even if it joins again.
+   */
+  static joinChannel(connection: RconConnection, channel: TextChannel) {
+    addChannel(connection.channels, channel);
   }
 
   private static async sendConnectionError(
@@ -215,7 +249,9 @@ export class RconConnectionService {
     const userMessage =
       error instanceof HostPolicyError
         ? error.message
-        : "無法建立連接，請確認 host/port 設定是否正確。";
+        : error instanceof ConnectionClosedError
+          ? "連接已關閉，未發送的指令已清除。"
+          : "無法建立連接，請確認 host/port 設定是否正確。";
     await channel
       .send({
         embeds: [
@@ -248,59 +284,69 @@ export class RconConnectionService {
    * close it. Its socket can still emit afterwards (a late `end`, or an
    * error on the dying socket); those must neither reach the connection
    * that replaced it nor throw as an unhandled `error` event.
+   *
+   * A client still connecting is destroyed: end() would wait for a
+   * connect a blackholed host never completes, until the OS gives up.
    */
   private static retireClient(connectionName: string, client: PinnedRcon) {
-    this.endConnectAttempt(client, new Error("連線已關閉"));
+    const connecting = this.stopConnectTimer(client);
     client.removeAllListeners();
     client.on("error", (err: Error) => {
       log.debug({ err, connectionName }, "Ignored error from a retired client");
     });
     try {
-      client.disconnect();
+      if (connecting) client.destroy();
+      else client.disconnect();
     } catch (error) {
       log.error({ err: error, connectionName }, "關閉連接時發生錯誤");
     }
   }
 
   /**
-   * Retire the named connection's client and forget the connection. The
-   * connection lock is left alone: it belongs to an `initializeConnection`
-   * that may still be running, which releases it.
+   * Retire the named connection's client and forget the connection. An
+   * initializeConnection still waiting for it to authenticate fails with
+   * `reason`. The connection lock is left alone: it belongs to that
+   * initializeConnection, which releases it.
    */
-  private static dropClient(connectionName: string) {
+  private static dropClient(
+    connectionName: string,
+    reason: Error = new ConnectionClosedError(),
+  ) {
     const connection = this.connectionMap[connectionName];
     if (!connection) return;
     this.retireClient(connectionName, connection.conn);
     delete this.connectionMap[connectionName];
+    this.settleFirstAuth(connection, reason);
   }
 
-  /**
-   * The client stopped connecting: it authenticated (no `error`) or
-   * failed (`error`). Stop its connect timeout and settle the
-   * initializeConnection waiting on it. Returns whether one was waiting.
-   */
-  private static endConnectAttempt(client: PinnedRcon, error?: Error) {
-    const attempt = this.connectAttempts.get(client);
-    if (!attempt) return false;
-    this.connectAttempts.delete(client);
-    clearTimeout(attempt.timer);
-    if (!attempt.settle) return false;
-    attempt.settle(error);
+  /** Stop the client's connect timeout; returns whether it was connecting. */
+  private static stopConnectTimer(client: PinnedRcon) {
+    const timer = this.connectTimers.get(client);
+    if (timer === undefined) return false;
+    clearTimeout(timer);
+    this.connectTimers.delete(client);
     return true;
+  }
+
+  /** End initializeConnection's wait for the connection, if it still waits. */
+  private static settleFirstAuth(connection: RconConnection, error?: Error) {
+    const settle = this.firstAuthWaits.get(connection);
+    if (!settle) return;
+    this.firstAuthWaits.delete(connection);
+    settle(error);
   }
 
   /**
    * Attach the handlers for the connection's current client, and start
-   * its connect timeout: the client has until then to authenticate.
-   * Until it does, a failure of initializeConnection's client (`settle`)
-   * ends that call; any other failure starts or continues the retries.
+   * its connect timeout: the client has until then to authenticate. A
+   * failure, before or after authenticating, starts or continues the
+   * retries.
    */
   private static setupEventListeners(
     connectionName: string,
     host: string,
     port: number,
     password: string,
-    settle?: (error?: Error) => void,
   ) {
     const connection = this.connectionMap[connectionName];
     if (!connection) return;
@@ -311,11 +357,6 @@ export class RconConnectionService {
       this.connectionMap[connectionName] === connection &&
       connection.conn === client;
 
-    // initializeConnection's client, before it authenticates: the failure
-    // ends that call (which reports it) instead of starting the retries.
-    const endsFirstConnect = (error: Error) =>
-      this.endConnectAttempt(client, error);
-
     // Retires this client and schedules the next attempt.
     const reconnect = (failedMsg: string) =>
       this.handleConnectionError(connectionName, host, port, password).catch(
@@ -325,7 +366,6 @@ export class RconConnectionService {
     const onError = (err: Error) => {
       if (!isCurrent()) return;
       log.error({ err, connectionName }, "RCON connection error");
-      if (endsFirstConnect(err)) return;
       for (const channel of connection.channels) {
         channel
           .send({
@@ -344,27 +384,25 @@ export class RconConnectionService {
       reconnect("處理連接錯誤時發生錯誤");
     };
 
-    this.connectAttempts.set(client, {
-      settle,
-      timer: setTimeout(() => {
+    this.connectTimers.set(
+      client,
+      setTimeout(() => {
         if (!isCurrent()) return;
         log.warn({ connectionName }, "Connect attempt timed out");
-        // Drop the half-open socket now: end() would wait for a connect
-        // a blackholed host never completes, until the OS gives up.
-        client.destroy();
         // Like a close: the Lost / Failed notices only, no error notice.
-        if (endsFirstConnect(new ConnectAttemptTimeoutError())) return;
+        // Retiring the still-connecting client destroys its socket.
         reconnect("處理連接超時時發生錯誤");
       }, CONNECT_ATTEMPT_TIMEOUT_MS),
-    });
+    );
 
     client
       .on("auth", () => {
         if (!isCurrent()) return;
-        this.endConnectAttempt(client);
+        this.stopConnectTimer(client);
         log.info({ connectionName }, "Connection authenticated");
         connection.authenticated = true;
         connection.reconnectAttempts = 0;
+        this.settleFirstAuth(connection);
         this.processQueuedCommands(connectionName);
         botEventLog.record(
           "info",
@@ -431,17 +469,22 @@ export class RconConnectionService {
       .on("end", () => {
         // Our own closes retire the client first, so this is the server
         // closing the connection: a failure like an error, minus the
-        // error notice. Includes a reconnect client closed right after
-        // connecting, so every attempt counts.
+        // error notice. Includes a client closed right after connecting,
+        // so every attempt counts.
         if (!isCurrent()) return;
         log.info({ connectionName }, "Connection closed by the server");
-        if (endsFirstConnect(new Error("伺服器關閉了連接"))) return;
         reconnect("處理連接關閉時發生錯誤");
       });
   }
 
-  /** Close the connection and drop its queued commands. */
-  private static async tearDownConnection(connectionName: string) {
+  /**
+   * Close the connection and drop its queued commands. An
+   * initializeConnection still waiting on it fails with `reason`.
+   */
+  private static async tearDownConnection(
+    connectionName: string,
+    reason?: Error,
+  ) {
     const connection = this.connectionMap[connectionName];
     if (!connection) return;
 
@@ -460,7 +503,7 @@ export class RconConnectionService {
         connection.queuedCommands = [];
       }
 
-      this.dropClient(connectionName);
+      this.dropClient(connectionName, reason);
     } catch (error) {
       log.error({ err: error, connectionName }, "清理連接時發生錯誤");
     }
@@ -551,7 +594,12 @@ export class RconConnectionService {
     // Close first: the notices below wait on Discord, and by then the
     // name may belong to a connection re-created in the meantime.
     if (this.connectionMap[connectionName] === connection) {
-      await this.tearDownConnection(connectionName);
+      // The notices below reach every waiting channel; the waiting
+      // initializeConnection adds none of its own.
+      await this.tearDownConnection(
+        connectionName,
+        new ReconnectExhaustedError(),
+      );
     }
     for (const channel of connection.channels) {
       try {

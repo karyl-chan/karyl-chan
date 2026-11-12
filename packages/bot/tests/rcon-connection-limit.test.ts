@@ -149,8 +149,8 @@ describe("RconConnectionService – connection limit", () => {
       svc.initializeConnection("new-conn", "10.0.0.1", 25575, "secret", makeChannel()),
     ).rejects.toBeInstanceOf(RconLimitError);
 
-    const lock = setLock.mock.calls[0][1] as Promise<void>;
-    await expect(lock).rejects.toBeInstanceOf(RconLimitError);
+    const lock = setLock.mock.calls[0][1] as { done: Promise<void> };
+    await expect(lock.done).rejects.toBeInstanceOf(RconLimitError);
     expect(svc.connectionLocks.has("new-conn")).toBe(false);
   });
 

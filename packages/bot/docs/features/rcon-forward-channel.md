@@ -100,8 +100,18 @@ configured hostname.
 
 RCON-layer errors (connection refused, handshake failures, timeouts) are
 written to the container log but never echoed into Discord. The channel
-only sees a stable message ("connection error, will retry", and so on),
-so the RCON target cannot be used as a port-scan proxy.
+only sees stable messages, so the RCON target cannot be used as a
+port-scan proxy:
+
+- "RCON Error" for a socket error.
+- "Connection Lost (n/3)" for each retry, after an error, a server close
+  or a timeout.
+- "Connection Failed" when the retries run out.
+- "Connection Error" when the first connect cannot resolve the host or
+  the host policy refuses it (a later attempt counts as a failed retry
+  instead), or when the connection is closed (for example by cleanup)
+  before a waiting message was sent. A host-policy refusal shows the
+  policy's message.
 
 ### Rate limiting
 
@@ -114,21 +124,21 @@ Up to 10 forwards per channel per minute. Over-limit messages get a
 Each connect attempt has 10 seconds to open the socket and authenticate. An
 attempt that runs out is closed at once and counts as a failure.
 
-The first connect to a server is not retried. Messages sent while it
-connects wait for it. Once it authenticates, their commands go out. If it
-fails (socket error, server close, or timeout), the channel gets
-"Connection Error" and those commands are dropped. The next message tries
-again.
+A socket error and the server closing the connection both count as
+failures, whether the connection had authenticated or was still on its
+first connect, and so does a client the server closes right after
+connecting. Failures are retried with exponential backoff
+(`min(1000 · 2^n, 30s)`, so 2s → 4s → 8s) for up to three attempts. After
+three failures the connection closes, its queued commands are dropped and
+every channel using it is notified ("Connection Failed"). A reconnect that
+authenticates again resets the count, so the next drop gets three fresh
+attempts. Connections idle for 30 minutes are cleaned up.
 
-Once connected, a dropped connection is retried. Both a socket error and
-the server closing the connection count as failures, including a
-reconnect the server closes right after connecting. Retries use exponential
-backoff (`min(1000 · 2^n, 30s)`, so 2s → 4s → 8s) for up to three attempts.
-After three failures the connection closes and the channel is notified
-("Connection Failed"). A reconnect that authenticates again resets the
-count, so the next drop gets three fresh attempts. Commands sent while
-reconnecting are queued and go out once the new connection authenticates.
-Connections idle for 30 minutes are cleaned up.
+Messages sent while the connection is being made (first connect or
+reconnect) wait or are queued. Their commands go out once it
+authenticates. Every channel with a message waiting gets the notices
+above, each once. Messages that were still waiting when the retries run
+out are dropped with the "Connection Failed" notice.
 
 Every attempt resolves and checks the host again, then connects a new
 client to the fresh answers only, so a container that restarted with a
