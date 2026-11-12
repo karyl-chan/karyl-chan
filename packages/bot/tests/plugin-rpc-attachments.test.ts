@@ -71,29 +71,39 @@ let port: number;
 const received: Array<{ url?: string; host?: string }> = [];
 /** Answers to /p/hold requests, sent when a test releases them, by `?who=`. */
 let held: Array<{ who: string; answer: () => void }> = [];
-/** The streamed paths the plugin got to write out to the end. */
-const streamedToTheEnd = new Set<string>();
+/** `?tag=` of each /p/endless stream whose connection the bot closed. */
+const cutOff = new Set<string>();
 
 /**
- * Stream `mibs` MiB in 1 MiB chunks without a Content-Length (so a cap
- * has to be counted while streaming), honouring backpressure: a reader
- * that stops early leaves the rest unwritten.
+ * A body that never ends: 1 MiB chunks without a Content-Length (so a cap
+ * has to be counted while streaming), honouring backpressure, for as long
+ * as the connection stays open. Only a cap cut can end the download
+ * with a size error (anything else runs into the call's timeout), and the
+ * close it causes is recorded under `tag`. Whether a finite body "got
+ * written to the end" is no evidence of a cut: socket buffers on a fast
+ * loopback can absorb the rest after the reader stops.
  */
-function streamMiBs(res: ServerResponse, path: string, mibs: number) {
+function streamEndlessly(res: ServerResponse, tag: string) {
   res.writeHead(200, { "transfer-encoding": "chunked" });
   res.on("error", () => {});
   const chunk = Buffer.alloc(MiB, 2);
-  let sent = 0;
+  let open = true;
+  res.once("close", () => {
+    open = false;
+    cutOff.add(tag);
+  });
   const pump = () => {
-    while (sent < mibs) {
-      sent += 1;
+    while (open) {
       if (!res.write(chunk)) return void res.once("drain", pump);
     }
-    res.end(() => {
-      streamedToTheEnd.add(path);
-    });
   };
   pump();
+}
+
+/** Wait until the bot has closed the /p/endless stream tagged `tag`. */
+async function untilCutOff(tag: string) {
+  for (let i = 0; i < 200 && !cutOff.has(tag); i += 1) await new Promise((r) => setTimeout(r, 5));
+  expect(cutOff.has(tag)).toBe(true);
 }
 
 beforeAll(async () => {
@@ -105,11 +115,8 @@ beforeAll(async () => {
         res.writeHead(200, { "content-type": "image/png" });
         res.end("PNG-A");
         return;
-      case "/p/streamed-big":
-        streamMiBs(res, path, 9);
-        return;
-      case "/p/seven-streamed":
-        streamMiBs(res, path, 7);
+      case "/p/endless":
+        streamEndlessly(res, new URLSearchParams(query).get("tag") ?? "");
         return;
       case "/p/stall":
         // headers and the start of a body, then nothing more
@@ -190,7 +197,7 @@ beforeEach(async () => {
   vi.clearAllMocks();
   received.length = 0;
   held = [];
-  streamedToTheEnd.clear();
+  cutOff.clear();
   vi.spyOn(pluginAuthStore, "verify").mockImplementation((token: string) =>
     PLUGINS[token] === undefined
       ? null
@@ -326,12 +333,13 @@ describe("plugin RPC attachments — the three routes download them", () => {
 describe("plugin RPC attachments — the download rules", () => {
   it("cuts a file off once it streams past 8 MiB", async () => {
     expect(MAX_REPLY_ATTACHMENT_BYTES).toBe(8 * MiB);
-    const res = await sendWith([{ name: "x.bin", path: "/streamed-big" }]);
+    const res = await sendWith([{ name: "x.bin", path: "/endless?tag=cap" }]);
 
+    // the per-file cap, not the timeout, ended a body that never ends ...
     expect(res.statusCode).toBe(400);
     expect(res.json()).toEqual({ error: 'attachment error: attachment 1 ("x.bin"): larger than 8 MiB' });
-    // the read stopped at the cap: the plugin never got to write all 9 MiB
-    expect(streamedToTheEnd.has("/p/streamed-big")).toBe(false);
+    // ... and the bot hung up on the plugin mid-body
+    await untilCutOff("cap");
     expect(send).not.toHaveBeenCalled();
   });
 
@@ -348,20 +356,22 @@ describe("plugin RPC attachments — the download rules", () => {
   });
 
   it("cuts the last file off mid-stream once the files together pass 25 MiB", async () => {
-    // 3 × 7 MiB fit; the fourth, each under 8 MiB, crosses the total 4 MiB in
+    // 3 × 7 MiB fit; the fourth never ends, and the 4 MiB left of the
+    // total runs out before its own 8 MiB cap would
     const files = [
       ...Array.from({ length: 3 }, (_, i) => ({ name: `${i}.bin`, path: "/seven" })),
-      { name: "3.bin", path: "/seven-streamed" },
+      { name: "3.bin", path: "/endless?tag=budget" },
     ];
     const res = await sendWith(files);
 
+    // the total budget, not the per-file cap or the timeout, ended it ...
     expect(res.statusCode).toBe(400);
     expect(res.json()).toEqual({
       error: 'attachment error: attachment 4 ("3.bin"): the files together are larger than 25 MiB',
     });
-    expect(received.map((r) => r.url)).toEqual(["/p/seven", "/p/seven", "/p/seven", "/p/seven-streamed"]);
-    // the read stopped at the budget: the plugin never got to write all 7 MiB
-    expect(streamedToTheEnd.has("/p/seven-streamed")).toBe(false);
+    expect(received.map((r) => r.url)).toEqual(["/p/seven", "/p/seven", "/p/seven", "/p/endless?tag=budget"]);
+    // ... and the bot hung up on the plugin mid-body
+    await untilCutOff("budget");
     expect(send).not.toHaveBeenCalled();
   });
 
