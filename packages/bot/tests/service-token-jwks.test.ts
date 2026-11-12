@@ -274,6 +274,7 @@ describe("service tokens and login tokens do not cross", () => {
       guildId: null,
       channelId: "dm",
       messageId: "m1",
+      jti: "service-token-jwks-login",
     });
     const res = await web.inject({
       method: "POST",
