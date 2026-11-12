@@ -344,7 +344,9 @@ vetted. An RPC's `attachments` (`messages.send`, `interactions.respond`,
 of it is refused), no redirects, at most 5 files of 8 MiB each and
 25 MiB together, cut off as they stream, one 10-second timeout for the
 call, and one batch per plugin at a time. A failure is a 400
-`attachment error: …`.
+`attachment error: …`. A plugin's concurrent attachment-bearing calls
+queue on its single download turn, so one still waiting when its
+10 seconds run out gets a 400 `timed out waiting for a download slot`.
 
 ## Related files
 
