@@ -128,8 +128,8 @@ A socket error and the server closing the connection both count as
 failures, whether the connection had authenticated or was still on its
 first connect, and so does a client the server closes right after
 connecting. Failures are retried with exponential backoff
-(`min(1000 · 2^n, 30s)`, so 2s → 4s → 8s) for up to three attempts. After
-three failures the connection closes, its queued commands are dropped and
+(`min(1000 · 2^n, 30s)`, so 2s → 4s → 8s) for up to three retries. When the
+third retry also fails, the connection closes, its queued commands are dropped and
 every channel using it is notified ("Connection Failed"). A reconnect that
 authenticates again resets the count, so the next drop gets three fresh
 attempts. Connections idle for 30 minutes are cleaned up.
