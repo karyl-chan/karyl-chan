@@ -488,39 +488,27 @@ export async function createWebServer(
       // other future flow (e.g., account-link DMs) from being walked
       // up to a full session here. Tampered / stale / wrong-purpose
       // all collapse into a generic 401 so we don't hand probers a
-      // useful distinction.
+      // useful distinction. A login link is single-use (#216), which
+      // needs its `jti`; links minted before that change have none and
+      // are refused the same way — the user just asks for a new link.
       const verified = jwt.verifyWithExpiry(loginToken, { purpose: "login" });
-      if (!verified) {
+      const jti = verified?.claims.jti;
+      if (!verified || !jti) {
         const ip = clientKey(request);
-        if (shouldRecord(`jwtReject:${ip}`)) {
+        if (shouldRecord(`${verified ? "jwtNoJti" : "jwtReject"}:${ip}`)) {
           botEventLog.record(
             "warn",
             "auth",
-            "Login token rejected (invalid/expired)",
-            { ip },
+            verified
+              ? "Login token rejected (no jti)"
+              : "Login token rejected (invalid/expired)",
+            verified ? { ip, userId: verified.claims.userId } : { ip },
           );
         }
         reply.code(401).send({ error: "Invalid or expired token" });
         return;
       }
       const { claims } = verified;
-      // A login link is single-use (#216), which needs its `jti`. Links
-      // minted before that change have none — refuse them like any
-      // invalid token; the user just asks for a new link.
-      const jti = claims.jti;
-      if (!jti) {
-        const ip = clientKey(request);
-        if (shouldRecord(`jwtNoJti:${ip}`)) {
-          botEventLog.record(
-            "warn",
-            "auth",
-            "Login token rejected (no jti)",
-            { ip, userId: claims.userId },
-          );
-        }
-        reply.code(401).send({ error: "Invalid or expired token" });
-        return;
-      }
       // Stage 2 — JWT info (the user) must still be permitted to log
       // in. Authorization can change between issuance and exchange
       // (role demotion, account removal); resolveLoginRole reflects

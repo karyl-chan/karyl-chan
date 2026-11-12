@@ -27,6 +27,18 @@ function b64u(input: Buffer | string): string {
     .replace(/\//g, "_");
 }
 
+/** Hand-sign a JWS over arbitrary header/body, bypassing JwtService.sign. */
+function signRaw(
+  key: KeyObject,
+  body: object,
+  header: object = { alg: "EdDSA", typ: "JWT" },
+): string {
+  const h = b64u(JSON.stringify(header));
+  const b = b64u(JSON.stringify(body));
+  const sig = b64u(cryptoSign(null, Buffer.from(`${h}.${b}`), key));
+  return `${h}.${b}.${sig}`;
+}
+
 const loginClaims: JwtClaims = {
   purpose: "login",
   userId: "user-1",
@@ -214,17 +226,11 @@ describe("JwtService (Ed25519)", () => {
     it("rejects a signed token whose jti is not a non-empty string", () => {
       const key = newKey();
       const svc = new JwtService(key);
-      const signRaw = (body: object) => {
-        const h = b64u(JSON.stringify({ alg: "EdDSA", typ: "JWT" }));
-        const b = b64u(JSON.stringify(body));
-        const sig = b64u(cryptoSign(null, Buffer.from(`${h}.${b}`), key));
-        return `${h}.${b}.${sig}`;
-      };
       const exp = Math.floor(Date.now() / 1000) + 60;
       for (const jti of [42, "", null]) {
-        expect(svc.verify(signRaw({ ...loginClaims, jti, exp }))).toBeNull();
+        expect(svc.verify(signRaw(key, { ...loginClaims, jti, exp }))).toBeNull();
       }
-      expect(svc.verify(signRaw({ ...loginClaims, jti: "ok", exp }))).toEqual({
+      expect(svc.verify(signRaw(key, { ...loginClaims, jti: "ok", exp }))).toEqual({
         ...loginClaims,
         jti: "ok",
       });
@@ -415,18 +421,16 @@ describe("JwtService (Ed25519)", () => {
     it("verify() refuses the service typ on its own, even with login claims", () => {
       const key = newKey();
       const svc = new JwtService(key);
-      const header = b64u(
-        JSON.stringify({ alg: "EdDSA", typ: "karyl-service+jwt", kid: svc.keyId() }),
-      );
-      const body = b64u(
-        JSON.stringify({
+      const token = signRaw(
+        key,
+        {
           ...loginClaims,
           iat: Math.floor(Date.now() / 1000),
           exp: Math.floor(Date.now() / 1000) + 60,
-        }),
+        },
+        { alg: "EdDSA", typ: "karyl-service+jwt", kid: svc.keyId() },
       );
-      const sig = b64u(cryptoSign(null, Buffer.from(`${header}.${body}`), key));
-      expect(svc.verify(`${header}.${body}.${sig}`, { purpose: "login" })).toBeNull();
+      expect(svc.verify(token, { purpose: "login" })).toBeNull();
     });
 
     it("verify() refuses any token carrying aud, even with login claims", () => {

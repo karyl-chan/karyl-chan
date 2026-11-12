@@ -214,11 +214,9 @@ export class AuthStore {
   }
 
   /**
-   * Use up a login link's `jti`. True the first time a given `jti` is
-   * presented (it is then remembered until `expiresAt`, the link's own
-   * expiry); false while it is remembered. Like {@link consumeSseTicket}
-   * the check-and-record is one synchronous step, so two concurrent
-   * exchanges of one link can't both win.
+   * Use up a login link's `jti` (contract on `SessionStore`). Like
+   * {@link consumeSseTicket} the check-and-record is one synchronous
+   * step, so two concurrent exchanges of one link can't both win.
    */
   consumeLoginJti(
     jti: string,
