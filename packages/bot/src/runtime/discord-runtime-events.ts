@@ -20,6 +20,7 @@ import {
   syncInProcessCommandsForGuild,
   syncInProcessCommandsToDiscord,
 } from "../modules/builtin-features/in-process-command-registry.service.js";
+import { replyInteractionFailure } from "../modules/command-system/interaction-failure-reply.js";
 import type { RuntimeContext } from "./context.js";
 
 const log = moduleLogger("main");
@@ -279,16 +280,9 @@ export function registerRuntimeEvents(ctx: RuntimeContext): void {
       }
     } catch (error) {
       log.error({ err: error }, "interactionDispatcher.dispatch failed");
-      // 硬 error 時嘗試回覆讓 Discord 不顯示「指令失敗」轉圈
-      if (
-        interaction.isChatInputCommand() &&
-        !interaction.replied &&
-        !interaction.deferred
-      ) {
-        await interaction
-          .reply({ content: "⚠ 內部錯誤，請稍後再試。", ephemeral: true })
-          .catch(() => {});
-      }
+      // 硬 error 時依 ack 狀態補一則失敗訊息（未 ack → reply；deferReply →
+      // editReply；deferUpdate → followUp），別讓使用者卡在「思考中…」（#179）
+      await replyInteractionFailure(interaction);
     }
   });
 

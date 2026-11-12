@@ -41,6 +41,7 @@ function fakeAutocomplete(respond: Mock): Interaction {
   return {
     isChatInputCommand: () => false,
     isAutocomplete: () => true,
+    isRepliable: () => false,
     isButton: () => false,
     isAnySelectMenu: () => false,
     isModalSubmit: () => false,
