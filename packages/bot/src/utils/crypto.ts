@@ -29,6 +29,7 @@ export function newToken(): string {
 const ALGO = "aes-256-gcm";
 const ENC_VERSION_V2 = "v2";
 const IV_BYTES = 12;
+const TAG_BYTES = 16;
 const KEY_BYTES = 32;
 
 interface EncKey {
@@ -210,7 +211,7 @@ export function openWithSubkey(purpose: string, value: string): SubkeyOpenResult
   const [, keyId, ivB64, tagB64, ctB64] = parts as [string, string, string, string, string];
   const iv = Buffer.from(ivB64, "base64url");
   const tag = Buffer.from(tagB64, "base64url");
-  if (iv.length !== IV_BYTES || tag.length !== 16) {
+  if (iv.length !== IV_BYTES || tag.length !== TAG_BYTES) {
     return { ok: false, reason: "malformed" };
   }
   const key = subkeys(purpose).find((k) => k.id === keyId);
