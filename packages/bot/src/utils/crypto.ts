@@ -2,6 +2,7 @@ import {
   createCipheriv,
   createDecipheriv,
   createHash,
+  hkdfSync,
   randomBytes,
 } from "crypto";
 import { moduleLogger } from "../logger.js";
@@ -28,6 +29,7 @@ export function newToken(): string {
 const ALGO = "aes-256-gcm";
 const ENC_VERSION_V2 = "v2";
 const IV_BYTES = 12;
+const TAG_BYTES = 16;
 const KEY_BYTES = 32;
 
 interface EncKey {
@@ -81,12 +83,30 @@ function getKeys(): EncKey[] {
   return parseKeys(raw);
 }
 
+/** AES-256-GCM-seal `plaintext` under `keyBytes` with a fresh IV. The
+ *  callers own the encoding (v2 secrets vs. subkey seals). */
+function gcmSeal(
+  keyBytes: Buffer,
+  plaintext: string,
+): { iv: Buffer; tag: Buffer; ct: Buffer } {
+  const iv = randomBytes(IV_BYTES);
+  const cipher = createCipheriv(ALGO, keyBytes, iv);
+  const ct = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  return { iv, tag: cipher.getAuthTag(), ct };
+}
+
+/** Open a {@link gcmSeal} output; throws when the tag does not verify. */
+function gcmOpen(keyBytes: Buffer, iv: Buffer, tag: Buffer, ct: Buffer): string {
+  const decipher = createDecipheriv(ALGO, keyBytes, iv);
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(ct), decipher.final()]).toString(
+    "utf8",
+  );
+}
+
 export function encryptSecret(plaintext: string): string {
   const [active] = getKeys();
-  const iv = randomBytes(IV_BYTES);
-  const cipher = createCipheriv(ALGO, active.bytes, iv);
-  const ct = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
-  const tag = cipher.getAuthTag();
+  const { iv, tag, ct } = gcmSeal(active.bytes, plaintext);
   return [
     ENC_VERSION_V2,
     active.id,
@@ -94,22 +114,6 @@ export function encryptSecret(plaintext: string): string {
     tag.toString("base64"),
     ct.toString("base64"),
   ].join(":");
-}
-
-function decryptWith(
-  keyBytes: Buffer,
-  ivB64: string,
-  tagB64: string,
-  ctB64: string,
-): string {
-  const iv = Buffer.from(ivB64, "base64");
-  const tag = Buffer.from(tagB64, "base64");
-  const ct = Buffer.from(ctB64, "base64");
-  const decipher = createDecipheriv(ALGO, keyBytes, iv);
-  decipher.setAuthTag(tag);
-  return Buffer.concat([decipher.update(ct), decipher.final()]).toString(
-    "utf8",
-  );
 }
 
 export function decryptSecret(value: string): string {
@@ -124,7 +128,12 @@ export function decryptSecret(value: string): string {
       throw new Error(
         `unknown encryption key id ${keyId} — was the key rotated out?`,
       );
-    return decryptWith(key.bytes, ivB64, tagB64, ctB64);
+    return gcmOpen(
+      key.bytes,
+      Buffer.from(ivB64, "base64"),
+      Buffer.from(tagB64, "base64"),
+      Buffer.from(ctB64, "base64"),
+    );
   }
   // v0 plaintext and v1 ciphertext are no longer supported. The one-time
   // encryption-v2 uplift migration was removed along with the Umzug
@@ -137,4 +146,80 @@ export function decryptSecret(value: string): string {
   throw new Error(
     "unknown encryption format: only v2 values are supported",
   );
+}
+
+// ─── purpose-bound subkeys ──────────────────────────────────────────
+
+const SUBKEY_SALT = Buffer.from("karyl-encryption-subkey-v1");
+const SUBKEY_SEAL_VERSION = "s1";
+
+/**
+ * Every configured key, HKDF-SHA256-derived for one `purpose`. A value
+ * sealed for one purpose never opens under another, and nothing sealed
+ * here is ever a valid `encryptSecret` ciphertext (or the reverse) — the
+ * master key itself never touches these values. The id is the subkey's
+ * own fingerprint, so a sealed value names no master-key fingerprint.
+ */
+function subkeys(purpose: string): EncKey[] {
+  return getKeys().map((k) => {
+    const bytes = Buffer.from(
+      hkdfSync("sha256", k.bytes, SUBKEY_SALT, Buffer.from(purpose, "utf8"), KEY_BYTES),
+    );
+    const id = createHash("sha256").update(bytes).digest("hex").slice(0, 8);
+    return { id, bytes };
+  });
+}
+
+/**
+ * AES-256-GCM-seal `plaintext` under the active key's subkey for
+ * `purpose`. Output is URL-safe: `s1.<keyId>.<iv>.<tag>.<ct>`, the last
+ * three base64url. Stateless: any process holding the same
+ * ENCRYPTION_KEY opens it, across restarts and shards; a key rotated in
+ * still opens what the previous key sealed while both are listed.
+ */
+export function sealWithSubkey(purpose: string, plaintext: string): string {
+  const [active] = subkeys(purpose);
+  const { iv, tag, ct } = gcmSeal(active.bytes, plaintext);
+  return [
+    SUBKEY_SEAL_VERSION,
+    active.id,
+    iv.toString("base64url"),
+    tag.toString("base64url"),
+    ct.toString("base64url"),
+  ].join(".");
+}
+
+export type SubkeyOpenResult =
+  | { ok: true; plaintext: string }
+  /** `malformed`: not a sealed value at all; `unsealable`: shaped like
+   *  one but no configured key authenticates it (tampered, another
+   *  purpose, or a key no longer listed). */
+  | { ok: false; reason: "malformed" | "unsealable" };
+
+/** Open a {@link sealWithSubkey} value sealed for the same `purpose`. */
+export function openWithSubkey(purpose: string, value: string): SubkeyOpenResult {
+  const parts = value.split(".");
+  const b64url = /^[A-Za-z0-9_-]+$/;
+  if (
+    parts.length !== 5 ||
+    parts[0] !== SUBKEY_SEAL_VERSION ||
+    !/^[0-9a-f]{8}$/.test(parts[1]!) ||
+    !parts.slice(2).every((p) => b64url.test(p))
+  ) {
+    return { ok: false, reason: "malformed" };
+  }
+  const [, keyId, ivB64, tagB64, ctB64] = parts as [string, string, string, string, string];
+  const iv = Buffer.from(ivB64, "base64url");
+  const tag = Buffer.from(tagB64, "base64url");
+  if (iv.length !== IV_BYTES || tag.length !== TAG_BYTES) {
+    return { ok: false, reason: "malformed" };
+  }
+  const key = subkeys(purpose).find((k) => k.id === keyId);
+  if (!key) return { ok: false, reason: "unsealable" };
+  try {
+    const plaintext = gcmOpen(key.bytes, iv, tag, Buffer.from(ctB64, "base64url"));
+    return { ok: true, plaintext };
+  } catch {
+    return { ok: false, reason: "unsealable" };
+  }
 }

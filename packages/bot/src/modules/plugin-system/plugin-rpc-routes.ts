@@ -34,7 +34,6 @@ import { featureReachResolver } from "../feature-toggle/feature-reach-resolver.j
 import { hasGuildReach } from "./plugin-guild-reach.js";
 import { jwtService } from "../web-core/jwt.service.js";
 import { discordErrorStatus } from "../web-core/discord-error.js";
-import { assertPluginTarget } from "../../utils/host-policy.js";
 import {
   describeOwnershipFailure,
   findUnownedCustomId,
@@ -44,17 +43,19 @@ import {
   clearPluginDeferState,
   planPluginRespond,
 } from "./plugin-defer-state.js";
+import { unsealInteractionToken } from "./plugin-interaction-token.js";
 import { maybeForwardGuildRpc } from "./shard-forward-routes.js";
 import {
   runBehaviorCallback,
   type BehaviorCallbackMethod,
 } from "../command-system/behavior-callback.js";
-// max attachments per message and per-file byte cap: one set with the
-// behavior reply's (#156)
+// attachments download as a plugin action reply's do (#203, #214)
+import type { ReplyAttachment } from "../command-system/behavior-reply.js";
+import type { ReplyFile } from "../command-system/reply-files.js";
 import {
-  MAX_REPLY_ATTACHMENT_BYTES as MAX_ATTACHMENT_BYTES,
-  MAX_REPLY_ATTACHMENTS as MAX_ATTACHMENTS,
-} from "../command-system/behavior-reply.js";
+  PLUGIN_FILE_TIMEOUT_MS,
+  pluginReplyFileFetcher,
+} from "../command-system/webhook-forwarder.service.js";
 import {
   formatPluginRpcSchemaError,
   installPluginRpcSchemaErrors,
@@ -138,6 +139,8 @@ export interface PluginRpcOptions {
   bot?: Client;
   /** Injected for tests; production uses the module-level singleton. */
   dmLimiter?: { isRateLimited(key: string): boolean };
+  /** How long one call's attachment downloads may take; tests inject a short one. */
+  attachmentTimeoutMs?: number;
 }
 
 /** Module-level singleton — one limiter shared across all requests. */
@@ -237,59 +240,41 @@ const MEMBERS_GET_MAX = 25;
  * (`attachment://<name>`) without needing a Discord-reachable public
  * URL — the fetch happens over the internal bot↔plugin network.
  *
- * SSRF is bounded: the fetch base is the plugin's own registered
- * `url`, run through the same `assertPluginTarget` host policy used
- * by the interaction dispatcher; `path` is forced to a leading-slash
- * relative path so it can't swap the host.
+ * The download is a plugin action reply's (#203, #214):
+ * `pluginReplyFileFetcher` → `downloadReplyFiles` — the descriptors
+ * checked by `attachmentsProblem`, the plugin target policy, a
+ * connection pinned to the addresses it vetted, no redirects, no path
+ * out of the plugin URL's prefix, 8 MiB a file and 25 MiB together cut
+ * off as they stream, one timeout for the call and a download turn,
+ * one at a time per plugin.
  *
- * Throws on any malformed descriptor / disallowed host / oversize
- * body so the caller can surface a 400.
+ * Throws on any malformed descriptor / disallowed host / failed or
+ * oversize download so the caller can surface a 400.
  */
 async function resolvePluginAttachments(
   pluginId: number,
   raw: unknown,
-): Promise<Array<{ name: string; data: Buffer }>> {
+  timeoutMs: number,
+): Promise<ReplyFile[]> {
   if (raw === undefined) return [];
   if (!Array.isArray(raw)) throw new Error("attachments must be an array");
-  if (raw.length === 0) return [];
-  if (raw.length > MAX_ATTACHMENTS) {
-    throw new Error(`at most ${MAX_ATTACHMENTS} attachments`);
+  const descriptors: ReplyAttachment[] = [];
+  for (const [i, entry] of raw.entries()) {
+    if (!entry || typeof entry !== "object") {
+      throw new Error(`attachment ${i + 1}: must be an object`);
+    }
+    const { name, path } = entry as Record<string, unknown>;
+    if (typeof name !== "string" || typeof path !== "string") {
+      throw new Error(`attachment ${i + 1}: name and path must be strings`);
+    }
+    descriptors.push({ name, path });
   }
+  if (descriptors.length === 0) return [];
   const plugin = await findPluginById(pluginId);
   if (!plugin) throw new Error("plugin not found");
-  const base = plugin.url.replace(/\/+$/, "");
-  const parsedBase = new URL(base);
-  const port = parsedBase.port
-    ? Number(parsedBase.port)
-    : parsedBase.protocol === "https:"
-      ? 443
-      : 80;
-  await assertPluginTarget(parsedBase.hostname, port);
-
-  const out: Array<{ name: string; data: Buffer }> = [];
-  for (const entry of raw) {
-    if (!entry || typeof entry !== "object") {
-      throw new Error("attachment entry must be an object");
-    }
-    const e = entry as { name?: unknown; path?: unknown };
-    if (typeof e.name !== "string" || e.name.length === 0) {
-      throw new Error("attachment.name required");
-    }
-    if (typeof e.path !== "string" || !e.path.startsWith("/")) {
-      throw new Error("attachment.path must be a leading-slash path");
-    }
-    // Don't follow redirects past the assertPluginTarget host check (SSRF).
-    const res = await fetch(`${base}${e.path}`, { redirect: "manual" });
-    if (!res.ok) {
-      throw new Error(`attachment fetch ${e.path} → ${res.status}`);
-    }
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.byteLength > MAX_ATTACHMENT_BYTES) {
-      throw new Error(`attachment ${e.name} exceeds size cap`);
-    }
-    out.push({ name: e.name, data: buf });
-  }
-  return out;
+  const got = await pluginReplyFileFetcher(plugin, { pluginId }, timeoutMs)(descriptors);
+  if (!got.ok) throw new Error(got.error);
+  return got.files;
 }
 
 /** Fetch a channel for a plugin RPC. `undefined` = the 404 was already sent;
@@ -445,6 +430,39 @@ function requirePluginToken<B extends { interaction_token?: string }>(
 }
 
 /**
+ * {@link requireScope} for an `interactions.*` route, then open the
+ * sealed `interaction_token` the plugin echoes back (#215) and return
+ * the Discord token inside. 403 when it does not open, has expired, or
+ * was dispatched to another plugin; every refusal is a bot event naming
+ * the caller and the reason, at most one per plugin per dedup window so
+ * a misbehaving plugin cannot flood the log.
+ */
+async function requireInteractionCaller(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  scope: string,
+  sealed: string,
+): Promise<{
+  ctx: { pluginId: number; pluginKey: string };
+  interactionToken: string;
+} | null> {
+  const ctx = await requireScope(request, reply, scope);
+  if (!ctx) return null;
+  const opened = unsealInteractionToken(sealed, ctx.pluginId);
+  if (opened.ok) return { ctx, interactionToken: opened.token };
+  if (shouldRecord(`plugin-interaction-token-refused:${ctx.pluginId}`)) {
+    botEventLog.record(
+      "warn",
+      "auth",
+      `plugin ${ctx.pluginKey} called ${scope} with a refused interaction_token: ${opened.reason}`,
+      { pluginId: ctx.pluginId, method: scope, reason: opened.reason },
+    );
+  }
+  reply.code(403).send({ error: `interaction_token refused: ${opened.reason}` });
+  return null;
+}
+
+/**
  * Verify a channel actually belongs to the claimed guild. The
  * per-guild feature gate only knows which guild the plugin asked
  * about — Discord's `/channels/:id/*` routes are keyed on the
@@ -502,6 +520,8 @@ function registerRpcRoutes(
 ): void {
   const bot = options.bot;
   const dmLimiter = options.dmLimiter ?? defaultDmLimiter;
+  const attachmentTimeoutMs =
+    options.attachmentTimeoutMs ?? PLUGIN_FILE_TIMEOUT_MS;
 
   // ─── messages.send ────────────────────────────────────────────────
   /**
@@ -591,11 +611,12 @@ function registerRpcRoutes(
           return;
         }
       }
-      let attachments: Array<{ name: string; data: Buffer }>;
+      let attachments: ReplyFile[];
       try {
         attachments = await resolvePluginAttachments(
           ctx.pluginId,
           body.attachments,
+          attachmentTimeoutMs,
         );
       } catch (err) {
         const m = err instanceof Error ? err.message : String(err);
@@ -1511,8 +1532,14 @@ function registerRpcRoutes(
     async (request, reply) => {
     if (await answeredBehaviorCallback(request, reply, "interactions.respond")) return;
     if (!requirePluginToken(request.body, reply)) return;
-    const ctx = await requireScope(request, reply, "interactions.respond");
-    if (!ctx) return;
+    const caller = await requireInteractionCaller(
+      request,
+      reply,
+      "interactions.respond",
+      request.body.interaction_token,
+    );
+    if (!caller) return;
+    const { ctx, interactionToken } = caller;
     if (!bot || !bot.application) {
       reply.code(503).send({ error: "bot client unavailable" });
       return;
@@ -1534,11 +1561,12 @@ function registerRpcRoutes(
         return;
       }
     }
-    let attachments: Array<{ name: string; data: Buffer }>;
+    let attachments: ReplyFile[];
     try {
       attachments = await resolvePluginAttachments(
         ctx.pluginId,
         body.attachments,
+        attachmentTimeoutMs,
       );
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
@@ -1550,7 +1578,7 @@ function registerRpcRoutes(
     // in plugin-defer-state (#56); this handler keeps the transport.
     // State is consumed (cleared) only after Discord accepts the call,
     // so a failed respond can retry against the same state.
-    const plan = planPluginRespond(body.interaction_token, body.ephemeral);
+    const plan = planPluginRespond(interactionToken, body.ephemeral);
     const extraFlags = sanitizePluginFlags(body.flags);
 
     try {
@@ -1564,7 +1592,7 @@ function registerRpcRoutes(
         await bot.rest.patch(
           Routes.webhookMessage(
             bot.application.id,
-            body.interaction_token,
+            interactionToken,
             "@original",
           ),
           {
@@ -1585,7 +1613,7 @@ function registerRpcRoutes(
               : {}),
           },
         );
-        clearPluginDeferState(body.interaction_token);
+        clearPluginDeferState(interactionToken);
         return { ok: true };
       }
 
@@ -1597,7 +1625,7 @@ function registerRpcRoutes(
       const followupFlags =
         (plan.ephemeral ? MessageFlags.Ephemeral : 0) | extraFlags;
       await bot.rest.post(
-        Routes.webhook(bot.application.id, body.interaction_token),
+        Routes.webhook(bot.application.id, interactionToken),
         {
           body: {
             content,
@@ -1623,12 +1651,12 @@ function registerRpcRoutes(
         .delete(
           Routes.webhookMessage(
             bot.application.id,
-            body.interaction_token,
+            interactionToken,
             "@original",
           ),
         )
         .catch(() => {});
-      clearPluginDeferState(body.interaction_token);
+      clearPluginDeferState(interactionToken);
       return { ok: true };
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
@@ -1681,8 +1709,14 @@ function registerRpcRoutes(
     async (request, reply) => {
     if (await answeredBehaviorCallback(request, reply, "interactions.followup")) return;
     if (!requirePluginToken(request.body, reply)) return;
-    const ctx = await requireScope(request, reply, "interactions.followup");
-    if (!ctx) return;
+    const caller = await requireInteractionCaller(
+      request,
+      reply,
+      "interactions.followup",
+      request.body.interaction_token,
+    );
+    if (!caller) return;
+    const { ctx, interactionToken } = caller;
     if (!bot || !bot.application) {
       reply.code(503).send({ error: "bot client unavailable" });
       return;
@@ -1704,11 +1738,12 @@ function registerRpcRoutes(
         return;
       }
     }
-    let attachments: Array<{ name: string; data: Buffer }>;
+    let attachments: ReplyFile[];
     try {
       attachments = await resolvePluginAttachments(
         ctx.pluginId,
         body.attachments,
+        attachmentTimeoutMs,
       );
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
@@ -1721,7 +1756,7 @@ function registerRpcRoutes(
       (ephemeral ? MessageFlags.Ephemeral : 0) | followupExtraFlags;
     try {
       const created = (await bot.rest.post(
-        Routes.webhook(bot.application.id, body.interaction_token),
+        Routes.webhook(bot.application.id, interactionToken),
         {
           body: {
             content,
@@ -1788,12 +1823,14 @@ function registerRpcRoutes(
     async (request, reply) => {
     if (await answeredBehaviorCallback(request, reply, "interactions.delete_followup")) return;
     if (!requirePluginToken(request.body, reply)) return;
-    const ctx = await requireScope(
+    const caller = await requireInteractionCaller(
       request,
       reply,
       "interactions.delete_followup",
+      request.body.interaction_token,
     );
-    if (!ctx) return;
+    if (!caller) return;
+    const { ctx, interactionToken } = caller;
     if (!bot || !bot.application) {
       reply.code(503).send({ error: "bot client unavailable" });
       return;
@@ -1803,7 +1840,7 @@ function registerRpcRoutes(
       await bot.rest.delete(
         Routes.webhookMessage(
           bot.application.id,
-          body.interaction_token,
+          interactionToken,
           body.message_id,
         ),
       );
@@ -1860,12 +1897,14 @@ function registerRpcRoutes(
     async (request, reply) => {
     if (await answeredBehaviorCallback(request, reply, "interactions.edit_followup")) return;
     if (!requirePluginToken(request.body, reply)) return;
-    const ctx = await requireScope(
+    const caller = await requireInteractionCaller(
       request,
       reply,
       "interactions.edit_followup",
+      request.body.interaction_token,
     );
-    if (!ctx) return;
+    if (!caller) return;
+    const { ctx, interactionToken } = caller;
     if (!bot || !bot.application) {
       reply.code(503).send({ error: "bot client unavailable" });
       return;
@@ -1891,7 +1930,7 @@ function registerRpcRoutes(
       await bot.rest.patch(
         Routes.webhookMessage(
           bot.application.id,
-          body.interaction_token,
+          interactionToken,
           body.message_id,
         ),
         {
@@ -1964,8 +2003,14 @@ function registerRpcRoutes(
       ]),
     },
     async (request, reply) => {
-    const ctx = await requireScope(request, reply, "interactions.send_modal");
-    if (!ctx) return;
+    const caller = await requireInteractionCaller(
+      request,
+      reply,
+      "interactions.send_modal",
+      request.body.interaction_token,
+    );
+    if (!caller) return;
+    const { ctx, interactionToken } = caller;
     if (!bot || !bot.application) {
       reply.code(503).send({ error: "bot client unavailable" });
       return;
@@ -1992,7 +2037,7 @@ function registerRpcRoutes(
       // doesn't exist here — we only have the id+token forwarded by
       // the plugin.
       await bot.rest.post(
-        Routes.interactionCallback(body.interaction_id, body.interaction_token),
+        Routes.interactionCallback(body.interaction_id, interactionToken),
         { body: { type: 9, data: body.modal } },
       );
       return { ok: true };

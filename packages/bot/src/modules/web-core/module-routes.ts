@@ -46,6 +46,8 @@ export interface ModuleRouteDeps {
   dmInbox?: DmInboxStore;
   /** Injected DM rate limiter for tests; production uses the singleton. */
   dmLimiter?: { isRateLimited(key: string): boolean };
+  /** A plugin RPC's attachment download timeout; tests inject a short one. */
+  pluginAttachmentTimeoutMs?: number;
 }
 
 /**
@@ -89,7 +91,7 @@ export async function registerModuleRoutes(
   server: FastifyInstance,
   deps: ModuleRouteDeps,
 ): Promise<void> {
-  const { bot, reconciler, commandNamespace, webhookForwarder, dmInbox, dmLimiter } = deps;
+  const { bot, reconciler, commandNamespace, webhookForwarder, dmInbox, dmLimiter, pluginAttachmentTimeoutMs } = deps;
 
   await registerAdminManagementRoutes(server, { bot });
   await registerAdminLoginStatusRoutes(server);
@@ -104,7 +106,7 @@ export async function registerModuleRoutes(
   // public (under /api/auth/, before sign-in): the login page's hint (#146)
   registerLoginTriggerHintRoute(server);
   await registerPluginRoutes(server, { bot, reconciler });
-  await registerPluginRpcRoutes(server, { bot, dmLimiter });
+  await registerPluginRpcRoutes(server, { bot, dmLimiter, attachmentTimeoutMs: pluginAttachmentTimeoutMs });
   await registerVoiceRpcRoutes(server, { bot });
   // Reverse channel from the standalone voice service (PR-2.3 full split).
   // Only meaningful when VOICE_SERVICE_URL is set; the routes self-guard

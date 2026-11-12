@@ -155,6 +155,8 @@ export interface CreateWebServerOptions {
   dmInbox?: DmInboxStore;
   /** Injected DM rate limiter for tests; production uses the module-level singleton. */
   dmLimiter?: { isRateLimited(key: string): boolean };
+  /** How long a plugin RPC's attachment downloads may take; tests inject a short one. */
+  pluginAttachmentTimeoutMs?: number;
   /** Override owner ids for tests; production uses config.bot.ownerIds. */
   ownerIds?: string[];
   reconciler?: import("../command-system/reconcile.service.js").CommandReconciler;
@@ -774,6 +776,7 @@ export async function createWebServer(
     webhookForwarder: options.webhookForwarder,
     dmInbox: options.dmInbox,
     dmLimiter: options.dmLimiter,
+    pluginAttachmentTimeoutMs: options.pluginAttachmentTimeoutMs,
   });
 
   const staticRoot = options.staticRoot ?? defaultStaticRoot();

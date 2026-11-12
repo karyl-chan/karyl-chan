@@ -26,6 +26,8 @@ import { vi, describe, it, expect, beforeAll, beforeEach, afterEach } from "vite
 
 vi.hoisted(() => {
   process.env.SQLITE_DB_PATH = ":memory:";
+  // interaction tokens are sealed under it (#215)
+  process.env.ENCRYPTION_KEY = "a".repeat(64);
 });
 
 // ── module-level mocks ──────────────────────────────────────────────────────
@@ -79,6 +81,7 @@ import { findPluginById } from "../src/modules/plugin-system/models/plugin.model
 import { findFeatureRowsByPluginGuild } from "../src/modules/feature-toggle/models/plugin-guild-feature.model.js";
 import { findFeatureDefaultsByPlugin } from "../src/modules/feature-toggle/models/plugin-feature-default.model.js";
 import { featureReachResolver } from "../src/modules/feature-toggle/feature-reach-resolver.js";
+import { sealInteractionToken } from "../src/modules/plugin-system/plugin-interaction-token.js";
 import type { PluginGuildFeatureRow } from "../src/modules/feature-toggle/models/plugin-guild-feature.model.js";
 import {
   PluginConfig,
@@ -92,7 +95,8 @@ const PLUGIN_KEY = "batch3-plugin";
 const GUILD_SNOWFLAKE = "222222222222222222";
 const USER_SNOWFLAKE = "333333333333333333";
 const ROLE_SNOWFLAKE = "444444444444444444";
-const TOKEN = "interaction-token-abc";
+/** The interaction token this plugin was dispatched (#215). */
+const TOKEN = sealInteractionToken("interaction-token-abc", PLUGIN_ID);
 
 const ALL_SCOPES = [
   "members.get",

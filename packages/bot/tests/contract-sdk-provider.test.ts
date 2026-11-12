@@ -53,6 +53,8 @@ vi.hoisted(() => {
   // Makes the register response emit `publicBaseUrl`, so the envelope
   // suite observes the full optional field set rather than a subset.
   process.env.WEB_BASE_URL = "https://karyl.test";
+  // Interaction tokens are sealed under it at dispatch (#215).
+  process.env.ENCRYPTION_KEY = "a".repeat(64);
 });
 
 // Host policy is the SSRF gate on BOTH the register path (validateManifest
@@ -120,6 +122,10 @@ import {
 } from "../src/modules/plugin-system/plugin-dispatch.service.js";
 import type { PluginDispatchPool } from "../src/modules/plugin-system/plugin-dispatch-pool.js";
 import type { PluginRow } from "../src/modules/plugin-system/models/plugin.model.js";
+import {
+  INTERACTION_TOKEN_TTL_MS,
+  unsealInteractionToken,
+} from "../src/modules/plugin-system/plugin-interaction-token.js";
 
 // ════════════════════════════════════════════════════════════════════
 //  Behavioural suite 1 — HMAC headers, window, golden vectors
@@ -792,6 +798,29 @@ function fakeModalInteraction(): unknown {
   };
 }
 
+/**
+ * The payload's `interaction_token` is sealed for this plugin (#215): the
+ * Discord token is nowhere in the body, the seal opens back to it for
+ * this plugin only, and it lapses 15 minutes after dispatch.
+ */
+function expectSealedFor(body: Record<string, unknown>, discordToken: string): void {
+  const sealed = body.interaction_token;
+  expect(typeof sealed).toBe("string");
+  expect(JSON.stringify(body)).not.toContain(discordToken);
+  const now = Date.now();
+  expect(unsealInteractionToken(sealed as string, PLUGIN_ID, now)).toEqual({
+    ok: true,
+    token: discordToken,
+  });
+  expect(unsealInteractionToken(sealed as string, PLUGIN_ID + 1, now)).toEqual({
+    ok: false,
+    reason: "wrong_plugin",
+  });
+  expect(
+    unsealInteractionToken(sealed as string, PLUGIN_ID, now + INTERACTION_TOKEN_TTL_MS + 1_000),
+  ).toEqual({ ok: false, reason: "expired" });
+}
+
 describe("contract: interaction dispatch payloads (field-level)", () => {
   let fetchSpy: ReturnType<typeof vi.fn>;
 
@@ -838,7 +867,7 @@ describe("contract: interaction dispatch payloads (field-level)", () => {
     expect(body.guild_id).toBe(GUILD_ID);
     expect(body.channel_id).toBe(CHANNEL_ID);
     expect(body.interaction_id).toBe("interaction-1");
-    expect(body.interaction_token).toBe("interaction-token-1");
+    expectSealedFor(body, "interaction-token-1");
     expect(body.application_id).toBe("application-1");
     expect(body.options).toEqual([{ name: "target", type: 3, value: "x" }]);
     expect(body.user).toMatchObject({ id: USER_ID, username: "tester" });
@@ -889,6 +918,7 @@ describe("contract: interaction dispatch payloads (field-level)", () => {
     expect(body.message_id).toBe("message-1");
     expect(body.component_type).toBe(3);
     expect(body.selected_values).toEqual(["opt-a", "opt-b"]);
+    expectSealedFor(body, "interaction-token-3");
     const member = body.member as Record<string, unknown>;
     expect(member.permissions).toBe("8");
     expect(member.voice_channel_id).toBe("voice-1");
@@ -905,6 +935,7 @@ describe("contract: interaction dispatch payloads (field-level)", () => {
     assertPayloadMatchesContract("modal", body);
     expect(body.custom_id).toBe(`kc:${PLUGIN_KEY}:feedback`);
     expect(body.components).toEqual([{ custom_id: "body", value: "hello" }]);
+    expectSealedFor(body, "interaction-token-4");
     expect((body.member as Record<string, unknown>).permissions).toBe("8");
   });
 
