@@ -797,6 +797,108 @@ describe("RCON host resolution timeout (#239)", () => {
     await expect(result).resolves.toBe(false);
     expect(embedTitles(second).at(-1)).toBe("Connection Failed");
   });
+
+  /** A lookup the test answers later, through the returned function. */
+  function answerLater() {
+    let answerNow: (value: LookupResult) => void = () => {};
+    mockedLookup.mockImplementationOnce(
+      () =>
+        new Promise<LookupResult>((resolve) => {
+          answerNow = resolve;
+        }),
+    );
+    return (value: LookupResult) => answerNow(value);
+  }
+
+  it("ignores a first-connect answer that arrives after the attempt ran out", async () => {
+    vi.useFakeTimers();
+    const lateAnswer = answerLater();
+    mockedLookup.mockImplementation(hang);
+    const channel = makeChannel();
+    startConnect(channel);
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    lateAnswer(answer("10.0.0.9"));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(instances).toHaveLength(0);
+    expect(RconConnectionService.getConnection("c1")?.conn).toBeUndefined();
+    expect(embedTitles(channel)).toEqual(["Connection Lost"]);
+
+    // The retry resolves afresh and pins only its own answer.
+    mockedLookup.mockResolvedValue(answer("10.0.0.5"));
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(instances).toHaveLength(1);
+    expect(instances[0].pinned).toEqual([{ address: "10.0.0.5", family: 4 }]);
+  });
+
+  it("ignores a reconnect answer that arrives after the attempt ran out", async () => {
+    const channel = await connectAndAuth();
+    const lateAnswer = answerLater();
+    mockedLookup.mockImplementation(hang);
+    instances[0].emit("end");
+    await vi.advanceTimersByTimeAsync(2000 + 10_000);
+
+    lateAnswer(answer("10.0.0.9"));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(instances).toHaveLength(1);
+    expect(RconConnectionService.getConnection("c1")?.conn).toBeUndefined();
+    expect(RconConnectionService.getConnection("c1")?.reconnectAttempts).toBe(2);
+    expect(embedTitles(channel)).toEqual(["Connection Lost", "Connection Lost"]);
+
+    mockedLookup.mockResolvedValue(answer("10.0.0.5"));
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(instances).toHaveLength(2);
+    expect(instances[1].pinned).toEqual([{ address: "10.0.0.5", family: 4 }]);
+  });
+
+  it("retires a client once even when later attempts time out resolving", async () => {
+    await connectAndAuth();
+    mockedLookup.mockImplementation(hang);
+    instances[0].emit("end");
+    expect(instances[0].disconnect).toHaveBeenCalledOnce();
+    // Retired: the connection holds no client while the next attempt waits.
+    expect(RconConnectionService.getConnection("c1")?.conn).toBeUndefined();
+
+    await vi.advanceTimersByTimeAsync(EVERY_RETRY_TIMES_OUT_MS);
+
+    expect(RconConnectionService.getConnection("c1")).toBeUndefined();
+    expect(instances[0].disconnect).toHaveBeenCalledOnce();
+    expect(instances[0].destroy).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a DNS error", () => mockedLookup.mockRejectedValue(new Error("ENOTFOUND"))],
+    ["a host-policy refusal", () => mockedLookup.mockResolvedValue(answer("169.254.169.254"))],
+  ])("still ends a first connect at once on %s, without retrying", async (_, failLookup) => {
+    vi.useFakeTimers();
+    failLookup();
+    const channel = makeChannel("channel-1");
+    const waiter = makeChannel("channel-2");
+    const result = startConnect(channel);
+    const waiterResult = startConnect(waiter);
+
+    expect(await isSettled(result)).toBe(true);
+    await expect(result).resolves.toBe(false);
+    await expect(waiterResult).resolves.toBe(false);
+    expect(RconConnectionService.getConnection("c1")).toBeUndefined();
+    expect(svc.connectionLocks.has("c1")).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(botEventLog.record).toHaveBeenCalledWith(
+      "error",
+      "feature",
+      expect.stringContaining("RCON connection failed: mc-server:25575"),
+      expect.objectContaining({ errorType: "HostPolicyError" }),
+    );
+
+    await vi.advanceTimersByTimeAsync(EVERY_ATTEMPT_TIMES_OUT_MS);
+
+    expect(mockedLookup).toHaveBeenCalledOnce();
+    expect(instances).toHaveLength(0);
+    expect(embedTitles(channel)).toEqual(["Connection Error"]);
+    expect(embedTitles(waiter)).toEqual(["Connection Error"]);
+  });
 });
 
 describe("RCON client retired while connecting (#180)", () => {

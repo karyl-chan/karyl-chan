@@ -18,8 +18,10 @@ const log = moduleLogger("rcon-connection");
 
 export interface RconConnection {
   /**
-   * The current client. Undefined only while a first connect whose host
-   * did not resolve in time waits for its retry.
+   * The current client. Undefined between retiring a failed client and
+   * starting the next attempt's, so a client is retired only once; also
+   * while a first connect whose host did not resolve in time waits for
+   * its retry.
    */
   conn: PinnedRcon | undefined;
   channels: Set<TextChannel>;
@@ -120,9 +122,9 @@ export class RconConnectionService {
    * or gives up (false). A first connect that fails (socket error, server
    * close, connect timeout, also while still resolving the host) is
    * retried like any drop; the channels waiting get the same notices,
-   * ending in "Connection Failed". A call made while
-   * another one connects the same name waits with it and shares its
-   * result. Every false leaves the waiting channels notified.
+   * ending in "Connection Failed". A call made while another one connects
+   * the same name waits with it and shares its result. Every false leaves
+   * the waiting channels notified.
    */
   static async initializeConnection(
     connectionName: string,
@@ -179,7 +181,7 @@ export class RconConnectionService {
       const deadline = Date.now() + CONNECT_ATTEMPT_TIMEOUT_MS;
       let addresses: PinnedAddress[] | undefined;
       try {
-        addresses = await this.resolveBefore(host, port, deadline);
+        addresses = await this.resolveWithDeadline(host, port, deadline);
       } catch (error) {
         // Out of time is a failed attempt, retried below; a DNS error or
         // a policy refusal ends the first connect at once.
@@ -389,7 +391,7 @@ export class RconConnectionService {
    * attempt's `deadline` passes. A resolver that never answers (DNS
    * hanging until the OS gives up) would otherwise hold the attempt.
    */
-  private static async resolveBefore(
+  private static async resolveWithDeadline(
     host: string,
     port: number,
     deadline: number,
@@ -620,6 +622,7 @@ export class RconConnectionService {
       // node-rcon authenticates a client once, so a reused one would
       // never emit `auth` again (and never reset the attempt count).
       this.retireClient(connectionName, connection.conn);
+      connection.conn = undefined;
       const delay = Math.min(
         1000 * Math.pow(2, connection.reconnectAttempts),
         30000,
@@ -651,7 +654,7 @@ export class RconConnectionService {
         // somewhere refused, or none in time, fails this attempt.
         if (this.connectionMap[connectionName] !== connection) return;
         const deadline = Date.now() + CONNECT_ATTEMPT_TIMEOUT_MS;
-        const addresses = await this.resolveBefore(host, port, deadline);
+        const addresses = await this.resolveWithDeadline(host, port, deadline);
         if (this.connectionMap[connectionName] !== connection) return;
         await this.startClient(
           connectionName,
