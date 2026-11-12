@@ -8,7 +8,8 @@
  * no lost updates, no duplicate rows, no unhandled unique-violation crash.
  *
  * Gated on TEST_PG_URL so the normal `pnpm test` run (no Postgres) skips it
- * and stays green. To run it:
+ * and stays green. CI runs it in the plugin-platform-e2e job against that
+ * job's Postgres service. To run it locally:
  *
  *   docker run -d --name pg -e POSTGRES_PASSWORD=test -e POSTGRES_DB=karyltest \
  *     -p 55432:5432 postgres:16
@@ -33,6 +34,9 @@ describe.skipIf(!PG_URL)("PR-2.1 Postgres multi-writer", () => {
   let grantRoleCapability: (role: string, cap: string) => Promise<void>;
   let AdminRole: any;
   let AdminRoleCapability: any;
+  let seedMessageTrigger: typeof import("./behavior-fixtures.js").seedMessageTrigger;
+  let recordForwardOutcome: typeof import("../src/modules/behavior/models/behavior-stats.model.js").recordForwardOutcome;
+  let findStatsBulk: typeof import("../src/modules/behavior/models/behavior-stats.model.js").findStatsBulk;
 
   beforeAll(async () => {
     // MUST be set before db.js is imported — it builds the Sequelize
@@ -54,6 +58,13 @@ describe.skipIf(!PG_URL)("PR-2.1 Postgres multi-writer", () => {
     const svc = await import("../src/modules/admin/authorized-user.service.js");
     seedDefaultRoles = svc.seedDefaultRoles;
     grantRoleCapability = svc.grantRoleCapability as typeof grantRoleCapability;
+
+    // Behavior models register on import, so they must load before sync()
+    // or their tables never get created on the fresh schema.
+    ({ seedMessageTrigger } = await import("./behavior-fixtures.js"));
+    ({ recordForwardOutcome, findStatsBulk } = await import(
+      "../src/modules/behavior/models/behavior-stats.model.js"
+    ));
 
     // Fresh schema on the throwaway DB.
     await sequelize.sync({ force: true });
@@ -121,10 +132,6 @@ describe.skipIf(!PG_URL)("PR-2.1 Postgres multi-writer", () => {
     // Every relay records its outcome via recordForwardOutcome(); one hot
     // behavior fired from many shards must count each forward exactly once,
     // including the first burst that races the stats row's creation.
-    const { seedMessageTrigger } = await import("./behavior-fixtures.js");
-    const { recordForwardOutcome, findStatsBulk } = await import(
-      "../src/modules/behavior/models/behavior-stats.model.js"
-    );
     const id = await seedMessageTrigger();
 
     await Promise.all(
