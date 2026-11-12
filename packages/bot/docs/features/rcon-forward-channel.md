@@ -107,8 +107,8 @@ port-scan proxy:
 - "Connection Lost (n/3)" for each retry, after an error, a server close
   or a timeout.
 - "Connection Failed" when the retries run out.
-- "Connection Error" when the first connect cannot resolve the host or
-  the host policy refuses it (a later attempt counts as a failed retry
+- "Connection Error" when DNS fails on the first connect or the host
+  policy refuses the host (a later attempt counts as a failed retry
   instead), or when the connection is closed (for example by cleanup)
   before a waiting message was sent. A host-policy refusal shows the
   policy's message.
@@ -121,8 +121,10 @@ Up to 10 forwards per channel per minute. Over-limit messages get a
 
 ### Reconnect policy
 
-Each connect attempt has 10 seconds to open the socket and authenticate. An
-attempt that runs out is closed at once and counts as a failure.
+Each connect attempt has 10 seconds to resolve the host (DNS included),
+open the socket and authenticate. An attempt that runs out, also while
+still resolving, is closed at once and counts as a failure, on the first
+connect too.
 
 A socket error and the server closing the connection both count as
 failures, whether the connection had authenticated or was still on its
@@ -143,9 +145,10 @@ out are dropped with the "Connection Failed" notice.
 Every attempt resolves and checks the host again, then connects a new
 client to the fresh answers only, so a container that restarted with a
 new IP is reached at the new IP. The replaced client's late socket events
-are ignored. If DNS fails, or the host policy now refuses the
-host (an answer has become a metadata / link-local address), that
-attempt fails without connecting and the next attempt follows.
+are ignored. If DNS fails or does not answer in time, or the host
+policy now refuses the host (an answer has become a metadata /
+link-local address), that attempt fails without connecting and the next
+attempt follows.
 
 ## Required bot permissions
 

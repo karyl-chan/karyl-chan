@@ -89,7 +89,8 @@ export class RconQueueService {
 
       this.cleanExpiredCommands(connection);
 
-      if (connection.authenticated) {
+      // An authenticated connection always has its client.
+      if (connection.authenticated && connection.conn) {
         connection.conn.send(content);
       } else if (connection.queuedCommands.length < connection.maxQueueSize) {
         connection.queuedCommands.push({
