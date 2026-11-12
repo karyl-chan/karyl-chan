@@ -51,6 +51,7 @@ import { toWebhookAttachment } from "./webhook-attachment.js";
 import type { DispatchOutcome } from "./types.js";
 import type { WebhookForwarder } from "./webhook-forwarder.service.js";
 import { tForInteraction } from "../../i18n/index.js";
+import { replyInteractionFailure } from "./interaction-failure-reply.js";
 
 // ── Discord webhook payload 建構（slash command → webhook body）─────────────
 
@@ -124,6 +125,17 @@ function buildWebhookPayload(
   };
 }
 
+/**
+ * 某一層丟出例外時，interaction 是否已被那一層 ack（defer / reply）。
+ * 已 ack 就代表那一層已經認領：不能再交給下一層（它的 reply 會失敗），
+ * 而且使用者正看著「思考中…」，必須補一則失敗訊息（#179）。
+ */
+function ackedBeforeThrow(interaction: Interaction): boolean {
+  return (
+    interaction.isRepliable() && (interaction.deferred || interaction.replied)
+  );
+}
+
 // ── InteractionDispatcher ────────────────────────────────────────────────────
 
 export class InteractionDispatcher {
@@ -161,7 +173,13 @@ export class InteractionDispatcher {
             : undefined,
         },
       );
-      // layer 2 失敗不短路，繼續嘗試 layer 2.5 / 3
+      // defer 之後才丟錯（deliver / buildCommandBody）：這一層已認領，
+      // 補失敗訊息，不再往下派
+      if (ackedBeforeThrow(interaction)) {
+        await replyInteractionFailure(interaction);
+        return { claimed: true, claimedBy: "plugin_command" };
+      }
+      // 還沒 ack 就失敗不短路，繼續嘗試 layer 2.5 / 3
     }
 
     // ─ Layer 2.5：plugin 元件（按鈕 + select menu）── custom_id 為 `kc:<pluginKey>:…`
@@ -178,7 +196,12 @@ export class InteractionDispatcher {
           `interaction-dispatcher: plugin_component layer 拋出例外：${err instanceof Error ? err.message : String(err)}`,
           { customId: interaction.customId },
         );
-        // 失敗不短路，繼續嘗試 layer 3（in-process 可能有同 prefix 的 handler）
+        // deferUpdate 之後才丟錯：補失敗訊息（followUp，不蓋掉元件所在的訊息）
+        if (ackedBeforeThrow(interaction)) {
+          await replyInteractionFailure(interaction);
+          return { claimed: true, claimedBy: "plugin_component" };
+        }
+        // 還沒 ack 就失敗不短路，繼續嘗試 layer 3（in-process 可能有同 prefix 的 handler）
       }
     }
 
@@ -196,7 +219,11 @@ export class InteractionDispatcher {
           `interaction-dispatcher: plugin_modal layer 拋出例外：${err instanceof Error ? err.message : String(err)}`,
           { customId: interaction.customId },
         );
-        // 失敗不短路，繼續嘗試 layer 3
+        if (ackedBeforeThrow(interaction)) {
+          await replyInteractionFailure(interaction);
+          return { claimed: true, claimedBy: "plugin_modal" };
+        }
+        // 還沒 ack 就失敗不短路，繼續嘗試 layer 3
       }
     }
 
@@ -217,6 +244,11 @@ export class InteractionDispatcher {
             : undefined,
         },
       );
+      // in-process 只有在找到對應的 spec / modal 之後才可能丟錯（例如
+      // resolveBuiltinFeatureEnabled 查詢失敗）：它就是這個 interaction 的
+      // 主人，回一則失敗訊息，別讓使用者等到 Discord 逾時
+      await replyInteractionFailure(interaction);
+      return { claimed: true, claimedBy: "in_process" };
     }
 
     // ─ Fallback：未被任何層 claim
