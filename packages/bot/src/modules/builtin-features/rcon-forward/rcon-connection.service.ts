@@ -216,10 +216,9 @@ export class RconConnectionService {
   }
 
   /**
-   * Retire the named connection's client and forget the connection, with
-   * no other cleanup — for `initializeConnection`, which replaces it or
-   * fails while it holds the connection lock (`handleConnectionEnd`
-   * would release that lock).
+   * Retire the named connection's client and forget the connection. The
+   * connection lock is left alone: it belongs to an `initializeConnection`
+   * that may still be running, which releases it.
    */
   private static dropClient(connectionName: string) {
     const connection = this.connectionMap[connectionName];
@@ -236,8 +235,8 @@ export class RconConnectionService {
   /**
    * Attach the handlers for the connection's current client, and start
    * its connect timeout: the client has until then to authenticate.
-   * Every way the client stops connecting (auth, error, end, retired)
-   * stops the timer.
+   * `auth` stops the timer; every failure retires the client, which
+   * stops it too.
    */
   private static setupEventListeners(
     connectionName: string,
@@ -254,10 +253,15 @@ export class RconConnectionService {
       this.connectionMap[connectionName] === connection &&
       connection.conn === client;
 
+    // Retires this client and schedules the next attempt.
+    const reconnect = (failedMsg: string) =>
+      this.handleConnectionError(connectionName, host, port, password).catch(
+        (e: unknown) => log.error({ err: e, connectionName }, failedMsg),
+      );
+
     // A socket error, or a connect that ran out of time.
     const onError = (err: Error) => {
       if (!isCurrent()) return;
-      this.stopConnectTimer(client);
       log.error({ err, connectionName }, "RCON connection error");
       for (const channel of connection.channels) {
         channel
@@ -274,10 +278,7 @@ export class RconConnectionService {
             log.error({ err: e }, "failed to send RCON error embed"),
           );
       }
-      this.handleConnectionError(connectionName, host, port, password).catch(
-        (e: unknown) =>
-          log.error({ err: e, connectionName }, "處理連接錯誤時發生錯誤"),
-      );
+      reconnect("處理連接錯誤時發生錯誤");
     };
 
     this.connectTimers.set(
@@ -361,12 +362,8 @@ export class RconConnectionService {
         // error notice. Includes a reconnect client closed right after
         // connecting, so every attempt counts.
         if (!isCurrent()) return;
-        this.stopConnectTimer(client);
         log.info({ connectionName }, "Connection closed by the server");
-        this.handleConnectionError(connectionName, host, port, password).catch(
-          (e: unknown) =>
-            log.error({ err: e, connectionName }, "處理連接關閉時發生錯誤"),
-        );
+        reconnect("處理連接關閉時發生錯誤");
       });
   }
 
@@ -389,11 +386,7 @@ export class RconConnectionService {
         connection.queuedCommands = [];
       }
 
-      this.retireClient(connectionName, connection.conn);
-
-      // The connection lock is not ours: it belongs to an
-      // initializeConnection that may still be running, which releases it.
-      delete this.connectionMap[connectionName];
+      this.dropClient(connectionName);
     } catch (error) {
       log.error({ err: error, connectionName }, "清理連接時發生錯誤");
     }

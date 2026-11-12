@@ -123,6 +123,23 @@ const svc = RconConnectionService as unknown as {
   connectionLocks: Map<string, Promise<void>>;
 };
 
+/** Connect "c1" under fake timers; its client has not authenticated yet. */
+async function connect() {
+  vi.useFakeTimers();
+  mockedLookup.mockResolvedValue(answer("10.0.0.5"));
+  const channel = makeChannel();
+  await expect(
+    RconConnectionService.initializeConnection("c1", "mc-server", 25575, "pw", channel),
+  ).resolves.toBe(true);
+  return channel;
+}
+
+async function connectAndAuth() {
+  const channel = await connect();
+  instances[0].emit("auth");
+  return channel;
+}
+
 beforeEach(() => {
   instances.length = 0;
   svc.connectionMap = {};
@@ -298,15 +315,6 @@ describe("RCON reconnect", () => {
 });
 
 describe("RCON reconnect lifecycle", () => {
-  async function connectAndAuth() {
-    vi.useFakeTimers();
-    mockedLookup.mockResolvedValue(answer("10.0.0.5"));
-    const channel = makeChannel();
-    await RconConnectionService.initializeConnection("c1", "mc-server", 25575, "pw", channel);
-    instances[0].emit("auth");
-    return channel;
-  }
-
   /** Drop the current client and let the next attempt's backoff elapse. */
   async function dropAndRetry(delayMs: number) {
     instances.at(-1)!.emit("error", new Error("ECONNRESET"));
@@ -437,15 +445,6 @@ describe("RCON reconnect lifecycle", () => {
 });
 
 describe("RCON graceful server close (#180)", () => {
-  async function connectAndAuth() {
-    vi.useFakeTimers();
-    mockedLookup.mockResolvedValue(answer("10.0.0.5"));
-    const channel = makeChannel();
-    await RconConnectionService.initializeConnection("c1", "mc-server", 25575, "pw", channel);
-    instances[0].emit("auth");
-    return channel;
-  }
-
   it("reconnects after the server closes an authenticated connection", async () => {
     const channel = await connectAndAuth();
 
@@ -506,16 +505,6 @@ describe("RCON graceful server close (#180)", () => {
 });
 
 describe("RCON connect timeout (#180)", () => {
-  async function connect() {
-    vi.useFakeTimers();
-    mockedLookup.mockResolvedValue(answer("10.0.0.5"));
-    const channel = makeChannel();
-    await expect(
-      RconConnectionService.initializeConnection("c1", "mc-server", 25575, "pw", channel),
-    ).resolves.toBe(true);
-    return channel;
-  }
-
   it("fails a connect that does not authenticate within 10 s, then retries", async () => {
     const channel = await connect();
 

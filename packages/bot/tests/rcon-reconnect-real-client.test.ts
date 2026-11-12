@@ -82,36 +82,21 @@ afterEach(async () => {
 });
 
 describe("RCON reconnect with the real client", () => {
-  it("authenticates again after a reset and resets the attempt count", async () => {
+  it.each([
+    // The client sees ECONNRESET, not `end`.
+    ["a reset", (socket: net.Socket) => socket.resetAndDestroy()],
+    // FIN: the client sees `end`, no `error`.
+    ["a graceful close", (socket: net.Socket) => socket.end()],
+  ])("authenticates again after %s and resets the attempt count", async (_, drop) => {
     await RconConnectionService.initializeConnection("c1", "127.0.0.1", ctx.port, "pw", makeChannel());
     await vi.waitFor(() => expect(RconConnectionService.getConnection("c1")?.authenticated).toBe(true));
 
-    ctx.sockets[0].resetAndDestroy(); // the client sees ECONNRESET, not `end`
+    drop(ctx.sockets[0]);
     await vi.waitFor(() =>
       expect(RconConnectionService.getConnection("c1")?.reconnectAttempts).toBe(1),
     );
 
     // First backoff is 2 s.
-    await vi.waitFor(
-      () => {
-        const connection = RconConnectionService.getConnection("c1");
-        expect(connection?.authenticated).toBe(true);
-        expect(connection?.reconnectAttempts).toBe(0);
-      },
-      { timeout: 5000, interval: 50 },
-    );
-    expect(ctx.sockets).toHaveLength(2);
-  }, 10_000);
-
-  it("reconnects after the server closes the connection gracefully", async () => {
-    await RconConnectionService.initializeConnection("c1", "127.0.0.1", ctx.port, "pw", makeChannel());
-    await vi.waitFor(() => expect(RconConnectionService.getConnection("c1")?.authenticated).toBe(true));
-
-    ctx.sockets[0].end(); // FIN: the client sees `end`, no `error`
-    await vi.waitFor(() =>
-      expect(RconConnectionService.getConnection("c1")?.reconnectAttempts).toBe(1),
-    );
-
     await vi.waitFor(
       () => {
         const connection = RconConnectionService.getConnection("c1");
