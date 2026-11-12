@@ -24,6 +24,9 @@ vi.hoisted(() => {
 });
 
 import { sequelize } from "../src/db.js";
+import { AdminRole } from "../src/modules/admin/models/admin-role.model.js";
+import { AdminRoleCapability } from "../src/modules/admin/models/admin-role-capability.model.js";
+import { AuthorizedUser } from "../src/modules/admin/models/authorized-user.model.js";
 import {
   addAuthorizedUser,
   createAdminRole,
@@ -55,8 +58,17 @@ const store = authStore;
 
 let server: FastifyInstance;
 
+// The tables these tests write, children first so the wipe below
+// satisfies the foreign keys. Not sequelize.sync(): createWebServer
+// registers 32 models, a full sync is ~185 serial SQLite round trips,
+// and under full-suite load each waits on the scheduler — run in
+// beforeEach it pushed the hook past its 10s timeout (#235).
+const TABLES = [AdminRoleCapability, AuthorizedUser, AdminRole];
+
 beforeAll(async () => {
-  await sequelize.sync({ force: true });
+  for (const model of [...TABLES].reverse()) {
+    await model.sync({ force: true });
+  }
   // Pin getSessionStore() to this instance so the server AND the admin
   // service resolve the same token map — the production invariant
   // (both read one getSessionStore() singleton) is exercised here.
@@ -80,7 +92,9 @@ beforeEach(async () => {
   // fully isolated. Also clear the in-memory token maps on the
   // singleton by revoking an imaginary owner that matches no real
   // token — we instead call the internal maps through a helper.
-  await sequelize.sync({ force: true });
+  for (const model of TABLES) {
+    await model.destroy({ where: {} });
+  }
   invalidateCapabilityCache();
   // Reset the singleton's in-memory token stores between tests.
   // We access this via a type cast because the private maps are not
