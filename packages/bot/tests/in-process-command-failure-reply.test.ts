@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Interaction } from "discord.js";
+import { MessageFlags, type Interaction } from "discord.js";
 
 vi.mock("../src/modules/bot-events/bot-event-log.js", () => ({
   botEventLog: { record: vi.fn() },
@@ -27,9 +27,14 @@ import { t } from "../src/i18n/index.js";
 type Kind = "command" | "modal";
 
 function fakeInteraction(kind: Kind) {
-  const state = { replied: false, deferred: false };
+  const state = {
+    replied: false,
+    deferred: false,
+    ephemeral: null as boolean | null,
+  };
   const reply = vi.fn(async () => {
     state.replied = true;
+    state.ephemeral = false;
   });
   const editReply = vi.fn(async () => {
     state.replied = true;
@@ -43,16 +48,21 @@ function fakeInteraction(kind: Kind) {
     customId: "boom-modal:tail",
     isChatInputCommand: () => kind === "command",
     isModalSubmit: () => kind === "modal",
+    isRepliable: () => true,
     get replied() {
       return state.replied;
     },
     get deferred() {
       return state.deferred;
     },
+    get ephemeral() {
+      return state.ephemeral;
+    },
     reply,
     editReply,
     deferReply: vi.fn(async () => {
       state.deferred = true;
+      state.ephemeral = true;
     }),
   } as unknown as Interaction;
   return { interaction, reply, editReply };
@@ -113,16 +123,14 @@ describe("in-process handler failure reply", () => {
 
       expect(f.reply).toHaveBeenCalledWith({
         content: failed,
-        flags: "Ephemeral",
+        flags: MessageFlags.Ephemeral,
       });
       expect(f.editReply).not.toHaveBeenCalled();
     });
-  });
 
-  describe("command", () => {
     it("sends nothing more when the handler already replied", async () => {
-      registerThrowing("command", (i) => i.reply({ content: "ok" }));
-      const f = fakeInteraction("command");
+      registerThrowing(kind, (i) => i.reply({ content: "ok" }));
+      const f = fakeInteraction(kind);
 
       await dispatchInProcessInteraction(f.interaction);
 
@@ -131,8 +139,8 @@ describe("in-process handler failure reply", () => {
     });
 
     it("swallows a failing editReply (interaction token may be gone)", async () => {
-      registerThrowing("command", (i) => i.deferReply());
-      const f = fakeInteraction("command");
+      registerThrowing(kind, (i) => i.deferReply());
+      const f = fakeInteraction(kind);
       f.editReply.mockRejectedValueOnce(new Error("Unknown interaction"));
 
       await expect(dispatchInProcessInteraction(f.interaction)).resolves.toBe(
