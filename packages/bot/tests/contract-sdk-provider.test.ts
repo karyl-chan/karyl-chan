@@ -82,6 +82,23 @@ vi.mock(
   }),
 );
 
+// A successful register (and a readiness ack) arms a fire-and-forget
+// dispatch probe: an unref'd 3 s timer that then POSTs
+// `/commands/kc-dispatch-probe` through `globalThis.fetch`. Nothing here
+// asserts on it, and it outlives the suite that registered — under
+// full-suite load it fired inside the interaction suite and landed in
+// that suite's fetch spy ahead of the test's own POST (#236). Drop the
+// scheduling; the probe itself stays real for anything else importing it.
+vi.mock(
+  "../src/modules/plugin-system/plugin-dispatch-probe.service.js",
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("../src/modules/plugin-system/plugin-dispatch-probe.service.js")
+    >()),
+    scheduleRegisterProbe: vi.fn(),
+  }),
+);
+
 import type { FastifyInstance } from "fastify";
 import { createHash } from "node:crypto";
 
@@ -559,19 +576,24 @@ function okFetch(): ReturnType<typeof vi.fn> {
   return vi.fn(async () => new Response(null, { status: 204 }));
 }
 
-/** The JSON body of the Nth outbound POST captured by a fetch stub. */
-function capturedBody(
-  spy: ReturnType<typeof vi.fn>,
-  n = 0,
-): Record<string, unknown> {
-  const call = spy.mock.calls[n] as [string, RequestInit] | undefined;
-  expect(call, "expected an outbound dispatch POST").toBeDefined();
-  return JSON.parse(String(call![1].body)) as Record<string, unknown>;
-}
-
-/** The URL of the Nth outbound POST captured by a fetch stub. */
-function capturedUrl(spy: ReturnType<typeof vi.fn>, n = 0): string {
-  return (spy.mock.calls[n] as [string, RequestInit])[0];
+/**
+ * The one outbound POST this test made, captured by a fetch stub.
+ * Exactly one: every dispatch below is awaited before this is read, so
+ * any other call can only be a request some other code issued (#236) —
+ * it fails here by count instead of being read as this test's payload.
+ */
+function soleDispatch(spy: ReturnType<typeof vi.fn>): {
+  url: string;
+  init: RequestInit;
+  body: Record<string, unknown>;
+} {
+  expect(spy, "expected exactly this test's one dispatch POST").toHaveBeenCalledTimes(1);
+  const [url, init] = spy.mock.calls[0] as [string, RequestInit];
+  return {
+    url,
+    init,
+    body: JSON.parse(String(init.body)) as Record<string, unknown>,
+  };
 }
 
 describe("contract: event/lifecycle dispatch envelope", () => {
@@ -618,7 +640,7 @@ describe("contract: event/lifecycle dispatch envelope", () => {
       payload: { data: { guild_id: GUILD_ID, feature_key: "f" } },
     });
     expect(outcome.status).toBe("ok");
-    const body = capturedBody(fetchImpl);
+    const { body } = soleDispatch(fetchImpl);
     expect(Object.keys(body).sort()).toEqual(
       [...fixtures.dispatchEnvelope.httpBodyKeys].sort(),
     );
@@ -851,11 +873,8 @@ describe("contract: interaction dispatch payloads (field-level)", () => {
       fakeSlashInteraction() as never,
     );
     expect(claimed).toBe(true);
-    expect(capturedUrl(fetchSpy)).toBe(
-      `${PLUGIN_URL}/commands/${COMMAND_NAME}`,
-    );
-
-    const body = capturedBody(fetchSpy);
+    const { url, body } = soleDispatch(fetchSpy);
+    expect(url).toBe(`${PLUGIN_URL}/commands/${COMMAND_NAME}`);
     assertPayloadMatchesContract("command", body);
 
     // Value-level spot checks on the two fields that once dropped
@@ -881,7 +900,7 @@ describe("contract: interaction dispatch payloads (field-level)", () => {
       null;
     (interaction.options as Record<string, unknown>).getSubcommand = () => null;
     await dispatchInteractionToPlugin(interaction as never);
-    const body = capturedBody(fetchSpy);
+    const { body } = soleDispatch(fetchSpy);
     // The null case is where a dropped field hides: `undefined` would
     // vanish from the JSON entirely and the SDK would see no key at all.
     expect(Object.hasOwn(body, "sub_command_group")).toBe(true);
@@ -895,11 +914,8 @@ describe("contract: interaction dispatch payloads (field-level)", () => {
       fakeAutocompleteInteraction() as never,
     );
     expect(claimed).toBe(true);
-    expect(capturedUrl(fetchSpy)).toBe(
-      `${PLUGIN_URL}/commands/${COMMAND_NAME}/autocomplete`,
-    );
-
-    const body = capturedBody(fetchSpy);
+    const { url, body } = soleDispatch(fetchSpy);
+    expect(url).toBe(`${PLUGIN_URL}/commands/${COMMAND_NAME}/autocomplete`);
     assertPayloadMatchesContract("autocomplete", body);
     expect(body.sub_command_group).toBe("admin");
     expect(body.focused).toEqual({ name: "target", value: "par", type: 3 });
@@ -910,9 +926,8 @@ describe("contract: interaction dispatch payloads (field-level)", () => {
       fakeSelectMenuInteraction() as never,
     );
     expect(claimed).toBe(true);
-    expect(capturedUrl(fetchSpy)).toBe(`${PLUGIN_URL}/components`);
-
-    const body = capturedBody(fetchSpy);
+    const { url, body } = soleDispatch(fetchSpy);
+    expect(url).toBe(`${PLUGIN_URL}/components`);
     assertPayloadMatchesContract("component", body);
     expect(body.custom_id).toBe(`kc:${PLUGIN_KEY}:pick`);
     expect(body.message_id).toBe("message-1");
@@ -929,9 +944,8 @@ describe("contract: interaction dispatch payloads (field-level)", () => {
       fakeModalInteraction() as never,
     );
     expect(claimed).toBe(true);
-    expect(capturedUrl(fetchSpy)).toBe(`${PLUGIN_URL}/modals/feedback`);
-
-    const body = capturedBody(fetchSpy);
+    const { url, body } = soleDispatch(fetchSpy);
+    expect(url).toBe(`${PLUGIN_URL}/modals/feedback`);
     assertPayloadMatchesContract("modal", body);
     expect(body.custom_id).toBe(`kc:${PLUGIN_KEY}:feedback`);
     expect(body.components).toEqual([{ custom_id: "body", value: "hello" }]);
@@ -941,7 +955,7 @@ describe("contract: interaction dispatch payloads (field-level)", () => {
 
   it("every interaction dispatch is HMAC-signed with the contract headers", async () => {
     await dispatchInteractionToPlugin(fakeSlashInteraction() as never);
-    const init = (fetchSpy.mock.calls[0] as [string, RequestInit])[1];
+    const { init } = soleDispatch(fetchSpy);
     const headers = init.headers as Record<string, string>;
     const lower = Object.fromEntries(
       Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]),
