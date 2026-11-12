@@ -111,13 +111,24 @@ Up to 10 forwards per channel per minute. Over-limit messages get a
 
 ### Reconnect policy
 
-Connection errors are retried with exponential backoff (`min(1000 · 2^n, 30s)`,
-so 2s → 4s → 8s) for up to three attempts. After three failures the connection
-closes and the channel is notified ("Connection Failed"). A reconnect that
-authenticates again resets the count, so the next drop gets three fresh
-attempts. Commands sent while reconnecting are queued and go out once the
-new connection authenticates. Connections idle for 30 minutes are cleaned
-up.
+Each connect attempt has 10 seconds to open the socket and authenticate. An
+attempt that runs out is closed at once and counts as a failure.
+
+The first connect to a server is not retried. Messages sent while it
+connects wait for it. Once it authenticates, their commands go out. If it
+fails (socket error, server close, or timeout), the channel gets
+"Connection Error" and those commands are dropped. The next message tries
+again.
+
+Once connected, a dropped connection is retried. Both a socket error and
+the server closing the connection count as failures, including a
+reconnect the server closes right after connecting. Retries use exponential
+backoff (`min(1000 · 2^n, 30s)`, so 2s → 4s → 8s) for up to three attempts.
+After three failures the connection closes and the channel is notified
+("Connection Failed"). A reconnect that authenticates again resets the
+count, so the next drop gets three fresh attempts. Commands sent while
+reconnecting are queued and go out once the new connection authenticates.
+Connections idle for 30 minutes are cleaned up.
 
 Every attempt resolves and checks the host again, then connects a new
 client to the fresh answers only, so a container that restarted with a

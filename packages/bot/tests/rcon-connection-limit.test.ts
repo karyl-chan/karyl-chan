@@ -33,11 +33,16 @@ vi.mock("../src/modules/builtin-features/rcon-forward/pinned-rcon.js", () => {
       on: ReturnType<typeof vi.fn>;
     },
   ) {
-    this.connect = vi.fn().mockResolvedValue(undefined);
+    const handlers = new Map<string, () => void>();
+    this.on = vi.fn((event: string, cb: () => void) => {
+      handlers.set(event, cb);
+      return this;
+    });
+    // The server accepts the password as soon as the client connects.
+    this.connect = vi.fn(async () => handlers.get("auth")?.());
     this.disconnect = vi.fn().mockResolvedValue(undefined);
     this.send = vi.fn();
     this.removeAllListeners = vi.fn();
-    this.on = vi.fn().mockReturnThis();
   }
   return { PinnedRcon: MockPinnedRcon };
 });
@@ -134,6 +139,19 @@ describe("RconConnectionService – connection limit", () => {
         makeChannel(),
       ),
     ).rejects.toBeInstanceOf(RconLimitError);
+  });
+
+  it("settles its connection lock with the error, so a waiter does not hang", async () => {
+    fillConnectionMap(svc, 50);
+    const setLock = vi.spyOn(svc.connectionLocks, "set");
+
+    await expect(
+      svc.initializeConnection("new-conn", "10.0.0.1", 25575, "secret", makeChannel()),
+    ).rejects.toBeInstanceOf(RconLimitError);
+
+    const lock = setLock.mock.calls[0][1] as Promise<void>;
+    await expect(lock).rejects.toBeInstanceOf(RconLimitError);
+    expect(svc.connectionLocks.has("new-conn")).toBe(false);
   });
 
   it("RconLimitError message contains the host", async () => {

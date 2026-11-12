@@ -11,8 +11,10 @@
  * #180 — a server that closes the connection gracefully (`end`, no
  * `error`) is a failure like any other: it is retried and, after the
  * last attempt, reported. Every connect attempt is bounded by a timeout
- * that ends once the client authenticates or is closed. Cleaning up a
- * connection leaves the lock of a connect in flight alone.
+ * that ends once the client authenticates or is closed. initializeConnection
+ * and the callers waiting on its lock settle with the attempt: true once
+ * the client authenticates, false when the first connect fails. Only the
+ * call that took the lock releases it.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -31,11 +33,14 @@ interface FakeRcon {
   pinned: Pinned;
   connect: ReturnType<typeof vi.fn>;
   disconnect: ReturnType<typeof vi.fn>;
+  destroy: ReturnType<typeof vi.fn>;
   send: ReturnType<typeof vi.fn>;
   emit(event: string, ...args: unknown[]): void;
 }
 
 const instances: FakeRcon[] = [];
+/** While set, the server accepts a new client's password as it connects. */
+let authOnConnect = false;
 
 vi.mock("../src/modules/builtin-features/rcon-forward/pinned-rcon.js", () => {
   type Self = FakeRcon & { handlers: Map<string, Array<(...a: unknown[]) => void>> };
@@ -45,8 +50,11 @@ vi.mock("../src/modules/builtin-features/rcon-forward/pinned-rcon.js", () => {
     this.password = password;
     this.pinned = pinned;
     this.handlers = new Map();
-    this.connect = vi.fn();
+    this.connect = vi.fn(() => {
+      if (authOnConnect) this.emit("auth");
+    });
     this.disconnect = vi.fn();
+    this.destroy = vi.fn();
     this.send = vi.fn();
     instances.push(this);
   }
@@ -123,25 +131,44 @@ const svc = RconConnectionService as unknown as {
   connectionLocks: Map<string, Promise<void>>;
 };
 
-/** Connect "c1" under fake timers; its client has not authenticated yet. */
-async function connect() {
+/** initializeConnection for "c1", against a server that accepts the password. */
+async function initialize(channel = makeChannel()) {
+  authOnConnect = true;
+  try {
+    return await RconConnectionService.initializeConnection("c1", "mc-server", 25575, "pw", channel);
+  } finally {
+    authOnConnect = false;
+  }
+}
+
+/** initializeConnection for "c1"; the test drives its client. */
+function startConnect(channel = makeChannel()) {
+  return RconConnectionService.initializeConnection("c1", "mc-server", 25575, "pw", channel);
+}
+
+/** Connect "c1" under fake timers; its client has authenticated. */
+async function connectAndAuth() {
   vi.useFakeTimers();
   mockedLookup.mockResolvedValue(answer("10.0.0.5"));
   const channel = makeChannel();
-  await expect(
-    RconConnectionService.initializeConnection("c1", "mc-server", 25575, "pw", channel),
-  ).resolves.toBe(true);
+  await expect(initialize(channel)).resolves.toBe(true);
   return channel;
 }
 
-async function connectAndAuth() {
-  const channel = await connect();
-  instances[0].emit("auth");
-  return channel;
+/** Whether a promise has settled, after the pending microtasks ran. */
+async function isSettled(promise: Promise<unknown>) {
+  let settled = false;
+  promise.then(
+    () => (settled = true),
+    () => (settled = true),
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  return settled;
 }
 
 beforeEach(() => {
   instances.length = 0;
+  authOnConnect = false;
   svc.connectionMap = {};
   svc.connectionLocks = new Map();
   mockedLookup.mockReset();
@@ -156,9 +183,7 @@ describe("RCON initial connect", () => {
   it("pins the client to the vetted IP", async () => {
     mockedLookup.mockResolvedValue(answer("10.0.0.5"));
 
-    await expect(
-      RconConnectionService.initializeConnection("c1", "mc-server", 25575, "pw", makeChannel()),
-    ).resolves.toBe(true);
+    await expect(initialize()).resolves.toBe(true);
 
     expect(mockedLookup).toHaveBeenCalledOnce();
     expect(instances).toHaveLength(1);
@@ -171,7 +196,7 @@ describe("RCON initial connect", () => {
   it("pins every vetted answer when the host has several", async () => {
     mockedLookup.mockResolvedValue(answer("fd00::7", "10.0.0.7"));
 
-    await RconConnectionService.initializeConnection("c1", "mc-server", 25575, "pw", makeChannel());
+    await initialize();
 
     expect(instances[0].pinned).toEqual([
       { address: "fd00::7", family: 6 },
@@ -182,8 +207,7 @@ describe("RCON initial connect", () => {
   it("keeps showing and logging the hostname", async () => {
     mockedLookup.mockResolvedValue(answer("10.0.0.5"));
 
-    await RconConnectionService.initializeConnection("c1", "mc-server", 25575, "pw", makeChannel());
-    instances[0].emit("auth");
+    await initialize();
 
     expect(instances[0].host).toBe("mc-server");
     expect(RconConnectionService.getConnection("c1")?.host).toBe("mc-server");
@@ -214,7 +238,7 @@ describe("RCON reconnect", () => {
     vi.useFakeTimers();
     mockedLookup.mockResolvedValue(first);
     const channel = makeChannel();
-    await RconConnectionService.initializeConnection("c1", "mc-server", 25575, "pw", channel);
+    await initialize(channel);
     instances[0].emit("error", new Error("ECONNRESET"));
     return channel;
   }
@@ -294,8 +318,7 @@ describe("RCON reconnect", () => {
     await vi.advanceTimersByTimeAsync(2000); // reconnect now waits on DNS
 
     mockedLookup.mockResolvedValue(answer("10.0.0.5"));
-    await RconConnectionService.initializeConnection("c1", "mc-server", 25575, "pw", makeChannel());
-    instances[1].emit("auth");
+    await initialize();
     failLookup();
     await vi.advanceTimersByTimeAsync(2000 + 4000 + 8000);
 
@@ -323,7 +346,7 @@ describe("RCON reconnect lifecycle", () => {
 
   it("a replaced client's late end leaves the re-created connection alone", async () => {
     await connectAndAuth();
-    await RconConnectionService.initializeConnection("c1", "mc-server", 25575, "pw", makeChannel());
+    await initialize();
     expect(instances).toHaveLength(2);
 
     instances[0].emit("end");
@@ -436,7 +459,7 @@ describe("RCON reconnect lifecycle", () => {
     );
     instances[3].emit("error", new Error("ECONNREFUSED")); // "Connection Failed" now in flight
 
-    await RconConnectionService.initializeConnection("c1", "mc-server", 25575, "pw", makeChannel());
+    await initialize();
     deliver();
     await vi.advanceTimersByTimeAsync(0);
 
@@ -505,36 +528,66 @@ describe("RCON graceful server close (#180)", () => {
 });
 
 describe("RCON connect timeout (#180)", () => {
-  it("fails a connect that does not authenticate within 10 s, then retries", async () => {
-    const channel = await connect();
+  it("fails a first connect that does not authenticate within 10 s, without retrying", async () => {
+    vi.useFakeTimers();
+    mockedLookup.mockResolvedValue(answer("10.0.0.5"));
+    const channel = makeChannel();
+    const result = startConnect(channel);
 
     await vi.advanceTimersByTimeAsync(9_999);
-    expect(RconConnectionService.getConnection("c1")?.reconnectAttempts).toBe(0);
+    expect(await isSettled(result)).toBe(false);
 
     await vi.advanceTimersByTimeAsync(1);
-    expect(RconConnectionService.getConnection("c1")?.reconnectAttempts).toBe(1);
-    expect(instances[0].disconnect).toHaveBeenCalled();
-    expect(embedTitles(channel)).toEqual(["RCON Error", "Connection Lost"]);
+    await expect(result).resolves.toBe(false);
+    expect(instances[0].destroy).toHaveBeenCalled();
+    expect(RconConnectionService.getConnection("c1")).toBeUndefined();
+    expect(embedTitles(channel)).toEqual(["Connection Error"]);
+    expect(botEventLog.record).toHaveBeenCalledWith(
+      "error",
+      "feature",
+      expect.stringContaining("RCON connection failed: mc-server:25575"),
+      expect.objectContaining({ errorType: "timeout" }),
+    );
 
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(instances).toHaveLength(1);
+  });
+
+  it("fails a reconnect attempt that runs out like a close: destroyed, Lost only, retried", async () => {
+    const channel = await connectAndAuth();
+    instances[0].emit("end");
     await vi.advanceTimersByTimeAsync(2000);
     expect(instances).toHaveLength(2);
-    expect(RconConnectionService.getConnection("c1")?.conn).toBe(instances[1]);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(instances[1].destroy).toHaveBeenCalled();
+    expect(RconConnectionService.getConnection("c1")?.reconnectAttempts).toBe(2);
+    expect(embedTitles(channel)).toEqual(["Connection Lost", "Connection Lost"]);
+
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(instances).toHaveLength(3);
   });
 
   it("bounds every reconnect attempt and gives up after the last one", async () => {
-    const channel = await connect();
+    const channel = await connectAndAuth();
+    instances[0].emit("end");
 
-    // 10 s timeout, then 2 s / 4 s / 8 s backoff, each attempt timing out too.
-    await vi.advanceTimersByTimeAsync(10_000 + 2000 + 10_000 + 4000 + 10_000 + 8000 + 10_000);
+    // 2 s / 4 s / 8 s backoff, each attempt timing out after 10 s.
+    await vi.advanceTimersByTimeAsync(2000 + 10_000 + 4000 + 10_000 + 8000 + 10_000);
 
     expect(instances).toHaveLength(4);
     expect(RconConnectionService.getConnection("c1")).toBeUndefined();
-    expect(embedTitles(channel).at(-1)).toBe("Connection Failed");
+    expect(embedTitles(channel)).toEqual([
+      "Connection Lost",
+      "Connection Lost",
+      "Connection Lost",
+      "Connection Failed",
+    ]);
   });
 
   it("stops the timer once the client authenticates", async () => {
-    const channel = await connect();
-    instances[0].emit("auth");
+    const channel = await connectAndAuth();
 
     expect(vi.getTimerCount()).toBe(0);
     await vi.advanceTimersByTimeAsync(60_000);
@@ -544,36 +597,106 @@ describe("RCON connect timeout (#180)", () => {
     expect(channel.send).not.toHaveBeenCalled();
   });
 
-  it("stops the timer when the connection is cleaned up", async () => {
-    await connect();
-    await RconConnectionService.cleanupConnection("c1");
-
-    expect(vi.getTimerCount()).toBe(0);
-  });
-
-  it("stops the timer when the client is replaced", async () => {
-    await connect();
-    await RconConnectionService.initializeConnection("c1", "mc-server", 25575, "pw", makeChannel());
-    instances[1].emit("auth");
-
-    expect(vi.getTimerCount()).toBe(0);
-  });
-
-  it("stops the dropped client's timer when it fails", async () => {
-    await connect();
-    instances[0].emit("error", new Error("ECONNRESET"));
+  it("stops the timer, and ends the wait, when the connection is cleaned up", async () => {
+    vi.useFakeTimers();
+    mockedLookup.mockResolvedValue(answer("10.0.0.5"));
+    const result = startConnect();
     await vi.advanceTimersByTimeAsync(0);
 
-    // Only the 2 s backoff is left.
+    await RconConnectionService.cleanupConnection("c1");
+
+    await expect(result).resolves.toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("stops a reconnect client's timer when the client is replaced", async () => {
+    await connectAndAuth();
+    instances[0].emit("error", new Error("ECONNRESET"));
+    await vi.advanceTimersByTimeAsync(2000); // instances[1] is connecting
+
+    await initialize();
+
+    expect(instances).toHaveLength(3);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("stops a reconnect client's timer when it fails", async () => {
+    await connectAndAuth();
+    instances[0].emit("error", new Error("ECONNRESET"));
+    await vi.advanceTimersByTimeAsync(2000);
+    instances[1].emit("error", new Error("ECONNREFUSED"));
+    await vi.advanceTimersByTimeAsync(0);
+
+    // Only the 4 s backoff is left.
     expect(vi.getTimerCount()).toBe(1);
   });
 });
 
+describe("RCON first connect (#180)", () => {
+  it.each([
+    ["a socket error", (client: FakeRcon) => client.emit("error", new Error("ECONNREFUSED"))],
+    ["the server closing the connection", (client: FakeRcon) => client.emit("end")],
+  ])("fails on %s before authenticating, without retrying", async (_, drop) => {
+    vi.useFakeTimers();
+    mockedLookup.mockResolvedValue(answer("10.0.0.5"));
+    const channel = makeChannel();
+    const result = startConnect(channel);
+    await vi.advanceTimersByTimeAsync(0);
+
+    drop(instances[0]);
+
+    await expect(result).resolves.toBe(false);
+    expect(RconConnectionService.getConnection("c1")).toBeUndefined();
+    expect(embedTitles(channel)).toEqual(["Connection Error"]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(instances).toHaveLength(1);
+  });
+});
+
 describe("RCON connection lock (#180)", () => {
+  it("a caller during a connect waits for it to authenticate, then joins it", async () => {
+    vi.useFakeTimers();
+    mockedLookup.mockResolvedValue(answer("10.0.0.5"));
+    const first = makeChannel();
+    const second = makeChannel();
+    const firstResult = startConnect(first);
+    const secondResult = startConnect(second);
+
+    expect(await isSettled(firstResult)).toBe(false);
+    expect(await isSettled(secondResult)).toBe(false);
+
+    instances[0].emit("auth");
+
+    await expect(firstResult).resolves.toBe(true);
+    await expect(secondResult).resolves.toBe(true);
+    expect(instances).toHaveLength(1);
+    expect(mockedLookup).toHaveBeenCalledOnce();
+    // The second caller's channel gets the responses too.
+    expect(RconConnectionService.getConnection("c1")?.channels).toEqual(new Set([first, second]));
+  });
+
+  it("a caller during a failing connect fails too, and its channel is told", async () => {
+    vi.useFakeTimers();
+    mockedLookup.mockResolvedValue(answer("10.0.0.5"));
+    const first = makeChannel();
+    const second = makeChannel();
+    const firstResult = startConnect(first);
+    const secondResult = startConnect(second);
+    await vi.advanceTimersByTimeAsync(0);
+
+    instances[0].emit("error", new Error("ECONNREFUSED"));
+
+    await expect(firstResult).resolves.toBe(false);
+    await expect(secondResult).resolves.toBe(false);
+    expect(embedTitles(first)).toEqual(["Connection Error"]);
+    expect(embedTitles(second)).toEqual(["Connection Error"]);
+    expect(instances).toHaveLength(1);
+    expect(svc.connectionLocks.size).toBe(0);
+  });
+
   it("cleaning up a connection keeps the lock of a connect in flight", async () => {
     mockedLookup.mockResolvedValue(answer("10.0.0.5"));
-    await RconConnectionService.initializeConnection("c1", "mc-server", 25575, "pw", makeChannel());
-    instances[0].emit("auth");
+    await initialize();
 
     let resolveLookup: (value: LookupResult) => void = () => {};
     mockedLookup.mockImplementationOnce(
@@ -582,19 +705,34 @@ describe("RCON connection lock (#180)", () => {
           resolveLookup = resolve;
         }),
     );
-    const first = RconConnectionService.initializeConnection("c1", "mc-server", 25575, "pw", makeChannel());
+    const first = startConnect();
     await vi.waitFor(() => expect(mockedLookup).toHaveBeenCalledTimes(2));
 
     await RconConnectionService.cleanupConnection("c1");
-    const second = RconConnectionService.initializeConnection("c1", "mc-server", 25575, "pw", makeChannel());
+    const second = startConnect();
 
+    authOnConnect = true;
     resolveLookup(answer("10.0.0.5"));
     await expect(first).resolves.toBe(true);
-    await second;
+    await expect(second).resolves.toBe(true);
 
     // The second connect waited on the first instead of opening its own client.
     expect(mockedLookup).toHaveBeenCalledTimes(2);
     expect(instances).toHaveLength(2);
     expect(RconConnectionService.getConnection("c1")?.conn).toBe(instances[1]);
+  });
+
+  it("releases only its own lock", async () => {
+    vi.useFakeTimers();
+    mockedLookup.mockResolvedValue(answer("10.0.0.5"));
+    const result = startConnect();
+    await vi.advanceTimersByTimeAsync(0);
+    const foreign = new Promise<void>(() => {});
+    svc.connectionLocks.set("c1", foreign);
+
+    instances[0].emit("auth");
+
+    await expect(result).resolves.toBe(true);
+    expect(svc.connectionLocks.get("c1")).toBe(foreign);
   });
 });
