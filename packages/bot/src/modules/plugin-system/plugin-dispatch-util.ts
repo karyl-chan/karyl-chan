@@ -15,6 +15,7 @@ import {
   assertPluginTarget,
   HostPolicyError,
 } from "../../utils/host-policy.js";
+import { effectivePort } from "@karyl-chan/voice/net";
 import { buildOutboundSignatureHeaders } from "../../utils/hmac.js";
 
 /**
@@ -73,13 +74,8 @@ export async function preflightPluginTarget(
   url: string,
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
   const parsed = new URL(url);
-  const port = parsed.port
-    ? Number(parsed.port)
-    : parsed.protocol === "https:"
-      ? 443
-      : 80;
   try {
-    await assertPluginTarget(parsed.hostname, port);
+    await assertPluginTarget(parsed.hostname, effectivePort(parsed));
     return { ok: true };
   } catch (err) {
     if (!(err instanceof HostPolicyError)) throw err;

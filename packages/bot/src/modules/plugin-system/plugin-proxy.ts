@@ -2,10 +2,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import fastifyReplyFrom from "@fastify/reply-from";
 import { findPluginByKey } from "./models/plugin.model.js";
 import { getCachedPluginByKey } from "./plugin-lookup-cache.js";
-import {
-  assertPluginTarget,
-  HostPolicyError,
-} from "../../utils/host-policy.js";
+import { preflightPluginTarget } from "./plugin-dispatch-util.js";
 import { getServiceDiscovery } from "../../adapters/registry.js";
 
 /** Regex that matches valid pluginKey values (same constraint as plugin.id at register time). */
@@ -277,20 +274,10 @@ export async function registerPluginProxy(
       // plugin-interaction-dispatch.service.ts and plugin-event-bridge.service.ts.
       // The check runs on the resolved endpoint (an IP under DNS-SD), so
       // host-policy still vets the concrete address being connected to.
-      const parsedUrl = new URL(chosenBase);
-      const upstreamPort = parsedUrl.port
-        ? Number(parsedUrl.port)
-        : parsedUrl.protocol === "https:"
-          ? 443
-          : 80;
-      try {
-        await assertPluginTarget(parsedUrl.hostname, upstreamPort);
-      } catch (err) {
-        if (err instanceof HostPolicyError) {
-          reply.code(502).send({ error: "plugin target not allowed" });
-          return;
-        }
-        throw err;
+      const preflight = await preflightPluginTarget(chosenBase);
+      if (!preflight.ok) {
+        reply.code(502).send({ error: "plugin target not allowed" });
+        return;
       }
 
       // Take the raw suffix directly from the raw request URL so that

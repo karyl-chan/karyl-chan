@@ -34,6 +34,7 @@ import {
   assertPluginTarget,
   HostPolicyError,
 } from "../../utils/host-policy.js";
+import { effectivePort } from "@karyl-chan/voice/net";
 import {
   deleteStaleCapabilities,
   upsertPluginCapability,
@@ -221,17 +222,13 @@ export async function validateManifest(
   // V-03 (bot half)：plugin.url 已確認是可解析的 http(s) URL，這裡再過
   // SSRF guard。
   const parsedUrl = new URL(protocol.manifest.plugin.url);
-  const pluginPort = parsedUrl.port
-    ? Number(parsedUrl.port)
-    : parsedUrl.protocol === "https:"
-      ? 443
-      : 80;
   try {
-    await assertPluginTarget(parsedUrl.hostname, pluginPort);
+    await assertPluginTarget(parsedUrl.hostname, effectivePort(parsedUrl));
   } catch (err) {
-    const msg =
-      err instanceof HostPolicyError ? err.message : "Plugin 目標不被允許";
-    return { ok: false, error: `manifest.plugin.url: ${msg}` };
+    // host policy 只會丟 HostPolicyError（DNS 失敗也是 `dns_failed`），
+    // 其他錯誤是 bug，直接往上丟。
+    if (!(err instanceof HostPolicyError)) throw err;
+    return { ok: false, error: `manifest.plugin.url: ${err.message}` };
   }
 
   return protocol;
