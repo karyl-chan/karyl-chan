@@ -225,9 +225,10 @@ export async function validateManifest(
   try {
     await assertPluginTarget(parsedUrl.hostname, effectivePort(parsedUrl));
   } catch (err) {
-    const msg =
-      err instanceof HostPolicyError ? err.message : "Plugin 目標不被允許";
-    return { ok: false, error: `manifest.plugin.url: ${msg}` };
+    // host policy 只會丟 HostPolicyError（DNS 失敗也是 `dns_failed`），
+    // 其他錯誤是 bug，直接往上丟。
+    if (!(err instanceof HostPolicyError)) throw err;
+    return { ok: false, error: `manifest.plugin.url: ${err.message}` };
   }
 
   return protocol;

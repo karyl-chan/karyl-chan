@@ -274,7 +274,8 @@ export async function registerPluginProxy(
       // plugin-interaction-dispatch.service.ts and plugin-event-bridge.service.ts.
       // The check runs on the resolved endpoint (an IP under DNS-SD), so
       // host-policy still vets the concrete address being connected to.
-      if (!(await preflightPluginTarget(chosenBase)).ok) {
+      const preflight = await preflightPluginTarget(chosenBase);
+      if (!preflight.ok) {
         reply.code(502).send({ error: "plugin target not allowed" });
         return;
       }

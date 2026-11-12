@@ -1,7 +1,7 @@
 /**
- * `effectivePort` (@karyl-chan/voice/net) is the one place the bot turns a
- * parsed URL into the port a host policy vets: plugin register / dispatch
- * preflight / health probe / proxy / reply files, voice.play on the
+ * `effectivePort` (@karyl-chan/voice/net) turns a parsed URL into the port
+ * a host policy vets for: plugin register / dispatch preflight (which the
+ * health probe and proxy go through) / reply files, voice.play on the
  * plugin's own origin, and the public-media and webhook policies (#183).
  * This pins the contract those callers rely on.
  */
