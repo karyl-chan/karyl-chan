@@ -1,11 +1,10 @@
-import { randomUUID } from "crypto";
 import { jwtService } from "../web-core/jwt.service.js";
 import { resolveLoginRole } from "./authorized-user.service.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { publicBaseUrl } from "../web-core/public-base-url.js";
 
 /**
- * Admin login link issuance: resolve the caller's role, sign a one-time
+ * Admin login link issuance: resolve the caller's role, sign a short-lived
  * login token, build the admin URL. The system login's built-in action
  * (command-system/builtin-login-action.ts) turns the result into a
  * behavior reply; the ReplyRenderer delivers it like any other reply.
@@ -44,8 +43,6 @@ export async function mintLoginLink(
     // shouldn't conflate). Easiest fix: synthesize a stable sentinel
     // so the audit trail still has SOMETHING the verify side accepts.
     messageId: ctx.messageId ?? `slash:${ctx.channelId}:${userId}`,
-    // Single-use: /api/auth/exchange takes each jti once (#216).
-    jti: randomUUID(),
   });
   const url = `${publicBaseUrl()}/admin/auth?token=${encodeURIComponent(token)}`;
   const minutesUntilExpiry = Math.max(

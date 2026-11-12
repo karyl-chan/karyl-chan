@@ -39,7 +39,6 @@ function makeStub(): RedisLike {
       return isAlive(key) ? data.get(key)!.value : null;
     },
     async set(key, value, ...args) {
-      if (args.includes("NX") && isAlive(key)) return null;
       let expiresAt: number | null = null;
       for (let i = 0; i < args.length; i++) {
         if (args[i] === "PX" && typeof args[i + 1] === "number") {
@@ -243,14 +242,6 @@ describe("RedisSessionStore", () => {
     await store.revokeOwner("user-1");
     // Refresh must be revoked — index didn't expire prematurely.
     expect(await store.rotateRefresh(refreshToken)).toBeNull();
-  });
-
-  it("consumeLoginJti takes a jti once, until the link's expiry (#216)", async () => {
-    const store = new RedisSessionStore();
-    const now = Date.now();
-    expect(await store.consumeLoginJti("jti-1", now + 60_000, now)).toBe(true);
-    expect(await store.consumeLoginJti("jti-1", now + 60_000, now)).toBe(false);
-    expect(await store.consumeLoginJti("jti-2", now + 60_000, now)).toBe(true);
   });
 
   it("consumeSseTicket is one-shot", async () => {

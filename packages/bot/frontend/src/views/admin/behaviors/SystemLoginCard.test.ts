@@ -165,7 +165,7 @@ describe('SystemLoginCard — message → command (board 4)', () => {
         expect(api.switchLoginTrigger).toHaveBeenCalledWith({
             kind: 'command',
             name: 'login',
-            description: '取得 admin 後台一次性登入連結(僅授權使用者)',
+            description: '取得 admin 後台登入連結(僅授權使用者)',
             integrationTypes: ['guild_install'],
             contexts: ['BotDM'],
             ifUpdatedAt: '2026-10-27T00:00:00.000Z',

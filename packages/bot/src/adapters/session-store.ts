@@ -1,7 +1,6 @@
 /**
  * SessionStore — issuance, verification, and revocation of admin
- * access / refresh / SSE-ticket tokens, and the record of used login
- * links.
+ * access / refresh / SSE-ticket tokens.
  *
  * The InProcess default IS the existing `AuthStore` class in
  * `modules/web-core/auth-store.service.ts` — these methods name the
@@ -61,18 +60,6 @@ export interface SessionStore {
     ticket: string,
     now?: number,
   ): (string | null) | Promise<string | null>;
-
-  /**
-   * Use up a login link's `jti` (#216): true the first time, false while
-   * the `jti` is remembered — until `expiresAt`, the link's own expiry.
-   * Must be atomic, so two concurrent exchanges of one link can't both
-   * get true.
-   */
-  consumeLoginJti(
-    jti: string,
-    expiresAt: number,
-    now?: number,
-  ): boolean | Promise<boolean>;
 
   /** Stop background timers. Called on graceful shutdown. */
   stop(): void;

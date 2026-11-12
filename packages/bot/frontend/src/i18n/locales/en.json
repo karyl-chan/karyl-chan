@@ -306,7 +306,7 @@
         "noTokenLead": "To sign in, send a direct message to the bot:",
         "noTokenLeadCommand": "To sign in, use this command of the bot:",
         "noTokenLeadUnknown": "To sign in, ask the bot for a login link the way your admin set up.",
-        "noTokenHint": "The bot will reply with a single-use login link. Open the link in this browser.",
+        "noTokenHint": "The bot will reply with a short-lived login link. Open the link in this browser.",
         "errorHint": "Request a new link by sending {login} to the bot.",
         "errorHintCommand": "Request a new link by using {login}.",
         "errorHintUnknown": "Request a new link from the bot.",

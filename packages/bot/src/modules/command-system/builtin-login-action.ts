@@ -5,7 +5,7 @@
  * BehaviorReply a webhook does (#140), so the ReplyRenderer delivers it:
  * an embed (role + how long the link lives) and a link button. The URL is
  * only the button's target — never in the text, so a link preview or a
- * log line can't pick up the one-time token.
+ * log line can't pick up the login token.
  *
  * Always `ephemeral: true`: a command shows it to the invoker only, a bot
  * DM ignores the flag, and were the login ever answered in a guild channel
@@ -41,7 +41,7 @@ export async function loginActionReply(
       {
         color: 0x5865f2,
         title: "後台登入連結",
-        description: "點下方按鈕在瀏覽器開啟後台。連結為一次性，請勿轉發。",
+        description: "點下方按鈕在瀏覽器開啟後台。連結在有效時間內都能使用，請勿轉發。",
         fields: [
           { name: "角色", value: result.role, inline: true },
           { name: "有效時間", value: `約 ${result.minutesUntilExpiry} 分鐘`, inline: true },

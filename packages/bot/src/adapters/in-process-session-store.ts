@@ -69,10 +69,6 @@ export class InProcessSessionStore implements SessionStore {
     return authStore.consumeSseTicket(ticket, now);
   }
 
-  consumeLoginJti(jti: string, expiresAt: number, now?: number): boolean {
-    return authStore.consumeLoginJti(jti, expiresAt, now);
-  }
-
   stop(): void {
     authStore.stop();
   }
