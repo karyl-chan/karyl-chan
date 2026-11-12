@@ -65,6 +65,21 @@ plugin completes the deferred reply by calling
 `/api/plugin/interactions.respond` over RPC (Discord allows 15 minutes
 for completion).
 
+#### `interaction_token` is opaque
+
+The `interaction_token` in a command, component or modal payload is
+**not** Discord's interaction token. The bot seals the Discord token,
+the receiving plugin and an expiry into it (AES-256-GCM under a subkey
+of the bot's `ENCRYPTION_KEY`), so it is valid only for the plugin it
+was dispatched to and only for 15 minutes after dispatch. Pass it back
+verbatim to `interactions.respond`, `followup`, `edit_followup`,
+`delete_followup` and `send_modal` — the SDK does this for you. Any
+other plugin's call with it, a modified or truncated value, or a call
+after the 15 minutes is refused with 403
+`interaction_token refused: <wrong_plugin|unsealable|malformed|expired>`
+and recorded as a bot event. Do not parse it or hand it to Discord
+directly: it is meaningless outside the bot.
+
 ### Autocomplete
 
 Synchronous: the bot waits for the plugin's response on

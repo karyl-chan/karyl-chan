@@ -23,6 +23,10 @@ _Avoid_: validation (unqualified — it hides which side owns the rule)
 A literal both sides of the wire must agree on — a golden HMAC hex, a stream key, an RPC path, a register response field, a dispatch payload field list. Lives here as one typed module (`CONTRACT_FIXTURES`) that every contract test imports; the bot's suite REPLAYS each literal through its real routes and dispatch services rather than grepping its own source for it.
 _Avoid_: test data (fixtures are the contract's assertions, not scaffolding for one test), snapshot (nothing here is generated from current behaviour)
 
+**Interaction Token**:
+The `interaction_token` field of a command, component or modal dispatch payload, and the same field a plugin echoes back to `/api/plugin/interactions.*`. Opaque: the bot seals the Discord interaction token, the plugin it dispatched to and an expiry into it, so it is valid only for that plugin and only for 15 minutes after dispatch; any other caller, a modified value or a late one is a 403. A plugin stores and returns it verbatim and never parses it. The field's name and type (string) are the contract; its content is the bot's.
+_Avoid_: Discord token, webhook token (the Discord token never leaves the bot)
+
 **Compat Floor**:
 The oldest SDK version the bot commits to interoperating with. The cross-version contract test proves the floor version still interops — the floor and the test always point at the same version.
 _Avoid_: minimum SDK version (as a loose phrase; the floor is a single named constant, not a vibe)
