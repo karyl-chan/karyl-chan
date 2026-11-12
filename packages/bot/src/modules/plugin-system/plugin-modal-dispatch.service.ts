@@ -4,6 +4,7 @@ import { resolveUserCapabilities } from "../admin/authorized-user.service.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { recordPluginDeferReply } from "./plugin-defer-state.js";
 import { pluginDispatcher } from "./plugin-dispatch.service.js";
+import { sealInteractionToken } from "./plugin-interaction-token.js";
 
 /**
  * Inbound Discord *modal-submit* interaction → plugin dispatcher
@@ -88,7 +89,8 @@ async function buildModalBody(
 
   return JSON.stringify({
     interaction_id: interaction.id,
-    interaction_token: interaction.token,
+    // sealed for this plugin (#215): the Discord token never leaves the bot
+    interaction_token: sealInteractionToken(interaction.token, plugin.id),
     application_id: interaction.applicationId,
     custom_id: interaction.customId,
     guild_id: interaction.guildId,

@@ -2,6 +2,7 @@ import {
   createCipheriv,
   createDecipheriv,
   createHash,
+  hkdfSync,
   randomBytes,
 } from "crypto";
 import { moduleLogger } from "../logger.js";
@@ -137,4 +138,88 @@ export function decryptSecret(value: string): string {
   throw new Error(
     "unknown encryption format: only v2 values are supported",
   );
+}
+
+// ─── purpose-bound subkeys ──────────────────────────────────────────
+
+const SUBKEY_SALT = Buffer.from("karyl-encryption-subkey-v1");
+const SUBKEY_SEAL_VERSION = "s1";
+
+/**
+ * Every configured key, HKDF-SHA256-derived for one `purpose`. A value
+ * sealed for one purpose never opens under another, and nothing sealed
+ * here is ever a valid `encryptSecret` ciphertext (or the reverse) — the
+ * master key itself never touches these values. The id is the subkey's
+ * own fingerprint, so a sealed value names no master-key fingerprint.
+ */
+function subkeys(purpose: string): EncKey[] {
+  return getKeys().map((k) => {
+    const bytes = Buffer.from(
+      hkdfSync("sha256", k.bytes, SUBKEY_SALT, Buffer.from(purpose, "utf8"), KEY_BYTES),
+    );
+    const id = createHash("sha256").update(bytes).digest("hex").slice(0, 8);
+    return { id, bytes };
+  });
+}
+
+/**
+ * AES-256-GCM-seal `plaintext` under the active key's subkey for
+ * `purpose`. Output is URL-safe: `s1.<keyId>.<iv>.<tag>.<ct>`, the last
+ * three base64url. Stateless: any process holding the same
+ * ENCRYPTION_KEY opens it, across restarts and shards; a key rotated in
+ * still opens what the previous key sealed while both are listed.
+ */
+export function sealWithSubkey(purpose: string, plaintext: string): string {
+  const [active] = subkeys(purpose);
+  const iv = randomBytes(IV_BYTES);
+  const cipher = createCipheriv(ALGO, active.bytes, iv);
+  const ct = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return [
+    SUBKEY_SEAL_VERSION,
+    active.id,
+    iv.toString("base64url"),
+    tag.toString("base64url"),
+    ct.toString("base64url"),
+  ].join(".");
+}
+
+export type SubkeyOpenResult =
+  | { ok: true; plaintext: string }
+  /** `malformed`: not a sealed value at all; `unsealable`: shaped like
+   *  one but no configured key authenticates it (tampered, another
+   *  purpose, or a key no longer listed). */
+  | { ok: false; reason: "malformed" | "unsealable" };
+
+/** Open a {@link sealWithSubkey} value sealed for the same `purpose`. */
+export function openWithSubkey(purpose: string, value: string): SubkeyOpenResult {
+  const parts = value.split(".");
+  const b64url = /^[A-Za-z0-9_-]+$/;
+  if (
+    parts.length !== 5 ||
+    parts[0] !== SUBKEY_SEAL_VERSION ||
+    !/^[0-9a-f]{8}$/.test(parts[1]!) ||
+    !parts.slice(2).every((p) => b64url.test(p))
+  ) {
+    return { ok: false, reason: "malformed" };
+  }
+  const [, keyId, ivB64, tagB64, ctB64] = parts as [string, string, string, string, string];
+  const iv = Buffer.from(ivB64, "base64url");
+  const tag = Buffer.from(tagB64, "base64url");
+  if (iv.length !== IV_BYTES || tag.length !== 16) {
+    return { ok: false, reason: "malformed" };
+  }
+  const key = subkeys(purpose).find((k) => k.id === keyId);
+  if (!key) return { ok: false, reason: "unsealable" };
+  try {
+    const decipher = createDecipheriv(ALGO, key.bytes, iv);
+    decipher.setAuthTag(tag);
+    const plaintext = Buffer.concat([
+      decipher.update(Buffer.from(ctB64, "base64url")),
+      decipher.final(),
+    ]).toString("utf8");
+    return { ok: true, plaintext };
+  } catch {
+    return { ok: false, reason: "unsealable" };
+  }
 }

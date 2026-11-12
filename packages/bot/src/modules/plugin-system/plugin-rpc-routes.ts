@@ -43,6 +43,7 @@ import {
   clearPluginDeferState,
   planPluginRespond,
 } from "./plugin-defer-state.js";
+import { unsealInteractionToken } from "./plugin-interaction-token.js";
 import { maybeForwardGuildRpc } from "./shard-forward-routes.js";
 import {
   runBehaviorCallback,
@@ -426,6 +427,33 @@ function requirePluginToken<B extends { interaction_token?: string }>(
   if (body.interaction_token !== undefined) return true;
   reply.code(400).send({ error: "interaction_token required" });
   return false;
+}
+
+/**
+ * Open the sealed `interaction_token` a plugin echoes back (#215) and
+ * return the Discord token inside. 403 when it does not open, has
+ * expired, or was dispatched to another plugin; every refusal is a bot
+ * event naming the caller and the reason, at most one per plugin per
+ * dedup window so a misbehaving plugin cannot flood the log.
+ */
+function unsealPluginToken(
+  sealed: string,
+  ctx: { pluginId: number; pluginKey: string },
+  method: string,
+  reply: FastifyReply,
+): string | null {
+  const opened = unsealInteractionToken(sealed, ctx.pluginId);
+  if (opened.ok) return opened.token;
+  if (shouldRecord(`plugin-interaction-token-refused:${ctx.pluginId}`)) {
+    botEventLog.record(
+      "warn",
+      "auth",
+      `plugin ${ctx.pluginKey} called ${method} with a refused interaction_token: ${opened.reason}`,
+      { pluginId: ctx.pluginId, method, reason: opened.reason },
+    );
+  }
+  reply.code(403).send({ error: `interaction_token refused: ${opened.reason}` });
+  return null;
 }
 
 /**
@@ -1500,6 +1528,13 @@ function registerRpcRoutes(
     if (!requirePluginToken(request.body, reply)) return;
     const ctx = await requireScope(request, reply, "interactions.respond");
     if (!ctx) return;
+    const interactionToken = unsealPluginToken(
+      request.body.interaction_token,
+      ctx,
+      "interactions.respond",
+      reply,
+    );
+    if (interactionToken === null) return;
     if (!bot || !bot.application) {
       reply.code(503).send({ error: "bot client unavailable" });
       return;
@@ -1538,7 +1573,7 @@ function registerRpcRoutes(
     // in plugin-defer-state (#56); this handler keeps the transport.
     // State is consumed (cleared) only after Discord accepts the call,
     // so a failed respond can retry against the same state.
-    const plan = planPluginRespond(body.interaction_token, body.ephemeral);
+    const plan = planPluginRespond(interactionToken, body.ephemeral);
     const extraFlags = sanitizePluginFlags(body.flags);
 
     try {
@@ -1552,7 +1587,7 @@ function registerRpcRoutes(
         await bot.rest.patch(
           Routes.webhookMessage(
             bot.application.id,
-            body.interaction_token,
+            interactionToken,
             "@original",
           ),
           {
@@ -1573,7 +1608,7 @@ function registerRpcRoutes(
               : {}),
           },
         );
-        clearPluginDeferState(body.interaction_token);
+        clearPluginDeferState(interactionToken);
         return { ok: true };
       }
 
@@ -1585,7 +1620,7 @@ function registerRpcRoutes(
       const followupFlags =
         (plan.ephemeral ? MessageFlags.Ephemeral : 0) | extraFlags;
       await bot.rest.post(
-        Routes.webhook(bot.application.id, body.interaction_token),
+        Routes.webhook(bot.application.id, interactionToken),
         {
           body: {
             content,
@@ -1611,12 +1646,12 @@ function registerRpcRoutes(
         .delete(
           Routes.webhookMessage(
             bot.application.id,
-            body.interaction_token,
+            interactionToken,
             "@original",
           ),
         )
         .catch(() => {});
-      clearPluginDeferState(body.interaction_token);
+      clearPluginDeferState(interactionToken);
       return { ok: true };
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
@@ -1671,6 +1706,13 @@ function registerRpcRoutes(
     if (!requirePluginToken(request.body, reply)) return;
     const ctx = await requireScope(request, reply, "interactions.followup");
     if (!ctx) return;
+    const interactionToken = unsealPluginToken(
+      request.body.interaction_token,
+      ctx,
+      "interactions.followup",
+      reply,
+    );
+    if (interactionToken === null) return;
     if (!bot || !bot.application) {
       reply.code(503).send({ error: "bot client unavailable" });
       return;
@@ -1710,7 +1752,7 @@ function registerRpcRoutes(
       (ephemeral ? MessageFlags.Ephemeral : 0) | followupExtraFlags;
     try {
       const created = (await bot.rest.post(
-        Routes.webhook(bot.application.id, body.interaction_token),
+        Routes.webhook(bot.application.id, interactionToken),
         {
           body: {
             content,
@@ -1783,6 +1825,13 @@ function registerRpcRoutes(
       "interactions.delete_followup",
     );
     if (!ctx) return;
+    const interactionToken = unsealPluginToken(
+      request.body.interaction_token,
+      ctx,
+      "interactions.delete_followup",
+      reply,
+    );
+    if (interactionToken === null) return;
     if (!bot || !bot.application) {
       reply.code(503).send({ error: "bot client unavailable" });
       return;
@@ -1792,7 +1841,7 @@ function registerRpcRoutes(
       await bot.rest.delete(
         Routes.webhookMessage(
           bot.application.id,
-          body.interaction_token,
+          interactionToken,
           body.message_id,
         ),
       );
@@ -1855,6 +1904,13 @@ function registerRpcRoutes(
       "interactions.edit_followup",
     );
     if (!ctx) return;
+    const interactionToken = unsealPluginToken(
+      request.body.interaction_token,
+      ctx,
+      "interactions.edit_followup",
+      reply,
+    );
+    if (interactionToken === null) return;
     if (!bot || !bot.application) {
       reply.code(503).send({ error: "bot client unavailable" });
       return;
@@ -1880,7 +1936,7 @@ function registerRpcRoutes(
       await bot.rest.patch(
         Routes.webhookMessage(
           bot.application.id,
-          body.interaction_token,
+          interactionToken,
           body.message_id,
         ),
         {
@@ -1955,6 +2011,13 @@ function registerRpcRoutes(
     async (request, reply) => {
     const ctx = await requireScope(request, reply, "interactions.send_modal");
     if (!ctx) return;
+    const interactionToken = unsealPluginToken(
+      request.body.interaction_token,
+      ctx,
+      "interactions.send_modal",
+      reply,
+    );
+    if (interactionToken === null) return;
     if (!bot || !bot.application) {
       reply.code(503).send({ error: "bot client unavailable" });
       return;
@@ -1981,7 +2044,7 @@ function registerRpcRoutes(
       // doesn't exist here — we only have the id+token forwarded by
       // the plugin.
       await bot.rest.post(
-        Routes.interactionCallback(body.interaction_id, body.interaction_token),
+        Routes.interactionCallback(body.interaction_id, interactionToken),
         { body: { type: 9, data: body.modal } },
       );
       return { ok: true };

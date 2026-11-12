@@ -20,6 +20,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 
 vi.hoisted(() => {
   process.env.SQLITE_DB_PATH = ":memory:";
+  // interaction tokens are sealed under it (#215)
+  process.env.ENCRYPTION_KEY = "a".repeat(64);
 });
 
 // ── module-level mocks ──────────────────────────────────────────────────────
@@ -51,6 +53,7 @@ import { createWebServer } from "../src/modules/web-core/server.js";
 import { pluginAuthStore } from "../src/modules/plugin-system/plugin-auth.service.js";
 import { findPluginById } from "../src/modules/plugin-system/models/plugin.model.js";
 import { resolvePluginTarget } from "../src/utils/host-policy.js";
+import { sealInteractionToken } from "../src/modules/plugin-system/plugin-interaction-token.js";
 import {
   MAX_REPLY_ATTACHMENT_BYTES,
   MAX_REPLY_ATTACHMENT_TOTAL_BYTES,
@@ -58,9 +61,10 @@ import {
 
 const MiB = 1024 * 1024;
 const CHANNEL_ID = "chan-1";
-const TOKEN = "interaction-token-abc";
 /** Bearer token → plugin id; every plugin has every scope. */
 const PLUGINS: Record<string, number> = { "token-a": 1, "token-b": 2 };
+/** The interaction token dispatched to plugin `token-a` (#215). */
+const TOKEN = sealInteractionToken("interaction-token-abc", PLUGINS["token-a"]!);
 
 let files: Server;
 let port: number;
