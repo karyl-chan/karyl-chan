@@ -7,7 +7,6 @@ import { vi, describe, it, expect, afterEach } from "vitest";
 
 vi.hoisted(() => {
   process.env.SQLITE_DB_PATH = ":memory:";
-  process.env.BOT_EVENTS_SQLITE_DB_PATH = ":memory:";
 });
 
 import { BotEvent } from "../src/modules/bot-events/models/bot-event.model.js";

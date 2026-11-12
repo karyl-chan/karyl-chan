@@ -27,10 +27,6 @@ import {
 
 vi.hoisted(() => {
   process.env.SQLITE_DB_PATH = ":memory:";
-  // bot_events has its own SQLite file; unset, it resolves to the
-  // package's real data/bot-events.sqlite (shared by every parallel run,
-  // and table-less in a fresh checkout → "no such table: bot_events").
-  process.env.BOT_EVENTS_SQLITE_DB_PATH = ":memory:";
 });
 
 // Open the SSRF gate so the HTTP path reaches the pool spy instead of
