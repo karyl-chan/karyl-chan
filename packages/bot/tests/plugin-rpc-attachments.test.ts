@@ -209,13 +209,17 @@ afterEach(async () => {
   await server.close();
 });
 
-function sendWith(attachments: unknown, token = "token-a") {
+function rpc(method: string, payload: Record<string, unknown>, token = "token-a") {
   return server.inject({
     method: "POST",
-    url: "/api/plugin/messages.send",
+    url: `/api/plugin/${method}`,
     headers: { authorization: `Bearer ${token}` },
-    payload: { channel_id: CHANNEL_ID, content: "hi", attachments } as never,
+    payload: payload as never,
   });
+}
+
+function sendWith(attachments: unknown, token = "token-a") {
+  return rpc("messages.send", { channel_id: CHANNEL_ID, content: "hi", attachments }, token);
 }
 
 /** Wait until the plugin holds `n` /p/hold requests open. */
@@ -245,11 +249,10 @@ describe("plugin RPC attachments — the three routes download them", () => {
   });
 
   it("interactions.respond sends the downloaded files with the PATCH", async () => {
-    const res = await server.inject({
-      method: "POST",
-      url: "/api/plugin/interactions.respond",
-      headers: { authorization: "Bearer token-a" },
-      payload: { interaction_token: TOKEN, content: "here", attachments: [{ name: "chart.png", path: "/files/a.png" }] },
+    const res = await rpc("interactions.respond", {
+      interaction_token: TOKEN,
+      content: "here",
+      attachments: [{ name: "chart.png", path: "/files/a.png" }],
     });
 
     expect(res.statusCode).toBe(200);
@@ -259,11 +262,10 @@ describe("plugin RPC attachments — the three routes download them", () => {
   });
 
   it("interactions.followup sends the downloaded files with the POST", async () => {
-    const res = await server.inject({
-      method: "POST",
-      url: "/api/plugin/interactions.followup",
-      headers: { authorization: "Bearer token-a" },
-      payload: { interaction_token: TOKEN, content: "more", attachments: [{ name: "chart.png", path: "/files/a.png" }] },
+    const res = await rpc("interactions.followup", {
+      interaction_token: TOKEN,
+      content: "more",
+      attachments: [{ name: "chart.png", path: "/files/a.png" }],
     });
 
     expect(res.statusCode).toBe(200);
@@ -273,11 +275,10 @@ describe("plugin RPC attachments — the three routes download them", () => {
   });
 
   it("interactions.respond refuses a failed download with a 400, before anything reaches Discord", async () => {
-    const res = await server.inject({
-      method: "POST",
-      url: "/api/plugin/interactions.respond",
-      headers: { authorization: "Bearer token-a" },
-      payload: { interaction_token: TOKEN, content: "here", attachments: [{ name: "x", path: "/redirect" }] },
+    const res = await rpc("interactions.respond", {
+      interaction_token: TOKEN,
+      content: "here",
+      attachments: [{ name: "x", path: "/redirect" }],
     });
 
     expect(res.statusCode).toBe(400);
@@ -289,11 +290,10 @@ describe("plugin RPC attachments — the three routes download them", () => {
   });
 
   it("interactions.followup refuses a path out of the prefix with a 400", async () => {
-    const res = await server.inject({
-      method: "POST",
-      url: "/api/plugin/interactions.followup",
-      headers: { authorization: "Bearer token-a" },
-      payload: { interaction_token: TOKEN, content: "more", attachments: [{ name: "x", path: "/../secret" }] },
+    const res = await rpc("interactions.followup", {
+      interaction_token: TOKEN,
+      content: "more",
+      attachments: [{ name: "x", path: "/../secret" }],
     });
 
     expect(res.statusCode).toBe(400);

@@ -51,7 +51,10 @@ import {
 // attachments download as a plugin action reply's do (#203, #214)
 import type { ReplyAttachment } from "../command-system/behavior-reply.js";
 import type { ReplyFile } from "../command-system/reply-files.js";
-import { pluginReplyFileFetcher } from "../command-system/webhook-forwarder.service.js";
+import {
+  PLUGIN_FILE_TIMEOUT_MS,
+  pluginReplyFileFetcher,
+} from "../command-system/webhook-forwarder.service.js";
 import {
   formatPluginRpcSchemaError,
   installPluginRpcSchemaErrors,
@@ -138,9 +141,6 @@ export interface PluginRpcOptions {
   /** How long one call's attachment downloads may take; tests inject a short one. */
   attachmentTimeoutMs?: number;
 }
-
-/** A plugin action reply's download timeout (plugin-action.ts), for a call's attachments. */
-const DEFAULT_ATTACHMENT_TIMEOUT_MS = 10_000;
 
 /** Module-level singleton — one limiter shared across all requests. */
 const defaultDmLimiter = new RateLimiter({
@@ -487,7 +487,7 @@ function registerRpcRoutes(
   const bot = options.bot;
   const dmLimiter = options.dmLimiter ?? defaultDmLimiter;
   const attachmentTimeoutMs =
-    options.attachmentTimeoutMs ?? DEFAULT_ATTACHMENT_TIMEOUT_MS;
+    options.attachmentTimeoutMs ?? PLUGIN_FILE_TIMEOUT_MS;
 
   // ─── messages.send ────────────────────────────────────────────────
   /**

@@ -42,6 +42,7 @@ import {
   type WebhookTarget,
 } from "../../utils/host-policy.js";
 import { createPinnedAgent, type PinnedAddress } from "../../utils/pinned-dispatcher.js";
+import { effectivePort } from "@karyl-chan/voice/net";
 import { webhookAllowlist } from "../../config.js";
 import type { AllowlistEntry } from "../../utils/webhook-allowlist.js";
 import { decryptSecret } from "../../utils/crypto.js";
@@ -690,6 +691,9 @@ export async function downloadReplyFiles(batch: ReplyFilesDownload): Promise<Rep
   }
 }
 
+/** How long one batch of a plugin's files may take: a webhook's forward timeout. */
+export const PLUGIN_FILE_TIMEOUT_MS = 10_000;
+
 /**
  * Files from a plugin come from under its registered URL, path prefix
  * included — `<plugin.url><path>` — under the plugin target policy,
@@ -704,27 +708,32 @@ export function pluginReplyFileFetcher(
   owner: DownloadOwner,
   timeoutMs: number,
 ): ReplyFileFetcher {
+  // parsed once, so the fetcher (a callback token may keep it) holds only the base
+  const base = pluginFileBase(plugin.url);
   return async (attachments) => {
-    let base: URL;
-    try {
-      base = new URL(plugin.url);
-    } catch {
-      return { ok: false, error: "the plugin's URL is unusable" };
-    }
-    if (base.protocol !== "http:" && base.protocol !== "https:") {
-      return { ok: false, error: "the plugin's URL is not http(s)" };
-    }
-    base.search = "";
-    base.hash = "";
+    if (typeof base === "string") return { ok: false, error: base };
     return downloadReplyFiles({
       owner,
       base,
       attachments,
       timeoutMs,
-      resolveAddresses: (o) =>
-        resolvePluginTarget(o.hostname, o.port ? Number(o.port) : o.protocol === "https:" ? 443 : 80),
+      resolveAddresses: (o) => resolvePluginTarget(o.hostname, effectivePort(o)),
     });
   };
+}
+
+/** A plugin URL without its query and hash, or why it can't be a file base. */
+function pluginFileBase(url: string): URL | string {
+  let base: URL;
+  try {
+    base = new URL(url);
+  } catch {
+    return "the plugin's URL is unusable";
+  }
+  if (base.protocol !== "http:" && base.protocol !== "https:") return "the plugin's URL is not http(s)";
+  base.search = "";
+  base.hash = "";
+  return base;
 }
 
 /** `promise`, or a rejection with the signal's reason once it aborts. */

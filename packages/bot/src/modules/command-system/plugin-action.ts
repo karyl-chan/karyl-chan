@@ -44,7 +44,7 @@ import { declaredBehaviorActions } from "../plugin-system/plugin-behavior-action
 import { behaviorCallbackTokens, callbackMetaOf } from "./behavior-callback-token.js";
 import { failRun, recordRun, showDeferred } from "./behavior-run.js";
 import { renderFailure, type ReplyTarget } from "./reply-renderer.js";
-import { pluginReplyFileFetcher } from "./webhook-forwarder.service.js";
+import { PLUGIN_FILE_TIMEOUT_MS, pluginReplyFileFetcher } from "./webhook-forwarder.service.js";
 
 /** What a plugin action run needs from the plugin system; tests inject their own. */
 export interface PluginActionDeps {
@@ -57,7 +57,7 @@ export interface PluginActionDeps {
 export const defaultPluginActionDeps: PluginActionDeps = {
   dispatcher: pluginDispatcher,
   findPlugin: findPluginByKey,
-  fileTimeoutMs: 10_000,
+  fileTimeoutMs: PLUGIN_FILE_TIMEOUT_MS,
 };
 
 export interface PluginActionRun {
