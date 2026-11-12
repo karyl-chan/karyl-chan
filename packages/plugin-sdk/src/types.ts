@@ -120,10 +120,12 @@ export interface CommandContext {
    */
   interactionId: string;
   /**
-   * The interaction token for this command invocation. Required when
-   * calling `interactions.send_modal`; the regular `interactions.respond`
-   * /`followup` RPCs read the token from the bot's side via the
-   * interaction id, so most handlers will not need this directly.
+   * Opaque interaction token for this command invocation, sealed by the
+   * bot. Valid only for this plugin and only for 15 minutes after
+   * dispatch; pass it back verbatim as `interaction_token` to
+   * `/api/plugin/interactions.*` (`respond`, `followup`, `send_modal`)
+   * and never parse it. It is not Discord's token — that never leaves
+   * the bot.
    */
   interactionToken: string;
   /**
@@ -388,8 +390,10 @@ export interface ComponentContext {
    */
   selectedValues: string[];
   /**
-   * The (fresh, 15-min) interaction token for this event. The bot has
-   * already `deferUpdate`d the interaction; pass this token to
+   * Opaque interaction token for this event, sealed by the bot: valid
+   * only for this plugin and only for 15 minutes after dispatch; return
+   * it verbatim and never parse it. The bot has already `deferUpdate`d
+   * the interaction; pass this token to
    * `/api/plugin/interactions.followup` for an ephemeral nudge — e.g.
    * `ctx.botRpc("/api/plugin/interactions.followup", { interaction_token:
    * ctx.interactionToken, content, ephemeral: true })`. (Editing the
@@ -491,7 +495,11 @@ export interface ModalContext {
   guildId: string | null;
   /** Channel the modal originated from; null if Discord didn't supply it. */
   channelId: string | null;
-  /** Fresh interaction token for this modal submit (15 min). */
+  /**
+   * Opaque interaction token for this modal submit, sealed by the bot:
+   * valid only for this plugin and only for 15 minutes after dispatch.
+   * Return it verbatim as `interaction_token`; never parse it.
+   */
   interactionToken: string;
   /** Discord user id of the submitter. */
   userId: string;
