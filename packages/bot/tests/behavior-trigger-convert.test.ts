@@ -27,6 +27,7 @@ import type { Client } from "discord.js";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { QueryInterface } from "sequelize";
 import { sequelize } from "../src/db.js";
+import { syncBehaviorRouteTables } from "./behavior-route-tables.js";
 import { up as indexes011 } from "../src/migrations/011-behavior-trigger-action-tables.js";
 import { registerBehaviorRoutes } from "../src/modules/behavior/behavior-routes.js";
 import { listAudit } from "../src/modules/admin/admin-audit.service.js";
@@ -102,7 +103,7 @@ const reconciler = new CommandReconciler(() =>
 let server: FastifyInstance;
 
 beforeAll(async () => {
-  await sequelize.sync({ force: true });
+  await syncBehaviorRouteTables();
   await (indexes011 as (c: { context: QueryInterface }) => Promise<void>)({
     context: sequelize.getQueryInterface(),
   });

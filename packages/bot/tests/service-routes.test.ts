@@ -24,7 +24,7 @@ vi.mock("../src/modules/bot-events/bot-event-log.js", () => ({
 
 import type { Client } from "discord.js";
 import Fastify, { type FastifyInstance } from "fastify";
-import { sequelize } from "../src/db.js";
+import { syncBehaviorRouteTables } from "./behavior-route-tables.js";
 import { registerBehaviorRoutes } from "../src/modules/behavior/behavior-routes.js";
 import { BehaviorCommand } from "../src/modules/behavior/models/behavior-command.model.js";
 import { BehaviorDefinition } from "../src/modules/behavior/models/behavior-definition.model.js";
@@ -64,7 +64,7 @@ let server: FastifyInstance;
 let caller: { userId: string; capabilities: Set<string> };
 
 beforeAll(async () => {
-  await sequelize.sync({ force: true });
+  await syncBehaviorRouteTables();
   server = Fastify({ logger: false });
   server.addHook("onRequest", async (request) => {
     request.authUserId = caller.userId;
@@ -457,14 +457,20 @@ describe("no trigger shadows a fixed row", () => {
     expect((await login({ kind: "message", patternKind: "startswith", patternValue: "!admin", sample: "!admin" })).statusCode).toBe(200);
   });
 
-  it("a service trigger never takes another service's DMs, in either save order", async () => {
-    const nas = await created();
+  // The two save orders are two tests: each service write is ~30 serial
+  // SQLite round trips, and under full-suite load both orders in one
+  // test (135) ran past the 5s test timeout (#235).
+  it("a service trigger never takes another service's DMs, saved after it", async () => {
+    await created();
     // a prefix that would answer `!login-nas` first
     const wiki = await created({ ...NAS, audience: "wiki" });
     const res = await switchTrigger(wiki.id, { kind: "message", patternKind: "startswith", patternValue: "!login-" });
     expect(res.statusCode).toBe(400);
     expect(res.json().error.message).toContain('service "NAS"');
+  });
 
+  it("a service trigger never takes another service's DMs, saved before it", async () => {
+    const nas = await created();
     // a service whose own sample DM an existing trigger would answer
     await switchTrigger(nas.id, { kind: "message", patternKind: "startswith", patternValue: "!files" });
     expect((await createService({ ...NAS, audience: "x" })).statusCode).toBe(201);

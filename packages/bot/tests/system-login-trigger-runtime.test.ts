@@ -35,7 +35,7 @@ vi.mock("../src/modules/builtin-features/in-process-command-registry.service.js"
 
 import { ChannelType, type Client, type Interaction } from "discord.js";
 import Fastify, { type FastifyInstance } from "fastify";
-import { sequelize } from "../src/db.js";
+import { syncBehaviorRouteTables } from "./behavior-route-tables.js";
 import { registerBehaviorRoutes } from "../src/modules/behavior/behavior-routes.js";
 import { mintLoginLink } from "../src/modules/admin/admin-login.service.js";
 import { CommandReconciler } from "../src/modules/command-system/reconcile.service.js";
@@ -75,7 +75,7 @@ const dispatcher = new InteractionDispatcher(forwarder);
 let server: FastifyInstance;
 
 beforeAll(async () => {
-  await sequelize.sync({ force: true });
+  await syncBehaviorRouteTables();
   server = Fastify({ logger: false });
   server.addHook("onRequest", async (request) => {
     request.authUserId = "owner";

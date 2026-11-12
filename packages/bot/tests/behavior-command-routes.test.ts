@@ -22,7 +22,7 @@ vi.mock("../src/modules/bot-events/bot-event-log.js", () => ({
 
 import type { Client } from "discord.js";
 import Fastify, { type FastifyInstance } from "fastify";
-import { sequelize } from "../src/db.js";
+import { syncBehaviorRouteTables } from "./behavior-route-tables.js";
 import { registerBehaviorRoutes } from "../src/modules/behavior/behavior-routes.js";
 import { listAudit } from "../src/modules/admin/admin-audit.service.js";
 import { PluginCommand } from "../src/modules/plugin-system/models/plugin-command.model.js";
@@ -103,7 +103,7 @@ const reconciler = new CommandReconciler(() =>
 let server: FastifyInstance;
 
 beforeAll(async () => {
-  await sequelize.sync({ force: true });
+  await syncBehaviorRouteTables();
   server = Fastify({ logger: false });
   server.addHook("onRequest", async (request) => {
     request.authUserId = "admin";
