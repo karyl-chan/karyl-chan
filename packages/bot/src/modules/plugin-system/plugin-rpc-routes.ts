@@ -430,26 +430,32 @@ function requirePluginToken<B extends { interaction_token?: string }>(
 }
 
 /**
- * Open the sealed `interaction_token` a plugin echoes back (#215) and
- * return the Discord token inside. 403 when it does not open, has
- * expired, or was dispatched to another plugin; every refusal is a bot
- * event naming the caller and the reason, at most one per plugin per
- * dedup window so a misbehaving plugin cannot flood the log.
+ * {@link requireScope} for an `interactions.*` route, then open the
+ * sealed `interaction_token` the plugin echoes back (#215) and return
+ * the Discord token inside. 403 when it does not open, has expired, or
+ * was dispatched to another plugin; every refusal is a bot event naming
+ * the caller and the reason, at most one per plugin per dedup window so
+ * a misbehaving plugin cannot flood the log.
  */
-function unsealPluginToken(
-  sealed: string,
-  ctx: { pluginId: number; pluginKey: string },
-  method: string,
+async function requireInteractionCaller(
+  request: FastifyRequest,
   reply: FastifyReply,
-): string | null {
+  scope: string,
+  sealed: string,
+): Promise<{
+  ctx: { pluginId: number; pluginKey: string };
+  interactionToken: string;
+} | null> {
+  const ctx = await requireScope(request, reply, scope);
+  if (!ctx) return null;
   const opened = unsealInteractionToken(sealed, ctx.pluginId);
-  if (opened.ok) return opened.token;
+  if (opened.ok) return { ctx, interactionToken: opened.token };
   if (shouldRecord(`plugin-interaction-token-refused:${ctx.pluginId}`)) {
     botEventLog.record(
       "warn",
       "auth",
-      `plugin ${ctx.pluginKey} called ${method} with a refused interaction_token: ${opened.reason}`,
-      { pluginId: ctx.pluginId, method, reason: opened.reason },
+      `plugin ${ctx.pluginKey} called ${scope} with a refused interaction_token: ${opened.reason}`,
+      { pluginId: ctx.pluginId, method: scope, reason: opened.reason },
     );
   }
   reply.code(403).send({ error: `interaction_token refused: ${opened.reason}` });
@@ -1526,15 +1532,14 @@ function registerRpcRoutes(
     async (request, reply) => {
     if (await answeredBehaviorCallback(request, reply, "interactions.respond")) return;
     if (!requirePluginToken(request.body, reply)) return;
-    const ctx = await requireScope(request, reply, "interactions.respond");
-    if (!ctx) return;
-    const interactionToken = unsealPluginToken(
-      request.body.interaction_token,
-      ctx,
-      "interactions.respond",
+    const caller = await requireInteractionCaller(
+      request,
       reply,
+      "interactions.respond",
+      request.body.interaction_token,
     );
-    if (interactionToken === null) return;
+    if (!caller) return;
+    const { ctx, interactionToken } = caller;
     if (!bot || !bot.application) {
       reply.code(503).send({ error: "bot client unavailable" });
       return;
@@ -1704,15 +1709,14 @@ function registerRpcRoutes(
     async (request, reply) => {
     if (await answeredBehaviorCallback(request, reply, "interactions.followup")) return;
     if (!requirePluginToken(request.body, reply)) return;
-    const ctx = await requireScope(request, reply, "interactions.followup");
-    if (!ctx) return;
-    const interactionToken = unsealPluginToken(
-      request.body.interaction_token,
-      ctx,
-      "interactions.followup",
+    const caller = await requireInteractionCaller(
+      request,
       reply,
+      "interactions.followup",
+      request.body.interaction_token,
     );
-    if (interactionToken === null) return;
+    if (!caller) return;
+    const { ctx, interactionToken } = caller;
     if (!bot || !bot.application) {
       reply.code(503).send({ error: "bot client unavailable" });
       return;
@@ -1819,19 +1823,14 @@ function registerRpcRoutes(
     async (request, reply) => {
     if (await answeredBehaviorCallback(request, reply, "interactions.delete_followup")) return;
     if (!requirePluginToken(request.body, reply)) return;
-    const ctx = await requireScope(
+    const caller = await requireInteractionCaller(
       request,
       reply,
       "interactions.delete_followup",
-    );
-    if (!ctx) return;
-    const interactionToken = unsealPluginToken(
       request.body.interaction_token,
-      ctx,
-      "interactions.delete_followup",
-      reply,
     );
-    if (interactionToken === null) return;
+    if (!caller) return;
+    const { ctx, interactionToken } = caller;
     if (!bot || !bot.application) {
       reply.code(503).send({ error: "bot client unavailable" });
       return;
@@ -1898,19 +1897,14 @@ function registerRpcRoutes(
     async (request, reply) => {
     if (await answeredBehaviorCallback(request, reply, "interactions.edit_followup")) return;
     if (!requirePluginToken(request.body, reply)) return;
-    const ctx = await requireScope(
+    const caller = await requireInteractionCaller(
       request,
       reply,
       "interactions.edit_followup",
-    );
-    if (!ctx) return;
-    const interactionToken = unsealPluginToken(
       request.body.interaction_token,
-      ctx,
-      "interactions.edit_followup",
-      reply,
     );
-    if (interactionToken === null) return;
+    if (!caller) return;
+    const { ctx, interactionToken } = caller;
     if (!bot || !bot.application) {
       reply.code(503).send({ error: "bot client unavailable" });
       return;
@@ -2009,15 +2003,14 @@ function registerRpcRoutes(
       ]),
     },
     async (request, reply) => {
-    const ctx = await requireScope(request, reply, "interactions.send_modal");
-    if (!ctx) return;
-    const interactionToken = unsealPluginToken(
-      request.body.interaction_token,
-      ctx,
-      "interactions.send_modal",
+    const caller = await requireInteractionCaller(
+      request,
       reply,
+      "interactions.send_modal",
+      request.body.interaction_token,
     );
-    if (interactionToken === null) return;
+    if (!caller) return;
+    const { ctx, interactionToken } = caller;
     if (!bot || !bot.application) {
       reply.code(503).send({ error: "bot client unavailable" });
       return;

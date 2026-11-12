@@ -82,12 +82,30 @@ function getKeys(): EncKey[] {
   return parseKeys(raw);
 }
 
+/** AES-256-GCM-seal `plaintext` under `keyBytes` with a fresh IV. The
+ *  callers own the encoding (v2 secrets vs. subkey seals). */
+function gcmSeal(
+  keyBytes: Buffer,
+  plaintext: string,
+): { iv: Buffer; tag: Buffer; ct: Buffer } {
+  const iv = randomBytes(IV_BYTES);
+  const cipher = createCipheriv(ALGO, keyBytes, iv);
+  const ct = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  return { iv, tag: cipher.getAuthTag(), ct };
+}
+
+/** Open a {@link gcmSeal} output; throws when the tag does not verify. */
+function gcmOpen(keyBytes: Buffer, iv: Buffer, tag: Buffer, ct: Buffer): string {
+  const decipher = createDecipheriv(ALGO, keyBytes, iv);
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(ct), decipher.final()]).toString(
+    "utf8",
+  );
+}
+
 export function encryptSecret(plaintext: string): string {
   const [active] = getKeys();
-  const iv = randomBytes(IV_BYTES);
-  const cipher = createCipheriv(ALGO, active.bytes, iv);
-  const ct = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
-  const tag = cipher.getAuthTag();
+  const { iv, tag, ct } = gcmSeal(active.bytes, plaintext);
   return [
     ENC_VERSION_V2,
     active.id,
@@ -95,22 +113,6 @@ export function encryptSecret(plaintext: string): string {
     tag.toString("base64"),
     ct.toString("base64"),
   ].join(":");
-}
-
-function decryptWith(
-  keyBytes: Buffer,
-  ivB64: string,
-  tagB64: string,
-  ctB64: string,
-): string {
-  const iv = Buffer.from(ivB64, "base64");
-  const tag = Buffer.from(tagB64, "base64");
-  const ct = Buffer.from(ctB64, "base64");
-  const decipher = createDecipheriv(ALGO, keyBytes, iv);
-  decipher.setAuthTag(tag);
-  return Buffer.concat([decipher.update(ct), decipher.final()]).toString(
-    "utf8",
-  );
 }
 
 export function decryptSecret(value: string): string {
@@ -125,7 +127,12 @@ export function decryptSecret(value: string): string {
       throw new Error(
         `unknown encryption key id ${keyId} — was the key rotated out?`,
       );
-    return decryptWith(key.bytes, ivB64, tagB64, ctB64);
+    return gcmOpen(
+      key.bytes,
+      Buffer.from(ivB64, "base64"),
+      Buffer.from(tagB64, "base64"),
+      Buffer.from(ctB64, "base64"),
+    );
   }
   // v0 plaintext and v1 ciphertext are no longer supported. The one-time
   // encryption-v2 uplift migration was removed along with the Umzug
@@ -171,10 +178,7 @@ function subkeys(purpose: string): EncKey[] {
  */
 export function sealWithSubkey(purpose: string, plaintext: string): string {
   const [active] = subkeys(purpose);
-  const iv = randomBytes(IV_BYTES);
-  const cipher = createCipheriv(ALGO, active.bytes, iv);
-  const ct = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
-  const tag = cipher.getAuthTag();
+  const { iv, tag, ct } = gcmSeal(active.bytes, plaintext);
   return [
     SUBKEY_SEAL_VERSION,
     active.id,
@@ -212,12 +216,7 @@ export function openWithSubkey(purpose: string, value: string): SubkeyOpenResult
   const key = subkeys(purpose).find((k) => k.id === keyId);
   if (!key) return { ok: false, reason: "unsealable" };
   try {
-    const decipher = createDecipheriv(ALGO, key.bytes, iv);
-    decipher.setAuthTag(tag);
-    const plaintext = Buffer.concat([
-      decipher.update(Buffer.from(ctB64, "base64url")),
-      decipher.final(),
-    ]).toString("utf8");
+    const plaintext = gcmOpen(key.bytes, iv, tag, Buffer.from(ctB64, "base64url"));
     return { ok: true, plaintext };
   } catch {
     return { ok: false, reason: "unsealable" };

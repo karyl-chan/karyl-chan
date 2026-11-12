@@ -52,14 +52,6 @@ const PLUGINS: Record<string, number> = { "token-a": 1, "token-b": 2 };
 const DISCORD_TOKEN = "discord-interaction-token-for-plugin-a";
 const MINE = () => sealInteractionToken(DISCORD_TOKEN, 1);
 
-const SCOPES = [
-  "interactions.respond",
-  "interactions.followup",
-  "interactions.delete_followup",
-  "interactions.edit_followup",
-  "interactions.send_modal",
-];
-
 /** One well-formed call per route, given its token. */
 const CALLS: Array<[string, (token: string) => Record<string, unknown>]> = [
   ["interactions.respond", (t) => ({ interaction_token: t, content: "x" })],
@@ -75,6 +67,8 @@ const CALLS: Array<[string, (token: string) => Record<string, unknown>]> = [
     }),
   ],
 ];
+
+const SCOPES = CALLS.map(([method]) => method);
 
 function fakeRest() {
   return {
