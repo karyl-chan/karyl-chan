@@ -8,7 +8,6 @@ import { vi, describe, it, expect, beforeAll, beforeEach, afterAll } from "vites
 
 vi.hoisted(() => {
   process.env.SQLITE_DB_PATH = ":memory:";
-  process.env.BOT_EVENTS_SQLITE_DB_PATH = ":memory:";
 });
 
 import Fastify, { type FastifyInstance } from "fastify";
