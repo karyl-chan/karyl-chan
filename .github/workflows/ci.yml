@@ -130,6 +130,18 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # The bot's Postgres multi-writer suite skips without TEST_PG_URL, so
+      # this is the only place it runs (#182). It uses the service's default
+      # `postgres` database because the suite does sync({ force: true }) —
+      # keeping it off karyl_e2e. `^...` builds the bot's workspace deps
+      # (plugin-wire, plugin-sdk, voice) without the bot itself; vitest runs
+      # the bot from source.
+      - name: Postgres multi-writer (bot)
+        env:
+          TEST_PG_URL: postgres://postgres:e2e@127.0.0.1:5432/postgres
+        run: |
+          pnpm --filter "@karyl-chan/bot^..." build
+          pnpm --dir packages/bot exec vitest run tests/postgres-multiwriter.test.ts --reporter=verbose
       - name: Run every required Plugin Platform path
         run: pnpm --dir e2e required
 
