@@ -30,6 +30,7 @@ import {
   assertPluginTarget,
   HostPolicyError,
 } from "../../utils/host-policy.js";
+import { effectivePort } from "@karyl-chan/voice/net";
 import { RateLimiter } from "../../utils/rate-limiter.js";
 
 interface VoiceRpcOptions {
@@ -232,24 +233,18 @@ export async function registerVoiceRpcRoutes(
       try {
         if (pluginOrigin && parsed.origin === pluginOrigin) {
           trustedOrigin = pluginOrigin;
-          const port = parsed.port
-            ? Number(parsed.port)
-            : parsed.protocol === "https:"
-              ? 443
-              : 80;
-          await assertPluginTarget(parsed.hostname, port);
+          await assertPluginTarget(parsed.hostname, effectivePort(parsed));
         } else {
           await assertPublicMediaUrl(parsed);
         }
       } catch (err) {
+        // Both policies refuse with HostPolicyError only — a DNS failure
+        // included (`dns_failed`) — so anything else is a bug: rethrow.
         if (err instanceof HostPolicyError) {
           reply.code(403).send({ error: err.message });
           return;
         }
-        reply
-          .code(400)
-          .send({ error: "could not resolve the audio URL's host" });
-        return;
+        throw err;
       }
       try {
         // The vetted, normalized URL — never the raw body string (see

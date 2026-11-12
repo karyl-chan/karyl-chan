@@ -3,7 +3,10 @@ import {
   type PluginRow,
 } from "./models/plugin.model.js";
 import type { PluginManifest } from "./plugin-registry.service.js";
-import { parsePluginManifest } from "./plugin-dispatch-util.js";
+import {
+  parsePluginManifest,
+  preflightPluginTarget,
+} from "./plugin-dispatch-util.js";
 import {
   setHealth,
   type HealthStatus,
@@ -11,10 +14,6 @@ import {
 } from "./plugin-health-store.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { shouldRecord } from "../bot-events/bot-event-dedup.js";
-import {
-  assertPluginTarget,
-  HostPolicyError,
-} from "../../utils/host-policy.js";
 
 /**
  * Periodic health prober.
@@ -58,21 +57,13 @@ async function probeOne(plugin: PluginRow): Promise<void> {
   if (!manifest) return;
   const url = resolveHealthUrl(plugin, manifest);
   if (!url) return;
-  const parsedUrl = new URL(url);
-  const port = parsedUrl.port
-    ? Number(parsedUrl.port)
-    : parsedUrl.protocol === "https:"
-      ? 443
-      : 80;
-  try {
-    await assertPluginTarget(parsedUrl.hostname, port);
-  } catch (err) {
-    if (!(err instanceof HostPolicyError)) throw err;
+  const preflight = await preflightPluginTarget(url);
+  if (!preflight.ok) {
     // Treat host-policy refusal as unhealthy — operators see this in
     // the UI badge instead of silently stale data.
     await setHealth(plugin.pluginKey, {
       status: "unhealthy",
-      message: `host policy: ${err.message}`,
+      message: `host policy: ${preflight.reason}`,
       checkedAt: Date.now(),
       fromError: true,
     });

@@ -9,6 +9,7 @@ import {
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { shouldRecord } from "../bot-events/bot-event-dedup.js";
 import { tForInteraction } from "../../i18n/index.js";
+import { replyInteractionFailure } from "../command-system/interaction-failure-reply.js";
 import {
   findAllStateRows,
   resolveBuiltinFeatureEnabled,
@@ -438,16 +439,7 @@ export async function dispatchInProcessInteraction(
         `in-process command '${interaction.commandName}' threw: ${msg}`,
         { commandName: interaction.commandName, userId: interaction.user.id },
       );
-      // Best-effort error reply if we haven't already replied — keeps
-      // the interaction from hanging on "loading…".
-      if (!interaction.replied && !interaction.deferred) {
-        await interaction
-          .reply({
-            content: tForInteraction(interaction, "common.command-failed"),
-            flags: "Ephemeral",
-          })
-          .catch(() => {});
-      }
+      await replyInteractionFailure(interaction);
     }
     return true;
   }
@@ -464,14 +456,7 @@ export async function dispatchInProcessInteraction(
         `in-process modal '${interaction.customId}' threw: ${msg}`,
         { customId: interaction.customId, userId: interaction.user.id },
       );
-      if (!interaction.replied && !interaction.deferred) {
-        await interaction
-          .reply({
-            content: tForInteraction(interaction, "common.modal-failed"),
-            flags: "Ephemeral",
-          })
-          .catch(() => {});
-      }
+      await replyInteractionFailure(interaction);
     }
     return true;
   }

@@ -8,6 +8,7 @@
  * smoke-test against a live gateway.
  */
 import { vi, describe, it, expect } from "vitest";
+import { MessageFlags, type Interaction } from "discord.js";
 
 vi.hoisted(() => {
   process.env.NODE_ENV = "test";
@@ -16,15 +17,16 @@ vi.hoisted(() => {
 import { createBotClient } from "../src/runtime/discord-client.js";
 import { registerRuntimeEvents } from "../src/runtime/discord-runtime-events.js";
 import type { RuntimeContext } from "../src/runtime/context.js";
+import { t } from "../src/i18n/index.js";
 
 /** Build a ctx with a real (un-logged-in) client; the singletons are
  *  only touched inside handler bodies, which this test never fires. */
-function makeCtx(): RuntimeContext {
+function makeCtx(interactionDispatcher: unknown = {}): RuntimeContext {
   const bot = createBotClient();
   return {
     bot,
     webhookForwarder: {},
-    interactionDispatcher: {},
+    interactionDispatcher,
     commandReconciler: {},
     messageMatcher: {},
     shuttingDown: false,
@@ -58,5 +60,58 @@ describe("registerRuntimeEvents", () => {
     for (const evt of expected) {
       expect(ctx.bot.listenerCount(evt)).toBe(1);
     }
+  });
+});
+
+/**
+ * #179: when dispatch throws, the interactionCreate catch answers in the
+ * shape the ack state allows (shared replyInteractionFailure) — including
+ * an interaction a layer already deferred, and modal submits.
+ */
+describe("interactionCreate — dispatch throws", () => {
+  function fireWith(
+    ack: { deferred: boolean; ephemeral: boolean | null },
+    modal = false,
+  ) {
+    const ctx = makeCtx({
+      dispatch: vi.fn(async () => {
+        throw new Error("boom");
+      }),
+    });
+    registerRuntimeEvents(ctx);
+    const raw = {
+      locale: "en-US",
+      guildLocale: null,
+      isChatInputCommand: () => !modal,
+      isModalSubmit: () => modal,
+      isRepliable: () => true,
+      replied: false,
+      ...ack,
+      reply: vi.fn(async () => {}),
+      editReply: vi.fn(async () => {}),
+      followUp: vi.fn(async () => {}),
+    };
+    const [listener] = ctx.bot.listeners("interactionCreate") as Array<
+      (i: Interaction) => Promise<void>
+    >;
+    return { raw, done: listener(raw as unknown as Interaction) };
+  }
+
+  it("edits the deferred reply of a command", async () => {
+    const { raw, done } = fireWith({ deferred: true, ephemeral: true });
+    await done;
+    expect(raw.editReply).toHaveBeenCalledWith({
+      content: t("en", "common.command-failed"),
+    });
+    expect(raw.reply).not.toHaveBeenCalled();
+  });
+
+  it("replies ephemerally to an un-acked modal submit", async () => {
+    const { raw, done } = fireWith({ deferred: false, ephemeral: null }, true);
+    await done;
+    expect(raw.reply).toHaveBeenCalledWith({
+      content: t("en", "common.modal-failed"),
+      flags: MessageFlags.Ephemeral,
+    });
   });
 });
