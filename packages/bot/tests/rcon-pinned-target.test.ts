@@ -17,6 +17,10 @@
  * connection authenticates (true) or gives up (false), and every channel
  * waiting gets each notice once. Only the call that took the lock
  * releases it.
+ *
+ * #239 — the attempt's timeout covers resolving the host too: a resolver
+ * that never answers fails the attempt, first connect or reconnect, and
+ * the attempt is retried and finally reported like any other failure.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -621,6 +625,173 @@ describe("RCON connect timeout (#180)", () => {
 
     // Only the 4 s backoff is left.
     expect(vi.getTimerCount()).toBe(1);
+  });
+});
+
+describe("RCON host resolution timeout (#239)", () => {
+  /** A resolver that never answers, like DNS that hangs until the OS gives up. */
+  const hang = () => new Promise<LookupResult>(() => {});
+
+  it("retries a first connect whose resolution does not answer within 10 s", async () => {
+    vi.useFakeTimers();
+    mockedLookup.mockImplementationOnce(hang).mockResolvedValue(answer("10.0.0.5"));
+    const channel = makeChannel("channel-1");
+    const waiter = makeChannel("channel-2");
+    const result = startConnect(channel);
+    const waiterResult = startConnect(waiter);
+
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(embedTitles(channel)).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(instances).toHaveLength(0);
+    expect(RconConnectionService.getConnection("c1")?.reconnectAttempts).toBe(1);
+    expect(embedTitles(channel)).toEqual(["Connection Lost"]);
+    expect(embedTitles(waiter)).toEqual(["Connection Lost"]);
+    expect(await isSettled(result)).toBe(false);
+    expect(await isSettled(waiterResult)).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(instances).toHaveLength(1);
+    expect(instances[0].pinned).toEqual([{ address: "10.0.0.5", family: 4 }]);
+    instances[0].emit("auth");
+
+    await expect(result).resolves.toBe(true);
+    await expect(waiterResult).resolves.toBe(true);
+    expect(RconConnectionService.getConnection("c1")?.reconnectAttempts).toBe(0);
+  });
+
+  it("gives up a first connect whose resolution never answers and tells every waiting channel", async () => {
+    vi.useFakeTimers();
+    mockedLookup.mockImplementation(hang);
+    const channel = makeChannel("channel-1");
+    const waiter = makeChannel("channel-2");
+    const result = startConnect(channel);
+    const waiterResult = startConnect(waiter);
+
+    // 10 s each attempt, with 2 s / 4 s / 8 s backoff in between.
+    await vi.advanceTimersByTimeAsync(10_000 + 2000 + 10_000 + 4000 + 10_000 + 8000 + 10_000);
+
+    await expect(result).resolves.toBe(false);
+    await expect(waiterResult).resolves.toBe(false);
+    expect(mockedLookup).toHaveBeenCalledTimes(4);
+    expect(instances).toHaveLength(0);
+    expect(RconConnectionService.getConnection("c1")).toBeUndefined();
+    expect(svc.connectionLocks.has("c1")).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+    for (const notified of [channel, waiter]) {
+      expect(embedTitles(notified)).toEqual([
+        "Connection Lost",
+        "Connection Lost",
+        "Connection Lost",
+        "Connection Failed",
+      ]);
+    }
+  });
+
+  it("queues a message sent while the first resolution hangs and sends it once a retry authenticates", async () => {
+    vi.useFakeTimers();
+    mockedLookup.mockImplementationOnce(hang).mockResolvedValue(answer("10.0.0.5"));
+    const first = makeChannel("channel-1");
+    const second = makeChannel("channel-2");
+    const firstSend = RconQueueService.send(makeMessage(first), "mc-server", 25575, "pw", "say hi");
+    await vi.advanceTimersByTimeAsync(10_000);
+    await RconQueueService.send(makeMessage(second), "mc-server", 25575, "pw", "list");
+
+    await vi.advanceTimersByTimeAsync(2000);
+    instances[0].emit("auth");
+    await firstSend;
+
+    expect(instances[0].send.mock.calls).toEqual([["list"], ["say hi"]]);
+  });
+
+  it("a cleanup while the first connect waits to retry ends the wait with a notice", async () => {
+    vi.useFakeTimers();
+    mockedLookup.mockImplementation(hang);
+    const channel = makeChannel();
+    const result = startConnect(channel);
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    await RconConnectionService.cleanupConnection("c1");
+
+    await expect(result).resolves.toBe(false);
+    expect(embedTitles(channel)).toEqual(["Connection Lost", "Connection Error"]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(mockedLookup).toHaveBeenCalledOnce();
+  });
+
+  it("counts the resolution against the attempt's 10 s", async () => {
+    vi.useFakeTimers();
+    let answerLookup: (value: LookupResult) => void = () => {};
+    mockedLookup.mockImplementationOnce(
+      () =>
+        new Promise<LookupResult>((resolve) => {
+          answerLookup = resolve;
+        }),
+    );
+    const channel = makeChannel();
+    startConnect(channel);
+
+    await vi.advanceTimersByTimeAsync(6000);
+    answerLookup(answer("10.0.0.5"));
+    await vi.advanceTimersByTimeAsync(3_999);
+    expect(embedTitles(channel)).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(instances[0].destroy).toHaveBeenCalled();
+    expect(embedTitles(channel)).toEqual(["Connection Lost"]);
+  });
+
+  it("fails a reconnect whose resolution does not answer within 10 s, then tries again", async () => {
+    const channel = await connectAndAuth();
+    mockedLookup.mockImplementationOnce(hang);
+    instances[0].emit("end");
+
+    await vi.advanceTimersByTimeAsync(2000 + 9_999);
+    expect(RconConnectionService.getConnection("c1")?.reconnectAttempts).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(RconConnectionService.getConnection("c1")?.reconnectAttempts).toBe(2);
+    expect(embedTitles(channel)).toEqual(["Connection Lost", "Connection Lost"]);
+
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(instances).toHaveLength(2);
+    instances[1].emit("auth");
+    expect(RconConnectionService.getConnection("c1")?.authenticated).toBe(true);
+  });
+
+  it("gives up a reconnect whose resolution never answers", async () => {
+    const channel = await connectAndAuth();
+    mockedLookup.mockImplementation(hang);
+    instances[0].emit("end");
+
+    await vi.advanceTimersByTimeAsync(2000 + 10_000 + 4000 + 10_000 + 8000 + 10_000);
+
+    expect(instances).toHaveLength(1);
+    expect(RconConnectionService.getConnection("c1")).toBeUndefined();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(embedTitles(channel)).toEqual([
+      "Connection Lost",
+      "Connection Lost",
+      "Connection Lost",
+      "Connection Failed",
+    ]);
+  });
+
+  it("a caller during a reconnect's hanging resolution gets the result once it gives up", async () => {
+    await connectAndAuth();
+    mockedLookup.mockImplementation(hang);
+    instances[0].emit("end");
+    await vi.advanceTimersByTimeAsync(2000);
+
+    // The connection exists, so RconQueueService queues instead of waiting;
+    // a direct initializeConnection replaces it and must not hang either.
+    const second = makeChannel("channel-2");
+    const result = startConnect(second);
+    await vi.advanceTimersByTimeAsync(10_000 + 2000 + 10_000 + 4000 + 10_000 + 8000 + 10_000);
+
+    await expect(result).resolves.toBe(false);
+    expect(embedTitles(second).at(-1)).toBe("Connection Failed");
   });
 });
 
