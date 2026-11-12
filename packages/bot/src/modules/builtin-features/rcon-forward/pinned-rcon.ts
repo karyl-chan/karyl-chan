@@ -48,4 +48,13 @@ export class PinnedRcon extends Rcon {
       .on("error", (err: Error) => this.emit("error", err))
       .on("end", () => this.socketOnEnd());
   }
+
+  /**
+   * Close the socket at once. `disconnect()` only sends FIN, which waits
+   * for a connect that a blackholed host never completes, so the socket
+   * stays half-open until the OS gives up.
+   */
+  destroy(): void {
+    this._tcpSocket?.destroy();
+  }
 }

@@ -4,7 +4,7 @@
  * No DNS is involved: the hostname is `.invalid`, which never resolves.
  */
 import net from "node:net";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PinnedRcon } from "../src/modules/builtin-features/rcon-forward/pinned-rcon.js";
 
 /** Minimal Source-RCON server: accepts every auth packet. */
@@ -89,5 +89,23 @@ describe("PinnedRcon", () => {
     await client.connect();
     await auth;
     await ended;
+  });
+
+  it("destroy() drops a socket that is still connecting at once", async () => {
+    client = new PinnedRcon("rcon.invalid", ctx.port, "pw", [
+      { address: "127.0.0.1", family: 4 },
+    ]);
+    const auth = vi.fn();
+    client.on("auth", auth);
+    await client.connect();
+    const socket = (client as unknown as { _tcpSocket: net.Socket })._tcpSocket;
+    expect(socket.connecting).toBe(true);
+
+    client.destroy();
+
+    // disconnect() (end) would wait for the connect to finish first.
+    expect(socket.destroyed).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(auth).not.toHaveBeenCalled();
   });
 });
