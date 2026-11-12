@@ -213,7 +213,7 @@ interface CommandContext {
   capabilities: string[]; // bot-resolved subset for this dispatch
   hasCapability(capKey: string): boolean;
   interactionId: string;
-  interactionToken: string;
+  interactionToken: string; // opaque, this plugin only, 15 min; return verbatim
   log: Logger;
   publicBaseUrl?: string; // see "publicBaseUrl" section
   botRpc(path: string, body?: unknown): Promise<unknown>; // escape hatch
