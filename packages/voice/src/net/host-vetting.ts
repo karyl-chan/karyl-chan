@@ -6,7 +6,10 @@
  *      range, metadata hostnames (refused by name, whatever they resolve to);
  *   2. `lookupHostAddresses`: the literal itself, or every DNS answer —
  *      resolved ONCE; a failed or empty lookup is refused (an empty answer
- *      would otherwise pass every per-address check vacuously);
+ *      would otherwise pass every per-address check vacuously). A running
+ *      lookup is shared by every caller of the same host (#260), and
+ *      `LookupSlots` caps the lookups a group of callers may start
+ *      (`MEDIA_LOOKUP_SLOTS`, process-wide);
  *   3. `toPinnedAddresses`: the vetted literals in the shape the
  *      connecting side pins to.
  *
@@ -107,17 +110,17 @@ export class LookupSlots {
   constructor(readonly max: number) {}
 
   /**
-   * `lookup` that takes a slot per lookup it starts and fails with
-   * LookupSlotsFullError when none is free. One wrapper per resolver, so
-   * callers of the same host still share a running lookup.
+   * `lookup` that takes a slot per lookup it starts and throws
+   * LookupSlotsFullError (synchronously, so no caller joins the refusal)
+   * when none is free. A caller joining a lookup already running for its
+   * host (guarded or not) takes no slot: the wrapper shares the
+   * resolver's running lookups.
    */
   guard(lookup: HostLookup = dnsLookup as HostLookup): HostLookup {
     let guarded = this.guarded.get(lookup);
     if (!guarded) {
       guarded = (host, options) => {
-        if (this.running >= this.max) {
-          return Promise.reject(new LookupSlotsFullError(this.max));
-        }
+        if (this.running >= this.max) throw new LookupSlotsFullError(this.max);
         this.running++;
         // async: a resolver that throws synchronously rejects instead
         const lookingUp = (async () => lookup(host, options))();
@@ -128,6 +131,7 @@ export class LookupSlots {
         return lookingUp;
       };
       this.guarded.set(lookup, guarded);
+      guardedResolvers.set(guarded, lookup);
     }
     return guarded;
   }
@@ -151,7 +155,10 @@ export const MEDIA_LOOKUP_SLOTS = new LookupSlots(2);
 
 type Answers = Array<{ address: string }>;
 
-/** Lookups still running, per resolver, by normalized host. */
+/** The resolver each LookupSlots wrapper guards. */
+const guardedResolvers = new WeakMap<HostLookup, HostLookup>();
+
+/** Lookups still running, per (unguarded) resolver, by normalized host. */
 const lookupsInFlight = new WeakMap<HostLookup, Map<string, Promise<Answers>>>();
 
 /**
@@ -163,20 +170,26 @@ const lookupsInFlight = new WeakMap<HostLookup, Map<string, Promise<Answers>>>()
  * afresh, so an answer is never reused.
  */
 function sharedLookup(host: string, lookup: HostLookup): Promise<Answers> {
-  let running = lookupsInFlight.get(lookup);
-  if (!running) {
-    running = new Map();
-    lookupsInFlight.set(lookup, running);
+  const resolver = guardedResolvers.get(lookup) ?? lookup;
+  let byHost = lookupsInFlight.get(resolver);
+  if (!byHost) {
+    byHost = new Map();
+    lookupsInFlight.set(resolver, byHost);
   }
   const key = normalizeHostname(host);
-  const inFlight = running.get(key);
+  const inFlight = byHost.get(key);
   if (inFlight) return inFlight;
-  // async: a resolver that throws synchronously rejects instead
-  const lookingUp = (async () => lookup(host, { all: true }))();
-  running.set(key, lookingUp);
+  let lookingUp: Promise<Answers>;
+  try {
+    lookingUp = lookup(host, { all: true });
+  } catch (err) {
+    // never started (e.g. no free slot): nothing to share
+    return Promise.reject(err);
+  }
+  byHost.set(key, lookingUp);
   // Two-armed so the cleanup's own promise never rejects.
   const forget = () => {
-    if (running.get(key) === lookingUp) running.delete(key);
+    if (byHost.get(key) === lookingUp) byHost.delete(key);
   };
   lookingUp.then(forget, forget);
   return lookingUp;

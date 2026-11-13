@@ -91,6 +91,19 @@ describe("a running lookup is shared across policies", () => {
 });
 
 describe("media URL lookups have a cap", () => {
+  it("shares a running lookup with the other policies without taking a slot", async () => {
+    const plugin = assertPluginTarget("cdn.example.com", 443);
+    const media = assertPublicMediaTarget("cdn.example.com", 443);
+    const others = [
+      assertPublicMediaTarget("a.example.com", 443),
+      assertPublicMediaTarget("b.example.com", 443),
+    ];
+    // one lookup for cdn.example.com, and both media slots went to a and b
+    expect(mockedLookup).toHaveBeenCalledTimes(3);
+    for (const p of pending) p.resolve(answer("93.184.216.34"));
+    await Promise.all([plugin, media, ...others]);
+  });
+
   it("refuses a third media host while two lookups run, and not other policies", async () => {
     const running = [
       assertPublicMediaTarget("a.example.com", 443),

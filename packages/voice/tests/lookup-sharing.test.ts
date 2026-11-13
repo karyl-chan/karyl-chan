@@ -130,19 +130,49 @@ describe("LookupSlots.guard", () => {
     assert.ok(err.cause instanceof LookupSlotsFullError);
     assert.equal(pending.length, 2);
 
+    // one lookup ending frees its slot while the other still runs
     pending[0].resolve([v4("93.184.216.34")]);
+    await running[0];
+    await tick();
+    const third = lookupHostAddresses("c.example.com", guarded);
+    assert.equal(pending.length, 3);
+    // a failed lookup frees its slot too
     pending[1].reject(new Error("ETIMEOUT"));
     await Promise.allSettled(running);
     await tick();
-    // both slots came back, whether the lookup answered or failed
-    const again = [
-      lookupHostAddresses("c.example.com", guarded),
-      lookupHostAddresses("d.example.com", guarded),
-    ];
+    const fourth = lookupHostAddresses("d.example.com", guarded);
     assert.equal(pending.length, 4);
     pending[2].resolve([v4("93.184.216.34")]);
     pending[3].resolve([v4("93.184.216.34")]);
-    await Promise.all(again);
+    await Promise.all([third, fourth]);
+  });
+
+  it("shares a running lookup with unguarded callers of the same resolver, either way", async () => {
+    const { lookup, pending } = manualLookup();
+    const guarded = new LookupSlots(1).guard(lookup);
+    // unguarded first: a guarded caller joins without a slot
+    const plain = lookupHostAddresses("a.example.com", lookup);
+    const joined = lookupHostAddresses("a.example.com", guarded);
+    // so the one slot is still free for another host
+    const other = lookupHostAddresses("b.example.com", guarded);
+    // guarded first: an unguarded caller joins it
+    const joinedOther = lookupHostAddresses("b.example.com", lookup);
+    assert.equal(pending.length, 2);
+    for (const p of pending) p.resolve([v4("93.184.216.34")]);
+    await Promise.all([plain, joined, other, joinedOther]);
+  });
+
+  it("never shares a refusal: an unguarded caller of that host starts its own lookup", async () => {
+    const { lookup, pending } = manualLookup();
+    const guarded = new LookupSlots(1).guard(lookup);
+    const running = lookupHostAddresses("a.example.com", guarded);
+    const refused = refusal(lookupHostAddresses("b.example.com", guarded));
+    const plain = lookupHostAddresses("b.example.com", lookup);
+    assert.ok((await refused).cause instanceof LookupSlotsFullError);
+    assert.equal(pending.length, 2);
+    for (const p of pending) p.resolve([v4("93.184.216.34")]);
+    assert.deepEqual(await plain, ["93.184.216.34"]);
+    await running;
   });
 
   it("lets a caller join a running lookup without a slot", async () => {
