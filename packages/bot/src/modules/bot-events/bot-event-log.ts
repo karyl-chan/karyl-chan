@@ -1,5 +1,6 @@
 import { Op } from "sequelize";
 import { BotEvent } from "./models/bot-event.model.js";
+import { botEventsDbPath } from "./bot-events-db.js";
 import { moduleLogger } from "../../logger.js";
 
 const log = moduleLogger("bot-event-log");
@@ -43,6 +44,24 @@ export const BOT_EVENT_CATEGORIES = [
 ] as const;
 export type BotEventCategory = (typeof BOT_EVENT_CATEGORIES)[number];
 
+// Startup's botEventsSequelize.sync() owns the bot_events table, but code
+// paths that skip startup (the test suite, whose events DB is `:memory:`)
+// would otherwise hit "no such table" on every write. An in-memory DB is
+// private to this process, so nothing else can have created the table:
+// sync it once, lazily, and chain the first writes on it. A file-backed DB
+// keeps the plain create() path — no schema work on a hot write path.
+let inMemorySchema: Promise<unknown> | null = null;
+function ensureInMemorySchema(): Promise<unknown> | null {
+  if (botEventsDbPath !== ":memory:") return null;
+  inMemorySchema ??= BotEvent.sync().catch((err: unknown) => {
+    // Drop the memo so the next record() retries instead of replaying the
+    // same rejection forever; this record() logs it as a failed write.
+    inMemorySchema = null;
+    throw err;
+  });
+  return inMemorySchema;
+}
+
 /**
  * Fire-and-forget persistent bot event logger.
  *
@@ -57,12 +76,15 @@ class BotEventLog {
     message: string,
     context?: Record<string, unknown>,
   ): void {
-    BotEvent.create({
-      level,
-      category,
-      message: message.slice(0, 500),
-      context: context ?? null,
-    })
+    const write = () =>
+      BotEvent.create({
+        level,
+        category,
+        message: message.slice(0, 500),
+        context: context ?? null,
+      });
+    const schema = ensureInMemorySchema();
+    (schema ? schema.then(write) : write())
       .then(() => {
         // Count only writes that ACTUALLY landed. Incrementing before the
         // create() (as this used to) over-reports during a DB outage — the
