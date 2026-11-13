@@ -53,13 +53,7 @@ export type BotEventCategory = (typeof BOT_EVENT_CATEGORIES)[number];
 let inMemorySchema: Promise<unknown> | null = null;
 function ensureInMemorySchema(): Promise<unknown> | null {
   if (botEventsDbPath !== ":memory:") return null;
-  inMemorySchema ??= BotEvent.sync().catch((err: unknown) => {
-    // Drop the memo so the next record() retries instead of replaying the
-    // same rejection forever; this record() logs it as a failed write.
-    inMemorySchema = null;
-    throw err;
-  });
-  return inMemorySchema;
+  return (inMemorySchema ??= BotEvent.sync());
 }
 
 /**

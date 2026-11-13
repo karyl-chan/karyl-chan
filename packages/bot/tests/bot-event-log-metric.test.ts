@@ -18,8 +18,8 @@ import {
 // On the in-memory events DB record() first awaits a one-off bot_events
 // sync, so wait for the create() to be issued, then let a macrotask tick
 // pass so its .then()/.catch() runs.
-async function settled(create: { mock: { calls: unknown[] } }): Promise<void> {
-  await vi.waitFor(() => expect(create.mock.calls.length).toBeGreaterThan(0));
+async function settled(create: ReturnType<typeof vi.spyOn>): Promise<void> {
+  await vi.waitFor(() => expect(create).toHaveBeenCalled());
   await new Promise<void>((r) => setImmediate(r));
 }
 
