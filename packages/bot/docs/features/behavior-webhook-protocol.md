@@ -577,7 +577,8 @@ The action fails when:
 
 - the URL is refused by the bot's target rules
   ([behaviors.md](behaviors.md#webhook-targets));
-- the receiver cannot be reached, or does not answer within 10 seconds;
+- the receiver cannot be reached, or does not answer within 10 seconds
+  (resolving its hostname counts toward them);
 - the answer is a redirect (3xx; redirects are never followed) or another
   non-2xx status;
 - the body is too large, is not JSON, or is not a JSON object;
