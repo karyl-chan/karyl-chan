@@ -5,7 +5,7 @@
  * the OS gives up, so while DNS hangs every caller that starts its own
  * lookup takes another worker. `lookupHostAddresses` shares a running
  * lookup by host; a group with any number of hostnames (media URLs) also
- * takes one of a few `LookupSlots` per lookup, refused when none is free.
+ * guards its resolver with `LookupSlots`, refused when no slot is free.
  */
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
@@ -24,13 +24,12 @@ type Answers = Array<{ address: string; family: number }>;
 /** A resolver whose lookups the test answers or fails by hand. */
 function manualLookup() {
   const pending: Array<{
-    host: string;
     resolve: (answers: Answers) => void;
     reject: (err: Error) => void;
   }> = [];
-  const lookup: HostLookup = (host) =>
+  const lookup: HostLookup = () =>
     new Promise<Answers>((resolve, reject) => {
-      pending.push({ host, resolve, reject });
+      pending.push({ resolve, reject });
     });
   return { lookup, pending };
 }
@@ -118,15 +117,15 @@ describe("lookupHostAddresses: a running lookup is shared", () => {
   });
 });
 
-describe("lookupHostAddresses: lookup slots", () => {
+describe("LookupSlots.guard", () => {
   it("refuses a lookup that finds no free slot, without starting it", async () => {
     const { lookup, pending } = manualLookup();
-    const slots = new LookupSlots(2);
+    const guarded = new LookupSlots(2).guard(lookup);
     const running = [
-      lookupHostAddresses("a.example.com", lookup, slots),
-      lookupHostAddresses("b.example.com", lookup, slots),
+      lookupHostAddresses("a.example.com", guarded),
+      lookupHostAddresses("b.example.com", guarded),
     ];
-    const err = await refusal(lookupHostAddresses("c.example.com", lookup, slots));
+    const err = await refusal(lookupHostAddresses("c.example.com", guarded));
     assert.equal(err.reason, "dns_failed");
     assert.ok(err.cause instanceof LookupSlotsFullError);
     assert.equal(pending.length, 2);
@@ -137,8 +136,8 @@ describe("lookupHostAddresses: lookup slots", () => {
     await tick();
     // both slots came back, whether the lookup answered or failed
     const again = [
-      lookupHostAddresses("c.example.com", lookup, slots),
-      lookupHostAddresses("d.example.com", lookup, slots),
+      lookupHostAddresses("c.example.com", guarded),
+      lookupHostAddresses("d.example.com", guarded),
     ];
     assert.equal(pending.length, 4);
     pending[2].resolve([v4("93.184.216.34")]);
@@ -148,9 +147,9 @@ describe("lookupHostAddresses: lookup slots", () => {
 
   it("lets a caller join a running lookup without a slot", async () => {
     const { lookup, pending } = manualLookup();
-    const slots = new LookupSlots(1);
-    const first = lookupHostAddresses("a.example.com", lookup, slots);
-    const joined = lookupHostAddresses("a.example.com", lookup, slots);
+    const guarded = new LookupSlots(1).guard(lookup);
+    const first = lookupHostAddresses("a.example.com", guarded);
+    const joined = lookupHostAddresses("a.example.com", guarded);
     pending[0].resolve([v4("93.184.216.34")]);
     assert.deepEqual(await joined, ["93.184.216.34"]);
     await first;
@@ -161,9 +160,11 @@ describe("lookupHostAddresses: lookup slots", () => {
     const throwing: HostLookup = () => {
       throw new Error("bad options");
     };
-    assert.equal((await refusal(lookupHostAddresses("a.example.com", throwing, slots))).reason, "dns_failed");
+    const failing = refusal(lookupHostAddresses("a.example.com", slots.guard(throwing)));
+    assert.equal((await failing).reason, "dns_failed");
+    await tick();
     const { lookup, pending } = manualLookup();
-    const next = lookupHostAddresses("a.example.com", lookup, slots);
+    const next = lookupHostAddresses("a.example.com", slots.guard(lookup));
     assert.equal(pending.length, 1);
     pending[0].resolve([v4("93.184.216.34")]);
     await next;

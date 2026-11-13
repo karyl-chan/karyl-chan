@@ -3,12 +3,10 @@
  * have a cap on lookups at once.
  *
  * dns.lookup cannot be aborted and holds a libuv threadpool worker until
- * the OS gives up. A webhook forward and a plugin proxy request re-check
- * their host on every call, so with DNS hanging each call used to take
- * another worker. Now concurrent checks of a host wait on one lookup, each
- * policy still judging the addresses itself; media URLs, whose hostnames
- * anyone can vary, take one of MEDIA_LOOKUP_SLOTS per lookup and are
- * refused when none is free.
+ * the OS gives up. Concurrent checks of a host now wait on one lookup,
+ * each policy still judging the addresses itself; media URLs, whose
+ * hostnames anyone can vary, take one of MEDIA_LOOKUP_SLOTS per lookup and
+ * are refused when none is free.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -28,10 +26,12 @@ type LookupResult = Awaited<ReturnType<typeof lookup>>;
 
 /** Lookups the test answers by hand, in call order. */
 let pending: Array<{
-  host: string;
   resolve: (r: LookupResult) => void;
   reject: (e: Error) => void;
 }> = [];
+
+/** Let the settled lookups' cleanup run. */
+const tick = () => new Promise((resolve) => setImmediate(resolve));
 
 function answer(address: string): LookupResult {
   return [{ address, family: 4 }] as unknown as LookupResult;
@@ -41,9 +41,9 @@ beforeEach(() => {
   pending = [];
   mockedLookup.mockReset();
   mockedLookup.mockImplementation(
-    ((host: string) =>
+    (() =>
       new Promise<LookupResult>((resolve, reject) => {
-        pending.push({ host, resolve, reject });
+        pending.push({ resolve, reject });
       })) as unknown as typeof lookup,
   );
 });
@@ -52,7 +52,7 @@ afterEach(async () => {
   // A lookup left running would be shared into the next test, and a
   // media one would keep its slot.
   for (const p of pending) p.reject(new Error("given up after the test"));
-  await new Promise((resolve) => setImmediate(resolve));
+  await tick();
 });
 
 describe("a running lookup is shared across policies", () => {
@@ -73,7 +73,7 @@ describe("a running lookup is shared across policies", () => {
     const first = assertPluginTarget("svc.internal", 8080);
     pending[0].resolve(answer("10.0.0.5"));
     await first;
-    await new Promise((resolve) => setImmediate(resolve));
+    await tick();
 
     const second = resolveAllowedTarget("svc.internal", 25575);
     expect(mockedLookup).toHaveBeenCalledTimes(2);
@@ -105,7 +105,7 @@ describe("media URL lookups have a cap", () => {
 
     for (const p of pending) p.resolve(answer("93.184.216.34"));
     await Promise.all([...running, plugin]);
-    await new Promise((resolve) => setImmediate(resolve));
+    await tick();
 
     // the slots came back
     const after = assertPublicMediaTarget("c.example.com", 443);

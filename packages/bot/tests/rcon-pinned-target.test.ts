@@ -127,9 +127,7 @@ type LookupResult = Awaited<ReturnType<typeof lookup>>;
 const hanging: Array<() => void> = [];
 /**
  * A resolver that never answers, like DNS that hangs until the OS gives
- * up. host-policy shares a running lookup with every later check of the
- * same host (#260), so each one is given up after its test — or the next
- * test would wait on it.
+ * up. A running lookup is shared by host (#260), so afterEach gives it up.
  */
 const hang = () =>
   new Promise<LookupResult>((_resolve, reject) => {

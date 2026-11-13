@@ -21,7 +21,7 @@ import {
   TargetRefusedError,
   toPinnedAddresses,
   vetHostAndPort,
-  type LookupSlots,
+  type HostLookup,
 } from "@karyl-chan/voice/net";
 import {
   allowlistMatches,
@@ -32,6 +32,8 @@ import {
 } from "./webhook-allowlist.js";
 
 const log = moduleLogger("host-policy");
+
+const dnsLookup = lookup as HostLookup;
 
 /**
  * Machine-readable refusal reason. `blocked` is the generic code of the
@@ -151,16 +153,15 @@ function vetHost(rawHost: string, port: number, wording: GateWording): string {
  * Every address a vetted host stands for: the literal itself, or every
  * DNS answer (resolved once). A failed or empty lookup is refused as
  * `dns_failed` (shared gate). The lookup is shared with every concurrent
- * check of the same host (#260); with `slots`, starting one needs a free
- * slot.
+ * check of the same host (#260).
  */
 async function hostAddresses(
   host: string,
   wording: GateWording,
-  slots?: LookupSlots,
+  hostLookup: HostLookup = dnsLookup,
 ): Promise<string[]> {
   try {
-    return await lookupHostAddresses(host, lookup, slots);
+    return await lookupHostAddresses(host, hostLookup);
   } catch (err) {
     throw gateRefusal(err, wording);
   }
@@ -185,7 +186,7 @@ async function checkHost(
   port: number,
   isDenied: (address: string) => boolean,
   denyMessage: string,
-  slots?: LookupSlots,
+  hostLookup?: HostLookup,
 ): Promise<PinnedAddress[]> {
   const wording: GateWording = {
     refuse: refuseGeneric,
@@ -193,7 +194,7 @@ async function checkHost(
     dnsFailed: () => "無法解析主機名稱",
   };
   const host = vetHost(rawHost, port, wording);
-  const addresses = await hostAddresses(host, wording, slots);
+  const addresses = await hostAddresses(host, wording, hostLookup);
   for (const address of addresses) {
     if (isDenied(address)) throw new HostPolicyError(denyMessage);
   }
@@ -282,7 +283,7 @@ export async function assertPublicMediaTarget(
     (address) => !isPublicMediaAddress(address, { allowPrivate }),
     "媒體 URL 目標不被允許",
     // a user-supplied URL can name any host; see MEDIA_LOOKUP_SLOTS
-    MEDIA_LOOKUP_SLOTS,
+    MEDIA_LOOKUP_SLOTS.guard(dnsLookup),
   );
 }
 

@@ -35,7 +35,6 @@ import {
   resolveVettedHost,
   stripIPv6Brackets,
   type HostLookup,
-  type LookupSlots,
 } from "./host-vetting.js";
 import type { PinnedAddress } from "./pinned-lookup.js";
 
@@ -73,11 +72,6 @@ export function legacyAllowPrivate(): boolean {
 export interface ResolveMediaTargetOptions {
   /** DNS resolver (test seam). Defaults to `dns.promises.lookup`. */
   lookup?: HostLookup;
-  /**
-   * The slots a public-media lookup takes (test seam). Defaults to the
-   * process-wide MEDIA_LOOKUP_SLOTS.
-   */
-  slots?: LookupSlots;
 }
 
 /**
@@ -116,15 +110,14 @@ export function isPluginTargetAddress(
 export async function resolvePublicMediaTarget(
   host: string,
   port: number,
-  { lookup, slots = MEDIA_LOOKUP_SLOTS }: ResolveMediaTargetOptions = {},
+  { lookup }: ResolveMediaTargetOptions = {},
 ): Promise<PinnedAddress[]> {
   const allowPrivate = legacyAllowPrivate();
   return resolveVettedHost(
     host,
     port,
     (address) => isPublicMediaAddress(address, { allowPrivate }),
-    lookup,
-    slots,
+    MEDIA_LOOKUP_SLOTS.guard(lookup),
   );
 }
 

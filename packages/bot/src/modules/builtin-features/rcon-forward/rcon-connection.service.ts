@@ -390,9 +390,9 @@ export class RconConnectionService {
    * Resolve and vet the host, or fail with ResolveTimeoutError once the
    * attempt's `deadline` passes. A resolver that never answers (DNS
    * hanging until the OS gives up) would otherwise hold the attempt. The
-   * attempt that gave up leaves its lookup running; the next one for the
-   * same host waits on it instead of starting another (host-policy shares
-   * running lookups, #260), so retries cannot take the whole threadpool.
+   * lookup it gave up on keeps running, and the next attempt waits on it
+   * rather than starting another (sharedLookup in @karyl-chan/voice/net,
+   * #260).
    */
   private static async resolveWithDeadline(
     host: string,
