@@ -21,6 +21,10 @@
  * #239 — the attempt's timeout covers resolving the host too: a resolver
  * that never answers fails the attempt, first connect or reconnect, and
  * the attempt is retried and finally reported like any other failure.
+ *
+ * #254 — a lookup still running is shared per host:port: retries (and
+ * other connections to the same target) wait on it instead of starting
+ * another, and once it settles the next attempt resolves afresh.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -119,6 +123,8 @@ const EVERY_RETRY_TIMES_OUT_MS = 2000 + 10_000 + 4000 + 10_000 + 8000 + 10_000;
 const EVERY_ATTEMPT_TIMES_OUT_MS = 10_000 + EVERY_RETRY_TIMES_OUT_MS;
 
 type LookupResult = Awaited<ReturnType<typeof lookup>>;
+/** A resolver that never answers, like DNS that hangs until the OS gives up. */
+const hang = () => new Promise<LookupResult>(() => {});
 
 function answer(...addresses: string[]): LookupResult {
   return addresses.map((address) => ({
@@ -155,6 +161,7 @@ function embedTitles(channel: { send: ReturnType<typeof vi.fn> }): string[] {
 const svc = RconConnectionService as unknown as {
   connectionMap: Record<string, unknown>;
   connectionLocks: Map<string, { done: Promise<void>; channels: Set<unknown> }>;
+  resolvesInFlight: Map<string, Promise<unknown>>;
 };
 
 /** initializeConnection for "c1", against a server that accepts the password. */
@@ -197,6 +204,8 @@ beforeEach(() => {
   authOnConnect = false;
   svc.connectionMap = {};
   svc.connectionLocks = new Map();
+  // A lookup a test left hanging must not be shared into the next test.
+  svc.resolvesInFlight = new Map();
   mockedLookup.mockReset();
   vi.mocked(botEventLog.record).mockClear();
 });
@@ -343,13 +352,18 @@ describe("RCON reconnect", () => {
     );
     await vi.advanceTimersByTimeAsync(2000); // reconnect now waits on DNS
 
+    // Re-created for another port: a connect to the same host:port would
+    // wait on the reconnect's lookup still running (#254).
     mockedLookup.mockResolvedValue(answer("10.0.0.5"));
-    await initialize();
+    authOnConnect = true;
+    await RconConnectionService.initializeConnection("c1", "mc-server", 25576, "pw", makeChannel());
+    authOnConnect = false;
     failLookup();
     await vi.advanceTimersByTimeAsync(2000 + 4000 + 8000);
 
     expect(instances).toHaveLength(2);
     expect(RconConnectionService.getConnection("c1")?.conn).toBe(instances[1]);
+    expect(instances[1].port).toBe(25576);
     expect(instances[1].connect).toHaveBeenCalledOnce();
   });
 
@@ -634,12 +648,18 @@ describe("RCON connect timeout (#180)", () => {
 });
 
 describe("RCON host resolution timeout (#239)", () => {
-  /** A resolver that never answers, like DNS that hangs until the OS gives up. */
-  const hang = () => new Promise<LookupResult>(() => {});
+  /**
+   * A resolver that answers only after the attempt ran out, by failing
+   * like the OS giving up. Until then, retries wait on it (#254).
+   */
+  const hangPastAttempt = () =>
+    new Promise<LookupResult>((_resolve, reject) => {
+      setTimeout(() => reject(new Error("EAI_AGAIN")), 11_000);
+    });
 
   it("retries a first connect whose resolution does not answer within 10 s", async () => {
     vi.useFakeTimers();
-    mockedLookup.mockImplementationOnce(hang).mockResolvedValue(answer("10.0.0.5"));
+    mockedLookup.mockImplementationOnce(hangPastAttempt).mockResolvedValue(answer("10.0.0.5"));
     const channel = makeChannel("channel-1");
     const waiter = makeChannel("channel-2");
     const result = startConnect(channel);
@@ -678,7 +698,8 @@ describe("RCON host resolution timeout (#239)", () => {
 
     await expect(result).resolves.toBe(false);
     await expect(waiterResult).resolves.toBe(false);
-    expect(mockedLookup).toHaveBeenCalledTimes(4);
+    // Every retry waits on the one stuck lookup instead of starting another.
+    expect(mockedLookup).toHaveBeenCalledOnce();
     expect(instances).toHaveLength(0);
     expect(RconConnectionService.getConnection("c1")).toBeUndefined();
     expect(svc.connectionLocks.has("c1")).toBe(false);
@@ -695,7 +716,7 @@ describe("RCON host resolution timeout (#239)", () => {
 
   it("queues a message sent while the first resolution hangs and sends it once a retry authenticates", async () => {
     vi.useFakeTimers();
-    mockedLookup.mockImplementationOnce(hang).mockResolvedValue(answer("10.0.0.5"));
+    mockedLookup.mockImplementationOnce(hangPastAttempt).mockResolvedValue(answer("10.0.0.5"));
     const first = makeChannel("channel-1");
     const second = makeChannel("channel-2");
     const firstSend = RconQueueService.send(makeMessage(first), "mc-server", 25575, "pw", "say hi");
@@ -748,7 +769,7 @@ describe("RCON host resolution timeout (#239)", () => {
 
   it("fails a reconnect whose resolution does not answer within 10 s, then tries again", async () => {
     const channel = await connectAndAuth();
-    mockedLookup.mockImplementationOnce(hang);
+    mockedLookup.mockImplementationOnce(hangPastAttempt);
     instances[0].emit("end");
 
     await vi.advanceTimersByTimeAsync(2000 + 9_999);
@@ -898,6 +919,124 @@ describe("RCON host resolution timeout (#239)", () => {
     expect(instances).toHaveLength(0);
     expect(embedTitles(channel)).toEqual(["Connection Error"]);
     expect(embedTitles(waiter)).toEqual(["Connection Error"]);
+  });
+});
+
+describe("RCON shared host lookup (#254)", () => {
+  // dns.lookup cannot be aborted: a lookup an attempt gave up on keeps a
+  // libuv threadpool worker until the OS gives up. Retries wait on it
+  // instead of starting another.
+
+  it("reconnect retries that time out wait on the one stuck lookup", async () => {
+    await connectAndAuth();
+    mockedLookup.mockReset();
+    mockedLookup.mockImplementation(hang);
+    instances[0].emit("end");
+
+    await vi.advanceTimersByTimeAsync(EVERY_RETRY_TIMES_OUT_MS);
+
+    expect(RconConnectionService.getConnection("c1")).toBeUndefined();
+    expect(mockedLookup).toHaveBeenCalledOnce();
+  });
+
+  /** A lookup that hangs until the test fails it, through the returned function. */
+  function failLater() {
+    let failNow: () => void = () => {};
+    mockedLookup.mockImplementationOnce(
+      () =>
+        new Promise<LookupResult>((_resolve, reject) => {
+          failNow = () => reject(new Error("EAI_AGAIN"));
+        }),
+    );
+    return () => failNow();
+  }
+
+  it("the attempt after the stuck lookup settles resolves afresh", async () => {
+    vi.useFakeTimers();
+    const failStuckLookup = failLater();
+    mockedLookup.mockResolvedValue(answer("10.0.0.5"));
+    const result = startConnect();
+    await vi.advanceTimersByTimeAsync(10_000 + 1000);
+    expect(mockedLookup).toHaveBeenCalledOnce();
+
+    // Fails after its attempt gave up on it: nobody waits on it any more.
+    failStuckLookup();
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(mockedLookup).toHaveBeenCalledTimes(2);
+    expect(instances).toHaveLength(1);
+    instances[0].emit("auth");
+    await expect(result).resolves.toBe(true);
+  });
+
+  it("connections with other names to the same target share the lookup, each within its own 10 s", async () => {
+    vi.useFakeTimers();
+    mockedLookup.mockImplementation(hang);
+    const first = makeChannel("channel-1");
+    const second = makeChannel("channel-2");
+    const firstResult = RconConnectionService.initializeConnection("c1", "mc-server", 25575, "pw", first);
+    await vi.advanceTimersByTimeAsync(5000);
+    const secondResult = RconConnectionService.initializeConnection("c2", "mc-server", 25575, "pw", second);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockedLookup).toHaveBeenCalledOnce();
+
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(embedTitles(first)).toEqual(["Connection Lost"]);
+    expect(embedTitles(second)).toEqual([]);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(embedTitles(second)).toEqual(["Connection Lost"]);
+
+    await vi.advanceTimersByTimeAsync(EVERY_ATTEMPT_TIMES_OUT_MS);
+    await expect(firstResult).resolves.toBe(false);
+    await expect(secondResult).resolves.toBe(false);
+    expect(mockedLookup).toHaveBeenCalledOnce();
+  });
+
+  it("a connection to another port of the host resolves on its own", async () => {
+    vi.useFakeTimers();
+    mockedLookup.mockImplementation(hang);
+    const results = [
+      RconConnectionService.initializeConnection("c1", "mc-server", 25575, "pw", makeChannel("channel-1")),
+      RconConnectionService.initializeConnection("c2", "mc-server", 25576, "pw", makeChannel("channel-2")),
+    ];
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockedLookup).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(EVERY_ATTEMPT_TIMES_OUT_MS);
+    for (const result of results) await expect(result).resolves.toBe(false);
+  });
+
+  it("a connection re-created for the same target during a re-resolve waits on its lookup and takes over", async () => {
+    await connectAndAuth();
+    let answerReconnect: (value: LookupResult) => void = () => {};
+    mockedLookup.mockImplementationOnce(
+      () =>
+        new Promise<LookupResult>((resolve) => {
+          answerReconnect = resolve;
+        }),
+    );
+    instances[0].emit("error", new Error("ECONNRESET"));
+    await vi.advanceTimersByTimeAsync(2000); // reconnect now waits on DNS
+
+    authOnConnect = true;
+    const recreated = startConnect(makeChannel("channel-2"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockedLookup).toHaveBeenCalledTimes(2);
+
+    answerReconnect(answer("10.0.0.7"));
+    await expect(recreated).resolves.toBe(true);
+    authOnConnect = false;
+    const current = RconConnectionService.getConnection("c1");
+    expect(current?.conn).toBe(instances.at(-1));
+    expect(instances.at(-1)?.pinned).toEqual([{ address: "10.0.0.7", family: 4 }]);
+    expect(current?.authenticated).toBe(true);
+
+    // The replaced connection's reconnect is done: nothing follows.
+    const built = instances.length;
+    await vi.advanceTimersByTimeAsync(2000 + 4000 + 8000 + 10_000);
+    expect(instances).toHaveLength(built);
+    expect(RconConnectionService.getConnection("c1")).toBe(current);
+    expect(mockedLookup).toHaveBeenCalledTimes(2);
   });
 });
 
