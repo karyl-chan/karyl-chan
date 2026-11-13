@@ -6,7 +6,10 @@
  *      range, metadata hostnames (refused by name, whatever they resolve to);
  *   2. `lookupHostAddresses`: the literal itself, or every DNS answer —
  *      resolved ONCE; a failed or empty lookup is refused (an empty answer
- *      would otherwise pass every per-address check vacuously);
+ *      would otherwise pass every per-address check vacuously). A running
+ *      lookup is shared by every caller of the same host (#260), and
+ *      `LookupSlots` caps the lookups a group of callers may start
+ *      (`MEDIA_LOOKUP_SLOTS`, process-wide);
  *   3. `toPinnedAddresses`: the vetted literals in the shape the
  *      connecting side pins to.
  *
@@ -93,19 +96,119 @@ export type HostLookup = (
   options: { all: true },
 ) => Promise<Array<{ address: string; family: number }>>;
 
+/** The resolver each LookupSlots wrapper guards. */
+const guardedResolvers = new WeakMap<HostLookup, HostLookup>();
+
+/**
+ * A cap on how many lookups a group of callers may have running at once
+ * (#260). Sharing a running lookup (see sharedLookup) only helps while the
+ * hostnames are few; a group whose hostnames anyone can vary (media URLs,
+ * the names a playlist lists) needs a cap too. A lookup that finds no free
+ * slot is refused rather than queued, so nothing piles up behind a hang.
+ */
+export class LookupSlots {
+  private running = 0;
+  private readonly guarded = new WeakMap<HostLookup, HostLookup>();
+
+  constructor(readonly max: number) {}
+
+  /**
+   * `lookup` that takes a slot per lookup it starts and throws
+   * LookupSlotsFullError (synchronously, so no caller joins the refusal)
+   * when none is free. Through lookupHostAddresses, a caller joining a
+   * lookup already running for its host (guarded or not) takes no slot:
+   * sharedLookup shares by the resolver the wrapper guards.
+   */
+  guard(lookup: HostLookup = dnsLookup as HostLookup): HostLookup {
+    let guarded = this.guarded.get(lookup);
+    if (!guarded) {
+      guarded = (host, options) => {
+        if (this.running >= this.max) throw new LookupSlotsFullError(this.max);
+        this.running++;
+        // async: a resolver that throws synchronously rejects instead
+        const lookingUp = (async () => lookup(host, options))();
+        const release = () => {
+          this.running--;
+        };
+        lookingUp.then(release, release);
+        return lookingUp;
+      };
+      this.guarded.set(lookup, guarded);
+      guardedResolvers.set(guarded, lookup);
+    }
+    return guarded;
+  }
+}
+
+/** The `cause` of a `dns_failed` refusal whose lookup found no free slot. */
+export class LookupSlotsFullError extends Error {
+  constructor(readonly max: number) {
+    super(`too many lookups running (at most ${max})`);
+    this.name = "LookupSlotsFullError";
+  }
+}
+
+/**
+ * The slots of media-URL lookups, one set per process: the bot's
+ * up-front media check and the voice media proxy share them. Two is half
+ * the default threadpool (UV_THREADPOOL_SIZE 4), which also serves file
+ * I/O, crypto and every other lookup.
+ */
+export const MEDIA_LOOKUP_SLOTS = new LookupSlots(2);
+
+type Answers = Array<{ address: string }>;
+
+/** Lookups still running, per (unguarded) resolver, by normalized host. */
+const lookupsInFlight = new WeakMap<HostLookup, Map<string, Promise<Answers>>>();
+
+/**
+ * `lookup(host)`, shared while it runs (#260): a caller for the same host
+ * waits on the running lookup instead of starting another. dns.lookup
+ * cannot be aborted and holds a libuv threadpool worker until the OS gives
+ * up, so with DNS hanging one lookup per call would take the whole pool
+ * (file I/O and crypto with it). Once it settles the next call resolves
+ * afresh, so an answer is never reused.
+ */
+function sharedLookup(host: string, lookup: HostLookup): Promise<Answers> {
+  const resolver = guardedResolvers.get(lookup) ?? lookup;
+  let byHost = lookupsInFlight.get(resolver);
+  if (!byHost) {
+    byHost = new Map();
+    lookupsInFlight.set(resolver, byHost);
+  }
+  const key = normalizeHostname(host);
+  const inFlight = byHost.get(key);
+  if (inFlight) return inFlight;
+  let lookingUp: Promise<Answers>;
+  try {
+    lookingUp = lookup(host, { all: true });
+  } catch (err) {
+    // never started (e.g. no free slot): nothing to share
+    return Promise.reject(err);
+  }
+  byHost.set(key, lookingUp);
+  // Two-armed so the cleanup's own promise never rejects.
+  const forget = () => {
+    if (byHost.get(key) === lookingUp) byHost.delete(key);
+  };
+  lookingUp.then(forget, forget);
+  return lookingUp;
+}
+
 /**
  * Every address a vetted host stands for: the literal itself, or every
  * DNS answer (resolved once, resolver order). A failed lookup (the error
- * is the `cause`) or an empty answer is refused as `dns_failed`.
+ * is the `cause`) or an empty answer is refused as `dns_failed`. The
+ * lookup is shared with concurrent callers for the same host.
  */
 export async function lookupHostAddresses(
   host: string,
   lookup: HostLookup = dnsLookup as HostLookup,
 ): Promise<string[]> {
   if (isIP(host) !== 0) return [host];
-  let answers: Array<{ address: string }>;
+  let answers: Answers;
   try {
-    answers = await lookup(host, { all: true });
+    answers = await sharedLookup(host, lookup);
   } catch (cause) {
     throw new TargetRefusedError("dns_failed", host, { cause });
   }

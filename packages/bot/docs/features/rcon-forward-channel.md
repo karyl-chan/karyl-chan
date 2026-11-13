@@ -153,10 +153,11 @@ attempt follows.
 A DNS lookup cannot be cancelled: one that did not answer in time keeps
 running, and holds one of Node's few libuv worker threads (shared with
 file I/O, crypto and every other lookup) until the OS gives up. So while
-a lookup for a `host:port` is still running, the next attempt waits on
-that one instead of starting another; it still fails once its own 10
-seconds run out. Connections under other names to the same `host:port`
-share it too. Once the lookup ends, with an answer or an error, the next
+a lookup for a host is still running, the next attempt waits on that one
+instead of starting another; it still fails once its own 10 seconds run
+out. Every other check of the same host shares it too — connections under
+other names or to another port, and the bot's webhook, plugin and media
+checks (#260). Once the lookup ends, with an answer or an error, the next
 attempt resolves afresh; an old answer is never reused.
 
 ## Required bot permissions

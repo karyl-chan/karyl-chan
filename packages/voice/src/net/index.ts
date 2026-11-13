@@ -1,7 +1,8 @@
 /**
  * @karyl-chan/voice/net — side-effect-free network policy helpers.
  *
- * Address classification, the public-media rule and the pinned lookup.
+ * Address classification, the host gate (with its shared, slot-capped
+ * DNS lookups), the public-media rule and the pinned lookup.
  * Importable from the bot's config chain: unlike the package root (whose
  * voice manager probes for ffmpeg at load), nothing here runs on import.
  * Keep it that way — node built-ins only.
