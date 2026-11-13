@@ -15,8 +15,13 @@ import {
   setBotEventLogMetric,
 } from "../src/modules/bot-events/bot-event-log.js";
 
-// Flush microtasks + a macrotask tick so the create().then()/.catch() runs.
-const flush = () => new Promise<void>((r) => setImmediate(r));
+// On the in-memory events DB record() first awaits a one-off bot_events
+// sync, so wait for the create() to be issued, then let a macrotask tick
+// pass so its .then()/.catch() runs.
+async function settled(create: ReturnType<typeof vi.spyOn>): Promise<void> {
+  await vi.waitFor(() => expect(create).toHaveBeenCalled());
+  await new Promise<void>((r) => setImmediate(r));
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -27,10 +32,10 @@ describe("botEventLog.record metric", () => {
   it("increments the write metric after the DB write succeeds", async () => {
     const inc = vi.fn();
     setBotEventLogMetric({ inc });
-    vi.spyOn(BotEvent, "create").mockResolvedValue({} as never);
+    const create = vi.spyOn(BotEvent, "create").mockResolvedValue({} as never);
 
     botEventLog.record("info", "bot", "hello");
-    await flush();
+    await settled(create);
 
     expect(inc).toHaveBeenCalledTimes(1);
     expect(inc).toHaveBeenCalledWith({ level: "info", category: "bot" });
@@ -39,10 +44,12 @@ describe("botEventLog.record metric", () => {
   it("does NOT increment the metric when the DB write fails", async () => {
     const inc = vi.fn();
     setBotEventLogMetric({ inc });
-    vi.spyOn(BotEvent, "create").mockRejectedValue(new Error("db down"));
+    const create = vi
+      .spyOn(BotEvent, "create")
+      .mockRejectedValue(new Error("db down"));
 
     botEventLog.record("warn", "auth", "boom");
-    await flush();
+    await settled(create);
 
     expect(inc).not.toHaveBeenCalled();
   });
