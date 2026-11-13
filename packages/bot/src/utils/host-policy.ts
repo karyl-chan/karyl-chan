@@ -170,8 +170,10 @@ async function hostAddresses(
  * The boolean policies (RCON / plugin / public-media): the shared gate
  * (`resolveVettedHost`) with this policy's address rule, refusing the
  * whole host if ANY address it stands for is not `isAllowed`. Every
- * refusal is a `blocked` HostPolicyError worded `denyMessage`, except an
- * invalid host / port and a failed lookup. Returns the vetted addresses.
+ * refusal is a `blocked` HostPolicyError; it reads `denyMessage`, except
+ * that an invalid host / port and a failed lookup keep their own
+ * messages. Returns the vetted addresses. The lookup defaults to the
+ * bot's own `dns/promises` import, the one tests mock.
  *
  * Pinning — connecting only to those addresses, so DNS rebinding between
  * this check and the connect cannot redirect it — is the caller's job:
@@ -223,6 +225,7 @@ export async function resolveAllowedTarget(
       const cls = classOf(address);
       if (NEVER_REACHABLE.has(cls)) return false;
       if (cls === "transition") {
+        // judged by the IPv4 it embeds; an undecodable one passes
         const inner = embeddedClass(address);
         return inner === null || !NEVER_REACHABLE.has(inner);
       }
