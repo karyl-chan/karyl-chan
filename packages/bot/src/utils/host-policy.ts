@@ -18,6 +18,7 @@ import {
   LookupSlotsFullError,
   MEDIA_LOOKUP_SLOTS,
   METADATA_HOSTNAMES,
+  resolveVettedHost,
   TargetRefusedError,
   toPinnedAddresses,
   vetHostAndPort,
@@ -109,10 +110,9 @@ interface GateWording {
 }
 
 /**
- * Turn a refusal of the shared host gate (`vetHostAndPort` /
- * `lookupHostAddresses` in @karyl-chan/voice/net, also what the voice
- * media proxy runs) into this policy's HostPolicyError. Anything else is
- * rethrown untouched.
+ * Turn a refusal of the shared host gate (`resolveVettedHost` and its
+ * steps in @karyl-chan/voice/net, also what the voice media proxy runs)
+ * into this policy's HostPolicyError. Anything else is rethrown untouched.
  */
 function gateRefusal(err: unknown, wording: GateWording): unknown {
   if (!(err instanceof TargetRefusedError)) return err;
@@ -131,9 +131,9 @@ function gateRefusal(err: unknown, wording: GateWording): unknown {
       }
       return wording.refuse("dns_failed", wording.dnsFailed(err.host));
     case "blocked_address":
-      // The gate's own address rule is not used here — each policy
-      // judges addresses itself — so this cannot happen; refuse anyway.
-      return wording.refuse("blocked", "主機目標不被允許");
+      // Only the boolean policies hand the gate an address rule
+      // (checkHost); their blockedHost is the policy's deny message.
+      return wording.refuse("blocked", wording.blockedHost(err.host));
   }
 }
 
@@ -158,18 +158,22 @@ function vetHost(rawHost: string, port: number, wording: GateWording): string {
 async function hostAddresses(
   host: string,
   wording: GateWording,
-  hostLookup: HostLookup = dnsLookup,
 ): Promise<string[]> {
   try {
-    return await lookupHostAddresses(host, hostLookup);
+    return await lookupHostAddresses(host, dnsLookup);
   } catch (err) {
     throw gateRefusal(err, wording);
   }
 }
 
 /**
- * Shared skeleton of the boolean policies: vet the host, refuse if any
- * address it stands for `isDenied`, and return the vetted addresses.
+ * The boolean policies (RCON / plugin / public-media): the shared gate
+ * (`resolveVettedHost`) with this policy's address rule, refusing the
+ * whole host if ANY address it stands for is not `isAllowed`. Every
+ * refusal is a `blocked` HostPolicyError; it reads `denyMessage`, except
+ * that an invalid host / port and a failed lookup keep their own
+ * messages. Returns the vetted addresses. The lookup defaults to the
+ * bot's own `dns/promises` import, the one tests mock.
  *
  * Pinning — connecting only to those addresses, so DNS rebinding between
  * this check and the connect cannot redirect it — is the caller's job:
@@ -184,21 +188,19 @@ async function hostAddresses(
 async function checkHost(
   rawHost: string,
   port: number,
-  isDenied: (address: string) => boolean,
+  isAllowed: (address: string) => boolean,
   denyMessage: string,
-  hostLookup?: HostLookup,
+  hostLookup: HostLookup = dnsLookup,
 ): Promise<PinnedAddress[]> {
-  const wording: GateWording = {
-    refuse: refuseGeneric,
-    blockedHost: () => denyMessage,
-    dnsFailed: () => "無法解析主機名稱",
-  };
-  const host = vetHost(rawHost, port, wording);
-  const addresses = await hostAddresses(host, wording, hostLookup);
-  for (const address of addresses) {
-    if (isDenied(address)) throw new HostPolicyError(denyMessage);
+  try {
+    return await resolveVettedHost(rawHost, port, isAllowed, hostLookup);
+  } catch (err) {
+    throw gateRefusal(err, {
+      refuse: refuseGeneric,
+      blockedHost: () => denyMessage,
+      dnsFailed: () => "無法解析主機名稱",
+    });
   }
-  return toPinnedAddresses(addresses);
 }
 
 /**
@@ -221,12 +223,13 @@ export async function resolveAllowedTarget(
     port,
     (address) => {
       const cls = classOf(address);
-      if (NEVER_REACHABLE.has(cls)) return true;
+      if (NEVER_REACHABLE.has(cls)) return false;
       if (cls === "transition") {
+        // judged by the IPv4 it embeds; an undecodable one passes
         const inner = embeddedClass(address);
-        return inner !== null && NEVER_REACHABLE.has(inner);
+        return inner === null || !NEVER_REACHABLE.has(inner);
       }
-      return false;
+      return true;
     },
     "主機目標不被允許",
   );
@@ -280,7 +283,7 @@ export async function assertPublicMediaTarget(
   await checkHost(
     host,
     port,
-    (address) => !isPublicMediaAddress(address, { allowPrivate }),
+    (address) => isPublicMediaAddress(address, { allowPrivate }),
     "媒體 URL 目標不被允許",
     // a user-supplied URL can name any host; see MEDIA_LOOKUP_SLOTS
     MEDIA_LOOKUP_SLOTS.guard(dnsLookup),
@@ -352,7 +355,7 @@ export async function resolvePluginTarget(
   return checkHost(
     host,
     port,
-    (address) => !isPluginTargetAddress(address, { allowLoopback }),
+    (address) => isPluginTargetAddress(address, { allowLoopback }),
     "Plugin 目標不被允許",
   );
 }
