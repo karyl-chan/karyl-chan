@@ -123,6 +123,8 @@ const EVERY_RETRY_TIMES_OUT_MS = 2000 + 10_000 + 4000 + 10_000 + 8000 + 10_000;
 const EVERY_ATTEMPT_TIMES_OUT_MS = 10_000 + EVERY_RETRY_TIMES_OUT_MS;
 
 type LookupResult = Awaited<ReturnType<typeof lookup>>;
+/** A resolver that never answers, like DNS that hangs until the OS gives up. */
+const hang = () => new Promise<LookupResult>(() => {});
 
 function answer(...addresses: string[]): LookupResult {
   return addresses.map((address) => ({
@@ -646,8 +648,6 @@ describe("RCON connect timeout (#180)", () => {
 });
 
 describe("RCON host resolution timeout (#239)", () => {
-  /** A resolver that never answers, like DNS that hangs until the OS gives up. */
-  const hang = () => new Promise<LookupResult>(() => {});
   /**
    * A resolver that answers only after the attempt ran out, by failing
    * like the OS giving up. Until then, retries wait on it (#254).
@@ -926,7 +926,6 @@ describe("RCON shared host lookup (#254)", () => {
   // dns.lookup cannot be aborted: a lookup an attempt gave up on keeps a
   // libuv threadpool worker until the OS gives up. Retries wait on it
   // instead of starting another.
-  const hang = () => new Promise<LookupResult>(() => {});
 
   it("reconnect retries that time out wait on the one stuck lookup", async () => {
     await connectAndAuth();
