@@ -123,8 +123,16 @@ const EVERY_RETRY_TIMES_OUT_MS = 2000 + 10_000 + 4000 + 10_000 + 8000 + 10_000;
 const EVERY_ATTEMPT_TIMES_OUT_MS = 10_000 + EVERY_RETRY_TIMES_OUT_MS;
 
 type LookupResult = Awaited<ReturnType<typeof lookup>>;
-/** A resolver that never answers, like DNS that hangs until the OS gives up. */
-const hang = () => new Promise<LookupResult>(() => {});
+/** Gives up every lookup `hang` left running; see afterEach. */
+const hanging: Array<() => void> = [];
+/**
+ * A resolver that never answers, like DNS that hangs until the OS gives
+ * up. A running lookup is shared by host (#260), so afterEach gives it up.
+ */
+const hang = () =>
+  new Promise<LookupResult>((_resolve, reject) => {
+    hanging.push(() => reject(new Error("given up after the test")));
+  });
 
 function answer(...addresses: string[]): LookupResult {
   return addresses.map((address) => ({
@@ -161,7 +169,6 @@ function embedTitles(channel: { send: ReturnType<typeof vi.fn> }): string[] {
 const svc = RconConnectionService as unknown as {
   connectionMap: Record<string, unknown>;
   connectionLocks: Map<string, { done: Promise<void>; channels: Set<unknown> }>;
-  resolvesInFlight: Map<string, Promise<unknown>>;
 };
 
 /** initializeConnection for "c1", against a server that accepts the password. */
@@ -204,14 +211,15 @@ beforeEach(() => {
   authOnConnect = false;
   svc.connectionMap = {};
   svc.connectionLocks = new Map();
-  // A lookup a test left hanging must not be shared into the next test.
-  svc.resolvesInFlight = new Map();
   mockedLookup.mockReset();
   vi.mocked(botEventLog.record).mockClear();
 });
 
-afterEach(() => {
+afterEach(async () => {
+  // A lookup a test left hanging must not be shared into the next test.
+  for (const giveUp of hanging.splice(0)) giveUp();
   vi.useRealTimers();
+  await new Promise((resolve) => setImmediate(resolve));
 });
 
 describe("RCON initial connect", () => {
@@ -352,11 +360,11 @@ describe("RCON reconnect", () => {
     );
     await vi.advanceTimersByTimeAsync(2000); // reconnect now waits on DNS
 
-    // Re-created for another port: a connect to the same host:port would
-    // wait on the reconnect's lookup still running (#254).
+    // Re-created for another host: a connect to the same host would wait
+    // on the reconnect's lookup still running (#254, #260).
     mockedLookup.mockResolvedValue(answer("10.0.0.5"));
     authOnConnect = true;
-    await RconConnectionService.initializeConnection("c1", "mc-server", 25576, "pw", makeChannel());
+    await RconConnectionService.initializeConnection("c1", "mc-server-b", 25576, "pw", makeChannel());
     authOnConnect = false;
     failLookup();
     await vi.advanceTimersByTimeAsync(2000 + 4000 + 8000);
@@ -992,7 +1000,7 @@ describe("RCON shared host lookup (#254)", () => {
     expect(mockedLookup).toHaveBeenCalledOnce();
   });
 
-  it("a connection to another port of the host resolves on its own", async () => {
+  it("a connection to another port of the host waits on the same lookup (#260)", async () => {
     vi.useFakeTimers();
     mockedLookup.mockImplementation(hang);
     const results = [
@@ -1000,7 +1008,7 @@ describe("RCON shared host lookup (#254)", () => {
       RconConnectionService.initializeConnection("c2", "mc-server", 25576, "pw", makeChannel("channel-2")),
     ];
     await vi.advanceTimersByTimeAsync(0);
-    expect(mockedLookup).toHaveBeenCalledTimes(2);
+    expect(mockedLookup).toHaveBeenCalledOnce();
 
     await vi.advanceTimersByTimeAsync(EVERY_ATTEMPT_TIMES_OUT_MS);
     for (const result of results) await expect(result).resolves.toBe(false);

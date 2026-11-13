@@ -387,6 +387,11 @@ export async function startMediaProxy(
           port: target.port,
           tls: target.tls,
           reason: err instanceof Error ? err.message : String(err),
+          // e.g. DNS failing vs. no free media lookup slot (#260)
+          cause:
+            err instanceof Error && err.cause instanceof Error
+              ? err.cause.message
+              : undefined,
         },
         "media-proxy: target refused",
       );

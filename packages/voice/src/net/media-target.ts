@@ -30,6 +30,7 @@ import {
 } from "./ip-address.js";
 import {
   effectivePort,
+  MEDIA_LOOKUP_SLOTS,
   normalizeHostname,
   resolveVettedHost,
   stripIPv6Brackets,
@@ -103,7 +104,8 @@ export function isPluginTargetAddress(
  * (TargetRefusedError) unless every address passes, return them all to
  * pin to — under the public-media rule
  * (`isPublicMediaAddress`, with the legacy WEBHOOK_ALLOW_PRIVATE hatch
- * read per call).
+ * read per call). Its lookup takes one of the media lookup slots: a
+ * playlist can name any number of hosts.
  */
 export async function resolvePublicMediaTarget(
   host: string,
@@ -115,7 +117,7 @@ export async function resolvePublicMediaTarget(
     host,
     port,
     (address) => isPublicMediaAddress(address, { allowPrivate }),
-    lookup,
+    MEDIA_LOOKUP_SLOTS.guard(lookup),
   );
 }
 
