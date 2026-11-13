@@ -96,6 +96,9 @@ export type HostLookup = (
   options: { all: true },
 ) => Promise<Array<{ address: string; family: number }>>;
 
+/** The resolver each LookupSlots wrapper guards. */
+const guardedResolvers = new WeakMap<HostLookup, HostLookup>();
+
 /**
  * A cap on how many lookups a group of callers may have running at once
  * (#260). Sharing a running lookup (see sharedLookup) only helps while the
@@ -112,9 +115,9 @@ export class LookupSlots {
   /**
    * `lookup` that takes a slot per lookup it starts and throws
    * LookupSlotsFullError (synchronously, so no caller joins the refusal)
-   * when none is free. A caller joining a lookup already running for its
-   * host (guarded or not) takes no slot: the wrapper shares the
-   * resolver's running lookups.
+   * when none is free. Through lookupHostAddresses, a caller joining a
+   * lookup already running for its host (guarded or not) takes no slot:
+   * sharedLookup shares by the resolver the wrapper guards.
    */
   guard(lookup: HostLookup = dnsLookup as HostLookup): HostLookup {
     let guarded = this.guarded.get(lookup);
@@ -154,9 +157,6 @@ export class LookupSlotsFullError extends Error {
 export const MEDIA_LOOKUP_SLOTS = new LookupSlots(2);
 
 type Answers = Array<{ address: string }>;
-
-/** The resolver each LookupSlots wrapper guards. */
-const guardedResolvers = new WeakMap<HostLookup, HostLookup>();
 
 /** Lookups still running, per (unguarded) resolver, by normalized host. */
 const lookupsInFlight = new WeakMap<HostLookup, Map<string, Promise<Answers>>>();
