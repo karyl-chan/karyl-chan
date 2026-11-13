@@ -10,6 +10,14 @@ export default defineConfig({
     test: {
         environment: 'node',
         include: ['tests/**/*.test.ts'],
+        // Each run defaults to one worker per CPU (minus one). Several
+        // full runs at once — parallel worktrees, parallel agents —
+        // oversubscribe the CPU that many times over, and the heavier
+        // tests then cross their 5 s / 10 s budgets (#235). When running
+        // N suites side by side, give each its share:
+        //   KARYL_TEST_MAX_WORKERS=<cores / N> pnpm run test
+        // Unset (CI, a single local run) keeps vitest's default.
+        maxWorkers: process.env.KARYL_TEST_MAX_WORKERS || undefined,
         env: {
             // bot_events has its own SQLite file. Unset, it resolves to
             // the package's real data/bot-events.sqlite: shared by every
