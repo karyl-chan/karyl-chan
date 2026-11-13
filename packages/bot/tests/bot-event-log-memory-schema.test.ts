@@ -18,7 +18,8 @@ describe("botEventLog.record on the in-memory events DB", () => {
   it("creates bot_events before its first write, with no manual sync", async () => {
     botEventLog.record("info", "bot", "first event");
 
-    // count() itself throws while the table is missing.
+    // count() itself throws while the table is missing. One record, one
+    // row: the write landed, so it logged no "DB write failed".
     await vi.waitFor(async () => expect(await BotEvent.count()).toBe(1));
   });
 });
