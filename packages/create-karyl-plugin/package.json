@@ -1,6 +1,6 @@
 {
   "name": "create-karyl-plugin",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Scaffold a new karyl-chan plugin — a minimal hello-world that responds to a slash command.",
   "type": "module",
   "license": "MIT",
