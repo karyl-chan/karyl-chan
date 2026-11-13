@@ -206,7 +206,8 @@ export class WebhookForwarder {
    *                   applies; defaults to the boot-parsed config value
    *                   (tests inject their own).
    * @param timeoutMs  how long one POST may take before it is aborted
-   *                   (headers and body together); tests inject a short one.
+   *                   (host lookup, headers and body together); tests
+   *                   inject a short one.
    */
   constructor(
     private readonly allowlist: readonly AllowlistEntry[] = webhookAllowlist,
@@ -376,14 +377,24 @@ export class WebhookForwarder {
       // authMode=null 且有 secret：異常狀態，不簽（已由 CR-6 DB CHECK 攔截）
     }
 
+    // 時限從解析主機名稱就開始算（#260）：DNS 卡住時不能無限等下去。
+    const signal = AbortSignal.timeout(this.timeoutMs);
+
     // host-policy 檢查（與存檔時同一套：允許清單、https 規則、封鎖段）。
     // 回傳的 addresses 是實際檢查過的 IP，下面的連線只會打這些 IP。
     let target: WebhookTarget;
     try {
-      target = await resolveWebhookTarget(url, this.allowlist);
+      target = await untilAborted(resolveWebhookTarget(url, this.allowlist), signal);
     } catch (err) {
-      if (!(err instanceof HostPolicyError)) throw err;
-      return fail(err.message, undefined, err.code);
+      if (err instanceof HostPolicyError) return fail(err.message, undefined, err.code);
+      if (signal.aborted) {
+        return fail(
+          `無法在 ${this.timeoutMs}ms 內解析主機名稱 ${url.hostname}`,
+          undefined,
+          "dns_failed",
+        );
+      }
+      throw err;
     }
 
     // 發送 HTTP POST —— connection pinned to the checked addresses so a DNS
@@ -404,7 +415,7 @@ export class WebhookForwarder {
           // re-validating — an SSRF into cloud metadata (169.254.169.254) or
           // internal hosts whose response we'd then relay back into Discord.
           redirect: "manual",
-          signal: AbortSignal.timeout(this.timeoutMs),
+          signal,
           // `dispatcher` is Node's (undici) fetch extension — absent from
           // the DOM RequestInit type the project compiles against.
         } as RequestInit);

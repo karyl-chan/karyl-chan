@@ -94,18 +94,109 @@ export type HostLookup = (
 ) => Promise<Array<{ address: string; family: number }>>;
 
 /**
+ * A cap on how many lookups a group of callers may have running at once
+ * (#260). Sharing a running lookup only helps while the hostnames are
+ * few; a group whose hostnames anyone can vary (media URLs, the names a
+ * playlist lists) would otherwise start one lookup per name, each holding
+ * a libuv threadpool worker while DNS hangs. A lookup that finds no free
+ * slot is refused rather than queued, so nothing piles up behind a hang.
+ */
+export class LookupSlots {
+  private running = 0;
+
+  constructor(readonly max: number) {}
+
+  /** Take a slot, or false when all `max` are in use. */
+  tryTake(): boolean {
+    if (this.running >= this.max) return false;
+    this.running++;
+    return true;
+  }
+
+  release(): void {
+    this.running--;
+  }
+}
+
+/** The `cause` of a `dns_failed` refusal whose lookup found no free slot. */
+export class LookupSlotsFullError extends Error {
+  constructor(readonly max: number) {
+    super(`too many lookups running (at most ${max})`);
+    this.name = "LookupSlotsFullError";
+  }
+}
+
+/**
+ * The slots of media-URL lookups, one set per process: the bot's
+ * up-front media check and the voice media proxy share them. Two is half
+ * the default threadpool (UV_THREADPOOL_SIZE 4), which also serves file
+ * I/O, crypto and every other lookup.
+ */
+export const MEDIA_LOOKUP_SLOTS = new LookupSlots(2);
+
+type Answers = Array<{ address: string }>;
+
+/** Lookups still running, per resolver, by normalized host. */
+const lookupsInFlight = new WeakMap<HostLookup, Map<string, Promise<Answers>>>();
+
+/**
+ * `lookup(host)`, shared while it runs (#260): a caller for the same host
+ * waits on the running lookup instead of starting another, whatever slots
+ * either one came with. dns.lookup cannot be aborted and holds a
+ * threadpool worker until the OS gives up, so with DNS hanging one lookup
+ * per call would take the whole pool. Once it settles the next call
+ * resolves afresh, so an answer is never reused.
+ */
+function sharedLookup(
+  host: string,
+  lookup: HostLookup,
+  slots: LookupSlots | undefined,
+): Promise<Answers> {
+  let running = lookupsInFlight.get(lookup);
+  if (!running) {
+    running = new Map();
+    lookupsInFlight.set(lookup, running);
+  }
+  const key = normalizeHostname(host);
+  const inFlight = running.get(key);
+  if (inFlight) return inFlight;
+  if (slots && !slots.tryTake()) {
+    return Promise.reject(new LookupSlotsFullError(slots.max));
+  }
+  let lookingUp: Promise<Answers>;
+  try {
+    lookingUp = lookup(host, { all: true });
+  } catch (err) {
+    slots?.release();
+    return Promise.reject(err);
+  }
+  running.set(key, lookingUp);
+  // Two-armed so the cleanup's own promise never rejects.
+  const forget = () => {
+    if (running.get(key) === lookingUp) running.delete(key);
+    slots?.release();
+  };
+  lookingUp.then(forget, forget);
+  return lookingUp;
+}
+
+/**
  * Every address a vetted host stands for: the literal itself, or every
  * DNS answer (resolved once, resolver order). A failed lookup (the error
- * is the `cause`) or an empty answer is refused as `dns_failed`.
+ * is the `cause`) or an empty answer is refused as `dns_failed`. The
+ * lookup is shared with concurrent callers for the same host; with
+ * `slots`, starting one needs a free slot (else `dns_failed`, cause
+ * LookupSlotsFullError).
  */
 export async function lookupHostAddresses(
   host: string,
   lookup: HostLookup = dnsLookup as HostLookup,
+  slots?: LookupSlots,
 ): Promise<string[]> {
   if (isIP(host) !== 0) return [host];
-  let answers: Array<{ address: string }>;
+  let answers: Answers;
   try {
-    answers = await lookup(host, { all: true });
+    answers = await sharedLookup(host, lookup, slots);
   } catch (cause) {
     throw new TargetRefusedError("dns_failed", host, { cause });
   }
@@ -131,9 +222,10 @@ export async function resolveVettedHost(
   port: number,
   isAllowed: (address: string) => boolean,
   lookup?: HostLookup,
+  slots?: LookupSlots,
 ): Promise<PinnedAddress[]> {
   const host = vetHostAndPort(rawHost, port);
-  const addresses = await lookupHostAddresses(host, lookup);
+  const addresses = await lookupHostAddresses(host, lookup, slots);
   for (const address of addresses) {
     if (!isAllowed(address)) throw new TargetRefusedError("blocked_address", host);
   }

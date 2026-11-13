@@ -15,10 +15,13 @@ import {
   isPublicMediaAddress,
   legacyAllowPrivate,
   lookupHostAddresses,
+  LookupSlotsFullError,
+  MEDIA_LOOKUP_SLOTS,
   METADATA_HOSTNAMES,
   TargetRefusedError,
   toPinnedAddresses,
   vetHostAndPort,
+  type LookupSlots,
 } from "@karyl-chan/voice/net";
 import {
   allowlistMatches,
@@ -119,7 +122,9 @@ function gateRefusal(err: unknown, wording: GateWording): unknown {
     case "blocked_metadata":
       return wording.refuse("blocked_metadata", wording.blockedHost(err.host));
     case "dns_failed":
-      if (err.cause !== undefined) {
+      if (err.cause instanceof LookupSlotsFullError) {
+        log.warn({ host: err.host, max: err.cause.max }, "DNS lookup refused: no free lookup slot");
+      } else if (err.cause !== undefined) {
         log.error({ err: err.cause, host: err.host }, "DNS lookup failed");
       }
       return wording.refuse("dns_failed", wording.dnsFailed(err.host));
@@ -145,11 +150,17 @@ function vetHost(rawHost: string, port: number, wording: GateWording): string {
 /**
  * Every address a vetted host stands for: the literal itself, or every
  * DNS answer (resolved once). A failed or empty lookup is refused as
- * `dns_failed` (shared gate).
+ * `dns_failed` (shared gate). The lookup is shared with every concurrent
+ * check of the same host (#260); with `slots`, starting one needs a free
+ * slot.
  */
-async function hostAddresses(host: string, wording: GateWording): Promise<string[]> {
+async function hostAddresses(
+  host: string,
+  wording: GateWording,
+  slots?: LookupSlots,
+): Promise<string[]> {
   try {
-    return await lookupHostAddresses(host, lookup);
+    return await lookupHostAddresses(host, lookup, slots);
   } catch (err) {
     throw gateRefusal(err, wording);
   }
@@ -174,6 +185,7 @@ async function checkHost(
   port: number,
   isDenied: (address: string) => boolean,
   denyMessage: string,
+  slots?: LookupSlots,
 ): Promise<PinnedAddress[]> {
   const wording: GateWording = {
     refuse: refuseGeneric,
@@ -181,7 +193,7 @@ async function checkHost(
     dnsFailed: () => "無法解析主機名稱",
   };
   const host = vetHost(rawHost, port, wording);
-  const addresses = await hostAddresses(host, wording);
+  const addresses = await hostAddresses(host, wording, slots);
   for (const address of addresses) {
     if (isDenied(address)) throw new HostPolicyError(denyMessage);
   }
@@ -269,6 +281,8 @@ export async function assertPublicMediaTarget(
     port,
     (address) => !isPublicMediaAddress(address, { allowPrivate }),
     "媒體 URL 目標不被允許",
+    // a user-supplied URL can name any host; see MEDIA_LOOKUP_SLOTS
+    MEDIA_LOOKUP_SLOTS,
   );
 }
 

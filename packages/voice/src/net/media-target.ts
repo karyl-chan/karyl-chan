@@ -30,10 +30,12 @@ import {
 } from "./ip-address.js";
 import {
   effectivePort,
+  MEDIA_LOOKUP_SLOTS,
   normalizeHostname,
   resolveVettedHost,
   stripIPv6Brackets,
   type HostLookup,
+  type LookupSlots,
 } from "./host-vetting.js";
 import type { PinnedAddress } from "./pinned-lookup.js";
 
@@ -71,6 +73,11 @@ export function legacyAllowPrivate(): boolean {
 export interface ResolveMediaTargetOptions {
   /** DNS resolver (test seam). Defaults to `dns.promises.lookup`. */
   lookup?: HostLookup;
+  /**
+   * The slots a public-media lookup takes (test seam). Defaults to the
+   * process-wide MEDIA_LOOKUP_SLOTS.
+   */
+  slots?: LookupSlots;
 }
 
 /**
@@ -103,12 +110,13 @@ export function isPluginTargetAddress(
  * (TargetRefusedError) unless every address passes, return them all to
  * pin to — under the public-media rule
  * (`isPublicMediaAddress`, with the legacy WEBHOOK_ALLOW_PRIVATE hatch
- * read per call).
+ * read per call). Its lookup takes one of the media lookup slots: a
+ * playlist can name any number of hosts.
  */
 export async function resolvePublicMediaTarget(
   host: string,
   port: number,
-  { lookup }: ResolveMediaTargetOptions = {},
+  { lookup, slots = MEDIA_LOOKUP_SLOTS }: ResolveMediaTargetOptions = {},
 ): Promise<PinnedAddress[]> {
   const allowPrivate = legacyAllowPrivate();
   return resolveVettedHost(
@@ -116,6 +124,7 @@ export async function resolvePublicMediaTarget(
     port,
     (address) => isPublicMediaAddress(address, { allowPrivate }),
     lookup,
+    slots,
   );
 }
 

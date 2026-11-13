@@ -3,6 +3,7 @@
  *
  *   - a receiver that never answers is cut off by the timeout (injected
  *     short here; production keeps 10 s) and the forward fails, no throw
+ *   - so is a host lookup that never answers (#260)
  *   - a receiver that can't be reached fails as a network error
  *   - hmac mode refuses an unsigned response (fail closed)
  *   - token mode relays an unsigned response but warns once per behavior;
@@ -30,6 +31,7 @@ vi.mock("../src/modules/bot-events/bot-event-log.js", () => ({
 import type { BehaviorWebhookActionRow } from "../src/modules/behavior/models/behavior-webhook-action.model.js";
 import { WebhookForwarder } from "../src/modules/command-system/webhook-forwarder.service.js";
 import { botEventLog } from "../src/modules/bot-events/bot-event-log.js";
+import { resolveWebhookTarget } from "../src/utils/host-policy.js";
 import { encryptSecret } from "../src/utils/crypto.js";
 import {
   emptyReceiver,
@@ -80,6 +82,21 @@ describe("a receiver that does not answer", () => {
       ok: false,
       reply: {},
       error: expect.stringMatching(/^network error: .*(abort|timeout)/i),
+    });
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+});
+
+describe("a host lookup that never answers (#260)", () => {
+  it("is cut off by the same timeout and fails as dns_failed", async () => {
+    vi.mocked(resolveWebhookTarget).mockImplementationOnce(() => new Promise(() => {}));
+    const started = Date.now();
+    const result = await new WebhookForwarder(undefined, 50).forward(action(null), {});
+    expect(result).toMatchObject({
+      ok: false,
+      reply: {},
+      errorCode: "dns_failed",
+      error: expect.stringContaining("無法在 50ms 內解析主機名稱 203.0.113.10"),
     });
     expect(Date.now() - started).toBeLessThan(1000);
   });
