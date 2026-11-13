@@ -111,6 +111,11 @@ export class RconConnectionService {
     PinnedRcon,
     ReturnType<typeof setTimeout>
   >();
+  /** Host lookups still running, by `host:port`; see sharedResolve. */
+  private static resolvesInFlight = new Map<
+    string,
+    Promise<PinnedAddress[]>
+  >();
   /** Ends initializeConnection's wait for a connection's first auth. */
   private static firstAuthWaits = new WeakMap<
     RconConnection,
@@ -404,10 +409,41 @@ export class RconConnectionService {
       );
     });
     try {
-      return await Promise.race([resolveAllowedTarget(host, port), timedOut]);
+      return await Promise.race([this.sharedResolve(host, port), timedOut]);
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  /**
+   * `resolveAllowedTarget`, shared while it runs: an attempt that gave up
+   * on it leaves its lookup running, so the next attempt for the same
+   * target waits on that one instead of starting another. dns.lookup
+   * cannot be aborted and holds a libuv threadpool worker until the OS
+   * gives up; with DNS hanging, one lookup per retry would take the whole
+   * pool (file I/O, crypto and every other lookup with it). Once it
+   * settles the next attempt resolves afresh, so an answer is never
+   * reused.
+   */
+  private static sharedResolve(
+    host: string,
+    port: number,
+  ): Promise<PinnedAddress[]> {
+    const key = `${host}:${port}`;
+    const inFlight = this.resolvesInFlight.get(key);
+    if (inFlight) return inFlight;
+    const resolving = resolveAllowedTarget(host, port);
+    this.resolvesInFlight.set(key, resolving);
+    // Two-armed so the cleanup's own promise never rejects: a .finally()
+    // would reject it unhandled after every attempt gave up waiting.
+    const forget = () => {
+      // Only its own entry, should the map have been reset meanwhile.
+      if (this.resolvesInFlight.get(key) === resolving) {
+        this.resolvesInFlight.delete(key);
+      }
+    };
+    resolving.then(forget, forget);
+    return resolving;
   }
 
   /**
@@ -649,8 +685,9 @@ export class RconConnectionService {
 
       try {
         await new Promise((resolve) => setTimeout(resolve, delay));
-        // Every attempt re-resolves and re-vets the host: a container
-        // that restarted has a new IP, and an answer that now points
+        // Every attempt re-resolves and re-vets the host (or waits on a
+        // lookup still running, see sharedResolve): a container that
+        // restarted has a new IP, and an answer that now points
         // somewhere refused, or none in time, fails this attempt.
         if (this.connectionMap[connectionName] !== connection) return;
         const deadline = Date.now() + CONNECT_ATTEMPT_TIMEOUT_MS;
