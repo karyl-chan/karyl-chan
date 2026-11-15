@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.2.0](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v1.1.0...plugin-sdk-v1.2.0) (2026-11-13)
+
+
+### Features
+
+* **bot:** behaviors answer later, attach files, DM others and run plugin actions ([5b17a05](https://github.com/karyl-chan/karyl-chan/commit/5b17a05958513760bfc74872209d23e0cd10dc43))
+* **plugin-sdk:** let plugins define behavior actions ([4a99a35](https://github.com/karyl-chan/karyl-chan/commit/4a99a356dc87750f09cb09b04d6290c6e343cdaf)), closes [#201](https://github.com/karyl-chan/karyl-chan/issues/201)
+* **plugin-sdk:** type a behavior reply's attachments ([8b9e02f](https://github.com/karyl-chan/karyl-chan/commit/8b9e02f3c37c1ef92f9e36194b241476ee62c5fa)), closes [#197](https://github.com/karyl-chan/karyl-chan/issues/197)
+* **plugin-sdk:** type a behavior reply's direct messages ([0b91b9b](https://github.com/karyl-chan/karyl-chan/commit/0b91b9bbaab1fcfbd361b21ed4264f2e3aaffbae)), closes [#202](https://github.com/karyl-chan/karyl-chan/issues/202)
+* **plugin-sdk:** type the behavior callback token and the defer reply ([f5d6d51](https://github.com/karyl-chan/karyl-chan/commit/f5d6d51e910a5e103c3a124e4720e4f425a16775)), closes [#198](https://github.com/karyl-chan/karyl-chan/issues/198)
+* **plugin-sdk:** type the callback token on message-trigger payloads ([96659cb](https://github.com/karyl-chan/karyl-chan/commit/96659cb49c98da657a958a2ea33506f08a520ad7)), closes [#200](https://github.com/karyl-chan/karyl-chan/issues/200)
+
+
+### Bug Fixes
+
+* **bot:** register track-3 plugin commands for manifests without schema_version ([69a71cb](https://github.com/karyl-chan/karyl-chan/commit/69a71cb12c612dcf9aa9adfe98b6fa0563e1b282))
+* **plugin-sdk:** keep the receiver declarations whole and harden behavior actions ([b659d72](https://github.com/karyl-chan/karyl-chan/commit/b659d7264b193d400cc86324a1844718b0ca7fdc)), closes [#201](https://github.com/karyl-chan/karyl-chan/issues/201)
+* **plugin-sdk:** recognise a refused behavior action reply by the error itself ([9bd7d03](https://github.com/karyl-chan/karyl-chan/commit/9bd7d03dc11dd251805c67cb4e6665eaffb50949)), closes [#201](https://github.com/karyl-chan/karyl-chan/issues/201)
+
 ## [1.1.0](https://github.com/karyl-chan/karyl-chan/compare/plugin-sdk-v1.0.0...plugin-sdk-v1.1.0) (2026-11-06)
 
 
