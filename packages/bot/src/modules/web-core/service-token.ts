@@ -9,29 +9,35 @@ import { publicBaseUrl } from "./public-base-url.js";
  * (karyl does not track them).
  */
 
-/** The user the token vouches for. */
-export interface ServiceTokenUser {
-  /** Discord user id → `sub`. */
-  id: string;
-  /** Display name → `name`. */
-  name: string;
-  /** Avatar URL → `avatar`; null when the user has none. */
-  avatar: string | null;
-}
-
+/** Mint a token saying the Discord user `userId` logged in to `audience`. */
 export function mintServiceToken(
-  user: ServiceTokenUser,
+  userId: string,
   audience: string,
   options: { now?: number } = {},
 ): SignedServiceToken {
   return jwtService.signService(
-    {
-      sub: user.id,
-      name: user.name,
-      avatar: user.avatar,
-      aud: audience,
-      iss: publicBaseUrl(),
-    },
+    { sub: userId, aud: audience, iss: publicBaseUrl() },
     { now: options.now },
   );
+}
+
+/** The redirect URL with the token as its `token` parameter. */
+export function serviceLoginLink(redirectUrl: string, token: string): string {
+  const url = new URL(redirectUrl);
+  url.searchParams.set("token", token);
+  return url.toString();
+}
+
+/** Discord's cap on a link button's URL: a login link longer than this cannot be sent. */
+export const LOGIN_LINK_MAX_LENGTH = 512;
+
+/** A Discord id is a 64-bit integer: at most 20 digits. */
+const LONGEST_USER_ID = "9".repeat(20);
+
+/**
+ * The longest login link a service with this redirect URL and audience can
+ * get. Everything else in the token has a fixed length.
+ */
+export function longestServiceLoginLink(redirectUrl: string, audience: string): number {
+  return serviceLoginLink(redirectUrl, mintServiceToken(LONGEST_USER_ID, audience).token).length;
 }

@@ -49,11 +49,7 @@ import { createWebServer } from "../src/modules/web-core/server.js";
 import { RateLimiter } from "../src/utils/rate-limiter.js";
 
 const OWNER_ID = "111111111111111111";
-const USER = {
-  id: "222222222222222222",
-  name: "Karyl",
-  avatar: "https://cdn.discordapp.com/avatars/222222222222222222/abc.png",
-};
+const USER_ID = "222222222222222222";
 
 function decodeSegment(seg: string): Record<string, unknown> {
   return JSON.parse(Buffer.from(seg, "base64url").toString("utf-8"));
@@ -192,7 +188,7 @@ describe("GET /.well-known/jwks.json", () => {
 describe("service tokens", () => {
   it("verify against the JWKS by kid, with every claim", async () => {
     const now = Date.now();
-    const { token, jti, expiresAt } = mintServiceToken(USER, "wiki", { now });
+    const { token, jti, expiresAt } = mintServiceToken(USER_ID, "wiki", { now });
     const header = decodeSegment(token.split(".")[0]);
     const active = await getActiveJwtSigningKey();
     expect(header).toEqual({
@@ -202,23 +198,15 @@ describe("service tokens", () => {
     });
 
     const claims = verifyAsService(token, await fetchJwks(), { aud: "wiki", iss: publicBaseUrl() });
-    const iat = Math.floor(now / 1000);
-    expect(claims).toEqual({
-      sub: USER.id,
-      name: USER.name,
-      avatar: USER.avatar,
-      aud: "wiki",
-      iss: publicBaseUrl(),
-      jti,
-      iat,
-      exp: iat + 120,
-    });
-    expect(expiresAt).toBe((iat + 120) * 1000);
+    const exp = Math.floor(now / 1000) + 120;
+    // nothing but who, for which service, from whom, once, until when
+    expect(claims).toEqual({ sub: USER_ID, aud: "wiki", iss: publicBaseUrl(), jti, exp });
+    expect(expiresAt).toBe(exp * 1000);
   });
 
   it("are scoped to their audience and expire after 120 s", async () => {
     const now = Date.now();
-    const { token } = mintServiceToken(USER, "wiki", { now });
+    const { token } = mintServiceToken(USER_ID, "wiki", { now });
     const jwks = await fetchJwks();
     expect(verifyAsService(token, jwks, { aud: "grafana", iss: publicBaseUrl() })).toBeNull();
     expect(
@@ -227,14 +215,14 @@ describe("service tokens", () => {
   });
 
   it("carry a fresh jti every time", () => {
-    const a = mintServiceToken(USER, "wiki");
-    const b = mintServiceToken(USER, "wiki");
+    const a = mintServiceToken(USER_ID, "wiki");
+    const b = mintServiceToken(USER_ID, "wiki");
     expect(a.jti).not.toBe(b.jti);
   });
 
   it("keep verifying after a rotation, while the old kid stays published for 24 h", async () => {
     const oldKid = jwtService.keyId();
-    const { token: oldToken } = mintServiceToken(USER, "wiki");
+    const { token: oldToken } = mintServiceToken(USER_ID, "wiki");
 
     await rotateJwtSigningKey();
     const newKid = jwtService.keyId();
@@ -244,7 +232,7 @@ describe("service tokens", () => {
     const jwks = await fetchJwks();
     expect(jwks.keys.map((k) => k.kid).sort()).toEqual([oldKid, newKid].sort());
     expect(verifyAsService(oldToken, jwks, { aud: "wiki", iss: publicBaseUrl() })).not.toBeNull();
-    const { token: newToken } = mintServiceToken(USER, "wiki");
+    const { token: newToken } = mintServiceToken(USER_ID, "wiki");
     expect(verifyAsService(newToken, jwks, { aud: "wiki", iss: publicBaseUrl() })).not.toBeNull();
 
     const later = await getJwks({ now: Date.now() + 23 * 60 * 60 * 1000 });
@@ -256,7 +244,7 @@ describe("service tokens", () => {
 
 describe("service tokens and login tokens do not cross", () => {
   it("POST /api/auth/exchange refuses a service token", async () => {
-    const { token } = mintServiceToken({ ...USER, id: OWNER_ID }, "wiki");
+    const { token } = mintServiceToken(OWNER_ID, "wiki");
     const res = await web.inject({
       method: "POST",
       url: "/api/auth/exchange",
@@ -288,7 +276,7 @@ describe("service tokens and login tokens do not cross", () => {
   it("a login token fails a service's typ check, even when the JWKS has a single key", async () => {
     const { token } = jwtService.sign({
       purpose: "login",
-      userId: USER.id,
+      userId: USER_ID,
       guildId: null,
       channelId: "dm",
       messageId: "m1",
@@ -305,7 +293,7 @@ describe("service tokens and login tokens do not cross", () => {
   });
 
   it("the SDK's plugin-session verifier refuses a service token, even against the master key", () => {
-    const { token } = mintServiceToken(USER, "wiki");
+    const { token } = mintServiceToken(USER_ID, "wiki");
     expect(verifyPluginSession(token, jwtService.publicKeyPem())).toBeNull();
   });
 });

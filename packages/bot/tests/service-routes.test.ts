@@ -158,6 +158,11 @@ describe("POST /api/services", () => {
       expect(res.statusCode, redirectUrl).toBe(400);
       expect(res.json().error).toMatchObject({ code: "validation_failed", field: "redirectUrl" });
     }
+    // the login link is a Discord link button: 512 characters at most
+    const tooLong = await createService({ ...NAS, audience: "long", redirectUrl: `https://nas.example/${"a".repeat(300)}` });
+    expect(tooLong.statusCode).toBe(400);
+    expect(tooLong.json().error).toMatchObject({ code: "validation_failed", field: "redirectUrl" });
+    expect(tooLong.json().error.message).toContain("512");
     expect((await createService({ ...NAS, audience: "x", redirectUrl: "http://x.example" })).json().error.message).toContain(
       "service token",
     );

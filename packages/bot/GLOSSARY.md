@@ -119,7 +119,7 @@ _Avoid_: `source: custom / system`（舊稱）
 _Avoid_: 內建動作（它不是可選的動作來源）、admin-login
 
 **Service（服務）**:
-透過 karyl 登入的自架服務：名稱、audience（唯一的小寫 slug，就是它收到的 Service Token 的 `aud`）與 redirect URL（https）。只有 bot owner 能在「服務」管理頁新增、修改、刪除（redirect URL 收得到登入者的 token），每個服務擁有一個 Service Behavior，同生同滅。
+透過 karyl 登入的自架服務：名稱、audience（唯一的小寫 slug，就是它收到的 Service Token 的 `aud`）與 redirect URL（https；連同 token 的登入連結超過 512 字元的會被拒絕）。只有 bot owner 能在「服務」管理頁新增、修改、刪除（redirect URL 收得到登入者的 token），每個服務擁有一個 Service Behavior，同生同滅。
 _Avoid_: OIDC client、SSO app（karyl 不實作 OIDC）
 
 **Service Behavior（服務列）**:
@@ -127,7 +127,7 @@ _Avoid_: OIDC client、SSO app（karyl 不實作 OIDC）
 _Avoid_: 服務的 webhook（它不呼叫服務）
 
 **Service Token（服務 token）**:
-karyl 簽給一個 Service、證明「這個 Discord 使用者剛透過 karyl 登入」的 JWT（EdDSA）：header `typ: karyl-service+jwt` 與 `kid`；claims `sub`（Discord user id）、`name`、`avatar`、`aud`、`iss`（bot 的公開 base URL）、`jti`、`iat`、`exp`（120 秒）。服務端必須檢查 `typ`、`kid`、`aud`、`iss`、`exp`，並拒絕用過的 `jti`（karyl 不追蹤）。與後台登入 token 共用主金鑰，但靠 `typ` 與 `aud` 互不通用。
+karyl 簽給一個 Service、證明「這個 Discord 使用者剛透過 karyl 登入」的 JWT（EdDSA）：header `typ: karyl-service+jwt` 與 `kid`；claims 只有 `sub`（Discord user id）、`aud`、`iss`（bot 的公開 base URL）、`jti`、`exp`（120 秒）——它放在 Discord 連結按鈕裡，整個連結不能超過 512 字元，所以不帶名稱與頭像。服務端必須檢查 `typ`、`kid`、`aud`、`iss`、`exp`，並拒絕用過的 `jti`（karyl 不追蹤）。與後台登入 token 共用主金鑰，但靠 `typ` 與 `aud` 互不通用。
 _Avoid_: login token（那是後台登入用的）
 
 **JWKS**:

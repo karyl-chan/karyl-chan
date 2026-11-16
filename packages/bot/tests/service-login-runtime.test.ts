@@ -173,12 +173,11 @@ describe("a Service Behavior's trigger", () => {
     const claims = verifyAsService(token, await getJwks(), "nas");
     expect(claims).toMatchObject({
       sub: "222222222222222222",
-      name: "Karyl",
-      avatar: "https://cdn.discordapp.com/avatars/222222222222222222/abc.png",
       aud: "nas",
       jti: expect.any(String),
     });
-    expect((claims!.exp as number) - (claims!.iat as number)).toBe(120);
+    // a Discord link button's URL may be 512 characters at most
+    expect(link.toString().length).toBeLessThanOrEqual(512);
     // the login never ran
     expect(mintLoginLink).not.toHaveBeenCalled();
   });
@@ -269,7 +268,7 @@ describe("a Service Behavior's trigger", () => {
     };
     expect(sent.ephemeral === true || ((sent.flags ?? 0) & MessageFlags.Ephemeral) !== 0).toBe(true);
     const token = new URL(sent.components[0].components[0].url).searchParams.get("token")!;
-    expect(verifyAsService(token, await getJwks(), "nas")).toMatchObject({ sub: "222222222222222222", avatar: null });
+    expect(verifyAsService(token, await getJwks(), "nas")).toMatchObject({ sub: "222222222222222222" });
 
     const { message, send } = dm("!login-nas");
     await matcher.onMessage(message);
