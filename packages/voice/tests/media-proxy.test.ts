@@ -134,10 +134,10 @@ function viaProxy(
 }
 
 describe("toProxyUrl", () => {
-  it("encodes https into the TLS marker, keeping a non-default port", () => {
+  it("encodes https into the TLS marker, always with an explicit port", () => {
     assert.equal(
       toProxyUrl("https://cdn.example.com/live/a.m3u8?t=1#frag"),
-      "http://cdn.example.com.karyl-tls.invalid/live/a.m3u8?t=1",
+      "http://cdn.example.com.karyl-tls.invalid:443/live/a.m3u8?t=1",
     );
     assert.equal(
       toProxyUrl("https://cdn.example.com:8443/a.mp3"),
@@ -149,8 +149,24 @@ describe("toProxyUrl", () => {
     );
     assert.equal(
       toProxyUrl("https://1.2.3.4/a.mp3"),
-      "http://1.2.3.4.karyl-tls.invalid/a.mp3",
+      "http://1.2.3.4.karyl-tls.invalid:443/a.mp3",
     );
+  });
+
+  // ffmpeg 4.3 (production) writes `:80` into the proxy request line for
+  // an http URL without a port, which the proxy would read as "TLS to
+  // port 80". The integration tests cannot catch that: their upstreams
+  // listen on ephemeral ports, so every URL there has a port already.
+  it("never emits a port-less marker URL", () => {
+    for (const url of [
+      "https://rr3---sn-abc.googlevideo.com/videoplayback?expire=1&sig=a%3D%3D",
+      "https://user:pw@cdn.example.com/a.mp3",
+      "https://cdn.example.com:443/a.mp3",
+    ]) {
+      const encoded = toProxyUrl(url);
+      assert.ok(encoded);
+      assert.match(encoded, /\.karyl-tls\.invalid:443\//, url);
+    }
   });
 
   it("leaves http as is and refuses what it cannot encode", () => {
@@ -413,7 +429,7 @@ describe("media proxy", () => {
     assert.equal(
       r.body,
       "﻿#EXTM3U\r\n" +
-        `#EXT-X-KEY:METHOD=AES-128,URI="http://keys.example.com.karyl-tls.invalid/k?id=1",IV=0x1\r\n` +
+        `#EXT-X-KEY:METHOD=AES-128,URI="http://keys.example.com.karyl-tls.invalid:443/k?id=1",IV=0x1\r\n` +
         `#EXT-X-MAP:URI="init.mp4"\r\n` +
         "#EXTINF:2.0,\r\n" +
         "http://cdn.example.com.karyl-tls.invalid:8443/seg1.ts\r\n" +
@@ -447,7 +463,7 @@ describe("media proxy", () => {
     assert.deepEqual(res.subarray(0, 84), id3Tag(64, true));
     assert.equal(
       res.subarray(84).toString("utf8"),
-      "#EXTM3U\nhttp://cdn.example.com.karyl-tls.invalid/a.ts\n",
+      "#EXTM3U\nhttp://cdn.example.com.karyl-tls.invalid:443/a.ts\n",
     );
   });
 

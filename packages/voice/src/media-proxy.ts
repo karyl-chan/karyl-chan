@@ -72,10 +72,14 @@ export const TLS_MARKER_SUFFIX = ".karyl-tls.invalid";
 /**
  * The URL ffmpeg should open for a real media URL:
  *   - `http://…` unchanged;
- *   - `https://host[:port]/path?q` → `http://host.karyl-tls.invalid[:port]/path?q`
- *     — a non-default port is carried explicitly (`https://h:80/` keeps
- *     `:80`; the proxy reads the authority verbatim, so an encoded URL
- *     without a port means 443). Userinfo is kept; the fragment dropped.
+ *   - `https://host[:port]/path?q` → `http://host.karyl-tls.invalid:port/path?q`
+ *     — the port is ALWAYS explicit (`:443` when the https URL has none).
+ *     ffmpeg 4.3 (production) rebuilds the proxy request line from host
+ *     and port and writes the http default, `:80`, when the URL carries
+ *     no port, so a port-less encoded URL would reach the proxy as "TLS
+ *     to port 80" and fail the handshake; newer ffmpeg sends the URL
+ *     verbatim. An explicit port reads the same from both. Userinfo is
+ *     kept; the fragment dropped.
  *
  * Returns null for what cannot be encoded (another scheme, an IPv6
  * literal host): such a URL is left as is by the playlist / Location
@@ -94,8 +98,8 @@ export function toProxyUrl(url: URL | string): string | null {
   if (u.protocol === "http:") return u.href.replace(/#.*$/, "");
   if (u.protocol !== "https:") return null;
   if (u.hostname.startsWith("[")) return null;
-  const port = u.port ? `:${u.port}` : "";
-  return `http://${auth}${u.hostname}${TLS_MARKER_SUFFIX}${port}${u.pathname}${u.search}`;
+  const port = u.port || String(defaultPortFor("https:"));
+  return `http://${auth}${u.hostname}${TLS_MARKER_SUFFIX}:${port}${u.pathname}${u.search}`;
 }
 
 /** Where a proxied request really goes. */
@@ -113,7 +117,9 @@ interface UpstreamTarget {
 /**
  * Decode an absolute-form request target (`http://authority/path`).
  * The authority is read verbatim (not through WHATWG URL, which would
- * drop a `:80` that means "https on port 80" for a marker host). Null
+ * drop a `:80` that means "https on port 80" for a marker host). A
+ * marker host without a port is read as 443, but `toProxyUrl` never
+ * emits one (see there: ffmpeg 4.3 would turn it into `:80`). Null
  * for anything else: origin-form, another scheme, userinfo (ffmpeg
  * never puts userinfo in the request line — it rebuilds it from host
  * and port and sends credentials as an Authorization header, which is
