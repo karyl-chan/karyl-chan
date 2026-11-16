@@ -115,6 +115,10 @@ WORKDIR /usr/src/app
 # manager spawns it from PATH. bullseye ships ffmpeg 4.3, which covers all
 # opus codec paths the bot uses. --no-install-recommends keeps the
 # image slim (~80MB vs 200MB).
+# 4.3 differs from current ffmpeg where the media proxy depends on it: it
+# writes `:80` into a proxied request line whose URL has no port, so
+# @karyl-chan/voice's toProxyUrl always emits an explicit port. Test
+# media-proxy changes against this ffmpeg, not a newer local one.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*
