@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.1](https://github.com/karyl-chan/karyl-chan/compare/bot-v2.0.0...bot-v2.0.1) (2026-11-16)
+
+
+### Bug Fixes
+
+* **bot:** keep the service login link within Discord's 512 characters ([f63caa4](https://github.com/karyl-chan/karyl-chan/commit/f63caa46caafbfac0387d808fc2d2fee10876605))
+* **bot:** keep the service login link within Discord's 512 characters ([26b6264](https://github.com/karyl-chan/karyl-chan/commit/26b62641ffffc93f6fcd37c89818cf1065f2840c))
+
 ## [2.0.0](https://github.com/karyl-chan/karyl-chan/compare/bot-v1.13.0...bot-v2.0.0) (2026-11-13)
 
 
