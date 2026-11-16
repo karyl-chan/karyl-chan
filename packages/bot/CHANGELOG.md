@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.2](https://github.com/karyl-chan/karyl-chan/compare/bot-v2.0.1...bot-v2.0.2) (2026-11-16)
+
+
+### Bug Fixes
+
+* **bot:** play https media (YouTube) on ffmpeg 4.3 again ([63fee90](https://github.com/karyl-chan/karyl-chan/commit/63fee90c34a9665c46449dd845287c61fec8ddba))
+* **bot:** play https media (YouTube) on ffmpeg 4.3 again ([9acd95b](https://github.com/karyl-chan/karyl-chan/commit/9acd95b920f729b6c83e4558cddfa9b6e924af7f))
+
 ## [2.0.1](https://github.com/karyl-chan/karyl-chan/compare/bot-v2.0.0...bot-v2.0.1) (2026-11-16)
 
 
