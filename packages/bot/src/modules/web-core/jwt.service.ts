@@ -4,7 +4,7 @@ import {
   createPublicKey,
   generateKeyPairSync,
   hkdfSync,
-  randomUUID,
+  randomBytes,
   sign as cryptoSign,
   verify as cryptoVerify,
   type KeyObject,
@@ -125,14 +125,14 @@ export interface SignOptions {
   now?: number;
 }
 
-/** What a service token says about the user, and for which service. */
+/**
+ * What a service token says: who logged in, and for which service. Nothing
+ * else — the token travels in a Discord link button, whose URL is capped at
+ * 512 characters.
+ */
 export interface ServiceTokenClaims {
   /** Discord user id. */
   sub: string;
-  /** Display name. */
-  name: string;
-  /** Avatar URL, or null when the user has none. */
-  avatar: string | null;
   /** The service's audience. */
   aud: string;
   /** The bot's public base URL. */
@@ -271,7 +271,7 @@ export class JwtService {
 
   /**
    * Sign a service token: header `{alg: EdDSA, typ: karyl-service+jwt,
-   * kid}`, the claims plus a fresh `jti`, `iat` and `exp = iat + 120`.
+   * kid}`, the claims plus a fresh `jti` and `exp` 120 s from now.
    * The bot never verifies these itself — the service does, against the
    * JWKS — and karyl does not track `jti`: rejecting a reused one is the
    * service's job.
@@ -280,24 +280,20 @@ export class JwtService {
     claims: ServiceTokenClaims,
     options: { now?: number } = {},
   ): SignedServiceToken {
-    for (const field of ["sub", "name", "aud", "iss"] as const) {
+    for (const field of ["sub", "aud", "iss"] as const) {
       if (typeof claims[field] !== "string" || !claims[field]) {
         throw new Error(`service token ${field} is required`);
       }
     }
-    const iat = Math.floor((options.now ?? Date.now()) / 1000);
-    const exp = iat + SERVICE_TOKEN_TTL_SECONDS;
-    const jti = randomUUID();
+    const exp = Math.floor((options.now ?? Date.now()) / 1000) + SERVICE_TOKEN_TTL_SECONDS;
+    const jti = randomBytes(16).toString("base64url");
     const token = this.signSegments(
       { alg: "EdDSA", typ: SERVICE_TOKEN_TYP, kid: this.keyId() },
       {
         sub: claims.sub,
-        name: claims.name,
-        avatar: claims.avatar,
         aud: claims.aud,
         iss: claims.iss,
         jti,
-        iat,
         exp,
       },
       this.privateKey,

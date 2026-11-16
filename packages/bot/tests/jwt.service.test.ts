@@ -275,8 +275,6 @@ describe("JwtService (Ed25519)", () => {
   describe("service tokens (#126)", () => {
     const serviceClaims = {
       sub: "user-1",
-      name: "Karyl",
-      avatar: null,
       aud: "wiki",
       iss: "https://karyl.example",
     };
@@ -349,14 +347,13 @@ describe("JwtService (Ed25519)", () => {
       const now = 1_700_000_000_000;
       const { token, expiresAt } = svc.signService(serviceClaims, { now });
       const body = segment(token, 1);
-      expect(body.iat).toBe(1_700_000_000);
       expect(body.exp).toBe(1_700_000_120);
       expect(expiresAt).toBe(1_700_000_120_000);
     });
 
-    it("refuse to sign without sub, name, aud or iss", () => {
+    it("refuse to sign without sub, aud or iss", () => {
       const svc = new JwtService(newKey());
-      for (const field of ["sub", "name", "aud", "iss"] as const) {
+      for (const field of ["sub", "aud", "iss"] as const) {
         expect(() => svc.signService({ ...serviceClaims, [field]: "" })).toThrow(
           new RegExp(field),
         );

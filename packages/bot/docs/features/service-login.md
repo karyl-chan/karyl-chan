@@ -34,7 +34,7 @@ logs in there), add a service:
 |-------|------------|
 | Name | Shown in the login reply ("登入 *name*"). |
 | Audience | The token's `aud`: a lower-case slug (`a-z`, `0-9`, `-`, at most 64), unique across services. Your service checks it. |
-| Redirect URL | Where the link goes. Must be `https`, without credentials and without a `token` parameter of its own. |
+| Redirect URL | Where the link goes. Must be `https`, without credentials and without a `token` parameter of its own. Keep it short: the whole link — this URL plus the token — must fit Discord's 512 characters for a link button, and a service whose link would not fit is refused. |
 
 Adding a service also adds its **Service Behavior**: a bot DM message
 trigger on exactly `!login-<audience>`. It is listed on the behaviors page
@@ -79,13 +79,14 @@ Claims:
 | Claim | Value |
 |-------|-------|
 | `sub` | The user's Discord id (a snowflake, as a string). |
-| `name` | Their display name (global name, else username). |
-| `avatar` | Their avatar URL, or `null` when they have none. |
 | `aud` | The service's audience. |
 | `iss` | The bot's public base URL (`WEB_BASE_URL`, no trailing slash). |
 | `jti` | A random id, unique per token. |
-| `iat` | Issued at (seconds). |
-| `exp` | `iat` + 120. |
+| `exp` | Expiry (seconds): 120 after it was issued. |
+
+That is all it carries. The token only says who logged in; it has to fit in
+a Discord link button. A service that shows a name or an avatar keeps its own,
+keyed by `sub`.
 
 ## Verifying the token
 
@@ -146,7 +147,7 @@ export async function verifyKarylToken(token) {
   for (const [jti, exp] of seen) if (exp < now) seen.delete(jti);
   if (seen.has(payload.jti)) throw new Error("token already used");
   seen.set(payload.jti, payload.exp * 1000);
-  return { id: payload.sub, name: payload.name, avatar: payload.avatar };
+  return { id: payload.sub };
 }
 ```
 

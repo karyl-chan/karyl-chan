@@ -36,6 +36,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { UniqueConstraintError, type Transaction } from "sequelize";
 import { requireOwner } from "../web-core/route-guards.js";
+import { LOGIN_LINK_MAX_LENGTH, longestServiceLoginLink } from "../web-core/service-token.js";
 import { BehaviorApiError, NON_BLANK_PATTERN } from "./behavior-api-error.js";
 import { auditBehaviorWrite } from "./behavior-audit.js";
 import {
@@ -188,6 +189,20 @@ export function checkRedirectUrl(raw: string): void {
   }
 }
 
+/**
+ * The login link is a Discord link button, whose URL is capped: a service
+ * whose link could not be sent is refused here rather than at every login.
+ */
+export function checkLoginLinkFits(redirectUrl: string, audience: string): void {
+  const length = longestServiceLoginLink(redirectUrl, audience);
+  if (length > LOGIN_LINK_MAX_LENGTH) {
+    refuse(
+      "redirectUrl",
+      `redirectUrl is too long: the login link would be ${length} characters and Discord allows ${LOGIN_LINK_MAX_LENGTH}; shorten the redirect URL or the audience`,
+    );
+  }
+}
+
 function audienceTaken(audience: string): BehaviorApiError {
   return new BehaviorApiError(
     "name_conflict",
@@ -292,6 +307,7 @@ export function registerServiceRoutes(server: FastifyInstance, deps: ServiceRout
     async (request, reply) => {
       const body = trimmedName(request.body as ServiceInput);
       checkRedirectUrl(body.redirectUrl);
+      checkLoginLinkFits(body.redirectUrl, body.audience);
       const pattern = defaultServicePattern(body.audience);
 
       const ids = await withBehaviorWriteLock(async () => {
@@ -364,6 +380,7 @@ export function registerServiceRoutes(server: FastifyInstance, deps: ServiceRout
           redirectUrl: body.redirectUrl ?? before.redirectUrl,
         };
 
+        checkLoginLinkFits(after.redirectUrl, after.audience);
         if (after.audience !== before.audience) await refuseTakenAudience(after.audience, id);
 
         // a message trigger still on the old default follows the audience

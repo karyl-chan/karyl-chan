@@ -3,7 +3,7 @@
  *
  * A Service Behavior's action (#126): log whoever triggered it in to the
  * service. A Service Token is minted for them (service-token.ts: `sub`,
- * `name`, `avatar`, `aud` = the service's audience, 120 s, one `jti`) and
+ * `aud` = the service's audience, 120 s, one `jti`) and
  * the reply — a RenderableReply, delivered by the ReplyRenderer like the
  * login's — is an embed and a link button to the service's redirect URL
  * with the token as its `token` parameter. The URL is only the button's
@@ -18,11 +18,10 @@
  * vouches for whoever reached it, and the service decides what they may do.
  */
 
-import type { User } from "discord.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import { moduleLogger } from "../../logger.js";
 import { serviceBehaviorTitle, type ServiceRow } from "../behavior/models/service.model.js";
-import { mintServiceToken, type ServiceTokenUser } from "../web-core/service-token.js";
+import { mintServiceToken, serviceLoginLink } from "../web-core/service-token.js";
 import { SERVICE_TOKEN_TTL_SECONDS } from "../web-core/jwt.service.js";
 import type { RenderableReply } from "./reply-files.js";
 import { renderFailure, renderReply, type ReplyTarget } from "./reply-renderer.js";
@@ -32,26 +31,6 @@ const log = moduleLogger("service-login");
 /** What the action needs of a service. */
 export type ServiceLoginTarget = Pick<ServiceRow, "name" | "audience" | "redirectUrl">;
 
-/** The user a token vouches for, as Discord shows them. */
-export function serviceTokenUserOf(
-  user: Pick<User, "id" | "username"> & {
-    globalName?: string | null;
-    avatarURL?: () => string | null;
-  },
-): ServiceTokenUser {
-  return {
-    id: user.id,
-    name: user.globalName ?? user.username,
-    avatar: user.avatarURL?.() ?? null,
-  };
-}
-
-/** The redirect URL with the token as its `token` parameter. */
-export function serviceLoginLink(redirectUrl: string, token: string): string {
-  const url = new URL(redirectUrl);
-  url.searchParams.set("token", token);
-  return url.toString();
-}
 
 export function serviceLoginReply(service: ServiceLoginTarget, link: string): RenderableReply {
   return {
@@ -80,7 +59,7 @@ export async function runServiceLoginAction(
 ): Promise<void> {
   const user = target.kind === "interaction" ? target.interaction.user : target.message.author;
   try {
-    const { token, jti } = mintServiceToken(serviceTokenUserOf(user), service.audience);
+    const { token, jti } = mintServiceToken(user.id, service.audience);
     const rendered = await renderReply(
       serviceLoginReply(service, serviceLoginLink(service.redirectUrl, token)),
       target,
