@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.1.0](https://github.com/karyl-chan/karyl-chan/compare/bot-v2.0.2...bot-v2.1.0) (2026-11-18)
+
+
+### Features
+
+* **bot:** forward WebSocket upgrades through the plugin proxy ([f95b292](https://github.com/karyl-chan/karyl-chan/commit/f95b2922088750168a67b91ffe2b35cf047e22c8))
+* **bot:** forward WebSocket upgrades through the plugin proxy ([51a1a1a](https://github.com/karyl-chan/karyl-chan/commit/51a1a1a2a392755dded6c5d0ad2aadac36cf88ae))
+
+
+### Bug Fixes
+
+* **bot:** release refused and aborted plugin WebSocket sockets ([3ac1fa9](https://github.com/karyl-chan/karyl-chan/commit/3ac1fa9bab571a9e12ad5934d6fc900df7d486b4)), closes [#272](https://github.com/karyl-chan/karyl-chan/issues/272)
+
 ## [2.0.2](https://github.com/karyl-chan/karyl-chan/compare/bot-v2.0.1...bot-v2.0.2) (2026-11-16)
 
 
