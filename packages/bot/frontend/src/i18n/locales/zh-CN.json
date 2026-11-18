@@ -1237,6 +1237,17 @@
             "placeholder": "选择对象",
             "new": "＋ 新增对象…"
         },
+        "userPicker": {
+            "source": {
+                "id": "输入 ID",
+                "dm": "私信过 bot 的人",
+                "guild": "服务器成员"
+            },
+            "idPlaceholder": "Discord 用户 ID",
+            "filterPlaceholder": "搜索名称",
+            "memberPlaceholder": "搜索成员名称",
+            "empty": "没有符合的用户。"
+        },
         "workspace": {
             "loadError": "无法加载行为：{error}",
             "empty": "这里还没有行为。",
@@ -1674,8 +1685,9 @@
             "ruleList": "只有这些用户与这些群组的成员。",
             "userPlaceholder": "用户 ID",
             "addUser": "添加用户",
-            "groupPlaceholder": "behavior 群组名称",
+            "groupPlaceholder": "选择群组",
             "addGroup": "添加群组",
+            "editGroup": "编辑成员",
             "remove": "移除 {name}",
             "badUserId": "用户 ID 是 17–20 位数字。",
             "logTitle": "最近的私信",

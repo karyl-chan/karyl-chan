@@ -1,5 +1,5 @@
 import { computed, inject, provide, type InjectionKey, type Ref } from 'vue';
-import type { BehaviorTargetView } from '../../../api/behavior';
+import type { BehaviorTargetKey, BehaviorTargetView } from '../../../api/behavior';
 import { NO_NAMES, type TargetNames } from './target-labels';
 
 /**
@@ -15,6 +15,8 @@ export interface TargetDirectory {
      * without moving the page away from the form's unsaved draft.
      */
     created: (target: BehaviorTargetView) => Promise<void> | void;
+    /** Go to a target's page (a group's, to edit its members); asks before dropping unsaved drafts. */
+    open?: (key: BehaviorTargetKey) => Promise<void> | void;
 }
 
 export const TARGET_DIRECTORY: InjectionKey<TargetDirectory> = Symbol('behavior-target-directory');

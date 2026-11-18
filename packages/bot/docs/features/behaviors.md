@@ -699,6 +699,17 @@ grant: per-section or per-behavior capabilities do not exist.
   offers the targets in DMs with the bot only, and shows the members of
   the group it is set to. A command has no such select: its target
   follows from its visibility settings.
+- A user — a new user target, a group's member, an entry of a DM
+  allowlist — is found three ways: by typing the id (the name and avatar
+  show once it is complete), from the people who have DMed the bot, or
+  by searching a server's members by name. The two lists reuse the
+  existing DM and guild member routes, so each shows only to an admin who
+  may call it: `dm.message` for the first, that server's
+  `guild:<id>.manage` (or `guild.manage`) for the second. With
+  `behavior.manage` alone a user is entered by id.
+- A DM allowlist's groups are picked from the group targets. A listed
+  group shows its members read-only, with a link to the group's own page,
+  where they are edited.
 - Each card edits a draft. Saving sends only what changed, and refuses
   when the behavior changed on the server since the page loaded; the card
   then shows the conflict. The page warns before leaving with unsaved

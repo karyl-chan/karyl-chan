@@ -2,8 +2,9 @@
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@iconify/vue';
-import { AppButton, AppTextField } from '@karyl-chan/ui';
+import { AppButton } from '@karyl-chan/ui';
 import { getGroupMembers, replaceGroupMembers } from '../../../api/behavior';
+import UserPicker from '../../../components/UserPicker.vue';
 import { useUserSummaries } from '../../../composables/use-user-summaries';
 import { describeBehaviorError } from './behavior-errors';
 
@@ -105,12 +106,12 @@ async function add() {
 
         <!-- not a <form>: the panel sits inside the card's editor form -->
         <div v-if="!readonly" class="add">
-            <AppTextField
+            <UserPicker
                 v-model="newUserId"
+                class="picker"
                 :placeholder="t('behaviors.group.addPlaceholder')"
-                inputmode="numeric"
-                :maxlength="20"
-                @keydown.enter.prevent="add"
+                :disabled="saving"
+                @submit="add"
             />
             <AppButton type="button" size="sm" data-test="add-member" variant="secondary" icon="material-symbols:person-add-outline-rounded" :disabled="saving || !newUserId.trim()" @click="add">
                 {{ t('behaviors.group.add') }}
@@ -174,6 +175,6 @@ async function add() {
     align-items: flex-start;
     gap: 0.4rem;
 }
-.add :deep(.app-field) { flex: 1; }
+.add .picker { flex: 1; }
 .error { margin: 0; font-size: 0.78rem; color: var(--danger); }
 </style>

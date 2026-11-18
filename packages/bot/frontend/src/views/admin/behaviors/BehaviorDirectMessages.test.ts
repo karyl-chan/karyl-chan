@@ -1,8 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { flushPromises, mount } from '@vue/test-utils';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { computed } from 'vue';
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import type { BehaviorDmLogEntry } from '../../../api/behavior';
-import { keyI18n } from './behavior-test-support';
+import { BUILTIN_TARGETS, createdTarget, keyI18n, stubMatchMedia } from './behavior-test-support';
+import { TARGET_DIRECTORY, type TargetDirectory } from './target-directory';
+import { NO_NAMES } from './target-labels';
 
 const api = vi.hoisted(() => ({
     getBehaviorDmAllowlist: vi.fn(),
@@ -23,8 +26,37 @@ function entry(overrides: Partial<BehaviorDmLogEntry> = {}): BehaviorDmLogEntry 
     return { id: 1, recipientUserId: A, triggererUserId: B, outcome: 'sent', at: new Date().toISOString(), ...overrides };
 }
 
+beforeAll(stubMatchMedia);
+
+// attached to <body> (the group select teleports its options there): take each one down again
+const mounted: VueWrapper[] = [];
+afterEach(() => mounted.splice(0).forEach((w) => w.unmount()));
+
+const openTarget = vi.fn();
+/** The group targets the page lists: the allowlist's group select offers them. */
+const directory: TargetDirectory = {
+    targets: computed(() => [...BUILTIN_TARGETS, createdTarget('group:ops'), createdTarget('group:vip')]),
+    names: computed(() => NO_NAMES),
+    created: () => undefined,
+    open: openTarget,
+};
+
 function mountSection() {
-    return mount(BehaviorDirectMessages, { props: { behaviorId: 7 }, global: { plugins: [keyI18n()] } });
+    const wrapper = mount(BehaviorDirectMessages, {
+        props: { behaviorId: 7 },
+        global: { plugins: [keyI18n()], provide: { [TARGET_DIRECTORY as symbol]: directory } },
+        attachTo: document.body,
+    });
+    mounted.push(wrapper);
+    return wrapper;
+}
+
+/** Pick a group in the allowlist's group select (its options are teleported). */
+async function chooseGroup(wrapper: ReturnType<typeof mountSection>, name: string) {
+    await wrapper.get('[data-test="dm-group-input"] button.select-trigger').trigger('click');
+    await flushPromises();
+    [...document.querySelectorAll<HTMLElement>('li')].find((li) => li.textContent?.trim() === name)!.click();
+    await flushPromises();
 }
 
 async function expand(wrapper: ReturnType<typeof mountSection>) {
@@ -97,7 +129,7 @@ describe('BehaviorDirectMessages', () => {
         const wrapper = mountSection();
         await expand(wrapper);
 
-        await wrapper.get('[data-test="dm-group-input"] input').setValue(' ops ');
+        await chooseGroup(wrapper, 'ops');
         await wrapper.get('[data-test="dm-add-group"]').trigger('click');
         await flushPromises();
         expect(api.replaceBehaviorDmAllowlist).toHaveBeenLastCalledWith(7, { userIds: [A], groupNames: ['ops'] });
@@ -107,6 +139,34 @@ describe('BehaviorDirectMessages', () => {
         await flushPromises();
         expect(api.replaceBehaviorDmAllowlist).toHaveBeenLastCalledWith(7, { userIds: [A], groupNames: [] });
         expect(wrapper.find('[data-test="dm-group"]').exists()).toBe(false);
+    });
+
+    it('offers the group targets not on the list yet', async () => {
+        api.getBehaviorDmAllowlist.mockResolvedValue({ userIds: [], groupNames: ['ops'] });
+        const wrapper = mountSection();
+        await expand(wrapper);
+
+        await wrapper.get('[data-test="dm-group-input"] button.select-trigger').trigger('click');
+        await flushPromises();
+        // the select's options, not the list's own chips
+        const options = [...document.querySelectorAll<HTMLElement>('li:not(.chip)')].map((li) => li.textContent?.trim());
+        expect(options).toContain('vip');
+        expect(options).not.toContain('ops');
+    });
+
+    it('shows a listed group’s members read-only, with a way to the group’s own page', async () => {
+        api.getBehaviorDmAllowlist.mockResolvedValue({ userIds: [], groupNames: ['ops'] });
+        api.getGroupMembers.mockResolvedValue({ groupName: 'ops', members: [A] });
+        const wrapper = mountSection();
+        await expand(wrapper);
+
+        expect(wrapper.find('.listed-group .chip').exists()).toBe(true);
+        expect(wrapper.find('[data-test="add-member"]').exists()).toBe(false);
+        expect(wrapper.find('.listed-group .chip-remove').exists()).toBe(false);
+
+        openTarget.mockClear();
+        await wrapper.get('[data-test="dm-edit-group"]').trigger('click');
+        expect(openTarget).toHaveBeenCalledWith('group:ops');
     });
 
     it('lists the log: outcome, recipient and triggerer per row', async () => {

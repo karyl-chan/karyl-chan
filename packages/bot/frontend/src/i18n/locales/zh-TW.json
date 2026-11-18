@@ -1237,6 +1237,17 @@
             "placeholder": "選擇對象",
             "new": "＋ 新增對象…"
         },
+        "userPicker": {
+            "source": {
+                "id": "輸入 ID",
+                "dm": "私訊過 bot 的人",
+                "guild": "伺服器成員"
+            },
+            "idPlaceholder": "Discord 使用者 ID",
+            "filterPlaceholder": "搜尋名稱",
+            "memberPlaceholder": "搜尋成員名稱",
+            "empty": "沒有符合的使用者。"
+        },
         "workspace": {
             "loadError": "無法載入行為：{error}",
             "empty": "這裡還沒有行為。",
@@ -1674,8 +1685,9 @@
             "ruleList": "只有這些使用者與這些群組的成員。",
             "userPlaceholder": "使用者 ID",
             "addUser": "加入使用者",
-            "groupPlaceholder": "behavior 群組名稱",
+            "groupPlaceholder": "選擇群組",
             "addGroup": "加入群組",
+            "editGroup": "編輯成員",
             "remove": "移除 {name}",
             "badUserId": "使用者 ID 是 17–20 位數字。",
             "logTitle": "最近的私訊",

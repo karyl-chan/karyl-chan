@@ -6,6 +6,8 @@ import type { BehaviorTargetView } from '../../../api/behavior';
 
 const api = vi.hoisted(() => ({ createBehaviorTarget: vi.fn(), getBehaviorSchemas: vi.fn() }));
 vi.mock('../../../api/behavior', () => api);
+// the user picker looks a typed id up to show whose it is
+vi.mock('../../../api/discord', () => ({ fetchUserSummaries: vi.fn(async () => ({})) }));
 vi.mock('../../../api/guilds', () => ({ listGuilds: vi.fn(async () => []), listGuildTextChannels: vi.fn(async () => []) }));
 
 import CreateTargetDialog from './CreateTargetDialog.vue';
