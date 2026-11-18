@@ -77,7 +77,6 @@ import {
   type BehaviorAudienceKind,
   type BehaviorPatternKind,
 } from "./models/behavior-definition.model.js";
-import { pruneUnusedGroupMembers } from "./models/behavior-group-member.model.js";
 
 /** What the switch needs of the CommandReconciler (injected, as for command writes). */
 export type FixedTriggerRegistrar = Pick<
@@ -223,8 +222,6 @@ async function storeCommandTrigger(
   const row = await BehaviorDefinition.findByPk(current.row.id, { transaction });
   row!.set(leafColumnsOf(command.getDataValue("id") as number));
   await row!.save({ transaction });
-  // a message trigger's audience group may have lost its last user
-  await pruneUnusedGroupMembers(transaction);
 }
 
 async function switchToCommand(
@@ -287,10 +284,6 @@ async function switchToMessage(
     await row!.save({ transaction });
     if (current.command) {
       await BehaviorCommand.destroy({ where: { id: current.command.id }, transaction });
-    }
-    // the last trigger leaving a group takes its member list along (#137)
-    if (current.row.audienceGroupName !== next.audienceGroupName) {
-      await pruneUnusedGroupMembers(transaction);
     }
   });
   if (!current.command) return null;

@@ -1357,9 +1357,7 @@
             "remove": "Remove {user}",
             "addPlaceholder": "Discord user ID",
             "add": "Add",
-            "saveFirst": "Once saved, you can set the group’s members.",
-            "dropOnSave": "Once saved, no behavior uses the group “{group}” any more, so its list of {count} members is deleted with it.",
-            "dropOnDelete": "It is the only behavior using the group “{group}”, so that group's list of {count} members is deleted too."
+            "saveFirst": "Once saved, you can set the group’s members."
         },
         "action": {
             "title": "Forwarding",

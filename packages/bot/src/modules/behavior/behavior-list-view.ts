@@ -1,9 +1,11 @@
 /**
  * GET /api/behaviors 的回應形狀：BehaviorCatalog → admin UI 的唯讀視圖。
  *
- *   { system, services, commands, messageTriggers }
+ *   { system, services, commands, messageTriggers, targets }
  *
- * 每一項帶推導出的 Behavior Section（behaviorSection，唯一的推導規則）。
+ * 每一項帶推導出的 Behavior Target（`target`，behavior-target.ts；指令的
+ * 對象就是它的分區）與 Behavior Section（`section`，舊 UI 的分組，改用
+ * `target` 的 UI 上線後移除）。`targets` 是對象名冊（behavior-target-view.ts）。
  * System Behavior 從所屬清單抽出放在 `system`，UI 把它釘在所屬分區最上方；
  * Service Behavior（#126）同樣抽出放在 `services`（一個訊息觸發或它的
  * 指令，帶它的服務），UI 在所屬分區的「服務」群組列出。
@@ -17,6 +19,8 @@ import type {
   DiscordIntegrationType,
 } from "../command-system/types.js";
 import { behaviorSection, type BehaviorSection } from "./behavior-section.js";
+import { messageTriggerTarget, type BehaviorTargetKey } from "./behavior-target.js";
+import type { BehaviorTargetView } from "./behavior-target-view.js";
 import type {
   BehaviorCatalog,
   CatalogBehavior,
@@ -95,6 +99,8 @@ export interface CommandView {
   contexts: DiscordContext[];
   defaultMemberPermissions: string | null;
   isSystem: boolean;
+  /** The Behavior Target it belongs to — for a command, its section. */
+  target: BehaviorTargetKey;
   section: BehaviorSection;
   /** ISO time of the last write to the command row */
   updatedAt: string;
@@ -113,6 +119,8 @@ export interface MessageTriggerView extends BehaviorViewBase {
   audienceKind: BehaviorAudienceKind;
   audienceUserId: string | null;
   audienceGroupName: string | null;
+  /** The Behavior Target it belongs to: its location, or its user / group in bot DMs. */
+  target: BehaviorTargetKey;
   section: BehaviorSection;
 }
 
@@ -137,6 +145,8 @@ export interface BehaviorListView {
   services: ServiceBehaviorView[];
   commands: CommandView[];
   messageTriggers: MessageTriggerView[];
+  /** The target directory: the built-in targets, then the created ones. */
+  targets: BehaviorTargetView[];
 }
 
 function webhookView(behavior: CatalogBehavior): WebhookActionView | null {
@@ -190,6 +200,13 @@ export function commandView(
 ): CommandView {
   const integrationTypes = parseIntegrationTypes(c.integrationTypes);
   const contexts = parseContexts(c.contexts);
+  const section = behaviorSection({
+    kind: "command",
+    registration: c.registration,
+    guildId: c.guildId,
+    integrationTypes,
+    contexts,
+  });
   return {
     kind: "command",
     id: c.id,
@@ -201,13 +218,8 @@ export function commandView(
     contexts,
     defaultMemberPermissions: c.defaultMemberPermissions,
     isSystem: c.isSystem,
-    section: behaviorSection({
-      kind: "command",
-      registration: c.registration,
-      guildId: c.guildId,
-      integrationTypes,
-      contexts,
-    }),
+    target: section,
+    section,
     updatedAt: c.updatedAt.toISOString(),
     leaves: c.leaves.map((leaf) => ({
       ...baseView(leaf, stats),
@@ -236,6 +248,7 @@ export function messageTriggerView(
     audienceKind: b.audienceKind,
     audienceUserId: b.audienceUserId,
     audienceGroupName: b.audienceGroupName,
+    target: messageTriggerTarget({ ...b, surface }),
     section: behaviorSection({
       kind: "message",
       surface,
@@ -259,6 +272,7 @@ export function serviceBehaviorView(
 export function buildBehaviorListView(
   catalog: BehaviorCatalog,
   stats: ReadonlyMap<number, BehaviorStatRow>,
+  targets: BehaviorTargetView[] = [],
 ): BehaviorListView {
   let system: CommandView | MessageTriggerView | null = null;
   const services: ServiceBehaviorView[] = [];
@@ -288,5 +302,5 @@ export function buildBehaviorListView(
     else messageTriggers.push(view);
   }
   services.sort((a, b) => a.service.id - b.service.id);
-  return { system, services, commands, messageTriggers };
+  return { system, services, commands, messageTriggers, targets };
 }

@@ -5,7 +5,8 @@
  *
  * Actions are `behavior.<thing>.<verb>`; targets name the row
  * (`behavior:<id>`, `command:<id>`, `group:<name>`, `location:<key>` —
- * a Message Trigger Location, `service:<id>`).
+ * a Message Trigger Location, `service:<id>`, `target:<key>` — a Behavior
+ * Target).
  * Contexts carry what changed — never a webhook secret, never a webhook
  * URL in plaintext (a URL often embeds a token): see webhookAuditView.
  */
@@ -22,6 +23,8 @@ export type BehaviorAuditAction =
   | "behavior.webhook_secret.rotate"
   | "behavior.group_members.replace"
   | "behavior.dm_allowlist.replace"
+  | "behavior.target.create"
+  | "behavior.target.delete"
   | "behavior.command.create"
   | "behavior.command.update"
   | "behavior.command.delete"

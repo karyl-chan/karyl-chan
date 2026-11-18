@@ -70,7 +70,6 @@ import {
   type BehaviorAudienceKind,
   type BehaviorPatternKind,
 } from "./models/behavior-definition.model.js";
-import { pruneUnusedGroupMembers } from "./models/behavior-group-member.model.js";
 import { findStatsBulk } from "./models/behavior-stats.model.js";
 import {
   SERVICE_AUDIENCE_PATTERN,
@@ -429,8 +428,6 @@ export function registerServiceRoutes(server: FastifyInstance, deps: ServiceRout
           await BehaviorDefinition.destroy({ where: { serviceId: id }, transaction });
           if (command) await BehaviorCommand.destroy({ where: { id: command.id }, transaction });
           await Service.destroy({ where: { id }, transaction });
-          // its trigger may have been the last user of an audience group
-          await pruneUnusedGroupMembers(transaction);
         });
         // a command trigger leaves Discord too (deferred: the next full reconcile removes it)
         const registration = command

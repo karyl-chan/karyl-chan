@@ -196,17 +196,6 @@ describe('ServiceBehaviorCard', () => {
         expect(wrapper.find('[data-test="command-warning"]').text()).toBe('behaviors.service.commandNote');
     });
 
-    it("warns before a switch to a command drops the list of the group only it uses", async () => {
-        api.getGroupMembers.mockResolvedValue({ groupName: 'family', members: ['1', '2'] });
-        const wrapper = await mountOpen(
-            onMessage({ audienceKind: 'group', audienceGroupName: 'family' }),
-            new Map([['family', 1]]),
-        );
-        expect(wrapper.find('[data-test="group-drop"]').exists()).toBe(false);
-        await pickKind(wrapper, 'command');
-        expect(wrapper.find('[data-test="group-drop"]').text()).toContain('behaviors.group.dropOnSave');
-    });
-
     it("a non-owner sees the group's members but cannot change them", async () => {
         signInAs(false);
         api.getGroupMembers.mockResolvedValue({ groupName: 'family', members: ['1'] });

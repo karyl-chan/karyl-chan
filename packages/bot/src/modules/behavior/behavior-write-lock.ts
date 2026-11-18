@@ -11,6 +11,9 @@
  *     across processes, so the reads INSIDE one — "the last sortOrder,
  *     then insert after it", a reorder's read-modify-write — cannot
  *     interleave with another behavior write transaction.
+ *     Before it commits, every Behavior Target the write left in use is
+ *     registered (behavior-target-registry.ts), so no write path has to
+ *     remember the target directory.
  *
  * What neither covers across processes: the advisory lock ends with its
  * transaction, while the write lock exists per process. Checks made
@@ -26,6 +29,7 @@
 
 import type { Transaction } from "sequelize";
 import { dbDialect, sequelize } from "../../db.js";
+import { registerTargetsInUse } from "./behavior-target-registry.js";
 
 let tail: Promise<unknown> = Promise.resolve();
 
@@ -47,6 +51,8 @@ export function behaviorTransaction<T>(
         transaction,
       });
     }
-    return fn(transaction);
+    const result = await fn(transaction);
+    await registerTargetsInUse(transaction);
+    return result;
   });
 }

@@ -358,7 +358,7 @@ describe("message → a new command", () => {
     expect(globalCmds.create).not.toHaveBeenCalled();
   });
 
-  it("drops a DM trigger's audience group, and the list it alone used", async () => {
+  it("drops a DM trigger's audience group; the group keeps its members", async () => {
     const id = await seedConvertible({
       surface: "bot_dm",
       stopOnMatch: false,
@@ -372,7 +372,7 @@ describe("message → a new command", () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().behavior).toMatchObject({ id });
-    expect(await BehaviorGroupMember.count()).toBe(0);
+    expect(await BehaviorGroupMember.count()).toBe(1);
   });
 });
 

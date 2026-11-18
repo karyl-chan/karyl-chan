@@ -279,7 +279,7 @@ describe("PUT /api/services/:id", () => {
 });
 
 describe("DELETE /api/services/:id", () => {
-  it("removes the service, its behavior, and a group only it used", async () => {
+  it("removes the service and its behavior; a group only it used keeps its members", async () => {
     const service = await created();
     await switchTrigger(service.id, {
       kind: "message",
@@ -294,7 +294,8 @@ describe("DELETE /api/services/:id", () => {
     expect(res.statusCode).toBe(204);
     expect((await listView()).services).toEqual([]);
     expect(await BehaviorDefinition.count({ where: { actionSource: "service" } })).toBe(0);
-    expect(await BehaviorGroupMember.count()).toBe(0);
+    // the group is a target of its own now (ADR 0004): no longer owner-only, but not emptied
+    expect(await BehaviorGroupMember.count()).toBe(1);
     expect((await server.inject({ method: "DELETE", url: `/api/services/${service.id}` })).statusCode).toBe(404);
   });
 

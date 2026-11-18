@@ -46,7 +46,6 @@ import {
 } from "./models/behavior-definition.model.js";
 import { BehaviorWebhookAction } from "./models/behavior-webhook-action.model.js";
 import { destroyPluginActions } from "./models/behavior-plugin-action.model.js";
-import { pruneUnusedGroupMembers } from "./models/behavior-group-member.model.js";
 import { destroyDmAllowlists } from "./models/behavior-dm-allowlist.model.js";
 import { destroyDmLog } from "./behavior-dm-log.js";
 import { webhookInputSchema } from "./webhook-action-input.js";
@@ -277,7 +276,6 @@ export function registerBehaviorWriteRoutes(
           await BehaviorWebhookAction.destroy({ where: { behaviorId: id }, transaction });
           await destroyPluginActions(id, transaction);
           await BehaviorDefinition.destroy({ where: { id }, transaction });
-          await pruneUnusedGroupMembers(transaction);
         });
         return { audit: { kind: "message", title: current.title }, registration: null };
       });
@@ -316,10 +314,6 @@ async function patchMessageTrigger(
     model!.set(action ? { ...after, actionSource: action.source } : after);
     await model!.save({ transaction });
     if (action) await storeActionWrite(row.id, action, transaction);
-    // the last trigger leaving a group takes its member list along (#137)
-    if (after.audienceGroupName !== before.audienceGroupName) {
-      await pruneUnusedGroupMembers(transaction);
-    }
   });
 
   return {

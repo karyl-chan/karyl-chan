@@ -115,7 +115,6 @@ import {
   type BehaviorAudienceKind,
   type ReplyVisibility,
 } from "./models/behavior-definition.model.js";
-import { pruneUnusedGroupMembers } from "./models/behavior-group-member.model.js";
 import type { SystemLoginRegistrar } from "./system-login-trigger-route.js";
 
 export interface TriggerConvertDeps {
@@ -401,8 +400,6 @@ async function storeAsLeaf(
   const model = await BehaviorDefinition.findByPk(row.id, { transaction });
   model!.set(targetLeafColumnsOf(commandId, target, replyVisibility));
   await model!.save({ transaction });
-  // the last trigger leaving a group takes its member list along (#137)
-  if (row.audienceGroupName !== null) await pruneUnusedGroupMembers(transaction);
   return commandId;
 }
 

@@ -1357,9 +1357,7 @@
             "remove": "移除 {user}",
             "addPlaceholder": "Discord 使用者 ID",
             "add": "加入",
-            "saveFirst": "儲存後就能設定這個群組的成員。",
-            "dropOnSave": "儲存後沒有其他行為使用群組「{group}」，它的 {count} 位成員名單會一起被清除。",
-            "dropOnDelete": "它是群組「{group}」唯一的使用者，這個群組的 {count} 位成員名單也會一起被清除。"
+            "saveFirst": "儲存後就能設定這個群組的成員。"
         },
         "action": {
             "title": "轉發設定",

@@ -32,7 +32,6 @@ import {
 import { draftLocation, messageTriggerDraftModel } from './message-trigger-draft';
 import { locationKey } from './message-trigger-location';
 import { sectionLabel } from './section-labels';
-import { draftLeavesGroup, useSoleGroup } from './use-sole-group';
 import { useDraftForm } from './use-draft-form';
 
 /**
@@ -166,29 +165,10 @@ async function testFire() {
     await tester.value?.run();
 }
 
-// ── the sole user of a group: its member list goes with it ─────────────────
-
-const soleGroup = useSoleGroup(base, () => props.groupUse, open);
-
-const groupDropWarning = computed(() => {
-    const group = soleGroup.group.value;
-    const count = soleGroup.members.value ?? 0;
-    return group && count > 0 && draftLeavesGroup(group, draft.value)
-        ? t('behaviors.group.dropOnSave', { group, count })
-        : '';
-});
-
 async function remove() {
-    const group = soleGroup.group.value;
-    const count = await soleGroup.load();
     const ok = await confirm({
         title: t('behaviors.card.deleteTitle'),
-        message: [
-            t('behaviors.card.deleteMessage', { title: props.trigger.title }),
-            group && count > 0 ? t('behaviors.group.dropOnDelete', { group, count }) : '',
-        ]
-            .filter(Boolean)
-            .join(' '),
+        message: t('behaviors.card.deleteMessage', { title: props.trigger.title }),
         confirmLabel: t('behaviors.card.delete'),
         confirmVariant: 'danger',
         cancelLabel: t('common.cancel'),
@@ -322,7 +302,6 @@ const savedGroup = computed(() =>
                                 v-if="savedGroup"
                                 :group-name="savedGroup"
                                 :used-by="groupUse.get(savedGroup) ?? 1"
-                                @members="soleGroup.members.value = $event"
                             />
                             <p v-else class="hint">{{ t('behaviors.group.saveFirst') }}</p>
                         </template>
@@ -342,8 +321,6 @@ const savedGroup = computed(() =>
 
                     <BehaviorDeliveries :behavior-id="trigger.id" />
                     <BehaviorDirectMessages :behavior-id="trigger.id" />
-
-                    <p v-if="groupDropWarning" class="warning" role="status" data-test="group-drop">{{ groupDropWarning }}</p>
 
                     <div v-if="conflict" class="conflict" role="alert" data-test="conflict">
                         <span>{{ t('behaviors.card.conflict') }}</span>

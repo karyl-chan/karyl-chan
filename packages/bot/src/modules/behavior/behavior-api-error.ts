@@ -30,7 +30,8 @@ export type BehaviorErrorCode =
   | "system_immutable"
   | "registration_failed"
   | "not_found"
-  | "invalid_tree";
+  | "invalid_tree"
+  | "target_in_use";
 
 const STATUS: Record<BehaviorErrorCode, number> = {
   validation_failed: 400,
@@ -38,6 +39,8 @@ const STATUS: Record<BehaviorErrorCode, number> = {
   name_conflict: 409,
   invalid_tree: 409,
   system_immutable: 409,
+  // a Behavior Target a behavior or a DM allowlist still refers to
+  target_in_use: 409,
   // Discord (the upstream) refused or could not be reached
   registration_failed: 502,
 };
@@ -47,7 +50,10 @@ export interface BehaviorErrorBody {
     code: BehaviorErrorCode;
     message: string;
     field?: string;
-    /** registration_failed only: what each registration target reported */
+    /**
+     * registration_failed: what each registration target reported;
+     * target_in_use: `{ behaviors, allowlists }` — how many of each use it
+     */
     details?: unknown;
   };
 }

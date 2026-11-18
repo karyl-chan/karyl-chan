@@ -200,38 +200,6 @@ describe('MessageTriggerCard — errors', () => {
     });
 });
 
-describe('MessageTriggerCard — the sole user of a group', () => {
-    const ops = savedTrigger({ audienceKind: 'group', audienceGroupName: 'ops' });
-
-    beforeEach(() => {
-        api.getGroupMembers.mockResolvedValue({ groupName: 'ops', members: ['1', '2', '3'] });
-    });
-
-    it('warns that leaving the group drops its member list', async () => {
-        const wrapper = await mountOpen(ops, new Map([['ops', 1]]));
-        expect(wrapper.find('[data-test="group-drop"]').exists()).toBe(false);
-        await choose(wrapper, 'behaviors.audience.label', 'behaviors.audience.all');
-        expect(wrapper.find('[data-test="group-drop"]').text()).toContain('behaviors.group.dropOnSave');
-    });
-
-    it('does not warn when another trigger still uses the group', async () => {
-        const wrapper = await mountOpen(ops, new Map([['ops', 2]]));
-        await choose(wrapper, 'behaviors.audience.label', 'behaviors.audience.all');
-        expect(wrapper.find('[data-test="group-drop"]').exists()).toBe(false);
-    });
-
-    it('the delete confirmation says the member list goes too', async () => {
-        confirmMock.mockResolvedValue(false);
-        const wrapper = await mountOpen(ops, new Map([['ops', 1]]));
-        await wrapper.find('.more-btn').trigger('click');
-        await flushPromises();
-        document.querySelector<HTMLElement>('[data-test="delete"]')!.click();
-        await flushPromises();
-        expect(confirmMock.mock.calls[0][0].message).toContain('behaviors.group.dropOnDelete');
-        expect(api.deleteBehavior).not.toHaveBeenCalled();
-    });
-});
-
 describe('MessageTriggerCard — header actions', () => {
     async function testFire(wrapper: VueWrapper): Promise<void> {
         await wrapper.find('.more-btn').trigger('click');
