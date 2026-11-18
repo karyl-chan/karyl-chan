@@ -9,6 +9,8 @@ import { BehaviorDefinition } from "../src/modules/behavior/models/behavior-defi
 import { BehaviorWebhookAction } from "../src/modules/behavior/models/behavior-webhook-action.model.js";
 import { BehaviorGroupMember } from "../src/modules/behavior/models/behavior-group-member.model.js";
 import { BehaviorPluginAction } from "../src/modules/behavior/models/behavior-plugin-action.model.js";
+import { BehaviorTarget } from "../src/modules/behavior/models/behavior-target.model.js";
+import { targetFieldsOf } from "../src/modules/behavior/behavior-target.js";
 import { Service } from "../src/modules/behavior/models/service.model.js";
 import { encryptSecret } from "../src/utils/crypto.js";
 
@@ -135,9 +137,16 @@ export async function bindPluginAction(
   await BehaviorPluginAction.create({ behaviorId, pluginKey, actionKey });
 }
 
-/** Remove every behavior row (cascades leaves, webhook actions, stats), group list, DM allowlist, DM log and service. */
+/** A Behavior Target's directory row, by key (`group:vip`, `user:<id>`, `guild:<id>`, …). Returns its id. */
+export async function seedBehaviorTarget(key: string): Promise<number> {
+  const row = await BehaviorTarget.create({ key, ...targetFieldsOf(key)! });
+  return row.getDataValue("id") as number;
+}
+
+/** Remove every behavior row (cascades leaves, webhook actions, stats), group list, target, DM allowlist, DM log and service. */
 export async function clearBehaviors(): Promise<void> {
   await BehaviorGroupMember.destroy({ where: {} });
+  await BehaviorTarget.destroy({ where: {} });
   await BehaviorDmAllowlist.destroy({ where: {} });
   await BehaviorDmLog.destroy({ where: {} });
   await BehaviorWebhookAction.destroy({ where: {} });

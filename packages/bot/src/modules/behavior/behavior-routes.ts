@@ -2,7 +2,7 @@
  * behavior-routes.ts — admin behaviors REST API（ADR 0003 trigger/action 模型）
  *
  * 路由表：
- *   GET  /api/behaviors                          — { system, services, commands, messageTriggers }
+ *   GET  /api/behaviors                          — { system, services, commands, messageTriggers, targets }
  *   GET  /api/behaviors/schema                   — the write schemas, for the admin UI's form checks
  *   GET  /api/behaviors/plugin-actions           — 已安裝 plugin 宣告的 behavior action（#203，動作選單）
  *   POST /api/behaviors/:id/test                 — 對 behavior 的 webhook 動作試發
@@ -15,6 +15,7 @@
  *   PUT  /api/behaviors/system/login/trigger     — 切換登入系統列的觸發（system-login-trigger-route.ts）
  *   GET / POST / PUT / DELETE /api/services[/:id] — 服務與它的 Service Behavior（service-routes.ts，#126；owner 限定）
  *   PUT  /api/services/:id/trigger               — 切換服務列的觸發（同登入的 fixed-row switch；owner 限定）
+ *   POST / DELETE /api/behavior-targets[/:id]    — 建立、刪除作用對象（behavior-target-routes.ts，ADR 0004）
  *   GET  /api/behavior-groups/:groupName/members — 群組名單
  *   PUT  /api/behavior-groups/:groupName/members — 全量替換群組名單（服務列用到的群組：owner 限定）
  *   GET / PUT /api/behaviors/:id/dm-allowlist     — 私訊白名單（#157，behavior-dm-routes.ts）
@@ -44,10 +45,10 @@ import { findRecentDeliveries } from "./behavior-deliveries.js";
 import { loadBehaviorRow } from "./behavior-write-guards.js";
 import {
   findGroupMembers,
-  groupInUse,
   groupUsedByService,
   replaceGroupMembers,
 } from "./models/behavior-group-member.model.js";
+import { groupTargetExists } from "./models/behavior-target.model.js";
 import { isOwnerRequest, requireOwner } from "../web-core/route-guards.js";
 import { botEventLog } from "../bot-events/bot-event-log.js";
 import {
@@ -63,6 +64,11 @@ import {
 import { registerMessageTriggerReorderRoute } from "./message-trigger-reorder.js";
 import { registerWebhookSecretRotateRoute } from "./webhook-secret-rotate.js";
 import { registerBehaviorDmRoutes } from "./behavior-dm-routes.js";
+import { createTargetSchema, registerBehaviorTargetRoutes } from "./behavior-target-routes.js";
+import { loadBehaviorTargetUsage, targetKeysInUse } from "./behavior-target-registry.js";
+import { behaviorTargetViews } from "./behavior-target-view.js";
+import { dmAllowlistGroupRefs } from "./models/behavior-dm-allowlist.model.js";
+import { findBehaviorTargets, type BehaviorTargetRow } from "./models/behavior-target.model.js";
 import {
   addLeafSchema,
   createCommandSchema,
@@ -117,7 +123,22 @@ export async function registerBehaviorRoutes(
     registerServiceRoutes(scope, options);
     registerGroupMemberRoutes(scope, options);
     registerBehaviorDmRoutes(scope);
+    registerBehaviorTargetRoutes(scope);
   });
+}
+
+/**
+ * The directory rows. A target in use always has one — every behavior
+ * write registers it (behaviorTransaction) — except after a write that
+ * went around the routes (a seed, a manual DB edit): then they are
+ * registered here, so the list never shows a behavior without its target.
+ */
+async function loadTargetRows(): Promise<BehaviorTargetRow[]> {
+  const [rows, usage] = await Promise.all([findBehaviorTargets(), loadBehaviorTargetUsage()]);
+  const have = new Set(rows.map((r) => r.key));
+  if (targetKeysInUse(usage).every((key) => have.has(key))) return rows;
+  await withBehaviorWriteLock(() => behaviorTransaction(async () => undefined));
+  return findBehaviorTargets();
 }
 
 function registerReadAndTestRoutes(
@@ -133,8 +154,14 @@ function registerReadAndTestRoutes(
       ...catalog.messageTriggers.map((t) => t.id),
       ...catalog.commands.flatMap((c) => c.leaves.map((l) => l.id)),
     ];
-    const stats = await findStatsBulk(ids);
-    return reply.send(buildBehaviorListView(catalog, stats));
+    const [stats, targetRows, allowlistGroups] = await Promise.all([
+      findStatsBulk(ids),
+      loadTargetRows(),
+      dmAllowlistGroupRefs(),
+    ]);
+    return reply.send(
+      buildBehaviorListView(catalog, stats, behaviorTargetViews(targetRows, catalog, allowlistGroups)),
+    );
   });
 
   // ── GET /api/behaviors/schema（#108）────────────────────────────────────────
@@ -154,6 +181,7 @@ function registerReadAndTestRoutes(
       convertTrigger: convertTriggerSchema,
       service: createServiceSchema,
       serviceTrigger: serviceTriggerSchema,
+      target: createTargetSchema,
     });
   });
 
@@ -257,9 +285,9 @@ function registerReadAndTestRoutes(
 // ── audience group 成員管理（BH-1）─────────────────────────────────────────
 //
 // group 以名字為單位（訊息觸發的 audienceGroupName），名單存
-// behavior_group_members，同名 group 的 behaviors 共享。group 沒有自己的
-// 列：只有被訊息觸發或私訊白名單（#157）引用的 group 能設名單，沒有人用了
-// 名單就清掉（behavior-group-member.model.ts），不會留下孤兒名單（#137）。
+// behavior_group_members，同名 group 的 behaviors 共享。group 是一個
+// Behavior Target（ADR 0004）：有它的列（behavior_targets）才能設名單，
+// 名單留到那一列被刪除為止。
 
 const groupParams = {
   type: "object",
@@ -292,7 +320,7 @@ function registerGroupMemberRoutes(server: FastifyInstance, options: BehaviorRou
 
   // PUT /api/behavior-groups/:groupName/members { userIds: string[] }
   // 全量替換（與 UI 的編輯-儲存模型一致；增/刪都走同一條）。
-  // 沒有訊息觸發引用的 group → not_found：先把觸發的對象設成這個群組。
+  // 沒有這個群組對象 → not_found：先建立它（POST /api/behavior-targets）。
   // 服務列（#126）引用的 group：成員就是能登入那個服務的人，和服務的觸發
   // 一樣只有 owner 能改（在寫入鎖內判斷，觸發不會在中途換上這個群組）。
   server.put(
@@ -316,10 +344,10 @@ function registerGroupMemberRoutes(server: FastifyInstance, options: BehaviorRou
       const owner = isOwnerRequest(request, options.ownerIds);
       const outcome = await withBehaviorWriteLock(() =>
         behaviorTransaction(async (transaction) => {
-          if (!(await groupInUse(groupName, transaction))) {
+          if (!(await groupTargetExists(groupName, transaction))) {
             throw new BehaviorApiError(
               "not_found",
-              `no message trigger or DM allowlist uses group '${groupName}'; set a trigger's audience or a behavior's DM allowlist to it first`,
+              `group '${groupName}' does not exist; create it first`,
               "groupName",
             );
           }

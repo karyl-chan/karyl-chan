@@ -3,9 +3,10 @@
  *
  *   - GET / PUT /api/behaviors/:id/dm-allowlist read and replace the list
  *     (empty: none), refused for the System Behavior, audited
- *   - a group a list names is in use: its members can be set, and it
- *     survives the prune that drops groups nobody uses; leaving the last
- *     list, or the behavior being deleted, prunes it
+ *   - a group a list names is a Behavior Target (ADR 0004): saving the
+ *     list registers it, so its members can be set; they stay when the
+ *     list drops the group or the behavior is deleted, until the group
+ *     target itself is deleted
  *   - a command snapshot carries a leaf's list, so a refused command
  *     write puts it back
  *   - GET /api/behaviors/:id/dm-log returns the newest DMs; rows older
@@ -28,9 +29,9 @@ import { registerBehaviorRoutes } from "../src/modules/behavior/behavior-routes.
 import { listAudit } from "../src/modules/admin/admin-audit.service.js";
 import {
   findGroupMembers,
-  pruneUnusedGroupMembers,
   replaceGroupMembers,
 } from "../src/modules/behavior/models/behavior-group-member.model.js";
+import { groupTargetExists } from "../src/modules/behavior/models/behavior-target.model.js";
 import { destroyDmAllowlists, findDmAllowlist } from "../src/modules/behavior/models/behavior-dm-allowlist.model.js";
 import { BehaviorDefinition } from "../src/modules/behavior/models/behavior-definition.model.js";
 import {
@@ -117,27 +118,28 @@ describe("the DM allowlist API", () => {
 });
 
 describe("a group a DM allowlist names", () => {
-  it("is in use: its members can be set, and the prune keeps them", async () => {
+  it("becomes a group target when the list is saved: its members can be set", async () => {
     const id = await seedMessageTrigger();
     expect((await putMembers("ops", [U1])).statusCode).toBe(404);
 
     await putList(id, { userIds: [], groupNames: ["ops"] });
+    expect(await groupTargetExists("ops")).toBe(true);
     const res = await putMembers("ops", [U1]);
     expect(res.statusCode).toBe(200);
-    await sequelize.transaction((t) => pruneUnusedGroupMembers(t));
     expect(await findGroupMembers("ops")).toEqual([U1]);
   });
 
-  it("is pruned when the last list drops it", async () => {
+  it("keeps its members when the last list drops it", async () => {
     const id = await seedMessageTrigger();
     await putList(id, { userIds: [], groupNames: ["ops"] });
     await putMembers("ops", [U1]);
 
     await putList(id, { userIds: [U2], groupNames: [] });
-    expect(await findGroupMembers("ops")).toEqual([]);
+    expect(await findGroupMembers("ops")).toEqual([U1]);
+    expect(await groupTargetExists("ops")).toBe(true);
   });
 
-  it("goes with its behavior when the behavior is deleted, and so does its DM log", async () => {
+  it("keeps its members when the behavior is deleted; the list and the DM log go", async () => {
     const id = await seedMessageTrigger();
     await putList(id, { userIds: [], groupNames: ["ops"] });
     await putMembers("ops", [U1]);
@@ -146,22 +148,13 @@ describe("a group a DM allowlist names", () => {
     const res = await server.inject({ method: "DELETE", url: `/api/behaviors/${id}` });
     expect(res.statusCode).toBe(204);
     expect(await findDmAllowlist(id)).toBeNull();
-    expect(await findGroupMembers("ops")).toEqual([]);
-    expect(await findRecentDmLog(id)).toEqual([]);
-  });
-
-  it("stays while a message trigger still uses it", async () => {
-    const id = await seedMessageTrigger();
-    await seedMessageTrigger({ title: "vip", audienceKind: "group", audienceGroupName: "ops" });
-    await putList(id, { userIds: [], groupNames: ["ops"] });
-    await putMembers("ops", [U1]);
-    await putList(id, { userIds: [], groupNames: [] });
     expect(await findGroupMembers("ops")).toEqual([U1]);
+    expect(await findRecentDmLog(id)).toEqual([]);
   });
 });
 
 describe("a command leaf's DM allowlist", () => {
-  it("goes with its command, and its group's members with it; its DM log ages out", async () => {
+  it("goes with its command, its group's members stay; its DM log ages out", async () => {
     const commandId = await seedCommand();
     const leaf = await seedLeaf(commandId);
     await putList(leaf, { userIds: [U1], groupNames: ["ops"] });
@@ -170,7 +163,7 @@ describe("a command leaf's DM allowlist", () => {
 
     await sequelize.transaction((t) => destroyCommandRows(commandId, t));
     expect(await findDmAllowlist(leaf)).toBeNull();
-    expect(await findGroupMembers("ops")).toEqual([]);
+    expect(await findGroupMembers("ops")).toEqual([U2]);
     // kept for a refused write's restore; the 30-day prune removes it
     expect(await findRecentDmLog(leaf)).toHaveLength(1);
   });

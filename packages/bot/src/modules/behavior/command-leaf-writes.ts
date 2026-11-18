@@ -38,7 +38,6 @@ import {
 } from "./models/behavior-definition.model.js";
 import { BehaviorStat } from "./models/behavior-stats.model.js";
 import { destroyDmAllowlists } from "./models/behavior-dm-allowlist.model.js";
-import { pruneUnusedGroupMembers } from "./models/behavior-group-member.model.js";
 import { BehaviorWebhookAction } from "./models/behavior-webhook-action.model.js";
 import { destroyPluginActions } from "./models/behavior-plugin-action.model.js";
 import {
@@ -226,8 +225,6 @@ export async function deleteCommandLeaf(
       await BehaviorStat.destroy({ where: { behaviorId: row.id }, transaction });
       await destroyDmAllowlists(row.id, transaction);
       await BehaviorDefinition.destroy({ where: { id: row.id }, transaction });
-      // a group only its DM allowlist named goes with it (#157)
-      await pruneUnusedGroupMembers(transaction);
     },
     () => ({ request, action: "behavior.delete", target: `behavior:${row.id}`, context: audit }),
   );

@@ -10,8 +10,9 @@ import { BehaviorDefinition } from "./behavior-definition.model.js";
  * trigger may DM members of its guild, a DM trigger members of any guild
  * the bot is in (behavior-direct-messages.ts).
  *
- * A group named here is in use (groupInUse / pruneUnusedGroupMembers), so
- * its member list survives without a message trigger using it.
+ * A group named here is in use (behavior-target-registry.ts): its group
+ * target is registered if it was not, and cannot be deleted while a list
+ * names it.
  *
  * Removed with its behavior — explicitly (SQLite may run without FK
  * enforcement), and the command snapshot carries it so a refused command
@@ -91,8 +92,14 @@ export async function destroyDmAllowlists(
   await BehaviorDmAllowlist.destroy({ where: { behaviorId: behaviorIds }, transaction });
 }
 
-/** Every group name some behavior's list refers to. */
-export async function groupsInDmAllowlists(transaction?: Transaction): Promise<Set<string>> {
+/** Every group name some behavior's list refers to → how many lists name it. */
+export async function dmAllowlistGroupRefs(transaction?: Transaction): Promise<Map<string, number>> {
   const rows = await BehaviorDmAllowlist.findAll({ attributes: ["groupNames"], transaction });
-  return new Set(rows.flatMap((r) => parseList(r.getDataValue("groupNames"))));
+  const refs = new Map<string, number>();
+  for (const row of rows) {
+    for (const name of new Set(parseList(row.getDataValue("groupNames")))) {
+      refs.set(name, (refs.get(name) ?? 0) + 1);
+    }
+  }
+  return refs;
 }

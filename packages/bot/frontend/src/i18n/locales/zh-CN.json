@@ -1357,9 +1357,7 @@
             "remove": "移除 {user}",
             "addPlaceholder": "Discord 用户 ID",
             "add": "加入",
-            "saveFirst": "保存后就能设置这个群组的成员。",
-            "dropOnSave": "保存后没有其他行为使用群组“{group}”，它的 {count} 位成员名单会一起被清除。",
-            "dropOnDelete": "它是群组“{group}”唯一的使用者，这个群组的 {count} 位成员名单也会一起被清除。"
+            "saveFirst": "保存后就能设置这个群组的成员。"
         },
         "action": {
             "title": "转发设置",

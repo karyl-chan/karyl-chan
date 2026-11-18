@@ -95,8 +95,12 @@ _Avoid_: DM pattern、message_pattern（舊稱，且不只限於私訊）
 一個 Message Trigger 設在哪裡：surface + guildId + channelId，也就是與 bot 的私訊、全部伺服器、指定伺服器或指定頻道。訊息觸發的排序以位置為單位：管理員排的是同一個位置裡的觸發，比對時所有位置仍走同一條順序。位置的 key 寫成 `bot_dm`、`guild:all`、`guild:<id>`、`channel:<guildId>:<channelId>`（與訊息觸發的 Behavior Section key 相同，但位置是寫入用的識別，分區只是呈現）。
 _Avoid_: 用 section / 分區指稱排序或寫入的單位
 
+**Behavior Target（作用對象）**:
+一個 behavior 作用在哪個對象上，也是 behaviors 的分組單位（ADR 0004）：全部伺服器、指定伺服器、指定頻道、所有人與 bot 的私訊、一個 Audience Group 的成員與 bot 的私訊、特定使用者與 bot 的私訊，另加 App 指令。key 寫成 `guild:all`、`guild:<id>`、`channel:<guildId>:<channelId>`、`bot_dm`、`group:<name>`、`user:<userId>`、`app`。一個 behavior 屬於剛好一個對象，由它的欄位推導，不另外儲存：訊息觸發是它的位置，與 bot 私訊且對象不是所有人的觸發歸到 `user:` / `group:`；指令的對象由可見性設定推導，只會是 `app`、`bot_dm`、`guild:all` 或 `guild:<id>`。對象是分組不是分流：一則訊息可以同時符合好幾個對象，各自比對。全部伺服器、所有人與 bot 的私訊、App 指令是內建的；其餘由管理員建立，存在 behavior_targets，沒有 behavior 也保留，還有 behavior 或私訊白名單用到時不能刪除。
+_Avoid_: scope、範圍；用「對象」單指「誰」（那是 Message Trigger 的對象篩選，只是作用對象的一部分）；把 Service 的 audience（JWT 的 `aud`）當成作用對象
+
 **Audience Group（對象群組）**:
-與 bot 私訊的 Message Trigger 可以只對一個群組的成員觸發。群組只是一個名字加一份名單，沒有自己的列：只有被訊息觸發引用的名字能設名單，同名的觸發共用同一份名單；最後一個引用它的觸發改掉對象或被刪除時，名單一起清掉。
+一個名字加一份成員名單，是一種 Behavior Target：與 bot 私訊的 Message Trigger 可以只對它的成員觸發。它在 behavior_targets 有自己的列，名稱全域唯一；有列就能設成員，名單留到群組被刪除為止。behavior 的 DM Allowlist 也用名稱引用同一份名單。
 _Avoid_: 用群組指稱 Discord 身分組或群組私訊
 
 **Behavior Section（分區）**:
@@ -141,7 +145,7 @@ _Avoid_: login token（那是後台登入用的）
 _Avoid_: relay、轉發內容（舊稱，只有 content / embeds）
 
 **DM Allowlist（私訊白名單）**:
-behavior 的回覆可以私訊的對象（#157）：使用者 id 與 behavior 群組。觸發者本人一律可以私訊；其他人：有名單就只能私訊名單上的人與群組成員；名單引用的群組算被使用中。存在 behavior_dm_allowlists。
+behavior 的回覆可以私訊的人（#157）：使用者 id 與 Audience Group。觸發者本人一律可以私訊；其他人：有名單就只能私訊名單上的人與群組成員；名單引用的群組算被使用中，不能刪除。存在 behavior_dm_allowlists。
 _Avoid_: 白名單（單獨用時不清楚是哪一份）
 
 **DM Log（私訊紀錄）**:

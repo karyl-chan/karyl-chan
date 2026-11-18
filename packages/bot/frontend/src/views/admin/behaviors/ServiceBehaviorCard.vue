@@ -24,7 +24,6 @@ import {
     serviceTriggerPatch,
 } from './service-trigger-draft';
 import { useDraftForm } from './use-draft-form';
-import { draftLeavesGroup, useSoleGroup } from './use-sole-group';
 import { useRegistrationResult } from './use-registration-results';
 
 /**
@@ -120,21 +119,6 @@ function switchKind(kind: 'message' | 'command') {
 
 // ── the message half's audience group ───────────────────────────────────────
 
-/** The saved trigger's audience: a command has none. */
-const savedAudience = computed(() =>
-    base.value.kind === 'message'
-        ? { audienceKind: base.value.audienceKind, audienceGroupName: base.value.audienceGroupName }
-        : { audienceKind: 'all' as const, audienceGroupName: null }
-);
-/** The sole user of a group: saving away from it (another audience, a command) drops its list. */
-const soleGroup = useSoleGroup(savedAudience, () => props.groupUse, open);
-const groupDropWarning = computed(() => {
-    const group = soleGroup.group.value;
-    const count = soleGroup.members.value ?? 0;
-    const leaves = group !== null && (draft.value.kind === 'command' || draftLeavesGroup(group, draft.value));
-    return group && count > 0 && leaves ? t('behaviors.group.dropOnSave', { group, count }) : '';
-});
-
 const savedGroup = computed(() =>
     base.value.kind === 'message' &&
     base.value.audienceKind === 'group' &&
@@ -226,7 +210,6 @@ const kindBlocked = computed(() => (isOwner.value ? null : t('behaviors.service.
                                 :group-name="savedGroup"
                                 :used-by="groupUse.get(savedGroup) ?? 1"
                                 :readonly="!isOwner"
-                                @members="soleGroup.members.value = $event"
                             />
                             <p v-else class="hint">{{ t('behaviors.group.saveFirst') }}</p>
                         </template>
@@ -263,7 +246,6 @@ const kindBlocked = computed(() => (isOwner.value ? null : t('behaviors.service.
                         <p class="warning" role="note" data-test="command-warning">{{ t('behaviors.service.commandNote') }}</p>
                     </Stack>
                 </fieldset>
-                <p v-if="groupDropWarning" class="warning" role="status" data-test="group-drop">{{ groupDropWarning }}</p>
                 <p v-if="moved" class="hint" role="status" data-test="moved">{{ t('behaviors.trigger.moved', { section: moved }) }}</p>
 
                 <dl class="details">

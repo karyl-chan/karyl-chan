@@ -1,7 +1,6 @@
-import { DataTypes, Op, type Transaction } from "sequelize";
+import { DataTypes, type Transaction } from "sequelize";
 import { sequelize } from "../../../db.js";
 import { BehaviorDefinition } from "./behavior-definition.model.js";
-import { groupsInDmAllowlists } from "./behavior-dm-allowlist.model.js";
 
 /**
  * Audience group 成員清單（BH-1）。取代舊 behavior_audience_members 表。
@@ -16,13 +15,13 @@ import { groupsInDmAllowlists } from "./behavior-dm-allowlist.model.js";
  *
  * 舊表由 migration 002 清除（從未有資料，無需搬遷）。
  *
- * group 不是有自己列的實體（#137，原 #116）：它只在有訊息觸發引用這個
- * 名字時存在。名單只能設給被引用的 group（groupInUse），最後一個引用它
- * 的觸發改掉對象或被刪除時，名單一併清掉（pruneUnusedGroupMembers），
- * 所以不會留下沒有觸發用的孤兒名單。
+ * group 是一個 Behavior Target（ADR 0004，取代 #137 的「只在被引用時存在」）：
+ * 它在 behavior_targets 有自己的列（`group:<name>`），名單跟著那一列 ——
+ * 有列才能設成員（groupTargetExists），列被刪除時名單一起刪
+ * （behavior-target-routes.ts）。沒有觸發引用的群組照樣保留名單。
  *
- * behavior 的私訊白名單（#157，behavior_dm_allowlists）引用的 group 也算
- * 被引用：名單可以設，也不會被清掉。
+ * behavior 的私訊白名單（#157，behavior_dm_allowlists）也用群組名稱引用
+ * 同一份名單。
  */
 export const BehaviorGroupMember = sequelize.define(
   "BehaviorGroupMember",
@@ -85,35 +84,10 @@ export const groupUsedByService = async (
     transaction,
   })) > 0;
 
-/**
- * Every group some message trigger's audience names — a Service Behavior's
- * trigger (#126) is a message trigger, so its audience group is among them.
- */
-const groupsInTriggerAudiences = async (transaction: Transaction): Promise<Set<string>> => {
-  const rows = await BehaviorDefinition.findAll({
-    attributes: ["audienceGroupName"],
-    where: { triggerKind: "message", audienceGroupName: { [Op.ne]: null } },
-    transaction,
-  });
-  return new Set(rows.map((r) => r.getDataValue("audienceGroupName") as string));
-};
-
-/**
- * Every group in use: named by a message trigger's audience, or by a
- * behavior's DM allowlist (#157). Its member list may be set and is kept.
- */
-const groupsInUse = async (transaction: Transaction): Promise<Set<string>> =>
-  new Set([...(await groupsInTriggerAudiences(transaction)), ...(await groupsInDmAllowlists(transaction))]);
-
-/** Whether the group is in use (groupsInUse). */
-export const groupInUse = async (groupName: string, transaction: Transaction): Promise<boolean> =>
-  (await groupsInUse(transaction)).has(groupName);
-
-/** Drop the member lists of every group no longer in use (groupsInUse). */
-export const pruneUnusedGroupMembers = async (transaction: Transaction): Promise<void> => {
-  const inUse = [...(await groupsInUse(transaction))];
-  await BehaviorGroupMember.destroy({
-    where: inUse.length > 0 ? { groupName: { [Op.notIn]: inUse } } : {},
-    transaction,
-  });
+/** Remove a group's whole member list — its group target is being deleted. */
+export const destroyGroupMembers = async (
+  groupName: string,
+  transaction: Transaction,
+): Promise<void> => {
+  await BehaviorGroupMember.destroy({ where: { groupName }, transaction });
 };

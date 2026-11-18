@@ -15,6 +15,7 @@ import { BehaviorDmLog } from "../src/modules/behavior/models/behavior-dm-log.mo
 import { BehaviorGroupMember } from "../src/modules/behavior/models/behavior-group-member.model.js";
 import { BehaviorPluginAction } from "../src/modules/behavior/models/behavior-plugin-action.model.js";
 import { BehaviorStat } from "../src/modules/behavior/models/behavior-stats.model.js";
+import { BehaviorTarget } from "../src/modules/behavior/models/behavior-target.model.js";
 import { BehaviorWebhookAction } from "../src/modules/behavior/models/behavior-webhook-action.model.js";
 import { Service } from "../src/modules/behavior/models/service.model.js";
 import { ReconcilerOwnedCommand } from "../src/modules/command-system/models/reconciler-owned-command.model.js";
@@ -29,6 +30,7 @@ export async function syncBehaviorRouteTables(): Promise<void> {
     BehaviorPluginAction,
     BehaviorDmAllowlist,
     BehaviorGroupMember,
+    BehaviorTarget,
     BehaviorDmLog,
     BehaviorStat,
     BehaviorDelivery,

@@ -160,9 +160,9 @@ trigger for other DMs.
 | Stop after a match (`stopOnMatch`) | Off by default. See [matching order](#matching-order). |
 
 An **audience group** is a name with a member list. Triggers that use the
-same name share one list. A group exists only while a trigger uses it:
-its list can be set only then, and it is deleted with the last trigger
-that uses it (the admin UI warns before that happens).
+same name share one list. A group is a [behavior target](#behavior-targets)
+of its own: its members can be set as soon as it exists, with or without
+a trigger using it, and the list stays until the group is deleted.
 
 ### Regex triggers
 
@@ -258,6 +258,42 @@ context; DMs with the bot: `BotDM`; All servers: `Guild`; one server: a
 command registered to that server). Changing a command's settings can
 move it to another section.
 
+## Behavior Targets
+
+A **behavior target** is what a behavior applies to
+([ADR 0004](../adr/0004-behavior-targets.md)):
+
+| Target | Key | |
+|--------|-----|--|
+| App commands | `app` | built in |
+| Everyone's DMs with the bot | `bot_dm` | built in |
+| All servers | `guild:all` | built in |
+| One server | `guild:<guildId>` | created |
+| One channel | `channel:<guildId>:<channelId>` | created |
+| An audience group's DMs with the bot | `group:<name>` | created |
+| One user's DMs with the bot | `user:<userId>` | created |
+
+Every behavior belongs to exactly one target, derived from its settings
+and reported as `target`. A message trigger's target is its location —
+except a trigger in DMs with the bot for one user or one group, which
+belongs to that user's or group's target. A command's target is its
+[section](#behavior-sections).
+
+Targets group behaviors; they do not split messages. One message can
+match several targets — a user's DM matches *everyone's DMs*, that user
+and every group the user is in.
+
+The created targets are kept in a directory (`behavior_targets`):
+
+- `POST /api/behavior-targets` creates one; it is listed from then on,
+  with no behavior yet. A group name is unique.
+- A target that a behavior or a DM allowlist refers to always has a row:
+  every behavior write registers the targets it leaves in use.
+- `DELETE /api/behavior-targets/:id` is refused (`409 target_in_use`)
+  while a behavior belongs to the target or, for a group, a DM allowlist
+  names it. Deleting a group deletes its member list.
+- A target cannot be renamed or moved: delete it and create another.
+
 ## Converting a trigger
 
 A custom behavior can move between a message trigger and a command
@@ -282,8 +318,7 @@ without a registration. Lost on the way:
 - a channel location: Discord cannot limit a command to one channel, so
   a channel's trigger becomes a command of that server;
 - the audience of a DM trigger (one user, a group): everyone who can see
-  the command can run it. A group whose only user this was is deleted
-  with its member list;
+  the command can run it. The group and its member list stay;
 - the pattern, **Stop after a match** and the position in the matching
   order;
 - the webhook payload changes from the message to the command's options
@@ -483,8 +518,9 @@ set on its card (`GET` / `PUT /api/behaviors/:id/dm-allowlist`, audited as
 may always be DMed. For anyone else: with a list, only those users and the
 groups' members may be DMed; without one, members of the server the
 behavior was triggered in, or of any server the bot is in for a trigger
-in a DM with the bot. A group a list names counts as in use: its members
-can be set, and it is not pruned while a list names it. Limits (env):
+in a DM with the bot. A group a list names is registered as a
+[behavior target](#behavior-targets) if it was not one, and cannot be
+deleted while a list names it. Limits (env):
 `BEHAVIOR_DM_PER_MINUTE` DMs a minute per behavior (default 10, every
 attempt counted, before any member lookup) and `BEHAVIOR_DM_PER_RECIPIENT`
 per `BEHAVIOR_DM_PER_RECIPIENT_WINDOW_MS` to one user from one behavior
@@ -664,7 +700,7 @@ silently dropped.
 
 | Route | Does |
 |-------|------|
-| `GET /api/behaviors` | `{ system, services, commands, messageTriggers }` (`services`: the [Service Behaviors](#service-behaviors) — a message trigger or a command — each with its `service`), each with its derived `section`, its statistics and its `updatedAt`. Secrets appear only as `secretSet`. |
+| `GET /api/behaviors` | `{ system, services, commands, messageTriggers, targets }` (`services`: the [Service Behaviors](#service-behaviors) — a message trigger or a command — each with its `service`), each with its derived `target` and `section`, its statistics and its `updatedAt`. Secrets appear only as `secretSet`. `targets`: the [behavior targets](#behavior-targets) in display order — the built-in ones, then servers with their channels, groups, users — each `{ key, id, kind, builtin, guildId, channelId, userId, groupName, memberCount, ownerOnly, allowlistRefs }` (`id` null for a built-in one; the last three describe a group: its member count, whether a Service Behavior uses it, how many DM allowlists name it). |
 | `GET /api/behaviors/schema` | The write routes' JSON schemas. |
 | `GET /api/behaviors/plugin-actions` | `{ plugins }`: each installed plugin whose manifest declares [behavior actions](#plugin-actions) — `pluginKey`, `pluginName`, `enabled`, `status`, `actions: [{ key, name, description }]`. |
 | `POST /api/behaviors` | Create a message trigger with its action. |
@@ -684,7 +720,9 @@ silently dropped.
 | `PUT /api/behaviors/system/login/trigger` | Change the system login's trigger (owner only). |
 | `GET` / `POST /api/services`, `PUT` / `DELETE /api/services/:id` | The [services](service-login.md#setting-a-service-up) (owner only): `{ name, audience, redirectUrl }`; a new service comes with its Service Behavior, a deleted one takes it along (and its command off Discord: `{ registration }`). `PUT` takes any of the three and `ifUpdatedAt`. Answers `{ services }` / `{ service }`; a taken audience is `409 name_conflict`. |
 | `PUT /api/services/:id/trigger` | Switch a [Service Behavior](#service-behaviors)'s trigger (owner only): `{ kind: "message", patternKind, patternValue, audienceKind?, audienceUserId?, audienceGroupName? }` or `{ kind: "command", name, description, integrationTypes?, contexts? }`, and `ifUpdatedAt`. Answers `{ behavior, registration }`. |
-| `GET` / `PUT /api/behavior-groups/:groupName/members` | Read or replace an audience group's members (at most 1000) — a group a message trigger's audience or a DM allowlist names. Replacing the members of a group a Service Behavior's trigger uses is owner only. |
+| `POST /api/behavior-targets` | Create a [behavior target](#behavior-targets): `{ kind: "guild", guildId }`, `{ kind: "channel", guildId, channelId }`, `{ kind: "user", userId }` or `{ kind: "group", name }`. Answers `201 { target }`; one that exists is `409 name_conflict`. |
+| `DELETE /api/behavior-targets/:id` | Delete a target nothing uses (`409 target_in_use` otherwise, with `details: { behaviors, allowlists }`); a group's member list goes with it. |
+| `GET` / `PUT /api/behavior-groups/:groupName/members` | Read or replace an audience group's members (at most 1000). Replacing needs the group target to exist (`404 not_found` otherwise). Replacing the members of a group a Service Behavior's trigger uses is owner only. |
 
 - **Actions:** a body that sets an action gives `webhook: { url, authMode? }`
   or `pluginAction: { pluginKey, actionKey }` — one of them (a create
@@ -711,7 +749,8 @@ silently dropped.
   (`behavior.create`, `behavior.update`, `behavior.delete`,
   `behavior.reorder`, `behavior.webhook_secret.rotate`,
   `behavior.command.create` / `update` / `delete` / `convert` / `resync`,
-  `behavior.group_members.replace`, `behavior.system.trigger`,
+  `behavior.group_members.replace`, `behavior.target.create` / `delete`,
+  `behavior.system.trigger`,
   `behavior.trigger.convert`), never with
   a secret or a webhook URL (a short URL fingerprint instead). A plugin
   action is recorded as its `pluginAction`; a change of source also as
@@ -728,6 +767,7 @@ silently dropped.
 | `behavior_webhook_actions` | A behavior's webhook: URL and secret (encrypted), auth mode, the previous secret and its expiry during a rotation. |
 | `behavior_plugin_actions` | A behavior's plugin action: `pluginKey` and `actionKey`. |
 | `behavior_group_members` | Audience group members, by group name. |
+| `behavior_targets` | The created [behavior targets](#behavior-targets): one row per server, channel, user or group, keyed by its target key. |
 | `behavior_stats` | Per-behavior statistics. |
 | `behavior_deliveries` | The delivery log: one row per webhook delivery or plugin action dispatch, the last 20 per behavior for at most 7 days. |
 
@@ -743,6 +783,7 @@ Schema changes and the 2.0 upgrade are in
 | `src/modules/behavior/models/` | The tables. |
 | `src/modules/behavior/behavior-catalog.ts` | The in-memory snapshot the runtime reads. |
 | `src/modules/behavior/behavior-section.ts` | The section rule. |
+| `src/modules/behavior/behavior-target.ts`, `behavior-target-registry.ts`, `behavior-target-routes.ts`, `behavior-target-view.ts` | The target rule, keeping the directory complete, its routes and its list view. |
 | `src/modules/behavior/behavior-routes.ts` | Mounts every route; list, schema, test-fire, group members. |
 | `src/modules/behavior/behavior-write-routes.ts`, `message-trigger-writes.ts`, `message-trigger-rules.ts` | Message trigger writes and their rules. |
 | `src/modules/behavior/behavior-command-routes.ts`, `command-leaf-writes.ts`, `command-tree-rules.ts`, `command-registration-sync.ts` | Command writes, Discord's rules, registration. |

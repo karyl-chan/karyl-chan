@@ -12,7 +12,6 @@ import { BehaviorStat } from "./models/behavior-stats.model.js";
 import { BehaviorWebhookAction } from "./models/behavior-webhook-action.model.js";
 import { BehaviorDmAllowlist, destroyDmAllowlists } from "./models/behavior-dm-allowlist.model.js";
 import { BehaviorPluginAction, destroyPluginActions } from "./models/behavior-plugin-action.model.js";
-import { pruneUnusedGroupMembers } from "./models/behavior-group-member.model.js";
 import { behaviorTransaction } from "./behavior-write-lock.js";
 
 type Raw = Record<string, unknown>;
@@ -82,8 +81,6 @@ async function destroyLeaves(ids: number[], transaction: Transaction): Promise<v
   await BehaviorStat.destroy({ where: { behaviorId: ids }, transaction });
   await destroyDmAllowlists(ids, transaction);
   await BehaviorDefinition.destroy({ where: { id: ids }, transaction });
-  // a group only these leaves' DM allowlists named goes with them (#157)
-  await pruneUnusedGroupMembers(transaction);
 }
 
 /** Delete a command with everything under it. */

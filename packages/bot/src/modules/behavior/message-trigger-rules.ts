@@ -7,7 +7,9 @@
  *
  *   - placement (guildId / channelId) only for surface `guild`; a channel
  *     needs its guild
- *   - audience other than `all` only in bot DMs; its fields match its kind
+ *   - audience other than `all` only in bot DMs; its fields match its kind;
+ *     a group name has no whitespace at its ends (it is a Behavior Target's
+ *     name, stored trimmed)
  *   - `ignoreBots` cannot be turned off in bot DMs — the matcher drops bot
  *     authors there unconditionally (#116)
  *   - a regex pattern must compile, and run in linear time (#119)
@@ -108,6 +110,9 @@ export function checkMessageTrigger(s: MessageTriggerState): void {
     case "group":
       if (s.audienceGroupName === null) {
         refuse("audienceGroupName", "audience 'group' needs audienceGroupName");
+      }
+      if (s.audienceGroupName !== s.audienceGroupName.trim()) {
+        refuse("audienceGroupName", "a group name must not start or end with whitespace");
       }
       if (s.audienceUserId !== null) refuse("audienceUserId", "audience 'group' takes no user");
       break;

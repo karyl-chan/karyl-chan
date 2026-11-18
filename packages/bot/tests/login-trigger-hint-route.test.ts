@@ -30,6 +30,7 @@ import { RateLimiter } from "../src/utils/rate-limiter.js";
 // Static on purpose: a dynamic import in the test body bills the large
 // web-server graph to the 5s test timeout (#181).
 import { createWebServer } from "../src/modules/web-core/server.js";
+import { BehaviorTarget } from "../src/modules/behavior/models/behavior-target.model.js";
 import { clearBehaviors, seedCommand, seedLeaf, seedSystemLogin } from "./behavior-fixtures.js";
 
 let server: FastifyInstance;
@@ -47,6 +48,7 @@ beforeAll(async () => {
     BehaviorPluginAction,
     BehaviorDmAllowlist,
     BehaviorGroupMember,
+    BehaviorTarget,
     BehaviorDmLog,
   ]) {
     await model.sync({ force: true });

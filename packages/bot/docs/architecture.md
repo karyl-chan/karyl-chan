@@ -201,12 +201,13 @@ is stored.
   import plugin-system) and stored, converting between sources.
 - `models/` — behavior-command, behavior-definition,
   behavior-webhook-action, behavior-plugin-action, behavior-stats, behavior-delivery,
-  behavior-group-member (an
-  Audience Group's list: settable only for a group a message trigger
-  uses, dropped when the last such trigger leaves it).
+  behavior-group-member (an Audience Group's list), behavior-target (the
+  created Behavior Targets — a server, a channel, a user, a group; a group's
+  list is settable while its row exists and goes with it).
 
 **External surface.** HTTP `/api/behaviors/*`,
-`/api/behavior-commands/*`, `/api/behavior-groups/*`, and the public
+`/api/behavior-commands/*`, `/api/behavior-groups/*`,
+`/api/behavior-targets/*`, and the public
 `/api/auth/login-trigger`;
 `ensureSystemBehaviors` (startup); `getBehaviorCatalog` (read by
 command-system).
