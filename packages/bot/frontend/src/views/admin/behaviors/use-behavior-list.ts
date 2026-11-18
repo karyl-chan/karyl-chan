@@ -146,6 +146,18 @@ export function useBehaviorList() {
         if (target.key !== selected.value && (await mayLeave())) selected.value = target.key;
     }
 
+    /**
+     * A form created a target from its own target select: list it, and
+     * stay where the form is — its draft is not saved yet.
+     */
+    async function listTarget(target: BehaviorTargetView): Promise<void> {
+        const current = view.value;
+        if (!current || current.targets.some((t) => t.key === target.key)) return;
+        // shown at once; the reload puts it in its place in the order
+        view.value = { ...current, targets: [...current.targets, target] };
+        await load();
+    }
+
     /** A group's member list changed: the sidebar shows the new count. */
     function applyMemberCount(key: BehaviorTargetKey, memberCount: number): void {
         const current = view.value;
@@ -184,21 +196,6 @@ export function useBehaviorList() {
         }
     }
 
-    /** Audience Groups in use, with how many message triggers (Service Behaviors included) use each. */
-    const groupUse = computed(() => {
-        const use = new Map<string, number>();
-        const triggers = [
-            ...(view.value?.messageTriggers ?? []),
-            ...(view.value?.services ?? []).filter((s): s is MessageTriggerView & ServiceBehaviorView => s.kind === 'message'),
-        ];
-        for (const m of triggers) {
-            if (m.audienceKind === 'group' && m.audienceGroupName) {
-                use.set(m.audienceGroupName, (use.get(m.audienceGroupName) ?? 0) + 1);
-            }
-        }
-        return use;
-    });
-
     return {
         view,
         selected,
@@ -207,7 +204,6 @@ export function useBehaviorList() {
         error,
         expandKey,
         targets,
-        groupUse,
         load,
         applyTrigger,
         applyCommand,
@@ -216,6 +212,7 @@ export function useBehaviorList() {
         applyMemberCount,
         showCreated,
         showTarget,
+        listTarget,
         reorder,
     };
 }

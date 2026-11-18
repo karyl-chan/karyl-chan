@@ -8,10 +8,9 @@ import {
     type BehaviorTargetInput,
     type BehaviorTargetView,
 } from '../../../api/behavior';
-import TriggerLocationFields from './TriggerLocationFields.vue';
+import TargetLocationFields from './TargetLocationFields.vue';
 import { NO_ERRORS, errorsFromIssues, errorsFromRefusal, hasErrors, type FormErrors } from './behavior-errors';
 import { checkAgainstSchema } from './form-schema';
-import { emptyDraft, withLocationKind, type MessageTriggerDraft } from './message-trigger-draft';
 import { draftPatcher } from './use-draft-form';
 
 /**
@@ -34,8 +33,8 @@ type Kind = BehaviorTargetInput['kind'];
 const KINDS: readonly Kind[] = ['guild', 'channel', 'user', 'group'];
 
 const kind = ref<Kind>('guild');
-/** The server / channel pickers work on a trigger draft's location fields. */
-const place = ref<MessageTriggerDraft>(emptyDraft({ kind: 'guild' }));
+/** The server — and the channel — a guild or channel target names. */
+const place = ref({ guildId: '', channelId: '' });
 const patchPlace = draftPatcher(place);
 const userId = ref('');
 const name = ref('');
@@ -48,7 +47,7 @@ watch(
     (visible) => {
         if (!visible) return;
         kind.value = 'guild';
-        place.value = emptyDraft({ kind: 'guild' });
+        place.value = { guildId: '', channelId: '' };
         userId.value = '';
         name.value = '';
         errors.value = NO_ERRORS;
@@ -56,9 +55,8 @@ watch(
     { immediate: true }
 );
 
-watch(kind, (next) => {
+watch(kind, () => {
     errors.value = NO_ERRORS;
-    if (next === 'guild' || next === 'channel') place.value = withLocationKind(place.value, next);
 });
 
 const kindOptions = computed<SelectOption<Kind>[]>(() =>
@@ -129,12 +127,12 @@ async function create() {
                     />
                 </label>
 
-                <TriggerLocationFields
+                <TargetLocationFields
                     v-if="kind === 'guild' || kind === 'channel'"
-                    :draft="place"
-                    :kinds="[kind]"
+                    :kind="kind"
+                    :guild-id="place.guildId"
+                    :channel-id="place.channelId"
                     :errors="errors.fields"
-                    hide-kind
                     @patch="patchPlace"
                 />
 

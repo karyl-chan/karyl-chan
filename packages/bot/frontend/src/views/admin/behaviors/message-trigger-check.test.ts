@@ -1,45 +1,51 @@
 import { describe, expect, it } from 'vitest';
-import { fieldsWithErrorLine, type TriggerFormLayout } from './message-trigger-check';
-import { emptyDraft } from './message-trigger-draft';
-
-const GUILD = '123456789012345678';
-const CHANNEL = '223456789012345678';
-
-const card: TriggerFormLayout = {
-    kinds: ['bot_dm', 'guild_all', 'guild', 'channel'],
-    lockGuild: false,
-    lockChannel: false,
-    description: true,
-};
+import { fieldsWithErrorLine, issuesByFormField, triggerFormField } from './message-trigger-check';
 
 describe('fieldsWithErrorLine — only fields on screen take an error', () => {
-    it('the card shows the location picker, ids and description', () => {
-        const fields = fieldsWithErrorLine(emptyDraft({ kind: 'channel', guildId: GUILD, channelId: CHANNEL }), card);
-        expect(fields).toEqual(
-            expect.arrayContaining(['title', 'description', 'surface', 'guildId', 'channelId', 'patternValue', 'webhook.url'])
+    it('the card shows the target select, the pattern, the action and the description', () => {
+        expect(fieldsWithErrorLine({ description: true })).toEqual(
+            expect.arrayContaining(['title', 'description', 'target', 'patternValue', 'webhook.url'])
         );
-        expect(fields).not.toContain('audienceKind');
     });
 
-    it('a section-fixed channel shows neither picker nor ids, and the dialog has no description', () => {
-        const dialog: TriggerFormLayout = { kinds: ['channel'], lockGuild: true, lockChannel: true, description: false };
-        const fields = fieldsWithErrorLine(emptyDraft({ kind: 'channel', guildId: GUILD, channelId: CHANNEL }), dialog);
-        for (const hidden of ['surface', 'guildId', 'channelId', 'description'] as const) {
-            expect(fields).not.toContain(hidden);
-        }
+    it('a dialog has no description', () => {
+        expect(fieldsWithErrorLine({ description: false })).not.toContain('description');
     });
 
     it('checkboxes and the pattern kind have no error line', () => {
-        const fields = fieldsWithErrorLine(emptyDraft({ kind: 'guild_all' }), card);
+        const fields = fieldsWithErrorLine({ description: true });
         for (const hidden of ['patternKind', 'stopOnMatch', 'ignoreBots'] as const) {
             expect(fields).not.toContain(hidden);
         }
     });
+});
 
-    it('audience fields only in bot DMs, and only the one in use', () => {
-        const dm = { ...emptyDraft({ kind: 'bot_dm' }), audienceKind: 'group' as const };
-        const fields = fieldsWithErrorLine(dm, card);
-        expect(fields).toEqual(expect.arrayContaining(['audienceKind', 'audienceGroupName']));
-        expect(fields).not.toContain('audienceUserId');
+describe('triggerFormField — what the target select stands for', () => {
+    it('where the trigger is and for whom all show on the target select', () => {
+        for (const field of [
+            'surface',
+            'guildId',
+            'channelId',
+            'audienceKind',
+            'audienceUserId',
+            'audienceGroupName',
+            'location',
+        ]) {
+            expect(triggerFormField(field)).toBe('target');
+        }
+    });
+
+    it('every other field shows on itself', () => {
+        expect(triggerFormField('patternValue')).toBe('patternValue');
+        expect(triggerFormField('webhook.url')).toBe('webhook.url');
+    });
+
+    it('schema issues on several of those fields become one, the first', () => {
+        const issues = issuesByFormField({
+            guildId: { keyword: 'pattern' },
+            channelId: { keyword: 'required' },
+            title: { keyword: 'minLength', limit: 1 },
+        });
+        expect(issues).toEqual({ target: { keyword: 'pattern' }, title: { keyword: 'minLength', limit: 1 } });
     });
 });

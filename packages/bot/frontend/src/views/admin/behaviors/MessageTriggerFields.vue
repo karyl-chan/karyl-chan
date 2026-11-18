@@ -2,33 +2,30 @@
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { AppSelectField, AppTextField, Stack, type SelectOption } from '@karyl-chan/ui';
-import type { BehaviorAudienceKind, BehaviorPatternKind } from '../../../api/behavior';
-import TriggerLocationFields from './TriggerLocationFields.vue';
+import type { BehaviorPatternKind, BehaviorTargetView } from '../../../api/behavior';
+import TargetSelectField from './TargetSelectField.vue';
 import { previewCaptures, previewMatch, type MessageTriggerDraft } from './message-trigger-draft';
-import type { LocationKind } from './message-trigger-location';
 
 /**
- * The trigger half of a Message Trigger form (board 7 「觸發」 and
- * 「對象」): where, which pattern, the try-it box, the guild-only and
- * DM-only settings. Shared by the card editor and the new-behavior dialog,
- * so there is one trigger editor.
+ * The trigger half of a Message Trigger form (board 7 「觸發」): what it
+ * applies to — one Behavior Target, which says both where and for whom
+ * (ADR 0004) — which pattern, the try-it box, the guild-only settings.
+ * Shared by the card editor and the new-behavior dialog, so there is one
+ * trigger editor.
  */
 const props = defineProps<{
     draft: MessageTriggerDraft;
-    kinds: readonly LocationKind[];
-    lockGuild?: boolean;
-    lockChannel?: boolean;
     errors: Record<string, string>;
-    /** Audience Groups some trigger already uses. */
-    groupNames: readonly string[];
+    /** Which targets the form may choose; all that hold message triggers when omitted. */
+    allowTarget?: (target: BehaviorTargetView) => boolean;
     /**
-     * Set when saving would move the trigger to another section; `public`
+     * Set when saving would move the trigger to another target; `public`
      * when it leaves bot DMs, so replies would show in a channel (board 7).
      */
     moved?: { section: string; public: boolean } | null;
     /**
      * A Service Behavior's trigger (#126): always a bot DM that ends the
-     * walk, so only the pattern and the audience are shown.
+     * walk, so there is no stop flag.
      */
     fixedPlacement?: boolean;
 }>();
@@ -47,29 +44,6 @@ const inDm = computed(() => props.draft.locationKind === 'bot_dm');
 const patternKindOptions = computed<SelectOption<BehaviorPatternKind>[]>(() =>
     (['startswith', 'endswith', 'regex'] as const).map((k) => ({ value: k, label: t(`behaviors.trigger.kind.${k}`) }))
 );
-const audienceOptions = computed<SelectOption<BehaviorAudienceKind>[]>(() =>
-    (['all', 'user', 'group'] as const).map((k) => ({ value: k, label: t(`behaviors.audience.${k}`) }))
-);
-
-const NEW_GROUP = '\u0000new';
-const typingNewGroup = ref(false);
-const isNewGroup = computed(
-    () =>
-        typingNewGroup.value ||
-        (props.draft.audienceGroupName !== '' && !props.groupNames.includes(props.draft.audienceGroupName))
-);
-const groupOptions = computed<SelectOption<string>[]>(() => [
-    ...props.groupNames.map((g) => ({ value: g, label: g })),
-    { value: NEW_GROUP, label: t('behaviors.audience.newGroup') },
-]);
-const groupChoice = computed({
-    get: () => (isNewGroup.value ? NEW_GROUP : props.draft.audienceGroupName),
-    set: (value: string) => {
-        typingNewGroup.value = value === NEW_GROUP;
-        update({ audienceGroupName: value === NEW_GROUP ? '' : value });
-    },
-});
-
 const tryText = ref('');
 const preview = computed(() => {
     const result = previewMatch(props.draft.patternKind, props.draft.patternValue, tryText.value);
@@ -89,13 +63,10 @@ const captured = computed(() =>
 <template>
     <Stack gap="2">
         <h4 class="part">{{ t('behaviors.trigger.title') }}</h4>
-        <TriggerLocationFields
-            v-if="!fixedPlacement"
+        <TargetSelectField
             :draft="draft"
-            :kinds="kinds"
-            :lock-guild="lockGuild"
-            :lock-channel="lockChannel"
-            :errors="errors"
+            :allow="allowTarget"
+            :error="errors.target"
             @patch="emit('patch', $event)"
         />
         <p v-if="moved" class="moved" role="status" data-test="moved">
@@ -143,51 +114,6 @@ const captured = computed(() =>
             {{ t('behaviors.trigger.stopOnMatch') }}
         </label>
 
-        <template v-if="inDm">
-            <h4 class="part">{{ t('behaviors.audience.title') }}</h4>
-            <div class="grid">
-                <label class="field">
-                    <span class="field-label">{{ t('behaviors.audience.label') }}</span>
-                    <AppSelectField
-                        :model-value="draft.audienceKind"
-                        :options="audienceOptions"
-                        :drawer-title="t('behaviors.audience.label')"
-                        @update:model-value="update({ audienceKind: $event })"
-                    />
-                    <p v-if="errors.audienceKind" class="field-error">{{ errors.audienceKind }}</p>
-                </label>
-                <AppTextField
-                    v-if="draft.audienceKind === 'user'"
-                    :model-value="draft.audienceUserId"
-                    :label="t('behaviors.audience.user')"
-                    :hint="t('behaviors.location.idHint')"
-                    :error="errors.audienceUserId"
-                    inputmode="numeric"
-                    @update:model-value="update({ audienceUserId: String($event) })"
-                />
-                <template v-if="draft.audienceKind === 'group'">
-                    <label class="field">
-                        <span class="field-label">{{ t('behaviors.audience.group') }}</span>
-                        <AppSelectField
-                            v-model="groupChoice"
-                            :options="groupOptions"
-                            :placeholder="t('behaviors.audience.groupPlaceholder')"
-                            :drawer-title="t('behaviors.audience.group')"
-                        />
-                        <p v-if="errors.audienceGroupName && !isNewGroup" class="field-error">{{ errors.audienceGroupName }}</p>
-                    </label>
-                    <AppTextField
-                        v-if="isNewGroup"
-                        :model-value="draft.audienceGroupName"
-                        :label="t('behaviors.audience.newGroupName')"
-                        :hint="t('behaviors.audience.newGroupHint')"
-                        :error="errors.audienceGroupName"
-                        @update:model-value="update({ audienceGroupName: String($event) })"
-                    />
-                </template>
-            </div>
-            <slot v-if="draft.audienceKind === 'group'" name="group-members" />
-        </template>
     </Stack>
 </template>
 

@@ -61,7 +61,7 @@ async function openConvert(
     commands: CommandView[] = [],
 ): Promise<VueWrapper> {
     const wrapper = mount(MessageTriggerCard, {
-        props: { trigger, guildNames: new Map(), groupNames: [], groupUse: new Map(), commands },
+        props: { trigger, guildNames: new Map(), commands },
         global: { plugins: [i18n] },
         attachTo: document.body,
     });
@@ -85,7 +85,7 @@ const losses = () => [...document.querySelectorAll<HTMLElement>('[data-test="con
 describe('the kind tag', () => {
     it('offers the other kind only, and opens the dialog without sending anything', async () => {
         const wrapper = mount(MessageTriggerCard, {
-            props: { trigger: savedTrigger(), guildNames: new Map(), groupNames: [], groupUse: new Map(), commands: [] },
+            props: { trigger: savedTrigger(), guildNames: new Map(), commands: [] },
             global: { plugins: [i18n] },
             attachTo: document.body,
         });

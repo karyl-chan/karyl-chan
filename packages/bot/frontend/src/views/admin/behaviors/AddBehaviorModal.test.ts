@@ -50,7 +50,7 @@ function targetOf(key: BehaviorTargetKey) {
 
 function open(key: BehaviorTargetKey) {
     const wrapper = mount(AddBehaviorModal, {
-        props: { visible: true, target: targetOf(key), targetLabel: key, guildNames: new Map(), groupNames: ['vip'] },
+        props: { visible: true, target: targetOf(key), targetLabel: key, guildNames: new Map() },
         global: { plugins: [i18n] },
         attachTo: document.body,
     });
@@ -206,7 +206,7 @@ describe('AddBehaviorModal — creating a message trigger', () => {
         expect(wrapper.emitted('created')).toBeUndefined();
     });
 
-    it('a refusal on a field the target fixes is shown as a general error', async () => {
+    it('a refusal about where the trigger is shows on the target select', async () => {
         api.createMessageTrigger.mockRejectedValue(
             new ApiError(400, 'guildId must be a Discord id', 'validation_failed', 'guildId')
         );
@@ -217,11 +217,11 @@ describe('AddBehaviorModal — creating a message trigger', () => {
         await type('behaviors.action.url', 'https://hook.example/q');
         $('[data-test="create"]')!.click();
         await flushPromises();
-        expect($('[role="alert"].error')!.textContent).toContain('behaviors.errors.withDetail');
+        expect($('[data-test="target-error"]')!.textContent).toContain('guildId must be a Discord id');
         expect(wrapper.emitted('created')).toBeUndefined();
     });
 
-    it('in a channel target the channel is fixed, not an input', async () => {
+    it('in a channel target there is no server or channel input: the target says both', async () => {
         open(`channel:${GUILD}:${CHANNEL}`);
         await flushPromises();
         const labels = $$('.app-field__label').map((l) => l.textContent);

@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { computed } from 'vue';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import type { MessageTriggerView } from '../../../api/behavior';
@@ -23,7 +24,16 @@ vi.mock('@karyl-chan/ui', async (importOriginal) => ({
 }));
 
 import MessageTriggerCard from './MessageTriggerCard.vue';
-import { MESSAGE_TRIGGER_SCHEMA, keyI18n, savedTrigger, stubMatchMedia } from './behavior-test-support';
+import {
+    BUILTIN_TARGETS,
+    MESSAGE_TRIGGER_SCHEMA,
+    createdTarget,
+    keyI18n,
+    savedTrigger,
+    stubMatchMedia,
+} from './behavior-test-support';
+import { TARGET_DIRECTORY, type TargetDirectory } from './target-directory';
+import { NO_NAMES } from './target-labels';
 
 const i18n = keyI18n();
 const GUILD = '123456789012345678';
@@ -31,13 +41,17 @@ const GUILD = '123456789012345678';
 const mounted: VueWrapper[] = [];
 afterEach(() => mounted.splice(0).forEach((w) => w.unmount()));
 
-async function mountOpen(
-    t: MessageTriggerView = savedTrigger(),
-    groupUse: Map<string, number> = new Map(),
-): Promise<VueWrapper> {
+/** The targets the card's target select offers — what the page provides. */
+const directory: TargetDirectory = {
+    targets: computed(() => [...BUILTIN_TARGETS, createdTarget(`guild:${GUILD}`), createdTarget('group:ops')]),
+    names: computed(() => NO_NAMES),
+    created: () => undefined,
+};
+
+async function mountOpen(t: MessageTriggerView = savedTrigger()): Promise<VueWrapper> {
     const wrapper = mount(MessageTriggerCard, {
-        props: { trigger: t, guildNames: new Map(), groupNames: [...groupUse.keys()], groupUse, commands: [] },
-        global: { plugins: [i18n] },
+        props: { trigger: t, guildNames: new Map(), commands: [] },
+        global: { plugins: [i18n], provide: { [TARGET_DIRECTORY as symbol]: directory } },
         attachTo: document.body,
     });
     mounted.push(wrapper);
@@ -79,22 +93,67 @@ describe('MessageTriggerCard — editing', () => {
         expect((wrapper.findAll('.editor input')[0].element as HTMLInputElement).value).toBe('weather');
     });
 
+    it('offers the targets the sidebar lists, never App 指令, and "new target"', async () => {
+        const wrapper = await mountOpen();
+        const field = wrapper.findAll('label.field').find((f) => f.find('.field-label').text() === 'behaviors.targetField.label')!;
+        await field.find('button.select-trigger').trigger('click');
+        await flushPromises();
+        // every select's options are on the page; the open one's come last
+        const options = [...document.querySelectorAll<HTMLElement>('li')].map((li) => li.textContent?.trim());
+        expect(options.slice(-5)).toEqual([
+            'behaviors.target.botDm',
+            'behaviors.target.guildAll',
+            GUILD,
+            'ops',
+            'behaviors.targetField.new',
+        ]);
+        expect(options).not.toContain('behaviors.target.app');
+    });
+
+    it('choosing a target is the whole of where and for whom: a group is a bot DM trigger for it', async () => {
+        api.updateBehavior.mockResolvedValue({ behavior: savedTrigger({ audienceKind: 'group', audienceGroupName: 'ops' }) });
+        const wrapper = await mountOpen();
+        await choose(wrapper, 'behaviors.targetField.label', 'ops');
+        await wrapper.find('form.editor').trigger('submit');
+        await flushPromises();
+        expect(api.updateBehavior).toHaveBeenCalledWith(7, {
+            audienceKind: 'group',
+            audienceGroupName: 'ops',
+            ifUpdatedAt: '2026-10-27T00:00:00.000Z',
+        });
+    });
+
     it('moving out of bot DMs says where it goes and that replies become public (board 7)', async () => {
         const wrapper = await mountOpen();
-        await choose(wrapper, 'behaviors.location.label', 'behaviors.location.guild_all');
+        await choose(wrapper, 'behaviors.targetField.label', 'behaviors.target.guildAll');
         const moved = wrapper.find('[data-test="moved"]');
         expect(moved.text()).toContain('behaviors.trigger.moved');
         expect(moved.text()).toContain('behaviors.trigger.movedPublic');
     });
 
-    it('moving between server locations does not warn about replies going public', async () => {
-        const wrapper = await mountOpen(savedTrigger({ surface: 'guild', section: 'guild:all' }));
-        await choose(wrapper, 'behaviors.location.label', 'behaviors.location.guild');
-        // no guild yet: nowhere to move to
+    it('moving between server targets does not warn about replies going public', async () => {
+        const wrapper = await mountOpen(savedTrigger({ surface: 'guild', target: 'guild:all', section: 'guild:all' }));
         expect(wrapper.find('[data-test="moved"]').exists()).toBe(false);
-        const guild = wrapper.findAll('.app-field').find((f) => f.text().includes('behaviors.location.guildPicker'))!;
-        await guild.find('input').setValue(GUILD);
+        await choose(wrapper, 'behaviors.targetField.label', GUILD);
+        expect(wrapper.find('[data-test="moved"]').text()).toContain('behaviors.trigger.moved');
         expect(wrapper.find('[data-test="moved"]').text()).not.toContain('behaviors.trigger.movedPublic');
+    });
+
+    it('moving within bot DMs — to a group — is a move, but replies stay private', async () => {
+        const wrapper = await mountOpen();
+        await choose(wrapper, 'behaviors.targetField.label', 'ops');
+        expect(wrapper.find('[data-test="moved"]').text()).not.toContain('behaviors.trigger.movedPublic');
+    });
+
+    it('a problem with where or for whom shows on the target select', async () => {
+        api.updateBehavior.mockRejectedValue(
+            new ApiError(400, 'guildId must be a Discord id', 'validation_failed', 'guildId')
+        );
+        const wrapper = await mountOpen();
+        await choose(wrapper, 'behaviors.targetField.label', GUILD);
+        await wrapper.find('form.editor').trigger('submit');
+        await flushPromises();
+        expect(wrapper.find('[data-test="target-error"]').text()).toContain('guildId must be a Discord id');
     });
 });
 

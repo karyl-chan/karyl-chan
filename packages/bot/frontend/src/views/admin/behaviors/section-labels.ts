@@ -2,7 +2,10 @@ import type { BehaviorSection } from '../../../api/behavior';
 import { parseSection } from './behavior-sections';
 import type { Translate } from './translate';
 
-/** Display name of a section (guild names resolve when known). */
+/**
+ * Display name of a section (guild names resolve when known). A section
+ * is a location-only Behavior Target, so it reads as that target does.
+ */
 export function sectionLabel(
     t: Translate,
     section: BehaviorSection,
@@ -11,11 +14,11 @@ export function sectionLabel(
     const s = parseSection(section);
     switch (s.kind) {
         case 'app':
-            return t('behaviors.sidebar.app');
+            return t('behaviors.target.app');
         case 'bot_dm':
-            return t('behaviors.sidebar.botDm');
+            return t('behaviors.target.botDm');
         case 'guild_all':
-            return t('behaviors.sidebar.guildAll');
+            return t('behaviors.target.guildAll');
         case 'guild':
             return guildNames.get(s.guildId) ?? s.guildId;
         case 'channel':

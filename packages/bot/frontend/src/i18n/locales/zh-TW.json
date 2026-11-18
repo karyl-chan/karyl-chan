@@ -1188,11 +1188,8 @@
     "behaviors": {
         "sidebar": {
             "title": "行為",
-            "app": "App 指令",
             "appHint": "跨多處可用或開放使用者安裝的指令",
-            "botDm": "與 bot 的私訊",
             "botDmHint": "bot 私訊裡的訊息觸發與指令",
-            "guildAll": "全部伺服器",
             "guildAllHint": "bot 所在的每個伺服器",
             "groupSub": "群組 · {count} 人"
         },
@@ -1234,6 +1231,11 @@
                 "hasBehaviors": "還有 {count} 個行為屬於它，請先移走或刪除",
                 "inAllowlists": "有 {count} 個行為的回覆可以私訊這個群組，請先從那些行為移除"
             }
+        },
+        "targetField": {
+            "label": "作用對象",
+            "placeholder": "選擇對象",
+            "new": "＋ 新增對象…"
         },
         "workspace": {
             "loadError": "無法載入行為：{error}",
@@ -1333,11 +1335,6 @@
             "leave": "放棄並離開"
         },
         "location": {
-            "label": "位置",
-            "bot_dm": "與 bot 的私訊",
-            "guild_all": "全部伺服器",
-            "guild": "指定伺服器",
-            "channel": "指定頻道",
             "guildPicker": "伺服器",
             "channelPicker": "頻道",
             "guildPlaceholder": "選擇伺服器",
@@ -1369,26 +1366,13 @@
             "stopOnMatch": "比對到之後停止，不再檢查這個對象後面的行為",
             "movedPublic": "回覆會貼在頻道裡，所有人都看得到。"
         },
-        "audience": {
-            "title": "對象",
-            "label": "誰私訊時觸發",
-            "all": "所有人",
-            "user": "指定使用者",
-            "group": "群組",
-            "groupPlaceholder": "選擇群組",
-            "newGroup": "＋ 新增群組…",
-            "newGroupName": "新群組名稱",
-            "newGroupHint": "儲存後就能設定這個群組的成員。"
-        },
         "group": {
             "membersTitle": "群組「{group}」的成員",
             "count": "{count} 人",
-            "shared": "這份名單由 {count} 個行為共用，修改會套用到全部。",
             "empty": "還沒有成員。",
             "remove": "移除 {user}",
             "addPlaceholder": "Discord 使用者 ID",
-            "add": "加入",
-            "saveFirst": "儲存後就能設定這個群組的成員。"
+            "add": "加入"
         },
         "action": {
             "title": "轉發設定",
@@ -1474,7 +1458,7 @@
             "created": "已建立「{title}」。",
             "done": "完成",
             "commandNamePlaceholder": "例：status",
-            "commandPreset": "可見性（依分區預設，建立後可在卡片調整）"
+            "commandPreset": "可見性（依對象預設，建立後可在卡片調整）"
         },
         "command": {
             "resync": "重新同步到 Discord",

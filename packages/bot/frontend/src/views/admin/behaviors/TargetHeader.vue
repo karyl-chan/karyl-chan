@@ -106,7 +106,6 @@ async function remove() {
             <GroupMembersPanel
                 :key="group"
                 :group-name="group"
-                :used-by="1"
                 :readonly="membersLocked"
                 @members="emit('members', $event)"
             />

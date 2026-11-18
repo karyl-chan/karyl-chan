@@ -155,7 +155,7 @@ trigger for other DMs.
 | Setting | Rule |
 |---------|------|
 | Pattern | `startswith`, `endswith` or `regex`, 1–500 characters. A regex is a JavaScript regular expression without flags (so it is case-sensitive), run on V8's linear-time engine: it must compile there, so backreferences, lookahead and large repeat counts are refused (see [regex triggers](#regex-triggers)). `startswith` and `endswith` compare exactly, case included. |
-| Audience | DMs with the bot only: **everyone**, **one user** (a user id), or an **audience group**. In servers a trigger always applies to everyone. |
+| Audience | DMs with the bot only: **everyone**, **one user** (a user id), or an **audience group**. In servers a trigger always applies to everyone. The admin UI sets it together with the location, as one [target](#behavior-targets). |
 | Skip other bots (`ignoreBots`) | Servers only, on by default: skip messages from other bots and webhooks. The bot's own messages are always skipped, and in DMs messages from bots always are. |
 | Stop after a match (`stopOnMatch`) | Off by default. See [matching order](#matching-order). |
 
@@ -692,6 +692,13 @@ grant: per-section or per-behavior capabilities do not exist.
   from the moment it exists; a group named in DM allowlists says how many.
 - The system login is pinned to the top of its target. Commands and
   message triggers are listed separately.
+- A message trigger's form has one **Applies to** select over the same
+  targets the sidebar lists (App commands aside): the target says both
+  where the trigger is and for whom. **New target…** in the select
+  creates one without leaving the form. A Service Behavior's select
+  offers the targets in DMs with the bot only, and shows the members of
+  the group it is set to. A command has no such select: its target
+  follows from its visibility settings.
 - Each card edits a draft. Saving sends only what changed, and refuses
   when the behavior changed on the server since the page loaded; the card
   then shows the conflict. The page warns before leaving with unsaved

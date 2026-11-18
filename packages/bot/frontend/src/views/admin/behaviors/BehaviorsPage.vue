@@ -11,6 +11,7 @@ import CreateTargetDialog from './CreateTargetDialog.vue';
 import type { BehaviorTargetKey, BehaviorTargetView } from '../../../api/behavior';
 import { describeBehaviorError, isStale } from './behavior-errors';
 import { countInTarget, itemsInTarget } from './behavior-targets';
+import { provideTargetDirectory } from './target-directory';
 import { targetLabel } from './target-labels';
 import { useBehaviorList } from './use-behavior-list';
 import { provideRegistrationResults } from './use-registration-results';
@@ -31,7 +32,6 @@ const {
     error,
     expandKey,
     targets,
-    groupUse,
     load,
     applyTrigger,
     applyCommand,
@@ -40,6 +40,7 @@ const {
     applyMemberCount,
     showCreated,
     showTarget,
+    listTarget,
     reorder,
 } = useBehaviorList();
 const adding = ref(false);
@@ -49,6 +50,8 @@ provideRegistrationResults();
 
 /** Guild, channel and user names are a nicety: without the access to read them the page shows ids. */
 const names = useTargetNames(targets);
+// every form's target select offers what the sidebar lists
+provideTargetDirectory({ targets, names, created: listTarget });
 
 const counts = computed(() => {
     const map: Record<string, number> = {};
@@ -60,10 +63,6 @@ const selectedItems = computed(() =>
 );
 const selectedLabel = computed(() =>
     selectedTarget.value ? targetLabel(t, selectedTarget.value, names.value) : ''
-);
-/** The Audience Groups a trigger's audience may name: the group targets. */
-const groupNames = computed(() =>
-    targets.value.flatMap((target) => (target.kind === 'group' && target.groupName ? [target.groupName] : []))
 );
 
 /** Leaving the target (or the page) unmounts its cards and drops their drafts (#105). */
@@ -134,8 +133,6 @@ async function onTargetCreated(target: BehaviorTargetView) {
             :label="selectedLabel"
             :items="selectedItems"
             :guild-names="names.guilds"
-            :group-names="groupNames"
-            :group-use="groupUse"
             :commands="view?.commands ?? []"
             :expand-key="expandKey"
             :loading="loading"
@@ -161,7 +158,6 @@ async function onTargetCreated(target: BehaviorTargetView) {
             :target="selectedTarget"
             :target-label="selectedLabel"
             :guild-names="names.guilds"
-            :group-names="groupNames"
             @close="adding = false"
             @created="showCreated($event, mayDropDrafts)"
             @reload="load"

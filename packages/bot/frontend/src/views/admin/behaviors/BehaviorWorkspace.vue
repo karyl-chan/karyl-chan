@@ -28,9 +28,6 @@ const props = defineProps<{
     label: string;
     items: TargetItems | null;
     guildNames: ReadonlyMap<string, string>;
-    /** Audience Groups in use, sorted, and how many triggers use each. */
-    groupNames: readonly string[];
-    groupUse: ReadonlyMap<string, number>;
     /** Every command on the page, whatever its target: a trigger conversion may join one. */
     commands: readonly CommandView[];
     /** The card to open (an item that just moved here or was created), by itemKey. */
@@ -157,8 +154,6 @@ const count = computed(() => (props.items ? countInTargetItems(props.items) : 0)
                         :behavior="s"
                         :expand="expandKey === itemKey(s)"
                         :guild-names="guildNames"
-                        :group-names="groupNames"
-                        :group-use="groupUse"
                         @updated="emit('serviceUpdated', $event)"
                         @reload="emit('reload')"
                     />
@@ -174,7 +169,6 @@ const count = computed(() => (props.items ? countInTargetItems(props.items) : 0)
                         :command="c"
                         :expand="expandKey === itemKey(c)"
                         :guild-names="guildNames"
-                        :group-names="groupNames"
                         @updated="emit('commandUpdated', $event)"
                         @reload="emit('reload')"
                         @deleted="emit('reload')"
@@ -192,8 +186,6 @@ const count = computed(() => (props.items ? countInTargetItems(props.items) : 0)
                         :trigger="m"
                         :expand="expandKey === itemKey(m)"
                         :guild-names="guildNames"
-                        :group-names="groupNames"
-                        :group-use="groupUse"
                         :commands="commands"
                         @updated="emit('updated', $event)"
                         @deleted="emit('deleted', $event)"

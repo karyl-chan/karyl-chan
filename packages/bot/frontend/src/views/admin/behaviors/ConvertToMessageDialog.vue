@@ -12,14 +12,14 @@ import ConvertLosses from './ConvertLosses.vue';
 import MessageTriggerFields from './MessageTriggerFields.vue';
 import { NO_ERRORS, errorsFromIssues, errorsFromRefusal, isStale, type FormErrors } from './behavior-errors';
 import { commandPath } from './command-draft';
-import {
-    CONVERT_LOCATION_KINDS,
-    convertedMessageDraft,
-    toMessageBody,
-    toMessageLosses,
-} from './convert-trigger-draft';
+import { convertedMessageDraft, toMessageBody, toMessageLosses } from './convert-trigger-draft';
 import { checkAgainstSchema } from './form-schema';
-import { fieldsWithErrorLine, type TriggerFormLayout } from './message-trigger-check';
+import {
+    fieldsWithErrorLine,
+    issuesByFormField,
+    triggerFormField,
+    type TriggerFormLayout,
+} from './message-trigger-check';
 import { previewMatch, type MessageTriggerDraft } from './message-trigger-draft';
 import { registrationResult } from './registration-result';
 import { draftPatcher } from './use-draft-form';
@@ -27,8 +27,8 @@ import { useRegistrationResult } from './use-registration-results';
 
 /**
  * A command leaf becomes a message trigger (#172): which leaf (a command
- * with subcommands has several), where the trigger goes — the command's
- * own section by default — and its pattern. The dialog lists what the
+ * with subcommands has several), which target the trigger is for — the
+ * command's own by default — and its pattern. The dialog lists what the
  * leaf loses before the admin confirms. The trigger is stored first; then
  * the command is registered again without the leaf, or removed from
  * Discord when it was its last. What Discord answered stays with the
@@ -38,8 +38,6 @@ const props = defineProps<{
     visible: boolean;
     command: CommandView;
     guildNames: ReadonlyMap<string, string>;
-    /** Audience Groups some trigger already uses. */
-    groupNames: readonly string[];
 }>();
 
 const emit = defineEmits<{
@@ -52,12 +50,7 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const toast = useToastStore();
 
-const LAYOUT: TriggerFormLayout = {
-    kinds: CONVERT_LOCATION_KINDS,
-    lockGuild: false,
-    lockChannel: false,
-    description: false,
-};
+const LAYOUT: TriggerFormLayout = { description: false };
 
 /** The only leaf goes without asking; of several, the admin picks one. */
 const firstPick = () => (props.command.leaves.length === 1 ? props.command.leaves[0].id : null);
@@ -100,17 +93,20 @@ const leafOptions = computed<SelectOption<number>[]>(() =>
 
 const losses = computed(() => (leaf.value ? toMessageLosses(props.command, leaf.value, draft.value) : []));
 
-/** What the server would refuse in the draft: a location without its ids, the served schema, a broken regex. */
+/** What the server would refuse in the draft: no target, the served schema, a broken regex. */
 function check(): FormErrors {
     if (!leaf.value) return { fields: { leaf: t('behaviors.validation.required') }, general: null };
-    const fields = fieldsWithErrorLine(draft.value, LAYOUT);
+    const fields = fieldsWithErrorLine(LAYOUT);
     const body = toMessageBody(draft.value);
-    if (!body) {
-        const field = draft.value.guildId.trim() === '' ? 'guildId' : 'channelId';
-        return { fields: { [field]: t('behaviors.validation.required') }, general: null };
-    }
+    if (!body) return { fields: { target: t('behaviors.validation.required') }, general: null };
     const found: FormErrors = schema.value
-        ? errorsFromIssues(t, checkAgainstSchema(schema.value, { to: 'message', ...body, ifUpdatedAt: leaf.value.updatedAt }), fields)
+        ? errorsFromIssues(
+              t,
+              issuesByFormField(
+                  checkAgainstSchema(schema.value, { to: 'message', ...body, ifUpdatedAt: leaf.value.updatedAt }),
+              ),
+              fields,
+          )
         : { fields: {}, general: null };
     if (body.patternKind === 'regex' && previewMatch('regex', body.patternValue, '') === 'invalid') {
         found.fields.patternValue ??= t('behaviors.trigger.preview.invalid');
@@ -146,7 +142,7 @@ async function convert() {
             errors.value = { fields: {}, general: t('behaviors.convertTrigger.stale') };
             emit('reload');
         } else {
-            errors.value = errorsFromRefusal(t, err, fieldsWithErrorLine(draft.value, LAYOUT));
+            errors.value = errorsFromRefusal(t, err, fieldsWithErrorLine(LAYOUT), triggerFormField);
         }
     } finally {
         converting.value = false;
@@ -181,13 +177,7 @@ const commandRegistration = useRegistrationResult(() => props.command.id);
                     <p v-if="errors.fields.leaf" class="field-error" data-test="leaf-error">{{ errors.fields.leaf }}</p>
                 </label>
 
-                <MessageTriggerFields
-                    :draft="draft"
-                    :kinds="LAYOUT.kinds"
-                    :errors="errors.fields"
-                    :group-names="groupNames"
-                    @patch="applyPatch"
-                />
+                <MessageTriggerFields :draft="draft" :errors="errors.fields" @patch="applyPatch" />
 
                 <ConvertLosses v-if="leaf" :losses="losses" />
 

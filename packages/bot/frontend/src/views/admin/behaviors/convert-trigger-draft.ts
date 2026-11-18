@@ -8,7 +8,7 @@ import type {
 import { parseSection } from './behavior-sections';
 import { commandBody, newCommandVisibility, type CommandDraft } from './command-draft';
 import { draftLocation, emptyDraft, toCreateBody, type MessageTriggerDraft } from './message-trigger-draft';
-import { locationKey, type LocationKind } from './message-trigger-location';
+import { locationKey } from './message-trigger-location';
 
 /**
  * Converting a custom behavior between a Message Trigger and a Command
@@ -103,9 +103,6 @@ export function convertedMessageDraft(command: CommandView): MessageTriggerDraft
         ? emptyDraft({ kind: 'guild', guildId: s.guildId })
         : emptyDraft({ kind: s.kind === 'guild_all' ? 'guild_all' : 'bot_dm' });
 }
-
-/** Every location a converted trigger may go to: any, whatever section the command was in. */
-export const CONVERT_LOCATION_KINDS: readonly LocationKind[] = ['bot_dm', 'guild_all', 'guild', 'channel'];
 
 /** The request for the draft; null while the location still lacks an id it needs. */
 export function toMessageBody(draft: MessageTriggerDraft): ConvertToMessageInput | null {
