@@ -94,6 +94,7 @@ import {
 // registration is delegated to registerModuleRoutes (module-routes.ts)
 // so this file no longer enumerates every module (PM-4).
 import { registerPluginProxy } from "../plugin-system/plugin-proxy.js";
+import { attachPluginWsProxy } from "../plugin-system/plugin-ws-proxy.js";
 import { STRICT_RPC_AJV_OPTIONS } from "../plugin-system/plugin-rpc-schema.js";
 import { registerModuleRoutes } from "./module-routes.js";
 import { registerJwksRoute } from "./jwks-route.js";
@@ -399,6 +400,11 @@ export async function createWebServer(
   await server.register(async (proxyInstance) => {
     await registerPluginProxy(proxyInstance);
   });
+
+  // WebSocket half of the plugin proxy (#272). Upgrades never reach Fastify
+  // routes or hooks; this listens on the Node server's `upgrade` event and
+  // runs its own checks (Origin, caps, enabled plugin, host policy).
+  attachPluginWsProxy(server, { trustProxy });
 
   // Security headers. Vue 3 production build extracts all scoped styles
   // into separate .css files (verified via `vite build` dist output — no

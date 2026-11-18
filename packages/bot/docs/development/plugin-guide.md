@@ -255,6 +255,54 @@ token is required.
 - The forwarding URL is read from the DB-stored `plugin.url` (the
   manifest-declared value). The request's host or origin is not used.
 
+### WebSocket
+
+A plugin can serve WebSocket endpoints under its prefix. The browser
+connects to `wss://<bot>/plugin/<pluginKey>/<path>`; the bot strips
+`/plugin/<pluginKey>` and forwards the `Upgrade` to the plugin, exactly
+like an HTTP request (`/plugin/karyl-radio/ws?token=…` reaches the
+plugin as `/ws?token=…`). After the plugin answers `101`, the bot pipes
+bytes both ways without parsing frames.
+
+Attach the upgrade handler to the Node server behind the Fastify
+instance the SDK hands to `onReady` (no SDK change is needed), for
+example a Hocuspocus or `ws` server listening on `server.server`'s
+`upgrade` event.
+
+Conditions, which differ from the HTTP proxy:
+
+- The plugin must be `status === 'active'` **and** `enabled`. A disabled
+  plugin's WebUI still loads over HTTP, but its WebSocket upgrades get
+  `404 { "error": "unknown plugin" }`.
+- When the plugin is disabled, deactivated or unregistered, the bot
+  destroys its open connections. The bot cannot send a close frame (it
+  does not parse frames), so the browser sees close code `1006`; the
+  WebUI should reconnect with backoff.
+- **Origin.** A request whose `Origin` is neither the `WEB_BASE_URL`
+  origin nor the origin of the request's own `Host` gets `403`. A
+  request without `Origin` (a non-browser client) is allowed.
+- **Authentication.** The `cookie` header is removed, as on HTTP. Pass
+  a token in the query string or in the first message (for example one
+  derived from the `plugin-session` JWT) and verify it in the plugin.
+  `Authorization` and every `Sec-WebSocket-*` header are forwarded.
+  `x-forwarded-for` / `-proto` / `-host` are replaced with the bot's
+  values; `forwarded` and `x-real-ip` are removed.
+- A `set-cookie` on the `101` gets the same Path/Domain rewrite as HTTP.
+- A non-`101` reply (for example `401`) is passed to the client with its
+  status, headers and body, then the connection closes.
+- The plugin must answer the upgrade within 10 seconds, otherwise the
+  client gets `504`. An established connection has no timeout; the bot
+  enables TCP keepalive on both sides.
+- Caps, per bot process: 60 upgrade attempts per client IP per minute,
+  32 open connections per client IP, 512 open connections per plugin.
+  Over a cap the client gets `429` before any handshake.
+- The bot logs each connection's open and close (duration, bytes each
+  way, reason) and each refusal, and exports the per-plugin count as
+  `karyl_plugin_ws_connections`.
+
+If a reverse proxy sits in front of the bot, it must forward `Upgrade`
+for `/plugin/*` as well.
+
 ### `publicBaseUrl` — how the plugin learns its public URL
 
 Register and heartbeat responses include a `publicBaseUrl` field:
@@ -290,11 +338,9 @@ blocks most inline scripts and styles.
 ### Limitations
 
 - **SSE (`text/event-stream`).** Long-running SSE streams are cut off
-  by the proxy's 30-second upstream timeout. A WebUI that needs
+  by the proxy's 210-second upstream timeout. A WebUI that needs
   server-sent events must reconnect before the timeout, or use a
-  different channel.
-- **WebSocket.** `@fastify/reply-from` does not proxy WebSocket
-  `Upgrade` requests. WebSocket support requires extending the proxy.
+  WebSocket (see [WebSocket](#websocket)), which has no such limit.
 
 ### Benefit
 

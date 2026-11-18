@@ -87,6 +87,7 @@ WebUI reverse proxy.
   → POST to plugin.
 - `plugin-auth.service.ts` — in-memory token hash cache.
 - `plugin-proxy.ts` — `/plugin/<key>/*` WebUI reverse proxy.
+- `plugin-ws-proxy.ts` — WebSocket Upgrade under `/plugin/<key>/` (raw socket pipe, enabled plugins only).
 - `plugin-routes.ts` — `/api/plugins/*` (register, heartbeat, admin).
 - `plugin-rpc-routes.ts` — `/api/plugin/*` (plugin → bot RPC).
 - `models/` — plugin, plugin-capability, plugin-command, plugin-config,
