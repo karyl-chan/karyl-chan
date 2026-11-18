@@ -6,7 +6,36 @@ import { preflightPluginTarget } from "./plugin-dispatch-util.js";
 import { getServiceDiscovery } from "../../adapters/registry.js";
 
 /** Regex that matches valid pluginKey values (same constraint as plugin.id at register time). */
-const PLUGIN_KEY_RE = /^[a-z0-9][a-z0-9-]*$/;
+export const PLUGIN_KEY_RE = /^[a-z0-9][a-z0-9-]*$/;
+
+/**
+ * Request headers the proxy drops before forwarding (HTTP and WebSocket):
+ * the bot's session cookie and any client-supplied forwarding chain, which
+ * the proxy then replaces with its own `x-forwarded-*` values.
+ */
+export const PROXY_STRIPPED_REQUEST_HEADERS = [
+  "x-forwarded-for",
+  "x-forwarded-host",
+  "x-forwarded-proto",
+  "forwarded",
+  "x-real-ip",
+  "cookie",
+] as const;
+
+/**
+ * Scope a plugin's `set-cookie` value to its proxy prefix: any Path is
+ * replaced with `/plugin/<key>/` and Domain is dropped, so a plugin cannot
+ * set cookies on the bot's root path or domain.
+ */
+export function rewritePluginSetCookie(cookie: string, pluginKey: string): string {
+  return (
+    cookie
+      // Remove any existing Path= attribute.
+      .replace(/;\s*Path=[^;]*/gi, "")
+      // Strip Domain= so the cookie is scoped to the current host only.
+      .replace(/;\s*Domain=[^;]*/gi, "") + `; Path=/plugin/${pluginKey}/`
+  );
+}
 
 /**
  * Transient upstream connection-error codes that are safe to retry once
@@ -43,7 +72,7 @@ const PROXY_CONNECT_RETRY_DELAY_MS = 250;
  */
 const rrCursor = new Map<string, number>();
 
-function pickEndpoint(pluginKey: string, endpoints: string[]): string {
+export function pickEndpoint(pluginKey: string, endpoints: string[]): string {
   if (endpoints.length <= 1) return endpoints[0];
   const i = (rrCursor.get(pluginKey) ?? 0) % endpoints.length;
   rrCursor.set(pluginKey, i + 1);
@@ -108,9 +137,9 @@ function pickEndpoint(pluginKey: string, endpoints: string[]): string {
  * cannot set cookies on the bot's root domain.
  *
  * SSE / WebSocket: long-lived text/event-stream responses will hit the
- * 30-second upstream timeout and be dropped. WebSocket Upgrade requests are
- * not proxied by @fastify/reply-from — a future plugin needing real-time
- * transport would require the proxy to be extended.
+ * 210-second upstream timeout and be dropped. WebSocket Upgrade requests
+ * never reach these routes — Node hands them to the server's `upgrade`
+ * event, which plugin-ws-proxy.ts handles (#272).
  *
  * Recreate-race retry: when a plugin container is recreated
  * (`docker compose up --build -d <plugin>`), there is a short window where
@@ -322,12 +351,9 @@ export async function registerPluginProxy(
           // Strip hop-by-hop and trust-sensitive forwarding headers so a
           // downstream plugin cannot spoof the bot's forwarding chain or
           // observe session cookies from the bot's domain.
-          delete headers["x-forwarded-for"];
-          delete headers["x-forwarded-host"];
-          delete headers["x-forwarded-proto"];
-          delete headers["forwarded"];
-          delete headers["x-real-ip"];
-          delete headers["cookie"];
+          for (const name of PROXY_STRIPPED_REQUEST_HEADERS) {
+            delete headers[name];
+          }
           // @fastify/reply-from hands us a content-type with media-type
           // parameters stripped (e.g. "multipart/form-data" without the
           // ; boundary=... part). Plugins that parse multipart uploads
@@ -351,13 +377,7 @@ export async function registerPluginProxy(
           // plugin's proxy prefix; Domain attribute is stripped entirely.
           const setCookie = headers["set-cookie"];
           if (setCookie) {
-            const rewrite = (c: string) =>
-              c
-                // Remove any existing Path= attribute.
-                .replace(/;\s*Path=[^;]*/gi, "")
-                // Strip Domain= so the cookie is scoped to the current host only.
-                .replace(/;\s*Domain=[^;]*/gi, "") +
-              `; Path=/plugin/${pluginKey}/`;
+            const rewrite = (c: string) => rewritePluginSetCookie(c, pluginKey);
             const rawValues = Array.isArray(setCookie)
               ? setCookie
               : [setCookie as string];

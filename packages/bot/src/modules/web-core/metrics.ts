@@ -234,6 +234,33 @@ export const pluginCircuitBreakerOpenGauge = new Gauge({
   },
 });
 
+// Open WebSocket connections through the plugin proxy (#272), per plugin.
+// Includes connections still in their handshake: they count against the
+// same per-plugin cap.
+export const pluginWsConnectionsGauge = new Gauge({
+  name: "karyl_plugin_ws_connections",
+  help: "Open WebSocket connections proxied to each plugin",
+  labelNames: ["plugin_id", "shard_id"] as const,
+  registers: [metricsRegistry],
+  async collect() {
+    let counts: Array<{ pluginKey: string; connections: number }> = [];
+    try {
+      // Deferred like getDispatchPoolSnapshotSafe: keeps the plugin-system
+      // tree out of this module's load.
+      const mod = await import("../plugin-system/plugin-ws-proxy.js");
+      counts = mod.getPluginWsConnectionCounts();
+    } catch {
+      counts = [];
+    }
+    this.reset();
+    for (const entry of counts) {
+      this.labels({ plugin_id: entry.pluginKey, shard_id: SHARD_ID }).set(
+        entry.connections,
+      );
+    }
+  },
+});
+
 /**
  * Wrapper that defers the actual `getDispatchPoolSnapshot` import to
  * call time so the metrics module loads without pulling the plugin-
