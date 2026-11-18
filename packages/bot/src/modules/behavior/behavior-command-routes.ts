@@ -47,7 +47,7 @@ import {
   type BehaviorCommandRegistrar,
   type CommandNamespaceChecker,
 } from "./command-registration-sync.js";
-import { destroyCommandRows } from "./command-snapshot.js";
+import { destroyCommandRows, snapshotBeforeCreate } from "./command-snapshot.js";
 import {
   checkCommandSettings,
   checkCommandTree,
@@ -211,6 +211,8 @@ export function registerBehaviorCommandRoutes(
 
       const { commandId, leafIds, registration } = await withBehaviorWriteLock(async () => {
         await checkNameFree(namespace(), at, null);
+        // before the rows exist: what a refused registration goes back to
+        const before = await snapshotBeforeCreate();
         const created = await behaviorTransaction(async (transaction) => {
           const command = await BehaviorCommand.create(
             {
@@ -237,7 +239,7 @@ export function registerBehaviorCommandRoutes(
           created.commandId,
           at,
           null,
-          { commandId: created.commandId, command: null, leaves: [] },
+          { commandId: created.commandId, ...before },
           {
             request,
             action: "behavior.command.create",

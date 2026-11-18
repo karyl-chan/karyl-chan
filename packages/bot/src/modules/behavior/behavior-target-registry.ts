@@ -11,6 +11,11 @@
  * a DM allowlist — each leaves its target registered. It only ever adds
  * rows; removing a target is the admin's call (behavior-target-routes.ts),
  * and is refused while the target is in use.
+ *
+ * The one exception is a command write Discord refuses: its rows are put
+ * back (command-snapshot.ts), and the server target that write registered
+ * goes with them (forgetGuildTargetsRegisteredSince) — a refused write
+ * leaves nothing behind.
  */
 
 import { Op, type Transaction } from "sequelize";
@@ -96,6 +101,37 @@ export function targetKeysInUse(usage: BehaviorTargetUsage): string[] {
     ...[...usage.allowlistGroups.keys()].map(groupTargetKey),
   ]);
   return [...keys].filter((key) => !isBuiltinTarget(key)).sort();
+}
+
+/** The key of every target in the directory. */
+export async function behaviorTargetKeys(transaction?: Transaction): Promise<string[]> {
+  const rows = await BehaviorTarget.findAll({ attributes: ["key"], transaction });
+  return rows.map((r) => r.getDataValue("key") as string);
+}
+
+/**
+ * Undo what registerTargetsInUse did for a write that is being taken back:
+ * remove the server targets that were not in the directory `before` the
+ * write and that nothing uses now. A server is the only kind of target a
+ * command write can register; anything in use, and anything that was
+ * already there, stays.
+ */
+export async function forgetGuildTargetsRegisteredSince(
+  before: readonly string[],
+  transaction: Transaction,
+): Promise<void> {
+  const known = new Set(before);
+  const candidates = (
+    await BehaviorTarget.findAll({ attributes: ["key"], where: { kind: "guild" }, transaction })
+  )
+    .map((r) => r.getDataValue("key") as string)
+    .filter((key) => !known.has(key));
+  if (candidates.length === 0) return;
+  const { behaviors } = await loadBehaviorTargetUsage(transaction);
+  const unused = candidates.filter((key) => !behaviors.has(key));
+  if (unused.length > 0) {
+    await BehaviorTarget.destroy({ where: { key: { [Op.in]: unused } }, transaction });
+  }
 }
 
 /** Add a row for every target in use that has none. */

@@ -3,6 +3,10 @@
  * their webhook or plugin actions (#203), stats and DM allowlists (#157) — so a write Discord refuses can be put
  * back exactly (ids included). See command-registration-sync.ts for when
  * that happens.
+ *
+ * It also holds which Behavior Targets existed (ADR 0004): a write that
+ * registers a command in a server registers that server as a target, and
+ * a refused write takes that back too.
  */
 
 import type { Transaction } from "sequelize";
@@ -12,6 +16,10 @@ import { BehaviorStat } from "./models/behavior-stats.model.js";
 import { BehaviorWebhookAction } from "./models/behavior-webhook-action.model.js";
 import { BehaviorDmAllowlist, destroyDmAllowlists } from "./models/behavior-dm-allowlist.model.js";
 import { BehaviorPluginAction, destroyPluginActions } from "./models/behavior-plugin-action.model.js";
+import {
+  behaviorTargetKeys,
+  forgetGuildTargetsRegisteredSince,
+} from "./behavior-target-registry.js";
 import { behaviorTransaction } from "./behavior-write-lock.js";
 
 type Raw = Record<string, unknown>;
@@ -31,14 +39,29 @@ export interface CommandSnapshot {
   /** null: the command did not exist (the write created it) */
   command: Raw | null;
   leaves: LeafSnapshot[];
+  /**
+   * The Behavior Targets in the directory before the write. Absent in a
+   * snapshot taken without them: the restore then leaves the directory alone.
+   */
+  targetKeys?: string[];
+}
+
+/**
+ * The snapshot of a command a write is about to create: nothing to put
+ * back but the directory. Take it BEFORE the creating transaction — that
+ * transaction registers the command's server as a target.
+ */
+export async function snapshotBeforeCreate(): Promise<Pick<CommandSnapshot, "command" | "leaves" | "targetKeys">> {
+  return { command: null, leaves: [], targetKeys: await behaviorTargetKeys() };
 }
 
 const raw = (m: { get(options: { plain: true }): unknown }): Raw =>
   m.get({ plain: true }) as Raw;
 
 export async function snapshotCommand(commandId: number): Promise<CommandSnapshot> {
+  const targetKeys = await behaviorTargetKeys();
   const command = await BehaviorCommand.findByPk(commandId);
-  if (!command) return { commandId, command: null, leaves: [] };
+  if (!command) return { commandId, command: null, leaves: [], targetKeys };
   const definitions = await BehaviorDefinition.findAll({ where: { commandId } });
   const ids = definitions.map((d) => d.getDataValue("id") as number);
   const [webhooks, pluginActions, stats, allowlists] = await Promise.all([
@@ -55,6 +78,7 @@ export async function snapshotCommand(commandId: number): Promise<CommandSnapsho
   const allowlistOf = byBehavior(allowlists);
   return {
     commandId,
+    targetKeys,
     command: raw(command),
     leaves: definitions.map((d) => {
       const id = d.getDataValue("id") as number;
@@ -96,9 +120,21 @@ export async function destroyCommandRows(
   await BehaviorCommand.destroy({ where: { id: commandId }, transaction });
 }
 
-/** Put the command's rows back as the snapshot has them. */
+/**
+ * Put the command's rows back as the snapshot has them, and take the
+ * server target the refused write registered out of the directory again.
+ */
 export async function restoreCommand(snapshot: CommandSnapshot): Promise<void> {
   await behaviorTransaction(async (transaction) => {
+    await restoreRows(snapshot, transaction);
+    if (snapshot.targetKeys) {
+      await forgetGuildTargetsRegisteredSince(snapshot.targetKeys, transaction);
+    }
+  });
+}
+
+async function restoreRows(snapshot: CommandSnapshot, transaction: Transaction): Promise<void> {
+  {
     const { commandId } = snapshot;
     if (snapshot.command === null) {
       await destroyCommandRows(commandId, transaction);
@@ -142,5 +178,5 @@ export async function restoreCommand(snapshot: CommandSnapshot): Promise<void> {
       await destroyDmAllowlists(id, transaction);
       if (leaf.dmAllowlist) await BehaviorDmAllowlist.create(leaf.dmAllowlist, { transaction });
     }
-  });
+  }
 }
