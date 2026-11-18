@@ -38,10 +38,14 @@
 
 import type { FastifyInstance } from "fastify";
 import type { IncomingMessage, OutgoingHttpHeaders } from "node:http";
-import { request as httpRequest } from "node:http";
+import { STATUS_CODES, request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { BlockList, isIP, type Socket } from "node:net";
-import { effectivePort, pinnedLookup } from "@karyl-chan/voice/net";
+import {
+  effectivePort,
+  pinnedLookup,
+  stripIPv6Brackets,
+} from "@karyl-chan/voice/net";
 import { config } from "../../config.js";
 import { moduleLogger } from "../../logger.js";
 import { RateLimiter } from "../../utils/rate-limiter.js";
@@ -72,15 +76,14 @@ export interface PluginWsLimits {
 }
 
 /** Connection caps, per bot process. */
-export const PLUGIN_WS_LIMITS: Readonly<PluginWsLimits> = {
-  /** Upgrade attempts per client IP per rolling minute. */
+const PLUGIN_WS_LIMITS: Readonly<PluginWsLimits> = {
   attemptsPerIpPerMinute: 60,
   concurrentPerIp: 32,
   concurrentPerPlugin: 512,
 };
 
 /** Connect to the plugin and get its handshake reply within this, else 504. */
-export const PLUGIN_WS_HANDSHAKE_TIMEOUT_MS = 10_000;
+const PLUGIN_WS_HANDSHAKE_TIMEOUT_MS = 10_000;
 
 export interface PluginWsProxyOptions {
   /** Trusted proxy CIDRs (as `resolveTrustProxy` returns); false = none. */
@@ -95,7 +98,6 @@ interface WsConnection {
   pluginKey: string;
   pluginId: number;
   ip: string;
-  upstream: Socket | null;
   /** Destroys both sides; the first call's reason is the one logged. */
   close(reason: string): void;
 }
@@ -138,7 +140,8 @@ export function getPluginWsConnectionCounts(): Array<{
 
 function closePluginConnections(pluginId: number, reason: string): void {
   for (const set of connectionsByPlugin.values()) {
-    for (const conn of [...set]) {
+    // Deleting the current entry while iterating a Set is safe.
+    for (const conn of set) {
       if (conn.pluginId === pluginId) conn.close(reason);
     }
   }
@@ -200,36 +203,35 @@ function clientView(
   trusted: (a: string) => boolean,
 ): ClientView {
   const peer = req.socket.remoteAddress ?? "unknown";
-  const peerTrusted = trusted(peer);
-  // Walk X-Forwarded-For right to left while the hop is trusted.
-  const chain = [
-    peer,
-    ...String(firstHeader(req.headers["x-forwarded-for"]) ?? "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean)
-      .reverse(),
-  ];
-  let ip = chain[0];
-  for (let i = 0; i < chain.length; i++) {
-    ip = chain[i];
-    if (!trusted(chain[i])) break;
-  }
   const encrypted = (req.socket as { encrypted?: boolean }).encrypted === true;
-  let protocol: "http" | "https" = encrypted ? "https" : "http";
-  let host = firstHeader(req.headers.host) ?? "";
-  if (peerTrusted) {
-    const fwdProto = firstHeader(req.headers["x-forwarded-proto"])
-      ?.split(",")[0]
-      ?.trim()
-      .toLowerCase();
-    if (fwdProto === "http" || fwdProto === "https") protocol = fwdProto;
-    const fwdHost = firstHeader(req.headers["x-forwarded-host"])
-      ?.split(",")[0]
-      ?.trim();
-    if (fwdHost) host = fwdHost;
+  const view: ClientView = {
+    ip: peer,
+    protocol: encrypted ? "https" : "http",
+    host: firstHeader(req.headers.host) ?? "",
+  };
+  if (trusted(peer)) {
+    // Walk X-Forwarded-For right to left while the hop is trusted.
+    const chain = [
+      peer,
+      ...String(firstHeader(req.headers["x-forwarded-for"]) ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .reverse(),
+    ];
+    view.ip = chain.find((hop) => !trusted(hop)) ?? chain[chain.length - 1];
+    const fwdProto = lastEntry(req.headers["x-forwarded-proto"])?.toLowerCase();
+    if (fwdProto === "http" || fwdProto === "https") view.protocol = fwdProto;
+    const fwdHost = lastEntry(req.headers["x-forwarded-host"]);
+    if (fwdHost) view.host = fwdHost;
   }
-  return { ip: unmapIPv4(ip), protocol, host };
+  view.ip = unmapIPv4(view.ip);
+  return view;
+}
+
+/** Last entry of a comma-separated header, as Fastify reads x-forwarded-host/proto. */
+function lastEntry(v: string | string[] | undefined): string | undefined {
+  return firstHeader(v)?.split(",").pop()?.trim();
 }
 
 function originOf(url: string): string | null {
@@ -252,36 +254,31 @@ const REFUSAL_FLUSH_MS = 2_000;
 function refuse(socket: Socket, status: number, error: string): void {
   if (socket.destroyed) return;
   const body = JSON.stringify({ error });
-  const reason =
-    {
-      403: "Forbidden",
-      404: "Not Found",
-      429: "Too Many Requests",
-      502: "Bad Gateway",
-      504: "Gateway Timeout",
-    }[status] ?? "Error";
+  const deadline = setTimeout(() => socket.destroy(), REFUSAL_FLUSH_MS).unref();
   socket.end(
-    `HTTP/1.1 ${status} ${reason}\r\n` +
+    `HTTP/1.1 ${status} ${STATUS_CODES[status] ?? "Error"}\r\n` +
       "Content-Type: application/json; charset=utf-8\r\n" +
       `Content-Length: ${Buffer.byteLength(body)}\r\n` +
       "Connection: close\r\n\r\n" +
       body,
-    () => socket.destroy(),
+    () => {
+      clearTimeout(deadline);
+      socket.destroy();
+    },
   );
-  setTimeout(() => socket.destroy(), REFUSAL_FLUSH_MS).unref();
 }
 
 /** Serialize upstream raw headers, rewriting set-cookie and dropping `drop`. */
 function headerLines(
   rawHeaders: string[],
   pluginKey: string,
-  drop: ReadonlySet<string> = new Set(),
+  drop?: ReadonlySet<string>,
 ): string {
   let out = "";
   for (let i = 0; i + 1 < rawHeaders.length; i += 2) {
     const name = rawHeaders[i];
     const lower = name.toLowerCase();
-    if (drop.has(lower)) continue;
+    if (drop?.has(lower)) continue;
     const value =
       lower === "set-cookie"
         ? rewritePluginSetCookie(rawHeaders[i + 1], pluginKey)
@@ -313,14 +310,14 @@ export function attachPluginWsProxy(
   const handshakeTimeoutMs =
     options.handshakeTimeoutMs ?? PLUGIN_WS_HANDSHAKE_TIMEOUT_MS;
   const trusted = compileTrust(options.trustProxy ?? false);
-  const baseOrigin = (() => {
-    const base =
-      options.baseUrl === undefined ? config.web.baseUrl : options.baseUrl;
-    return base ? originOf(base) : null;
-  })();
+  const baseUrl =
+    options.baseUrl === undefined ? config.web.baseUrl : options.baseUrl;
+  const baseOrigin = baseUrl ? originOf(baseUrl) : null;
   const attempts = new RateLimiter({
     windowMs: 60_000,
     max: limits.attemptsPerIpPerMinute,
+    // Sweep every window: the keys are unauthenticated client IPs.
+    cleanupIntervalMs: 60_000,
   });
   const mine = new Set<WsConnection>();
   // Every upgrade socket under /plugin/ that is not closed yet (refusals
@@ -333,7 +330,7 @@ export function attachPluginWsProxy(
   // wait on the upgraded sockets it still counts.
   server.addHook("preClose", async () => {
     unsubscribe();
-    for (const conn of [...mine]) conn.close("server_closing");
+    for (const conn of mine) conn.close("server_closing");
     for (const s of upgradeSockets) s.destroy();
   });
 
@@ -364,24 +361,18 @@ export function attachPluginWsProxy(
     const rawUrl = req.url ?? "/";
     const m = /^\/plugin\/([^/?#]*)(\/[^]*)$/.exec(rawUrl);
     const view = clientView(req, trusted);
-    // Track the client from the start: a reset or FIN during an await below
-    // must not go on to reserve a slot or open an upstream connection.
-    let clientGone = false;
-    const markGone = () => {
-      clientGone = true;
-    };
-    socket.once("close", markGone);
-    socket.once("end", markGone);
+    const logRefused = (reason: string, status?: number, pluginKey?: string) =>
+      log.warn(
+        { pluginKey, ip: view.ip, reason, status },
+        "plugin ws upgrade refused",
+      );
     const reject = (
       status: number,
       error: string,
       reason: string,
       pluginKey?: string,
     ) => {
-      log.warn(
-        { pluginKey, ip: view.ip, reason, status },
-        "plugin ws upgrade refused",
-      );
+      logRefused(reason, status, pluginKey);
       refuse(socket, status, error);
     };
 
@@ -410,7 +401,9 @@ export function attachPluginWsProxy(
     }
 
     const plugin = await getCachedPluginByKey(pluginKey, findPluginByKey);
-    if (clientGone || socket.destroyed) {
+    // A reset or FIN during the await must not go on to reserve a slot or
+    // open an upstream connection.
+    if (socket.destroyed || socket.readableEnded) {
       socket.destroy();
       return;
     }
@@ -440,64 +433,56 @@ export function attachPluginWsProxy(
     const openedAt = Date.now();
     let closed = false;
     let upstreamReq: ReturnType<typeof httpRequest> | null = null;
+    /** The plugin's non-101 reply, while it is relayed to the client. */
     let upstreamRes: IncomingMessage | null = null;
-    /** True while a non-101 plugin reply is being relayed to the client. */
-    let relaying = false;
+    /** The plugin's socket once the handshake succeeded. */
+    let upstream: Socket | null = null;
     let timer: NodeJS.Timeout | undefined;
-    const conn: WsConnection = {
-      pluginKey,
-      pluginId: plugin.id,
-      ip: view.ip,
-      upstream: null,
-      close(reason) {
-        if (closed) return;
-        closed = true;
-        clearTimeout(timer);
-        untrack(conn);
-        mine.delete(conn);
-        upstreamRes?.destroy();
-        upstreamReq?.destroy();
-        conn.upstream?.destroy();
-        socket.destroy();
-        if (!conn.upstream) {
-          log.info(
-            {
-              pluginKey,
-              ip: view.ip,
-              reason,
-              durationMs: Date.now() - openedAt,
-              ...(relaying ? { upstreamStatus: upstreamRes?.statusCode } : {}),
-            },
-            relaying
-              ? "plugin ws refusal relayed"
-              : "plugin ws handshake ended",
-          );
-        } else {
-          log.info(
-            {
-              pluginKey,
-              ip: view.ip,
-              reason,
-              durationMs: Date.now() - openedAt,
-              bytesIn: socket.bytesRead,
-              bytesOut: socket.bytesWritten,
-            },
-            "plugin ws closed",
-          );
-        }
-      },
-    };
-    track(conn);
-    mine.add(conn);
-    const fail = (status: number, error: string, reason: string) => {
-      reject(status, error, reason, pluginKey);
-      // Untrack without destroying first so the refusal can flush;
-      // `refuse` destroys the socket once it has.
+    /** Release the slot; false if it already was. Leaves the client socket alone. */
+    const release = (): boolean => {
+      if (closed) return false;
       closed = true;
       clearTimeout(timer);
       untrack(conn);
       mine.delete(conn);
       upstreamReq?.destroy();
+      return true;
+    };
+    const conn: WsConnection = {
+      pluginKey,
+      pluginId: plugin.id,
+      ip: view.ip,
+      close(reason) {
+        if (!release()) return;
+        upstreamRes?.destroy();
+        upstream?.destroy();
+        socket.destroy();
+        log.info(
+          {
+            pluginKey,
+            ip: view.ip,
+            reason,
+            durationMs: Date.now() - openedAt,
+            ...(upstream
+              ? { bytesIn: socket.bytesRead, bytesOut: socket.bytesWritten }
+              : upstreamRes
+                ? { upstreamStatus: upstreamRes.statusCode }
+                : {}),
+          },
+          upstream
+            ? "plugin ws closed"
+            : upstreamRes
+              ? "plugin ws refusal relayed"
+              : "plugin ws handshake ended",
+        );
+      },
+    };
+    track(conn);
+    mine.add(conn);
+    // Release without destroying so the refusal can flush; `refuse`
+    // destroys the socket once it has.
+    const fail = (status: number, error: string, reason: string) => {
+      if (release()) reject(status, error, reason, pluginKey);
     };
     // Attached in the same tick as the reservation (no await in between),
     // so the slot is always released.
@@ -505,7 +490,7 @@ export function attachPluginWsProxy(
     // HTTP server sockets are half-open capable: a client FIN alone never
     // fires "close", so treat it as the end of the connection.
     socket.once("end", () => {
-      if (!conn.upstream) conn.close("client_closed");
+      if (!upstream) conn.close("client_closed");
     });
 
     let base: URL;
@@ -517,7 +502,7 @@ export function attachPluginWsProxy(
       base = new URL(pickEndpoint(pluginKey, endpoints));
     } catch (err) {
       log.warn({ err, pluginKey }, "plugin ws service discovery failed");
-      if (!closed) fail(502, "plugin unreachable", "discovery_failed");
+      fail(502, "plugin unreachable", "discovery_failed");
       return;
     }
     if (closed) return;
@@ -526,9 +511,11 @@ export function attachPluginWsProxy(
       return;
     }
 
+    const hostname = stripIPv6Brackets(base.hostname);
+    const port = effectivePort(base);
     let addresses;
     try {
-      addresses = await resolvePluginTarget(base.hostname, effectivePort(base));
+      addresses = await resolvePluginTarget(base.hostname, port);
     } catch (err) {
       if (closed) return;
       if (err instanceof HostPolicyError) {
@@ -549,34 +536,27 @@ export function attachPluginWsProxy(
     headers.host = base.host;
 
     const isHttps = base.protocol === "https:";
-    const upstreamPath = base.pathname.replace(/\/+$/, "") + rest;
-    const doRequest = isHttps ? httpsRequest : httpRequest;
-    const ureq = doRequest({
-      host: base.hostname.replace(/^\[|\]$/g, ""),
-      port: effectivePort(base),
-      path: upstreamPath,
+    const ureq = (isHttps ? httpsRequest : httpRequest)({
+      host: hostname,
+      port,
+      path: base.pathname.replace(/\/+$/, "") + rest,
       method: "GET",
       headers,
       lookup: pinnedLookup(addresses),
       agent: false,
-      ...(isHttps && isIP(base.hostname.replace(/^\[|\]$/g, "")) === 0
-        ? { servername: base.hostname }
-        : {}),
+      ...(isHttps && isIP(hostname) === 0 ? { servername: hostname } : {}),
     });
     upstreamReq = ureq;
 
     // Bounds the whole handshake, including relaying a non-101 reply: a
     // plugin cannot hold a slot with a body that never ends.
     timer = setTimeout(() => {
-      if (closed) return;
-      if (relaying) conn.close("handshake_timeout");
+      if (upstreamRes) conn.close("handshake_timeout");
       else fail(504, "plugin handshake timed out", "handshake_timeout");
-    }, handshakeTimeoutMs);
-    timer.unref?.();
+    }, handshakeTimeoutMs).unref();
 
     ureq.on("error", (err) => {
-      clearTimeout(timer);
-      if (closed || conn.upstream) return;
+      if (closed || upstream) return;
       log.warn({ err, pluginKey }, "plugin ws upstream error");
       fail(502, "plugin unreachable", "upstream_error");
     });
@@ -589,17 +569,8 @@ export function attachPluginWsProxy(
       // Not a 101: relay the plugin's refusal as-is, then close. The slot
       // stays reserved until the relay ends; a client that goes away
       // destroys the upstream request and response with it (conn.close).
-      relaying = true;
       upstreamRes = res;
-      log.warn(
-        {
-          pluginKey,
-          ip: view.ip,
-          reason: "upstream_refused",
-          status: res.statusCode,
-        },
-        "plugin ws upgrade refused",
-      );
+      logRefused("upstream_refused", res.statusCode, pluginKey);
       socket.write(
         `HTTP/1.1 ${res.statusCode} ${res.statusMessage ?? ""}\r\n` +
           headerLines(res.rawHeaders, pluginKey, NON_101_DROPPED) +
@@ -619,7 +590,7 @@ export function attachPluginWsProxy(
           conn.close("client_closed");
           return;
         }
-        conn.upstream = upSocket;
+        upstream = upSocket;
         upSocket.on("error", () => {});
         for (const s of [socket, upSocket]) {
           s.setTimeout(0);
