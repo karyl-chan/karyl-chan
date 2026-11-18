@@ -25,7 +25,7 @@ import {
   type Server,
 } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
-import type { AddressInfo, Socket } from "node:net";
+import { connect, type AddressInfo, type Socket } from "node:net";
 
 vi.hoisted(() => {
   process.env.SQLITE_DB_PATH = ":memory:";
@@ -124,6 +124,9 @@ function startPluginDouble(): Promise<{
     sockets.add(socket);
     socket.on("close", () => sockets.delete(socket));
     socket.on("error", () => {});
+    // Like a real WS server: the bot's FIN ends the connection (an http
+    // server socket would otherwise sit half-open).
+    socket.on("end", () => socket.destroy());
     const path = (req.url ?? "").split("?")[0];
     if (path === "/deny") {
       const body = "go away";
@@ -138,6 +141,16 @@ function startPluginDouble(): Promise<{
       return;
     }
     if (path === "/hang") return; // never answers the handshake
+    if (path === "/deny-forever") {
+      // A refusal whose chunked body never ends.
+      socket.write(
+        "HTTP/1.1 403 Forbidden\r\n" +
+          "Transfer-Encoding: chunked\r\n" +
+          "\r\n" +
+          "5\r\nhello\r\n",
+      );
+      return;
+    }
     const accept = createHash("sha1")
       .update(String(req.headers["sec-websocket-key"]) + WS_GUID)
       .digest("base64");
@@ -261,6 +274,7 @@ function readOneServerText(socket: Socket): Promise<string> {
 // ── fixtures ────────────────────────────────────────────────────────────────
 
 let upstream: Awaited<ReturnType<typeof startPluginDouble>>;
+let metricsRegistry: typeof import("../src/modules/web-core/metrics.js").metricsRegistry;
 let bot: import("fastify").FastifyInstance | null = null;
 let botPort = 0;
 
@@ -294,7 +308,10 @@ async function createPlugin(
 beforeAll(async () => {
   await sequelize.sync({ force: true });
   upstream = await startPluginDouble();
-});
+  // metrics.ts pulls in the plugin registry; a cold import takes seconds,
+  // so it is loaded here rather than inside a test's time budget.
+  ({ metricsRegistry } = await import("../src/modules/web-core/metrics.js"));
+}, 60_000);
 
 beforeEach(async () => {
   hostPolicy.refuse = false;
@@ -362,7 +379,7 @@ describe("which plugins get a WebSocket", () => {
   it("refuses upgrades outside /plugin/<key>/", async () => {
     await createPlugin("echo-plugin");
     await startBot();
-    expect((await rawUpgrade(botPort, "/api/dm/events")).status).toBe(404);
+    expect((await rawUpgrade(botPort, "/api/dm/events")).status).toBe("closed");
     expect((await rawUpgrade(botPort, "/plugin/echo-plugin")).status).toBe(404);
     expect((await rawUpgrade(botPort, "/plugin/Bad_Key/ws")).status).toBe(404);
     expect(upstream.upgrades).toHaveLength(0);
@@ -494,8 +511,6 @@ describe("connection caps", () => {
     expect(getPluginWsConnectionCounts()).toEqual([
       { pluginKey: "echo-plugin", connections: 1 },
     ]);
-    const { metricsRegistry } =
-      await import("../src/modules/web-core/metrics.js");
     expect(
       await metricsRegistry.getSingleMetricAsString(
         "karyl_plugin_ws_connections",
@@ -618,5 +633,136 @@ describe("graceful close", () => {
     expect(code).toBe(1005);
     await new Promise((r) => setTimeout(r, 50));
     expect(getPluginWsConnectionCounts()).toEqual([]);
+  });
+});
+
+// ── review round 1 ──────────────────────────────────────────────────────────
+
+/** Number of sockets the bot's Node server still holds. */
+function serverConnections(): Promise<number> {
+  return new Promise((resolve, reject) =>
+    bot!.server.getConnections((err, n) => (err ? reject(err) : resolve(n))),
+  );
+}
+
+async function waitFor(pred: () => Promise<boolean>, ms = 3000) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (await pred()) return true;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return pred();
+}
+
+describe("refused sockets", () => {
+  it.each([
+    ["an unknown plugin", "/plugin/nope/ws"],
+    ["a path outside /plugin/", "/api/anything"],
+  ])(
+    "destroys the server side after refusing %s, even if the client never sends FIN",
+    async (_label, path) => {
+      await startBot();
+      const client = connect({
+        port: botPort,
+        host: "127.0.0.1",
+        allowHalfOpen: true,
+      });
+      client.on("error", () => {});
+      await new Promise<void>((r) => client.once("connect", () => r()));
+      client.write(
+        `GET ${path} HTTP/1.1\r\n` +
+          `Host: 127.0.0.1:${botPort}\r\n` +
+          "Connection: Upgrade\r\nUpgrade: websocket\r\n" +
+          "Sec-WebSocket-Version: 13\r\n" +
+          `Sec-WebSocket-Key: ${randomBytes(16).toString("base64")}\r\n\r\n`,
+      );
+      // The client keeps its side open; the server must still let go.
+      expect(await waitFor(async () => (await serverConnections()) === 0)).toBe(
+        true,
+      );
+      client.destroy();
+    },
+  );
+});
+
+describe("review round 1: relay and forwarding details", () => {
+  it("keeps a never-ending non-101 relay inside the caps and drops the plugin side when the client leaves", async () => {
+    await createPlugin("echo-plugin");
+    await startBot();
+    const before = upstream.sockets.size;
+    const res = await new Promise<{ status: number; destroy: () => void }>(
+      (resolve) => {
+        const req = httpRequest({
+          host: "127.0.0.1",
+          port: botPort,
+          path: "/plugin/echo-plugin/deny-forever",
+          headers: {
+            Connection: "Upgrade",
+            Upgrade: "websocket",
+            "Sec-WebSocket-Version": "13",
+            "Sec-WebSocket-Key": randomBytes(16).toString("base64"),
+          },
+        });
+        req.on("response", (r) =>
+          resolve({ status: r.statusCode ?? 0, destroy: () => req.destroy() }),
+        );
+        req.on("error", () => {});
+        req.end();
+      },
+    );
+    expect(res.status).toBe(403);
+    expect(upstream.sockets.size).toBe(before + 1);
+    expect(getPluginWsConnectionCounts()).toEqual([
+      { pluginKey: "echo-plugin", connections: 1 },
+    ]);
+
+    res.destroy();
+    expect(await waitFor(async () => upstream.sockets.size === before)).toBe(
+      true,
+    );
+    expect(getPluginWsConnectionCounts()).toEqual([]);
+  });
+
+  it("ends a never-ending non-101 relay at the handshake timeout", async () => {
+    await createPlugin("echo-plugin");
+    await startBot({ handshakeTimeoutMs: 300 });
+    const before = upstream.sockets.size;
+    const r = await rawUpgrade(botPort, "/plugin/echo-plugin/deny-forever");
+    expect(r.status).toBe(403);
+    expect(await waitFor(async () => upstream.sockets.size === before)).toBe(
+      true,
+    );
+    expect(getPluginWsConnectionCounts()).toEqual([]);
+  });
+
+  it("forwards the path and query exactly as received, percent-encoding included", async () => {
+    await createPlugin("echo-plugin");
+    await startBot();
+    const r = await rawUpgrade(
+      botPort,
+      "/plugin/echo-plugin/room/a%20b%2Fc?doc=%E6%A8%82&x=%41",
+    );
+    expect(r.status).toBe(101);
+    if ("socket" in r) r.socket.destroy();
+    expect(upstream.upgrades[0].url).toBe(
+      "/room/a%20b%2Fc?doc=%E6%A8%82&x=%41",
+    );
+  });
+
+  it("replaces the client's x-forwarded-* with the bot's own values", async () => {
+    await createPlugin("echo-plugin");
+    await startBot();
+    const r = await rawUpgrade(botPort, "/plugin/echo-plugin/ws", {
+      "X-Forwarded-For": "6.6.6.6",
+      "X-Forwarded-Proto": "https",
+      "X-Forwarded-Host": "evil.example",
+    });
+    expect(r.status).toBe(101);
+    if ("socket" in r) r.socket.destroy();
+    const seen = upstream.upgrades[0].headers;
+    expect(seen["x-forwarded-for"]).toBe("127.0.0.1");
+    expect(seen["x-forwarded-proto"]).toBe("http");
+    expect(seen["x-forwarded-host"]).toBe(`127.0.0.1:${botPort}`);
+    expect(seen.host).toBe(`127.0.0.1:${upstream.port}`);
   });
 });

@@ -6,7 +6,10 @@
  * does every check itself — none of the onRequest hooks run.
  *
  * Flow for one upgrade request:
- *   1. path must be `/plugin/<key>/…` with a valid key, else 404;
+ *   1. an upgrade outside `/plugin/` is destroyed without a reply, as
+ *      Node did before this listener existed; under it the path must be
+ *      `/plugin/<key>/…` with a valid key, else 404. Every refusal writes
+ *      its reply and then destroys the socket (no half-open leftovers);
  *   2. per-IP attempt rate (60/min) → 429;
  *   3. Origin, when present, must be the WEB_BASE_URL origin or the
  *      request Host's own origin → else 403 (absent Origin is allowed:
@@ -92,7 +95,6 @@ interface WsConnection {
   pluginKey: string;
   pluginId: number;
   ip: string;
-  client: Socket;
   upstream: Socket | null;
   /** Destroys both sides; the first call's reason is the one logged. */
   close(reason: string): void;
@@ -239,7 +241,14 @@ function originOf(url: string): string | null {
   }
 }
 
-/** Write a plain HTTP response on the raw socket and close it. */
+/** How long a refused socket may take to flush its reply before it is destroyed. */
+const REFUSAL_FLUSH_MS = 2_000;
+
+/**
+ * Write a plain HTTP response on the raw socket, then destroy it. Ending is
+ * not enough: HTTP server sockets allow half-open, so a client that never
+ * sends FIN would keep the descriptor forever.
+ */
 function refuse(socket: Socket, status: number, error: string): void {
   if (socket.destroyed) return;
   const body = JSON.stringify({ error });
@@ -257,7 +266,9 @@ function refuse(socket: Socket, status: number, error: string): void {
       `Content-Length: ${Buffer.byteLength(body)}\r\n` +
       "Connection: close\r\n\r\n" +
       body,
+    () => socket.destroy(),
   );
+  setTimeout(() => socket.destroy(), REFUSAL_FLUSH_MS).unref();
 }
 
 /** Serialize upstream raw headers, rewriting set-cookie and dropping `drop`. */
@@ -312,6 +323,10 @@ export function attachPluginWsProxy(
     max: limits.attemptsPerIpPerMinute,
   });
   const mine = new Set<WsConnection>();
+  // Every upgrade socket under /plugin/ that is not closed yet (refusals
+  // still flushing and handshakes included), so closing the server never
+  // waits on one.
+  const upgradeSockets = new Set<Socket>();
 
   const unsubscribe = onPluginChange(onChange);
   // preClose: before Fastify closes the Node server, which would otherwise
@@ -319,12 +334,21 @@ export function attachPluginWsProxy(
   server.addHook("preClose", async () => {
     unsubscribe();
     for (const conn of [...mine]) conn.close("server_closing");
+    for (const s of upgradeSockets) s.destroy();
   });
 
   server.server.on(
     "upgrade",
     (req: IncomingMessage, socket: Socket, head: Buffer) => {
       socket.on("error", () => {});
+      // Anything outside /plugin/ is dropped as Node did before this
+      // listener existed (no upgrade listener: socket destroyed).
+      if (!(req.url ?? "").startsWith("/plugin/")) {
+        socket.destroy();
+        return;
+      }
+      upgradeSockets.add(socket);
+      socket.once("close", () => upgradeSockets.delete(socket));
       handleUpgrade(req, socket, head).catch((err) => {
         log.error({ err }, "plugin ws upgrade failed");
         refuse(socket, 502, "plugin unreachable");
@@ -340,6 +364,14 @@ export function attachPluginWsProxy(
     const rawUrl = req.url ?? "/";
     const m = /^\/plugin\/([^/?#]*)(\/[^]*)$/.exec(rawUrl);
     const view = clientView(req, trusted);
+    // Track the client from the start: a reset or FIN during an await below
+    // must not go on to reserve a slot or open an upstream connection.
+    let clientGone = false;
+    const markGone = () => {
+      clientGone = true;
+    };
+    socket.once("close", markGone);
+    socket.once("end", markGone);
     const reject = (
       status: number,
       error: string,
@@ -378,6 +410,10 @@ export function attachPluginWsProxy(
     }
 
     const plugin = await getCachedPluginByKey(pluginKey, findPluginByKey);
+    if (clientGone || socket.destroyed) {
+      socket.destroy();
+      return;
+    }
     if (!plugin || plugin.status !== "active" || !plugin.enabled) {
       reject(
         404,
@@ -404,21 +440,39 @@ export function attachPluginWsProxy(
     const openedAt = Date.now();
     let closed = false;
     let upstreamReq: ReturnType<typeof httpRequest> | null = null;
+    let upstreamRes: IncomingMessage | null = null;
+    /** True while a non-101 plugin reply is being relayed to the client. */
+    let relaying = false;
+    let timer: NodeJS.Timeout | undefined;
     const conn: WsConnection = {
       pluginKey,
       pluginId: plugin.id,
       ip: view.ip,
-      client: socket,
       upstream: null,
       close(reason) {
         if (closed) return;
         closed = true;
+        clearTimeout(timer);
         untrack(conn);
         mine.delete(conn);
+        upstreamRes?.destroy();
         upstreamReq?.destroy();
         conn.upstream?.destroy();
         socket.destroy();
-        if (conn.upstream) {
+        if (!conn.upstream) {
+          log.info(
+            {
+              pluginKey,
+              ip: view.ip,
+              reason,
+              durationMs: Date.now() - openedAt,
+              ...(relaying ? { upstreamStatus: upstreamRes?.statusCode } : {}),
+            },
+            relaying
+              ? "plugin ws refusal relayed"
+              : "plugin ws handshake ended",
+          );
+        } else {
           log.info(
             {
               pluginKey,
@@ -437,12 +491,16 @@ export function attachPluginWsProxy(
     mine.add(conn);
     const fail = (status: number, error: string, reason: string) => {
       reject(status, error, reason, pluginKey);
-      // Untrack without destroying first so the refusal can flush.
+      // Untrack without destroying first so the refusal can flush;
+      // `refuse` destroys the socket once it has.
       closed = true;
+      clearTimeout(timer);
       untrack(conn);
       mine.delete(conn);
       upstreamReq?.destroy();
     };
+    // Attached in the same tick as the reservation (no await in between),
+    // so the slot is always released.
     socket.once("close", () => conn.close("client_closed"));
     // HTTP server sockets are half-open capable: a client FIN alone never
     // fires "close", so treat it as the end of the connection.
@@ -507,8 +565,12 @@ export function attachPluginWsProxy(
     });
     upstreamReq = ureq;
 
-    const timer = setTimeout(() => {
-      if (!closed) fail(504, "plugin handshake timed out", "handshake_timeout");
+    // Bounds the whole handshake, including relaying a non-101 reply: a
+    // plugin cannot hold a slot with a body that never ends.
+    timer = setTimeout(() => {
+      if (closed) return;
+      if (relaying) conn.close("handshake_timeout");
+      else fail(504, "plugin handshake timed out", "handshake_timeout");
     }, handshakeTimeoutMs);
     timer.unref?.();
 
@@ -520,15 +582,15 @@ export function attachPluginWsProxy(
     });
 
     ureq.on("response", (res: IncomingMessage) => {
-      clearTimeout(timer);
       if (closed) {
         res.destroy();
         return;
       }
-      // Not a 101: relay the plugin's refusal as-is, then close.
-      closed = true;
-      untrack(conn);
-      mine.delete(conn);
+      // Not a 101: relay the plugin's refusal as-is, then close. The slot
+      // stays reserved until the relay ends; a client that goes away
+      // destroys the upstream request and response with it (conn.close).
+      relaying = true;
+      upstreamRes = res;
       log.warn(
         {
           pluginKey,
@@ -544,15 +606,17 @@ export function attachPluginWsProxy(
           "Connection: close\r\n\r\n",
       );
       res.pipe(socket);
-      res.on("error", () => socket.destroy());
+      res.on("error", () => conn.close("plugin_closed"));
+      socket.once("finish", () => conn.close("upstream_refused"));
     });
 
     ureq.on(
       "upgrade",
       (res: IncomingMessage, upSocket: Socket, upHead: Buffer) => {
         clearTimeout(timer);
-        if (closed) {
+        if (closed || socket.destroyed) {
           upSocket.destroy();
+          conn.close("client_closed");
           return;
         }
         conn.upstream = upSocket;
