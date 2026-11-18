@@ -125,6 +125,8 @@ migrations are tracked in the `SequelizeMeta` table:
   boot in filename-lexical order. See `src/migrations/README.md`.
 - **Upgrading to 2.0.0** runs behavior migrations that cannot be
   undone: see [Upgrading to 2.0.0](#upgrading-to-200-behaviors-phase-1).
+- **Upgrading to 3.0.0** changes what "stop after a match" stops: see
+  [Upgrading to 3.0.0](#upgrading-to-300-behavior-targets).
 - **Pre-v2 DB compatibility.** The one-time encryption-v2 uplift
   migration is gone; this build can only decrypt v2 ciphertexts.
   Restoring a pre-v2 backup will throw when reading an encrypted
@@ -207,6 +209,47 @@ Migration 011 in detail:
 - Commands re-register with Discord when the bot connects. Check that
   behavior commands appear where expected, and that no `/manual` or
   `/break` command is left.
+
+### Upgrading to 3.0.0 (behavior targets)
+
+Bot 3.0.0 groups behaviors by what they apply to
+([ADR 0004](adr/0004-behavior-targets.md),
+[behavior targets](features/behaviors.md#behavior-targets)). The
+database change is additive; one behavior of the matcher changes.
+
+**What changes:**
+
+- **Stop after a match** stops only the rest of the trigger's own target
+  ([matching order](features/behaviors.md#matching-order)). Before, it
+  ended the whole walk. A trigger that relied on stopping the triggers of
+  *another* target — a user's own `!help` set to stop so the one for
+  everyone would not answer too — no longer does: both answer. The system
+  login and the Service Behaviors still end the whole walk.
+- **Audience groups keep their members** until the group is deleted. They
+  used to be emptied when the last trigger left the group. A group a
+  Service Behavior used keeps its list too, and is then an ordinary
+  group any behavior admin may edit — look at its members before pointing
+  a service at it again.
+- A message trigger's group name with whitespace at its ends is refused
+  on save.
+
+**Migration 017** runs once, at the first boot: it fills the new
+`behavior_targets` table from the servers, channels, users and groups
+existing behaviors and DM allowlists use, and trims group names on
+triggers. It deletes nothing. Its `down` drops the table.
+
+**After upgrading:**
+
+- Read the `migration 017` line in the bot event log: it says how many
+  targets were registered and how many message triggers stop after a
+  match. Review those triggers if any shares a pattern with a trigger of
+  another target.
+- Check that the login still works (by default, DM the bot `!login`).
+
+**Going back to 2.x:** restore the database backup taken before the
+upgrade. Without it the older build still starts, but on its next
+behavior write it deletes the member list of every group no trigger
+uses — lists 3.0.0 had kept.
 
 ### Dependency audit
 
