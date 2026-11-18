@@ -293,7 +293,9 @@ The created targets are kept in a directory (`behavior_targets`):
 - `POST /api/behavior-targets` creates one; it is listed from then on,
   with no behavior yet. A group name is unique.
 - A target that a behavior or a DM allowlist refers to always has a row:
-  every behavior write registers the targets it leaves in use.
+  every behavior write registers the targets it leaves in use. A command
+  write Discord refuses is taken back whole: the server target it
+  registered goes too, unless something else uses it.
 - `DELETE /api/behavior-targets/:id` is refused (`409 target_in_use`)
   while a behavior belongs to the target or, for a group, a DM allowlist
   names it. Deleting a group deletes its member list.

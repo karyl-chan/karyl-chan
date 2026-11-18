@@ -524,6 +524,103 @@ describe("behavior webhook + DM inbox E2E (PM-2.3, paths 4+5)", { skip: !DB_URL 
     createdCommandIds.pop();
   });
 
+  it("behavior targets: the directory on Postgres, through the write API (ADR 0004)", async () => {
+    // The shared e2e database keeps rows between runs: names are unique per run.
+    const run = Date.now().toString(36);
+    const group = `e2e-group-${run}`;
+    const groupKey = `group:${group}`;
+    const member = "920000000000000021";
+    // a user nobody created a target for: the trigger's write registers it
+    const userKey = `user:92${String(Date.now()).padStart(16, "0").slice(-16)}`;
+    const userId = userKey.slice("user:".length);
+
+    interface TargetView {
+      key: string;
+      id: number | null;
+      builtin: boolean;
+      memberCount: number | null;
+    }
+    const targets = async (): Promise<TargetView[]> => {
+      const list = await api("GET", `${botUrl}/api/behaviors`);
+      assert.equal(list.status, 200, JSON.stringify(list.body));
+      return (list.body as { targets: TargetView[] }).targets;
+    };
+    const members = (name: string) =>
+      api("GET", `${botUrl}/api/behavior-groups/${encodeURIComponent(name)}/members`);
+    const setMembers = (name: string, userIds: string[]) =>
+      api("PUT", `${botUrl}/api/behavior-groups/${encodeURIComponent(name)}/members`, { userIds });
+    const dmTrigger = (suffix: string, audience: Record<string, unknown>) =>
+      api("POST", `${botUrl}/api/behaviors`, {
+        title: `e2e target ${suffix}`,
+        surface: "bot_dm",
+        patternKind: "startswith",
+        patternValue: `!e2e-target-${suffix}-${run}`,
+        webhook: { url: sink!.url(`/hook/target-${suffix}`) },
+        ...audience,
+      });
+
+    // A group is listed, and takes members, before any trigger uses it.
+    const created = await api("POST", `${botUrl}/api/behavior-targets`, { kind: "group", name: group });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const groupTarget = (created.body as { target: TargetView }).target;
+    assert.equal(groupTarget.key, groupKey);
+    assert.equal(groupTarget.memberCount, 0);
+
+    const again = await api("POST", `${botUrl}/api/behavior-targets`, { kind: "group", name: group });
+    assert.equal(again.status, 409, JSON.stringify(again.body));
+    assert.equal((again.body as { error: { code: string } }).error.code, "name_conflict");
+
+    const set = await setMembers(group, [member]);
+    assert.equal(set.status, 200, JSON.stringify(set.body));
+
+    // A trigger for the group belongs to it; one for an unlisted user registers that user.
+    const forGroup = await dmTrigger("group", { audienceKind: "group", audienceGroupName: group });
+    assert.equal(forGroup.status, 201, JSON.stringify(forGroup.body));
+    const groupTrigger = (forGroup.body as { behavior: { id: number; target: string } }).behavior;
+    createdBehaviorIds.push(groupTrigger.id);
+    assert.equal(groupTrigger.target, groupKey);
+
+    const forUser = await dmTrigger("user", { audienceKind: "user", audienceUserId: userId });
+    assert.equal(forUser.status, 201, JSON.stringify(forUser.body));
+    const userTrigger = (forUser.body as { behavior: { id: number; target: string } }).behavior;
+    createdBehaviorIds.push(userTrigger.id);
+    assert.equal(userTrigger.target, userKey);
+
+    const listed = await targets();
+    assert.deepEqual(
+      listed.slice(0, 3).map((t) => [t.key, t.builtin]),
+      [["app", true], ["bot_dm", true], ["guild:all", true]],
+      "the built-in targets come first",
+    );
+    assert.equal(listed.find((t) => t.key === groupKey)?.memberCount, 1);
+    const userTarget = listed.find((t) => t.key === userKey);
+    assert.ok(userTarget?.id, "the trigger's write registered its user as a target");
+
+    // In use: not deletable. Emptied: its members stay until it is deleted.
+    const inUse = await api("DELETE", `${botUrl}/api/behavior-targets/${groupTarget.id}`);
+    assert.equal(inUse.status, 409, JSON.stringify(inUse.body));
+    const refusal = (inUse.body as { error: { code: string; details: unknown } }).error;
+    assert.equal(refusal.code, "target_in_use");
+    assert.deepEqual(refusal.details, { behaviors: 1, allowlists: 0 });
+
+    for (const id of [groupTrigger.id, userTrigger.id]) {
+      const removed = await api("DELETE", `${botUrl}/api/behaviors/${id}`);
+      assert.equal(removed.status, 204, JSON.stringify(removed.body));
+      createdBehaviorIds.splice(createdBehaviorIds.indexOf(id), 1);
+    }
+    assert.deepEqual((await members(group)).body, { groupName: group, members: [member] });
+
+    const gone = await api("DELETE", `${botUrl}/api/behavior-targets/${groupTarget.id}`);
+    assert.equal(gone.status, 204, JSON.stringify(gone.body));
+    assert.deepEqual((await members(group)).body, { groupName: group, members: [] });
+    assert.equal((await setMembers(group, [member])).status, 404, "a deleted group takes no members");
+
+    const userGone = await api("DELETE", `${botUrl}/api/behavior-targets/${userTarget.id}`);
+    assert.equal(userGone.status, 204, JSON.stringify(userGone.body));
+    const after = (await targets()).map((t) => t.key);
+    assert.ok(!after.includes(groupKey) && !after.includes(userKey), "both targets are gone");
+  });
+
   it("path 5: synthetic DM flows store → bus → SSE, and reply degrades cleanly", async (t) => {
     // Open the SSE stream FIRST so the injected events arrive live.
     const controller = new AbortController();

@@ -29,7 +29,8 @@ import { PluginCommand } from "../src/modules/plugin-system/models/plugin-comman
 import { ReconcilerOwnedCommand } from "../src/modules/command-system/models/reconciler-owned-command.model.js";
 import { CommandReconciler } from "../src/modules/command-system/reconcile.service.js";
 import { CommandNamespace } from "../src/modules/command-system/command-namespace.js";
-import { clearBehaviors, seedCommand, seedLeaf } from "./behavior-fixtures.js";
+import { findBehaviorTargets } from "../src/modules/behavior/models/behavior-target.model.js";
+import { clearBehaviors, seedBehaviorTarget, seedCommand, seedLeaf } from "./behavior-fixtures.js";
 
 const HOOK = "https://203.0.113.10/hook";
 const GUILD = "123456789012345678";
@@ -145,6 +146,11 @@ function patchCommand(id: number, payload: Record<string, unknown>) {
   return server.inject({ method: "PATCH", url: `/api/behavior-commands/${id}`, payload });
 }
 
+/** The directory's rows, read straight from the table (the list route would register what is in use). */
+async function targetKeys(): Promise<string[]> {
+  return (await findBehaviorTargets()).map((t) => t.key);
+}
+
 async function listedCommands(): Promise<Array<Record<string, unknown>>> {
   const res = await server.inject({ method: "GET", url: "/api/behaviors" });
   return res.json().commands;
@@ -239,6 +245,23 @@ describe("POST /api/behavior-commands", () => {
     });
     expect(await listedCommands()).toEqual([]);
     expect((await listAudit({ limit: 1 }))[0]?.id).toBe(lastAudit);
+  });
+
+  it("a refused command leaves no target for its server behind", async () => {
+    guildCmds.refuseNext("Invalid Form Body");
+    await create(guildCommand);
+    expect(await targetKeys()).toEqual([]);
+
+    // accepted: the server is a target from then on
+    expect((await create(guildCommand)).statusCode).toBe(201);
+    expect(await targetKeys()).toEqual([`guild:${GUILD}`]);
+  });
+
+  it("a refused command leaves a server target that was already there alone", async () => {
+    await seedBehaviorTarget(`guild:${GUILD}`);
+    guildCmds.refuseNext("Invalid Form Body");
+    await create(guildCommand);
+    expect(await targetKeys()).toEqual([`guild:${GUILD}`]);
   });
 
   it("registration fails for a guild the bot is not in", async () => {
@@ -406,6 +429,28 @@ describe("PATCH /api/behavior-commands/:id", () => {
     const [command] = await listedCommands();
     expect(command).toMatchObject({ description: "NAS tools" });
     expect(guildCmds.byName("nas")!.description).toBe("NAS tools");
+  });
+
+  it("a refused move to a server leaves no target for that server behind", async () => {
+    const global = { ...guildCommand, registration: "global", guildId: null };
+    const id = (await create(global)).json().command.id;
+    expect(await targetKeys()).toEqual([]);
+
+    guildCmds.refuseNext("Missing Access");
+    const res = await patchCommand(id, { registration: "guild", guildId: GUILD });
+    expect(res.statusCode).toBe(502);
+    expect(await targetKeys()).toEqual([]);
+
+    // the same move, accepted, registers the server
+    expect((await patchCommand(id, { registration: "guild", guildId: GUILD })).statusCode).toBe(200);
+    expect(await targetKeys()).toEqual([`guild:${GUILD}`]);
+  });
+
+  it("a refused edit keeps the target its command is still in", async () => {
+    const id = (await create(guildCommand)).json().command.id;
+    guildCmds.refuseNext("Missing Access");
+    await patchCommand(id, { description: "Renamed tools" });
+    expect(await targetKeys()).toEqual([`guild:${GUILD}`]);
   });
 
   it("checks the merged settings", async () => {
