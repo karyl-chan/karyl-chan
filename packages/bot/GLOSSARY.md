@@ -96,7 +96,7 @@ _Avoid_: DM pattern、message_pattern（舊稱，且不只限於私訊）
 _Avoid_: 用 section / 分區指稱排序或寫入的單位
 
 **Behavior Target（作用對象）**:
-一個 behavior 作用在哪個對象上，也是 behaviors 的分組單位（ADR 0004）：全部伺服器、指定伺服器、指定頻道、所有人與 bot 的私訊、一個 Audience Group 的成員與 bot 的私訊、特定使用者與 bot 的私訊，另加 App 指令。key 寫成 `guild:all`、`guild:<id>`、`channel:<guildId>:<channelId>`、`bot_dm`、`group:<name>`、`user:<userId>`、`app`。一個 behavior 屬於剛好一個對象，由它的欄位推導，不另外儲存：訊息觸發是它的位置，與 bot 私訊且對象不是所有人的觸發歸到 `user:` / `group:`；指令的對象由可見性設定推導，只會是 `app`、`bot_dm`、`guild:all` 或 `guild:<id>`。對象是分組不是分流：一則訊息可以同時符合好幾個對象，各自比對。全部伺服器、所有人與 bot 的私訊、App 指令是內建的；其餘由管理員建立，存在 behavior_targets，沒有 behavior 也保留，還有 behavior 或私訊白名單用到時不能刪除。
+一個 behavior 作用在哪個對象上，也是 behaviors 的分組單位（ADR 0004）：全部伺服器、指定伺服器、指定頻道、所有人與 bot 的私訊、一個 Audience Group 的成員與 bot 的私訊、特定使用者與 bot 的私訊，另加 App 指令。key 寫成 `guild:all`、`guild:<id>`、`channel:<guildId>:<channelId>`、`bot_dm`、`group:<name>`、`user:<userId>`、`app`。一個 behavior 屬於剛好一個對象，由它的欄位推導，不另外儲存：訊息觸發是它的位置，與 bot 私訊且對象不是所有人的觸發歸到 `user:` / `group:`；指令的對象由可見性設定推導，只會是 `app`、`bot_dm`、`guild:all` 或 `guild:<id>`。對象是分組不是分流：一則訊息可以同時符合好幾個對象，各自比對；Message Trigger 的「比對到之後停止」只停掉同一個對象後面的觸發。全部伺服器、所有人與 bot 的私訊、App 指令是內建的；其餘由管理員建立，存在 behavior_targets，沒有 behavior 也保留，還有 behavior 或私訊白名單用到時不能刪除。
 _Avoid_: scope、範圍；用「對象」單指「誰」（那是 Message Trigger 的對象篩選，只是作用對象的一部分）；把 Service 的 audience（JWT 的 `aud`）當成作用對象
 
 **Audience Group（對象群組）**:

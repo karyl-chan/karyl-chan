@@ -97,8 +97,9 @@ guild, as in `guild_id`.)
 | `_meta.captures` | A regex trigger's capture groups, group 1 first. A named group counts by its position, and an optional group that took no part is `null`. `天氣 台北` against `^天氣\s+(.+)` sends `["台北"]`. Always `[]` for `startswith` / `endswith`. |
 | `_meta.callback` | This run's callback token, `{ token, expires_at, api_base }`, to answer later ([Answering later](#answering-later)). |
 
-One message can fire more than one behavior, unless a behavior stops the
-walk ([behaviors.md](behaviors.md#matching-order)). Each behavior sends its
+One message can fire more than one behavior: a behavior set to stop only
+stops the rest of its own target
+([behaviors.md](behaviors.md#matching-order)). Each behavior sends its
 own request, so a receiver used by several behaviors can get more than one
 request for one message. Tell them apart by `behavior_id`.
 

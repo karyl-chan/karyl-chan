@@ -1231,7 +1231,7 @@
             "subcommandCount": "{count} subcommand(s)",
             "tagSystem": "System behavior",
             "tagSystemShort": "System",
-            "tagStop": "Stops later matches",
+            "tagStop": "Stops later matches in this target",
             "tagStopShort": "Stop",
             "unhealthy": "Failing",
             "toggleProtected": "The system behavior cannot be disabled",
@@ -1335,7 +1335,7 @@
                 "groupSeparator": ", "
             },
             "ignoreBots": "Skip messages from other bots and webhooks",
-            "stopOnMatch": "Stop after a match; skip the behaviors below",
+            "stopOnMatch": "Stop after a match; skip this target's behaviors below",
             "movedPublic": "Replies will be posted in the channel, where everyone can see them."
         },
         "audience": {

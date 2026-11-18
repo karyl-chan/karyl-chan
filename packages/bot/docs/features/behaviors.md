@@ -214,11 +214,18 @@ the overall order.
 
 For one message, several triggers can fire, one after another:
 
-- A trigger with **Stop after a match** stops the walk when it matches
-  (also when the rate limit below dropped its request).
-- The system login always stops the walk, and is checked before every
-  custom trigger. Only the [Service Behaviors](#service-behaviors) come
-  before it; they always stop the walk too.
+- A trigger with **Stop after a match** stops the rest of **its own
+  [target](#behavior-targets)** when it matches (also when the rate limit
+  below dropped its request): the triggers of that target that come after
+  it are skipped, the other targets' triggers are still checked. One
+  message can match several targets — a user's DM matches *everyone's
+  DMs*, that user and each group the user is in; a server message
+  matches *all servers*, its server and its channel — and each target is
+  a list of its own. So a trigger for one user cannot keep the trigger
+  for everyone from firing: both answer.
+- The system login always stops the whole walk, and is checked before
+  every custom trigger. Only the [Service Behaviors](#service-behaviors)
+  come before it; they always stop the whole walk too.
 
 Other limits:
 
@@ -435,7 +442,7 @@ verifies the token is in [service-login.md](service-login.md).
   below the system login.
 - Service Behaviors' message triggers are checked **before** the system
   login (the default `!login-<audience>` starts with the login's
-  `!login`), and always stop the walk. So that a service can never lock
+  `!login`), and always stop the whole walk. So that a service can never lock
   the owner out, one rule holds from both sides: no service trigger
   matches the login's own DM — a service trigger that matches the login's
   pattern text is refused, and so is a login trigger switch whose pattern

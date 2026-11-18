@@ -33,6 +33,7 @@ import {
 } from "./models/behavior-plugin-action.model.js";
 import { BehaviorGroupMember } from "./models/behavior-group-member.model.js";
 import { Service, rowOfService, type ServiceRow } from "./models/service.model.js";
+import { messageTriggerTarget, type BehaviorTargetKey } from "./behavior-target.js";
 import {
   SYSTEM_BEHAVIOR_KEY_LOGIN,
   isServiceBehavior,
@@ -53,10 +54,13 @@ export type CatalogAction =
  *     Service Behavior，或來源對應的那一列不存在（手動改過 DB 等）——
  *     那時執行當成沒有動作。
  *   - service：Service Behavior（actionSource='service'）的服務；其餘 null。
+ *   - target：訊息觸發所屬的 Behavior Target（ADR 0004）——「比對到就停」
+ *     的範圍；載入時算好，每則訊息的熱路徑不重算。指令葉節點為 null。
  */
 export interface CatalogBehavior extends BehaviorDefinitionRow {
   action: CatalogAction | null;
   service: ServiceRow | null;
+  target: BehaviorTargetKey | null;
 }
 
 function actionOf(
@@ -122,6 +126,7 @@ export async function loadBehaviorCatalog(): Promise<BehaviorCatalog> {
       ...row,
       action: actionOf(row, webhooks.get(row.id), pluginActions.get(row.id)),
       service: row.serviceId !== null ? (services.get(row.serviceId) ?? null) : null,
+      target: row.triggerKind === "message" ? messageTriggerTarget(row) : null,
     };
   });
 

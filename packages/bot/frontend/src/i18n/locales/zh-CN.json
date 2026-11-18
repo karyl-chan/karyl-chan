@@ -1231,7 +1231,7 @@
             "subcommandCount": "{count} 个子指令",
             "tagSystem": "系统行为",
             "tagSystemShort": "系统",
-            "tagStop": "命中后停止后续匹配",
+            "tagStop": "命中后停止这个对象后面的匹配",
             "tagStopShort": "停止",
             "unhealthy": "连续失败",
             "toggleProtected": "系统行为不可停用",
@@ -1335,7 +1335,7 @@
                 "groupSeparator": "、"
             },
             "ignoreBots": "忽略其他 bot 与 webhook 的消息",
-            "stopOnMatch": "匹配到之后停止，不再检查后面的行为",
+            "stopOnMatch": "匹配到之后停止，不再检查这个对象后面的行为",
             "movedPublic": "回复会发在频道里，所有人都看得到。"
         },
         "audience": {
