@@ -30,6 +30,7 @@ function trigger(overrides: Partial<MessageTriggerView> = {}): MessageTriggerVie
         audienceKind: 'user',
         audienceUserId: USER,
         audienceGroupName: null,
+        target: 'bot_dm',
         section: 'bot_dm',
         ...overrides,
     };

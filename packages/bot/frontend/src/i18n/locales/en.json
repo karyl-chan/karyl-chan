@@ -1192,19 +1192,50 @@
             "appHint": "Commands usable in several places or by user install",
             "botDm": "DMs with the bot",
             "botDmHint": "Message triggers and commands in bot DMs",
-            "guildSection": "Servers",
             "guildAll": "All servers",
             "guildAllHint": "Every server the bot is in",
-            "behaviorCount": "{count} behavior(s)"
+            "groupSub": "Group · {count} member(s)"
         },
-        "workspace": {
+        "target": {
+            "app": "App commands",
+            "botDm": "Everyone's DMs with the bot",
+            "guildAll": "All servers",
+            "channelIn": "{guild} › #{channel}",
             "kind": {
                 "app": "App commands",
                 "bot_dm": "Bot DMs",
                 "guild_all": "All servers",
                 "guild": "Server",
-                "channel": "Channel"
+                "channel": "Channel",
+                "user": "User",
+                "group": "Group"
             },
+            "allowlistRefs": "{count} behavior(s) may DM this group's members",
+            "create": {
+                "open": "New target",
+                "title": "New target",
+                "kind": "Kind",
+                "kinds": {
+                    "guild": "Server",
+                    "channel": "Channel",
+                    "user": "User",
+                    "group": "Group"
+                },
+                "userId": "User",
+                "groupName": "Group name",
+                "submit": "Create"
+            },
+            "delete": {
+                "open": "Delete target",
+                "title": "Delete target",
+                "message": "Delete “{name}”?",
+                "messageGroup": "Delete the group “{name}”? Its member list is deleted with it.",
+                "confirm": "Delete",
+                "hasBehaviors": "{count} behavior(s) still belong to it; move or delete them first",
+                "inAllowlists": "{count} behavior(s) may DM this group; remove it from them first"
+            }
+        },
+        "workspace": {
             "loadError": "Could not load behaviors: {error}",
             "empty": "No behaviors here yet.",
             "services": "Services",
@@ -1420,7 +1451,8 @@
             "system_immutable": "The system behavior cannot be changed this way",
             "registration_failed": "Discord registration failed",
             "not_found": "Not found",
-            "invalid_tree": "Invalid command structure"
+            "invalid_tree": "Invalid command structure",
+            "target_in_use": "The target is still in use"
         },
         "add": {
             "open": "New behavior",
@@ -1435,7 +1467,8 @@
             },
             "reason": {
                 "messageInApp": "App commands holds commands only: the bot cannot read DMs between users or messages in servers it is not in.",
-                "commandInChannel": "Discord cannot limit a command to one channel. Add it in the server above, then limit channels in Discord’s Server Settings → Integrations."
+                "commandInChannel": "Discord cannot limit a command to one channel. Add it to the server, then limit channels in Discord’s Server Settings → Integrations.",
+                "commandNeedsEveryone": "A command cannot be limited to a user or a group: whoever sees it can run it."
             },
             "create": "Create",
             "created": "Created “{title}”.",

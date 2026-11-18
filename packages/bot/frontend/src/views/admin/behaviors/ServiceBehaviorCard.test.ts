@@ -58,6 +58,7 @@ function onCommand(): ServiceBehaviorView {
         contexts: ['BotDM', 'Guild'],
         defaultMemberPermissions: null,
         isSystem: true,
+        target: 'app',
         section: 'app',
         updatedAt: '2026-11-10T02:00:00.000Z',
         leaves: [savedLeaf({ id: 40, title: '登入 NAS', actionSource: 'service', webhook: null })],

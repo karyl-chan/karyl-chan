@@ -4,12 +4,13 @@ import { authedFetch, jsonOrThrow } from "./client";
 // shape of GET /api/behaviors (ADR 0003 trigger/action model) — and the
 // write API (#136): behavior-write-routes.ts, behavior-command-routes.ts,
 // message-trigger-reorder.ts, webhook-secret-rotate.ts,
-// behavior-trigger-convert.ts. The server derives
-// every item's `section`; the UI only groups by it.
+// behavior-trigger-convert.ts, behavior-target-routes.ts. The server
+// derives every item's `target` (and `section`); the UI only groups by it.
 //
 // Refusals arrive as ApiError with `code` (validation_failed,
 // name_conflict, system_immutable, registration_failed, not_found,
-// invalid_tree) and, when the server names one, the offending `field`.
+// invalid_tree, target_in_use) and, when the server names one, the
+// offending `field`.
 
 /**
  * Where a behavior can be used (Behavior Section):
@@ -22,6 +23,43 @@ export type BehaviorSection =
   | "guild:all"
   | `guild:${string}`
   | `channel:${string}:${string}`;
+
+/**
+ * What a behavior applies to (Behavior Target, ADR 0004) — the unit the
+ * page groups by. A location-only target has its section's key;
+ * `user:<userId>` and `group:<name>` are bot DM triggers for one user or
+ * one Audience Group.
+ */
+export type BehaviorTargetKey = BehaviorSection | `user:${string}` | `group:${string}`;
+
+export type BehaviorTargetKind =
+  | "app"
+  | "bot_dm"
+  | "guild_all"
+  | "guild"
+  | "channel"
+  | "user"
+  | "group";
+
+/** A target as GET /api/behaviors lists it (behavior-target-view.ts), in display order. */
+export interface BehaviorTargetView {
+  key: BehaviorTargetKey;
+  /** The directory row's id; null for a built-in target. */
+  id: number | null;
+  kind: BehaviorTargetKind;
+  /** Always there, cannot be deleted. */
+  builtin: boolean;
+  guildId: string | null;
+  channelId: string | null;
+  userId: string | null;
+  groupName: string | null;
+  /** A group's member count; null for the other kinds. */
+  memberCount: number | null;
+  /** A group a Service Behavior's trigger uses: only an owner sets its members. */
+  ownerOnly: boolean;
+  /** A group: how many behaviors' DM allowlists name it. */
+  allowlistRefs: number;
+}
 
 export type BehaviorActionSource = "builtin" | "webhook" | "plugin" | "service";
 export type BehaviorMessageSurface = "bot_dm" | "guild";
@@ -122,6 +160,8 @@ export interface CommandView {
   contexts: DiscordContext[];
   defaultMemberPermissions: string | null;
   isSystem: boolean;
+  /** The Behavior Target it belongs to — for a command, its section. */
+  target: BehaviorTargetKey;
   section: BehaviorSection;
   /** ISO time of the last write to the command row. */
   updatedAt: string;
@@ -140,6 +180,9 @@ export interface MessageTriggerView extends BehaviorViewBase {
   audienceKind: BehaviorAudienceKind;
   audienceUserId: string | null;
   audienceGroupName: string | null;
+  /** The Behavior Target it belongs to: its location, or its user / group in bot DMs. */
+  target: BehaviorTargetKey;
+  /** Its Message Trigger Location's key (the unit it is ordered in). */
   section: BehaviorSection;
 }
 
@@ -164,7 +207,9 @@ export type ServiceBehaviorView = (CommandView | MessageTriggerView) & {
 };
 
 export interface BehaviorListView {
-  /** The System Behavior (login), pinned at the top of its section. */
+  /** The target directory: the built-in targets, then the created ones. */
+  targets: BehaviorTargetView[];
+  /** The System Behavior (login), pinned at the top of its target. */
   system: BehaviorItemView | null;
   /** The Service Behaviors, listed apart from the custom triggers. */
   services: ServiceBehaviorView[];
@@ -647,6 +692,8 @@ export interface BehaviorSchemas {
   loginTrigger?: Record<string, unknown>;
   /** POST /api/behaviors/:id/convert-trigger. */
   convertTrigger?: Record<string, unknown>;
+  /** POST /api/behavior-targets. */
+  target?: Record<string, unknown>;
 }
 
 /** An installed plugin and the behavior actions its manifest declares (#203). */
@@ -680,7 +727,31 @@ export function getBehaviorSchemas(): Promise<BehaviorSchemas> {
   return schemas;
 }
 
-/** Members of an Audience Group; only a group some message trigger uses can be set. */
+/** A target the admin creates: a server, a channel, a user, or a named group. */
+export type BehaviorTargetInput =
+  | { kind: "guild"; guildId: string }
+  | { kind: "channel"; guildId: string; channelId: string }
+  | { kind: "user"; userId: string }
+  | { kind: "group"; name: string };
+
+/** Create a Behavior Target; one that exists is refused with `name_conflict`. */
+export async function createBehaviorTarget(
+  input: BehaviorTargetInput,
+): Promise<{ target: BehaviorTargetView }> {
+  return jsonOrThrow(await send("POST", "/api/behavior-targets", input));
+}
+
+/**
+ * Delete a target nothing uses (a group's members go with it). Refused
+ * with `target_in_use` while a behavior belongs to it or a DM allowlist
+ * names the group.
+ */
+export async function deleteBehaviorTarget(id: number): Promise<void> {
+  const r = await send("DELETE", `/api/behavior-targets/${id}`);
+  if (!r.ok) await jsonOrThrow(r);
+}
+
+/** Members of an Audience Group; they can be set once the group target exists. */
 export async function getGroupMembers(
   groupName: string,
 ): Promise<{ groupName: string; members: string[] }> {

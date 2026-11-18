@@ -1,18 +1,14 @@
-import type {
-    BehaviorItemView,
-    BehaviorListView,
-    BehaviorSection,
-    CommandView,
-    MessageTriggerView,
-    ServiceBehaviorView,
-} from '../../../api/behavior';
+import type { BehaviorItemView, BehaviorSection } from '../../../api/behavior';
 
 /**
- * Grouping of the behaviors page by Behavior Section (ADR 0003). The
- * server derives each item's `section`; this file only reads those keys —
+ * Behavior Section keys (ADR 0003) as the forms read them: where a command
+ * with given visibility lands, where a message trigger is. The server
+ * derives each item's `section`; this file only takes those keys apart —
  * it never re-derives a section from trigger fields. (The command form's
  * live "lands in" hint is the one exception: command-rules.ts, a mirror
  * the bot's tests pin to the server's rule.)
+ *
+ * The page itself groups by Behavior Target: behavior-targets.ts.
  */
 
 export type ParsedSection =
@@ -36,71 +32,4 @@ export function parseSection(key: BehaviorSection): ParsedSection {
 /** A card's key across the page: commands and behaviors are numbered apart. */
 export function itemKey(item: Pick<BehaviorItemView, 'kind' | 'id'>): string {
     return `${item.kind}:${item.id}`;
-}
-
-const FIXED: BehaviorSection[] = ['app', 'bot_dm', 'guild:all'];
-
-function allItems(view: BehaviorListView): BehaviorItemView[] {
-    return [
-        ...(view.system ? [view.system] : []),
-        ...view.services,
-        ...view.commands,
-        ...view.messageTriggers,
-    ];
-}
-
-/**
- * Sidebar entries: the three fixed sections, then every specific guild
- * that has items (directly or through one of its channels), each followed
- * by its channels.
- */
-export function sidebarSections(view: BehaviorListView): BehaviorSection[] {
-    const channelsByGuild = new Map<string, Set<string>>();
-    for (const item of allItems(view)) {
-        const s = parseSection(item.section);
-        if (s.kind === 'guild') {
-            if (!channelsByGuild.has(s.guildId)) channelsByGuild.set(s.guildId, new Set());
-        } else if (s.kind === 'channel') {
-            const set = channelsByGuild.get(s.guildId) ?? new Set<string>();
-            set.add(s.channelId);
-            channelsByGuild.set(s.guildId, set);
-        }
-    }
-    const out: BehaviorSection[] = [...FIXED];
-    for (const guildId of [...channelsByGuild.keys()].sort()) {
-        out.push(`guild:${guildId}`);
-        for (const channelId of [...channelsByGuild.get(guildId)!].sort()) {
-            out.push(`channel:${guildId}:${channelId}`);
-        }
-    }
-    return out;
-}
-
-export interface SectionItems {
-    /** The System Behavior when it lives in this section — pinned on top. */
-    system: BehaviorItemView | null;
-    /** The Service Behaviors here (#126) — under the login, apart from the custom triggers. */
-    services: ServiceBehaviorView[];
-    commands: CommandView[];
-    messageTriggers: MessageTriggerView[];
-}
-
-export function itemsInSection(view: BehaviorListView, key: BehaviorSection): SectionItems {
-    return {
-        system: view.system && view.system.section === key ? view.system : null,
-        services: view.services.filter((s) => s.section === key),
-        commands: view.commands.filter((c) => c.section === key),
-        messageTriggers: view.messageTriggers.filter((t) => t.section === key),
-    };
-}
-
-/** Number of behaviors (leaves + triggers) in a section, for the sidebar. */
-export function countInSection(view: BehaviorListView, key: BehaviorSection): number {
-    const items = itemsInSection(view, key);
-    return (
-        (items.system ? 1 : 0) +
-        items.services.length +
-        items.commands.reduce((n, c) => n + c.leaves.length, 0) +
-        items.messageTriggers.length
-    );
 }

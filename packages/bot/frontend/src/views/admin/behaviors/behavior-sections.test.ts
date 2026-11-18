@@ -1,77 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type {
-    BehaviorListView,
-    CommandView,
-    MessageTriggerView,
-} from '../../../api/behavior';
-import { countInSection, itemsInSection, parseSection, sidebarSections } from './behavior-sections';
-
-function command(id: number, section: CommandView['section'], name = `cmd${id}`): CommandView {
-    return {
-        kind: 'command',
-        id,
-        name,
-        description: name,
-        registration: 'global',
-        guildId: null,
-        integrationTypes: ['guild_install'],
-        contexts: ['Guild'],
-        defaultMemberPermissions: null,
-        isSystem: false,
-        section,
-        updatedAt: '2026-10-26T00:00:00.000Z',
-        leaves: [],
-    };
-}
-
-function trigger(id: number, section: MessageTriggerView['section']): MessageTriggerView {
-    return {
-        kind: 'message',
-        id,
-        title: `t${id}`,
-        description: '',
-        enabled: true,
-        sortOrder: id,
-        systemKey: null,
-        actionSource: 'webhook',
-        webhook: null,
-        pluginAction: null,
-        stats: null,
-        updatedAt: '2026-10-26T00:00:00.000Z',
-        replyVisibility: null,
-        surface: section === 'bot_dm' ? 'bot_dm' : 'guild',
-        guildId: null,
-        channelId: null,
-        patternKind: 'startswith',
-        patternValue: '!x',
-        stopOnMatch: false,
-        ignoreBots: true,
-        audienceKind: 'all',
-        audienceUserId: null,
-        audienceGroupName: null,
-        section,
-    };
-}
-
-const login = { ...trigger(100, 'bot_dm'), systemKey: 'admin-login', actionSource: 'builtin' as const };
-
-const nas = {
-    ...trigger(200, 'bot_dm'),
-    actionSource: 'service' as const,
-    service: { id: 1, name: 'NAS', audience: 'nas', redirectUrl: 'https://nas.example/cb' },
-};
-
-const view: BehaviorListView = {
-    system: login,
-    services: [nas],
-    commands: [command(1, 'app'), command(2, 'guild:G2'), command(3, 'guild:all')],
-    messageTriggers: [
-        trigger(10, 'bot_dm'),
-        trigger(11, 'channel:G1:C1'),
-        trigger(12, 'guild:G1'),
-        trigger(13, 'channel:G1:C0'),
-    ],
-};
+import { itemKey, parseSection } from './behavior-sections';
 
 describe('parseSection', () => {
     it('reads every section key', () => {
@@ -87,61 +15,9 @@ describe('parseSection', () => {
     });
 });
 
-describe('sidebarSections', () => {
-    it('always lists the fixed sections, then guilds with their channels', () => {
-        expect(sidebarSections(view)).toEqual([
-            'app',
-            'bot_dm',
-            'guild:all',
-            'guild:G1',
-            'channel:G1:C0',
-            'channel:G1:C1',
-            'guild:G2',
-        ]);
-    });
-
-    it('lists a channel section even when its guild has no own items', () => {
-        const only: BehaviorListView = {
-            system: null,
-            services: [],
-            commands: [],
-            messageTriggers: [trigger(1, 'channel:G9:C9')],
-        };
-        expect(sidebarSections(only)).toEqual([
-            'app',
-            'bot_dm',
-            'guild:all',
-            'guild:G9',
-            'channel:G9:C9',
-        ]);
-    });
-});
-
-describe('itemsInSection', () => {
-    it('pins the system behavior at the top of its own section', () => {
-        const dm = itemsInSection(view, 'bot_dm');
-        expect(dm.system?.id).toBe(100);
-        expect(dm.messageTriggers.map((t) => t.id)).toEqual([10]);
-        expect(dm.commands).toEqual([]);
-    });
-
-    it('lists the Service Behaviors in their section, apart from the custom triggers (#126)', () => {
-        const dm = itemsInSection(view, 'bot_dm');
-        expect(dm.services.map((s) => s.id)).toEqual([200]);
-        expect(dm.messageTriggers.map((t) => t.id)).not.toContain(200);
-        expect(itemsInSection(view, 'guild:G1').services).toEqual([]);
-        // the login, the service row and the custom trigger
-        expect(countInSection(view, 'bot_dm')).toBe(3);
-    });
-
-    it('keeps the system behavior out of other sections', () => {
-        expect(itemsInSection(view, 'app').system).toBeNull();
-    });
-
-    it('groups commands and triggers by exact section', () => {
-        expect(itemsInSection(view, 'guild:G1').messageTriggers.map((t) => t.id)).toEqual([12]);
-        expect(itemsInSection(view, 'channel:G1:C1').messageTriggers.map((t) => t.id)).toEqual([11]);
-        expect(itemsInSection(view, 'guild:G2').commands.map((c) => c.id)).toEqual([2]);
-        expect(itemsInSection(view, 'guild:all').commands.map((c) => c.id)).toEqual([3]);
+describe('itemKey', () => {
+    it('keeps commands and behaviors apart: they are numbered separately', () => {
+        expect(itemKey({ kind: 'command', id: 4 })).toBe('command:4');
+        expect(itemKey({ kind: 'message', id: 4 })).toBe('message:4');
     });
 });

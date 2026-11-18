@@ -37,8 +37,3 @@ export function sectionIcon(section: BehaviorSection): string {
             return 'material-symbols:tag-rounded';
     }
 }
-
-/** Short kind badge for the workspace header. */
-export function sectionKind(t: Translate, section: BehaviorSection): string {
-    return t(`behaviors.workspace.kind.${parseSection(section).kind}`);
-}

@@ -4,57 +4,69 @@ import { useI18n } from 'vue-i18n';
 import { onBeforeRouteLeave } from 'vue-router';
 import { SidebarLayout } from '../../../layouts';
 import { useBreakpoint, useAppShell, useConfirm, useToastStore } from '@karyl-chan/ui';
-import { useGuildListStore } from '../../../stores/guildListStore';
-import BehaviorSidebar from './BehaviorSidebar.vue';
+import TargetSidebar from './TargetSidebar.vue';
 import BehaviorWorkspace from './BehaviorWorkspace.vue';
 import AddBehaviorModal from './AddBehaviorModal.vue';
-import type { BehaviorSection } from '../../../api/behavior';
-import { messageTriggerLocationOf } from './message-trigger-location';
+import CreateTargetDialog from './CreateTargetDialog.vue';
+import type { BehaviorTargetKey, BehaviorTargetView } from '../../../api/behavior';
 import { describeBehaviorError, isStale } from './behavior-errors';
-import { countInSection, itemsInSection } from './behavior-sections';
+import { countInTarget, itemsInTarget } from './behavior-targets';
+import { targetLabel } from './target-labels';
 import { useBehaviorList } from './use-behavior-list';
 import { provideRegistrationResults } from './use-registration-results';
+import { useTargetNames } from './use-target-names';
 import { provideUnsavedDrafts } from './use-unsaved-drafts';
 
 const { t } = useI18n();
 const { isMobile } = useBreakpoint();
 const { closeOverlay } = useAppShell();
 const { confirm } = useConfirm();
-const guildList = useGuildListStore();
 
 const toast = useToastStore();
 const {
     view,
     selected,
+    selectedTarget,
     loading,
     error,
     expandKey,
-    sections,
+    targets,
     groupUse,
     load,
     applyTrigger,
     applyCommand,
     applySystem,
     applyService,
+    applyMemberCount,
     showCreated,
+    showTarget,
     reorder,
 } = useBehaviorList();
 const adding = ref(false);
+const creatingTarget = ref(false);
 const { hasUnsaved } = provideUnsavedDrafts();
 provideRegistrationResults();
 
+/** Guild, channel and user names are a nicety: without the access to read them the page shows ids. */
+const names = useTargetNames(targets);
+
 const counts = computed(() => {
     const map: Record<string, number> = {};
-    if (view.value) for (const s of sections.value) map[s] = countInSection(view.value, s);
+    if (view.value) for (const target of targets.value) map[target.key] = countInTarget(view.value, target.key);
     return map;
 });
 const selectedItems = computed(() =>
-    view.value && selected.value ? itemsInSection(view.value, selected.value) : null
+    view.value && selected.value ? itemsInTarget(view.value, selected.value) : null
 );
-const groupNames = computed(() => [...groupUse.value.keys()].sort());
-const guildNames = computed(() => new Map(guildList.guilds.map((g) => [g.id, g.name])));
+const selectedLabel = computed(() =>
+    selectedTarget.value ? targetLabel(t, selectedTarget.value, names.value) : ''
+);
+/** The Audience Groups a trigger's audience may name: the group targets. */
+const groupNames = computed(() =>
+    targets.value.flatMap((target) => (target.kind === 'group' && target.groupName ? [target.groupName] : []))
+);
 
-/** Leaving the section (or the page) unmounts its cards and drops their drafts (#105). */
+/** Leaving the target (or the page) unmounts its cards and drops their drafts (#105). */
 async function mayDropDrafts(): Promise<boolean> {
     if (!hasUnsaved.value) return true;
     return confirm({
@@ -74,18 +86,15 @@ function onBeforeUnload(event: BeforeUnloadEvent) {
 
 onMounted(() => {
     void load();
-    // Guild names are a nicety: without guild access the sidebar shows ids.
-    void guildList.ensure().catch(() => undefined);
     window.addEventListener('beforeunload', onBeforeUnload);
 });
 onBeforeUnmount(() => window.removeEventListener('beforeunload', onBeforeUnload));
 onBeforeRouteLeave(() => mayDropDrafts());
 
 async function onReorder(ids: number[]) {
-    const location = selected.value ? messageTriggerLocationOf(selected.value) : null;
-    if (!location) return;
+    if (!selectedTarget.value) return;
     try {
-        await reorder(location, ids);
+        await reorder(selectedTarget.value, ids);
     } catch (err) {
         // the list was reloaded either way; say why the order did not stick
         if (isStale(err)) toast.show(t('behaviors.workspace.reorderStale'), 'warn');
@@ -93,9 +102,14 @@ async function onReorder(ids: number[]) {
     }
 }
 
-async function onSelect(section: BehaviorSection) {
-    if (section !== selected.value && !(await mayDropDrafts())) return;
-    selected.value = section;
+async function onSelect(key: BehaviorTargetKey) {
+    if (key !== selected.value && !(await mayDropDrafts())) return;
+    selected.value = key;
+    if (isMobile.value) closeOverlay();
+}
+
+async function onTargetCreated(target: BehaviorTargetView) {
+    await showTarget(target, mayDropDrafts);
     if (isMobile.value) closeOverlay();
 }
 </script>
@@ -103,21 +117,23 @@ async function onSelect(section: BehaviorSection) {
 <template>
     <SidebarLayout>
         <template #sidebar>
-            <BehaviorSidebar
-                :sections="sections"
+            <TargetSidebar
+                :targets="targets"
                 :counts="counts"
                 :selected="selected"
-                :guild-names="guildNames"
+                :names="names"
                 :loading="loading"
                 @select="onSelect"
+                @create="creatingTarget = true"
             />
         </template>
 
         <BehaviorWorkspace
-            v-if="selected"
-            :section="selected"
+            v-if="selectedTarget"
+            :target="selectedTarget"
+            :label="selectedLabel"
             :items="selectedItems"
-            :guild-names="guildNames"
+            :guild-names="names.guilds"
             :group-names="groupNames"
             :group-use="groupUse"
             :commands="view?.commands ?? []"
@@ -134,18 +150,27 @@ async function onSelect(section: BehaviorSection) {
             @converted="showCreated($event, mayDropDrafts)"
             @add="adding = true"
             @reorder="onReorder"
+            @target-deleted="load"
+            @members="applyMemberCount(selectedTarget.key, $event)"
         />
         <p v-else-if="error" class="page-error" role="alert">{{ error }}</p>
 
         <AddBehaviorModal
-            v-if="selected"
+            v-if="selectedTarget"
             :visible="adding"
-            :section="selected"
-            :guild-names="guildNames"
+            :target="selectedTarget"
+            :target-label="selectedLabel"
+            :guild-names="names.guilds"
             :group-names="groupNames"
             @close="adding = false"
             @created="showCreated($event, mayDropDrafts)"
             @reload="load"
+        />
+
+        <CreateTargetDialog
+            :visible="creatingTarget"
+            @close="creatingTarget = false"
+            @created="onTargetCreated"
         />
     </SidebarLayout>
 </template>

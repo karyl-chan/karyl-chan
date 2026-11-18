@@ -1,5 +1,11 @@
 import { createI18n } from 'vue-i18n';
-import type { CommandLeafView, CommandView, MessageTriggerView } from '../../../api/behavior';
+import type {
+    BehaviorTargetKey,
+    BehaviorTargetView,
+    CommandLeafView,
+    CommandView,
+    MessageTriggerView,
+} from '../../../api/behavior';
 
 /**
  * Shared fixtures for the behaviors page's component tests (not a test
@@ -97,6 +103,43 @@ export const COMMAND_LEAF_SCHEMA = {
     required: ['subcommand', 'title'],
 };
 
+const TARGET_NONE = {
+    guildId: null,
+    channelId: null,
+    userId: null,
+    groupName: null,
+    memberCount: null,
+    ownerOnly: false,
+    allowlistRefs: 0,
+} as const;
+
+/** A built-in target: App 指令, 所有人與 bot 的私訊 or 全部伺服器. */
+export function builtinTarget(key: 'app' | 'bot_dm' | 'guild:all'): BehaviorTargetView {
+    const kind = key === 'guild:all' ? 'guild_all' : key;
+    return { ...TARGET_NONE, key, id: null, kind, builtin: true };
+}
+
+/** A created target by key (`guild:<id>`, `channel:<g>:<c>`, `user:<id>`, `group:<name>`). */
+export function createdTarget(key: BehaviorTargetKey, overrides: Partial<BehaviorTargetView> = {}): BehaviorTargetView {
+    const base = { ...TARGET_NONE, key, id: 1, builtin: false };
+    if (key.startsWith('group:')) {
+        return { ...base, kind: 'group', groupName: key.slice('group:'.length), memberCount: 0, ...overrides };
+    }
+    if (key.startsWith('user:')) return { ...base, kind: 'user', userId: key.slice('user:'.length), ...overrides };
+    if (key.startsWith('channel:')) {
+        const [, guildId, channelId] = key.split(':');
+        return { ...base, kind: 'channel', guildId, channelId, ...overrides };
+    }
+    return { ...base, kind: 'guild', guildId: key.slice('guild:'.length), ...overrides };
+}
+
+/** The three built-in targets, as every list starts. */
+export const BUILTIN_TARGETS: BehaviorTargetView[] = [
+    builtinTarget('app'),
+    builtinTarget('bot_dm'),
+    builtinTarget('guild:all'),
+];
+
 /** A saved bot DM message trigger, id 7, HMAC webhook. */
 export function savedTrigger(overrides: Partial<MessageTriggerView> = {}): MessageTriggerView {
     return {
@@ -123,6 +166,7 @@ export function savedTrigger(overrides: Partial<MessageTriggerView> = {}): Messa
         audienceKind: 'all',
         audienceUserId: null,
         audienceGroupName: null,
+        target: 'bot_dm',
         section: 'bot_dm',
         ...overrides,
     };
@@ -164,6 +208,7 @@ export function savedCommand(overrides: Partial<CommandView> = {}): CommandView 
         contexts: ['BotDM'],
         defaultMemberPermissions: null,
         isSystem: false,
+        target: 'bot_dm',
         section: 'bot_dm',
         updatedAt: '2026-10-27T00:00:00.000Z',
         leaves: [savedLeaf()],
