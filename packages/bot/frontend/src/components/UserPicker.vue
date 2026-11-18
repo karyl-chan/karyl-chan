@@ -73,7 +73,8 @@ const typedId = computed(() => props.modelValue.trim());
 watch(
     typedId,
     (id) => {
-        if (SNOWFLAKE.test(id)) void summaries.resolve([id]);
+        // a name is a nicety: when the lookup fails the id stands as typed
+        if (SNOWFLAKE.test(id)) summaries.resolve([id]).catch(() => undefined);
     },
     { immediate: true }
 );

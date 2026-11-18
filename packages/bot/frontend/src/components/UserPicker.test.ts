@@ -113,6 +113,14 @@ describe('UserPicker — by id', () => {
         expect((wrapper.find('input').element as HTMLInputElement).value).toBe(BOB);
     });
 
+    it('a lookup that fails leaves the id as typed, with no preview', async () => {
+        api.fetchUserSummaries.mockRejectedValue(new TypeError('network down'));
+        const wrapper = await mountPicker({ modelValue: ALICE });
+        expect(api.fetchUserSummaries).toHaveBeenCalledWith([ALICE]);
+        expect(wrapper.find('[data-test="user-preview"]').exists()).toBe(false);
+        expect((wrapper.find('input').element as HTMLInputElement).value).toBe(ALICE);
+    });
+
     it('Enter in the id field submits', async () => {
         const wrapper = await mountPicker({ modelValue: ALICE });
         await wrapper.find('input').trigger('keydown', { key: 'Enter' });
