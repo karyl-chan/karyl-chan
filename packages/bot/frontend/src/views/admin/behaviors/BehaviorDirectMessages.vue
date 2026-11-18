@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@iconify/vue';
-import { AppBadge, AppButton, AppTextField, Cluster, Spacer, Stack } from '@karyl-chan/ui';
+import { AppBadge, AppButton, AppSelectField, Cluster, Spacer, Stack, type SelectOption } from '@karyl-chan/ui';
 import {
     getBehaviorDmAllowlist,
     getBehaviorDmLog,
@@ -11,22 +11,26 @@ import {
     type BehaviorDmLogEntry,
     type BehaviorDmOutcome,
 } from '../../../api/behavior';
+import UserPicker from '../../../components/UserPicker.vue';
 import { useRelativeTime } from '../../../composables/use-relative-time';
 import { useUserSummaries } from '../../../composables/use-user-summaries';
 import { describeBehaviorError } from './behavior-errors';
 import GroupMembersPanel from './GroupMembersPanel.vue';
+import { useTargetDirectory } from './target-directory';
 
 /**
  * A behavior's direct messages to other users (#157): its DM allowlist —
- * user ids and behavior groups, saved on every add or remove — and its DM
+ * users and Audience Groups, saved on every add or remove — and its DM
  * log (the last 50, 30 days). Loaded when the section is opened, not
- * before. A group on the list gets its member panel here, since the list
- * is what keeps the group in use.
+ * before. A user is found with UserPicker; a group is picked from the
+ * group targets (ADR 0004). A group on the list shows its members here,
+ * read-only: they are edited on the group's own page.
  */
 const props = defineProps<{ behaviorId: number }>();
 
 const { t } = useI18n();
 const { relativeTime } = useRelativeTime();
+const directory = useTargetDirectory();
 
 const SNOWFLAKE = /^[0-9]{17,20}$/;
 
@@ -38,6 +42,20 @@ const list = ref<BehaviorDmAllowlist | null>(null);
 const entries = ref<BehaviorDmLogEntry[] | null>(null);
 const newUserId = ref('');
 const newGroup = ref('');
+
+/** The group targets not on the list yet. */
+const groupOptions = computed<SelectOption<string>[]>(() => {
+    const listed = new Set(list.value?.groupNames ?? []);
+    return directory.targets.value
+        .flatMap((target) => (target.kind === 'group' && target.groupName ? [target.groupName] : []))
+        .filter((name) => !listed.has(name))
+        .map((name) => ({ value: name, label: name }));
+});
+
+/** A listed group's target key, when the page lists that group. */
+function groupTarget(name: string) {
+    return directory.targets.value.find((target) => target.kind === 'group' && target.groupName === name) ?? null;
+}
 
 const hasList = computed(() => !!list.value && (list.value.userIds.length > 0 || list.value.groupNames.length > 0));
 const shownUsers = computed(() => [
@@ -184,32 +202,46 @@ function absolute(iso: string): string {
 
                     <!-- not a <form>: the section sits inside the card's editor form -->
                     <div class="add">
-                        <AppTextField
+                        <UserPicker
                             v-model="newUserId"
+                            class="picker"
                             data-test="dm-user-input"
                             :placeholder="t('behaviors.directMessages.userPlaceholder')"
-                            inputmode="numeric"
-                            :maxlength="20"
-                            @keydown.enter.prevent="addUser"
+                            :disabled="saving"
+                            @submit="addUser"
                         />
                         <AppButton type="button" size="sm" variant="secondary" data-test="dm-add-user" :disabled="saving || !newUserId.trim()" @click="addUser">
                             {{ t('behaviors.directMessages.addUser') }}
                         </AppButton>
                     </div>
                     <div class="add">
-                        <AppTextField
-                            v-model="newGroup"
-                            data-test="dm-group-input"
-                            :placeholder="t('behaviors.directMessages.groupPlaceholder')"
-                            :maxlength="200"
-                            @keydown.enter.prevent="addGroup"
-                        />
+                        <div class="picker" data-test="dm-group-input">
+                            <AppSelectField
+                                v-model="newGroup"
+                                :options="groupOptions"
+                                :placeholder="t('behaviors.directMessages.groupPlaceholder')"
+                                :drawer-title="t('behaviors.directMessages.addGroup')"
+                                :disabled="groupOptions.length === 0"
+                                filter
+                            />
+                        </div>
                         <AppButton type="button" size="sm" variant="secondary" data-test="dm-add-group" :disabled="saving || !newGroup.trim()" @click="addGroup">
                             {{ t('behaviors.directMessages.addGroup') }}
                         </AppButton>
                     </div>
 
-                    <GroupMembersPanel v-for="g in list.groupNames" :key="`m${g}`" :group-name="g" />
+                    <div v-for="g in list.groupNames" :key="`m${g}`" class="listed-group">
+                        <GroupMembersPanel :group-name="g" readonly />
+                        <button
+                            v-if="directory.open && groupTarget(g)"
+                            type="button"
+                            class="link"
+                            data-test="dm-edit-group"
+                            @click="directory.open(groupTarget(g)!.key)"
+                        >
+                            {{ t('behaviors.directMessages.editGroup') }}
+                        </button>
+                    </div>
                 </template>
                 <p v-if="error" class="error" role="alert">{{ error }}</p>
 
@@ -293,7 +325,24 @@ function absolute(iso: string): string {
     align-items: flex-start;
     gap: 0.4rem;
 }
-.add :deep(.app-field) { flex: 1; min-width: 0; }
+.add .picker { flex: 1; min-width: 0; }
+.listed-group {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
+}
+.listed-group > :first-child { align-self: stretch; }
+.link {
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--accent-text-strong);
+    font: inherit;
+    font-size: 0.78rem;
+    cursor: pointer;
+}
+.link:hover { text-decoration: underline; }
 .rows {
     list-style: none;
     margin: 0;

@@ -8,6 +8,7 @@ import {
     type BehaviorTargetInput,
     type BehaviorTargetView,
 } from '../../../api/behavior';
+import UserPicker from '../../../components/UserPicker.vue';
 import TargetLocationFields from './TargetLocationFields.vue';
 import { NO_ERRORS, errorsFromIssues, errorsFromRefusal, hasErrors, type FormErrors } from './behavior-errors';
 import { checkAgainstSchema } from './form-schema';
@@ -17,8 +18,8 @@ import { draftPatcher } from './use-draft-form';
  * "New target" (ADR 0004): a server, a channel, a user or a group the
  * admin wants behaviors for. It is listed as soon as it exists, before any
  * behavior is added to it. Servers and channels are picked from what the
- * bot can see (raw ids without guild access); the request is checked
- * against the server's own schema before it is sent.
+ * bot can see (raw ids without guild access), a user with UserPicker; the
+ * request is checked against the server's own schema before it is sent.
  */
 const props = defineProps<{ visible: boolean }>();
 
@@ -136,16 +137,14 @@ async function create() {
                     @patch="patchPlace"
                 />
 
-                <AppTextField
+                <UserPicker
                     v-if="kind === 'user'"
                     v-model="userId"
                     data-test="target-user-id"
                     :label="t('behaviors.target.create.userId')"
-                    :hint="t('behaviors.location.idHint')"
                     :error="errors.fields.userId"
-                    inputmode="numeric"
-                    :maxlength="20"
                     autofocus
+                    @submit="create"
                 />
 
                 <AppTextField

@@ -1237,6 +1237,17 @@
             "placeholder": "Choose a target",
             "new": "＋ New target…"
         },
+        "userPicker": {
+            "source": {
+                "id": "By ID",
+                "dm": "DMed the bot",
+                "guild": "Server members"
+            },
+            "idPlaceholder": "Discord user ID",
+            "filterPlaceholder": "Search by name",
+            "memberPlaceholder": "Search members by name",
+            "empty": "No one to show."
+        },
         "workspace": {
             "loadError": "Could not load behaviors: {error}",
             "empty": "No behaviors here yet.",
@@ -1674,8 +1685,9 @@
             "ruleList": "Only these users and the members of these groups.",
             "userPlaceholder": "User ID",
             "addUser": "Add user",
-            "groupPlaceholder": "Behavior group name",
+            "groupPlaceholder": "Choose a group",
             "addGroup": "Add group",
+            "editGroup": "Edit members",
             "remove": "Remove {name}",
             "badUserId": "A user ID is 17–20 digits.",
             "logTitle": "Recent direct messages",

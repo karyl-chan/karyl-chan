@@ -51,7 +51,7 @@ provideRegistrationResults();
 /** Guild, channel and user names are a nicety: without the access to read them the page shows ids. */
 const names = useTargetNames(targets);
 // every form's target select offers what the sidebar lists
-provideTargetDirectory({ targets, names, created: listTarget });
+provideTargetDirectory({ targets, names, created: listTarget, open: (key) => onSelect(key) });
 
 const counts = computed(() => {
     const map: Record<string, number> = {};
