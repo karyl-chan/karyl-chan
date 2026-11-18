@@ -223,26 +223,22 @@ describe('useBehaviorList', () => {
         expect(mayLeave).toHaveBeenCalledTimes(1);
         expect(state.selected.value).toBe('bot_dm');
     });
-
-    it('counts the triggers using each audience group', async () => {
-        listMock.mockResolvedValue(
-            list([
-                trigger(1, { audienceKind: 'group', audienceGroupName: 'ops' }),
-                trigger(2, { audienceKind: 'group', audienceGroupName: 'ops' }),
-                trigger(3, { audienceKind: 'group', audienceGroupName: 'vip' }),
-                trigger(4),
-            ])
-        );
-        const state = useBehaviorList();
-        await state.load();
-        expect([...state.groupUse.value]).toEqual([
-            ['ops', 2],
-            ['vip', 1],
-        ]);
-    });
 });
 
 describe('useBehaviorList — targets', () => {
+    it('a target a form created is listed at once, and the page stays where the form is', async () => {
+        listMock.mockResolvedValueOnce({ ...list([]), targets: BUILTIN_TARGETS });
+        const state = useBehaviorList();
+        await state.load();
+        state.selected.value = 'bot_dm';
+
+        const vip = createdTarget('group:vip');
+        listMock.mockResolvedValueOnce({ ...list([]), targets: [...BUILTIN_TARGETS, vip] });
+        await state.listTarget(vip);
+        expect(state.targets.value).toContainEqual(vip);
+        expect(state.selected.value).toBe('bot_dm');
+    });
+
     it('a created target is listed and selected', async () => {
         listMock.mockResolvedValueOnce({ ...list([]), targets: BUILTIN_TARGETS });
         const state = useBehaviorList();

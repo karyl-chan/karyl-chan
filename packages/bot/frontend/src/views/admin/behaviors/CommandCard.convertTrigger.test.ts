@@ -54,7 +54,7 @@ const losses = () => [...document.querySelectorAll<HTMLElement>('[data-test="con
 /** Opens the dialog from the tag of a collapsed card: the dialog does not need the card open. */
 async function openConvert(command: CommandView = savedCommand()): Promise<VueWrapper> {
     const wrapper = mount(CommandCard, {
-        props: { command, guildNames: new Map(), groupNames: [] },
+        props: { command, guildNames: new Map() },
         global: { plugins: [i18n] },
         attachTo: document.body,
     });

@@ -1188,11 +1188,8 @@
     "behaviors": {
         "sidebar": {
             "title": "Behaviors",
-            "app": "App commands",
             "appHint": "Commands usable in several places or by user install",
-            "botDm": "DMs with the bot",
             "botDmHint": "Message triggers and commands in bot DMs",
-            "guildAll": "All servers",
             "guildAllHint": "Every server the bot is in",
             "groupSub": "Group · {count} member(s)"
         },
@@ -1234,6 +1231,11 @@
                 "hasBehaviors": "{count} behavior(s) still belong to it; move or delete them first",
                 "inAllowlists": "{count} behavior(s) may DM this group; remove it from them first"
             }
+        },
+        "targetField": {
+            "label": "Applies to",
+            "placeholder": "Choose a target",
+            "new": "＋ New target…"
         },
         "workspace": {
             "loadError": "Could not load behaviors: {error}",
@@ -1333,11 +1335,6 @@
             "leave": "Discard and leave"
         },
         "location": {
-            "label": "Location",
-            "bot_dm": "DMs with the bot",
-            "guild_all": "All servers",
-            "guild": "One server",
-            "channel": "One channel",
             "guildPicker": "Server",
             "channelPicker": "Channel",
             "guildPlaceholder": "Pick a server",
@@ -1369,26 +1366,13 @@
             "stopOnMatch": "Stop after a match; skip this target's behaviors below",
             "movedPublic": "Replies will be posted in the channel, where everyone can see them."
         },
-        "audience": {
-            "title": "Audience",
-            "label": "Who triggers it in DMs",
-            "all": "Everyone",
-            "user": "One user",
-            "group": "Group",
-            "groupPlaceholder": "Pick a group",
-            "newGroup": "+ New group…",
-            "newGroupName": "New group name",
-            "newGroupHint": "Once saved, you can set the group’s members."
-        },
         "group": {
             "membersTitle": "Members of “{group}”",
             "count": "{count} members",
-            "shared": "{count} behaviors share this list; changes apply to all of them.",
             "empty": "No members yet.",
             "remove": "Remove {user}",
             "addPlaceholder": "Discord user ID",
-            "add": "Add",
-            "saveFirst": "Once saved, you can set the group’s members."
+            "add": "Add"
         },
         "action": {
             "title": "Forwarding",
@@ -1474,7 +1458,7 @@
             "created": "Created “{title}”.",
             "done": "Done",
             "commandNamePlaceholder": "e.g. status",
-            "commandPreset": "Visibility (set by this section; change it in the card afterwards)"
+            "commandPreset": "Visibility (set by this target; change it in the card afterwards)"
         },
         "command": {
             "resync": "Sync to Discord again",

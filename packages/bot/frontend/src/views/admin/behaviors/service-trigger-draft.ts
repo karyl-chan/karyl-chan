@@ -21,7 +21,8 @@ import type { Translate } from './translate';
  * A Service Behavior's trigger draft (#126): like the login's, a bot DM
  * pattern or a global command — the card edits the half it is on, and
  * the kind tag turns it to the other. Unlike the login's, the pattern may
- * be a regex and has an audience (who may log in to the service), and the
+ * be a regex and has a target in bot DMs — everyone, one user or one
+ * group: who may log in to the service — and the
  * command has no install or context it must keep. Only the chosen half is
  * sent (PUT /api/services/:id/trigger).
  *
@@ -125,10 +126,13 @@ export function serviceDraftSection(d: ServiceTriggerDraft): BehaviorSection {
     return d.kind === 'message' ? 'bot_dm' : commandSection(visibilityOf(d));
 }
 
-/** The fields the form shows an error line on, for the chosen half (server field names). */
+/**
+ * The fields the form shows an error line on, for the chosen half. The
+ * audience is the target select's (message-trigger-check.ts triggerFormField).
+ */
 export function serviceTriggerFields(d: Pick<ServiceTriggerDraft, 'kind'>): string[] {
     return d.kind === 'message'
-        ? ['patternKind', 'patternValue', 'audienceKind', 'audienceUserId', 'audienceGroupName']
+        ? ['patternKind', 'patternValue', 'target']
         : ['name', 'description', 'integrationTypes', 'contexts'];
 }
 

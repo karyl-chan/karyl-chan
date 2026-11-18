@@ -209,7 +209,7 @@ function absolute(iso: string): string {
                         </AppButton>
                     </div>
 
-                    <GroupMembersPanel v-for="g in list.groupNames" :key="`m${g}`" :group-name="g" :used-by="1" />
+                    <GroupMembersPanel v-for="g in list.groupNames" :key="`m${g}`" :group-name="g" />
                 </template>
                 <p v-if="error" class="error" role="alert">{{ error }}</p>
 

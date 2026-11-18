@@ -2,6 +2,8 @@ import type {
     BehaviorAudienceKind,
     BehaviorPatch,
     BehaviorPatternKind,
+    BehaviorTargetKey,
+    BehaviorTargetView,
     MessageTriggerInput,
     MessageTriggerView,
     ReplyVisibility,
@@ -85,20 +87,68 @@ export function emptyDraft(location: { kind: LocationKind; guildId?: string; cha
     };
 }
 
-/** Move the draft to another kind of location, dropping what does not apply there. */
-export function withLocationKind(draft: MessageTriggerDraft, kind: LocationKind): MessageTriggerDraft {
-    const next = { ...draft, locationKind: kind };
-    if (!kindHasGuild(kind)) next.guildId = '';
-    if (kind !== 'channel') next.channelId = '';
-    if (kind === 'bot_dm') {
-        // the matcher drops bot authors in bot DMs whatever the flag says
-        next.ignoreBots = true;
-    } else {
-        next.audienceKind = 'all';
-        next.audienceUserId = '';
-        next.audienceGroupName = '';
+/** The draft fields that say where a trigger is and for whom — together, its Behavior Target. */
+type TargetFields = Pick<
+    MessageTriggerDraft,
+    'locationKind' | 'guildId' | 'channelId' | 'audienceKind' | 'audienceUserId' | 'audienceGroupName'
+>;
+
+/**
+ * The Behavior Target a draft's fields add up to (ADR 0004): a user's or
+ * a group's for a bot DM trigger with that audience, else its location.
+ * Null while a server or channel id it needs is still empty. The server
+ * derives a saved trigger's target the same way (behavior-target.ts).
+ */
+export function draftTarget(d: TargetFields): BehaviorTargetKey | null {
+    const guildId = d.guildId.trim();
+    const channelId = d.channelId.trim();
+    switch (d.locationKind) {
+        case 'bot_dm': {
+            const userId = d.audienceUserId.trim();
+            const groupName = d.audienceGroupName.trim();
+            if (d.audienceKind === 'user' && userId) return `user:${userId}`;
+            if (d.audienceKind === 'group' && groupName) return `group:${groupName}`;
+            return 'bot_dm';
+        }
+        case 'guild_all':
+            return 'guild:all';
+        case 'guild':
+            return guildId ? `guild:${guildId}` : null;
+        case 'channel':
+            return guildId && channelId ? `channel:${guildId}:${channelId}` : null;
     }
-    return next;
+}
+
+/**
+ * The fields that put a draft in `target`: its location, and — for a user
+ * or a group — its audience. A target the form may not choose (App 指令,
+ * which holds no message trigger) changes nothing.
+ */
+export function withTarget(draft: MessageTriggerDraft, target: BehaviorTargetView): Partial<MessageTriggerDraft> {
+    const everyone = { audienceKind: 'all', audienceUserId: '', audienceGroupName: '' } as const;
+    // the matcher drops bot authors in bot DMs whatever the flag says
+    const botDm = { locationKind: 'bot_dm', guildId: '', channelId: '', ignoreBots: true } as const;
+    switch (target.kind) {
+        case 'app':
+            return {};
+        case 'bot_dm':
+            return { ...botDm, ...everyone };
+        case 'user':
+            return { ...botDm, ...everyone, audienceKind: 'user', audienceUserId: target.userId ?? '' };
+        case 'group':
+            return { ...botDm, ...everyone, audienceKind: 'group', audienceGroupName: target.groupName ?? '' };
+        case 'guild_all':
+            return { locationKind: 'guild_all', guildId: '', channelId: '', ...everyone };
+        case 'guild':
+            return { locationKind: 'guild', guildId: target.guildId ?? '', channelId: '', ...everyone };
+        case 'channel':
+            return {
+                locationKind: 'channel',
+                guildId: target.guildId ?? '',
+                channelId: target.channelId ?? '',
+                ...everyone,
+            };
+    }
 }
 
 /** Where the draft puts the trigger; null while an id it needs is still empty. */

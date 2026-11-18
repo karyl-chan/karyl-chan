@@ -3,9 +3,11 @@
  *
  *   { system, services, commands, messageTriggers, targets }
  *
- * 每一項帶推導出的 Behavior Target（`target`，behavior-target.ts；指令的
- * 對象就是它的分區）與 Behavior Section（`section`，舊 UI 的分組，改用
- * `target` 的 UI 上線後移除）。`targets` 是對象名冊（behavior-target-view.ts）。
+ * 每一項帶推導出的 Behavior Target（`target`，behavior-target.ts）—— admin
+ * UI 依它分組 —— 與 Behavior Section（`section`）：指令的分區就是它的對象；
+ * 訊息觸發的分區是它的位置 key，也就是排序的單位（對象是 `user:` /
+ * `group:` 的觸發，位置仍是 `bot_dm`）。`targets` 是對象名冊
+ * （behavior-target-view.ts）。
  * System Behavior 從所屬清單抽出放在 `system`，UI 把它釘在所屬分區最上方；
  * Service Behavior（#126）同樣抽出放在 `services`（一個訊息觸發或它的
  * 指令，帶它的服務），UI 在所屬分區的「服務」群組列出。

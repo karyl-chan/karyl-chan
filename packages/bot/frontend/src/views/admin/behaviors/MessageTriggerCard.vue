@@ -18,7 +18,6 @@ import { deleteBehavior, updateBehavior, type CommandView, type MessageTriggerVi
 import BehaviorDeliveries from './BehaviorDeliveries.vue';
 import BehaviorDirectMessages from './BehaviorDirectMessages.vue';
 import ConvertToCommandDialog from './ConvertToCommandDialog.vue';
-import GroupMembersPanel from './GroupMembersPanel.vue';
 import MessageTriggerFields from './MessageTriggerFields.vue';
 import TriggerKindMenu from './TriggerKindMenu.vue';
 import WebhookActionFields from './WebhookActionFields.vue';
@@ -27,11 +26,12 @@ import { NO_ERRORS, describeBehaviorError, errorsFromRefusal, hasErrors, isStale
 import {
     checkMessageTriggerDraft,
     fieldsWithErrorLine,
+    triggerFormField,
     type TriggerFormLayout,
 } from './message-trigger-check';
-import { draftLocation, messageTriggerDraftModel } from './message-trigger-draft';
-import { locationKey } from './message-trigger-location';
-import { sectionLabel } from './section-labels';
+import { draftTarget, messageTriggerDraftModel } from './message-trigger-draft';
+import { useTargetDirectory } from './target-directory';
+import { targetLabel } from './target-labels';
 import { useDraftForm } from './use-draft-form';
 
 /**
@@ -51,9 +51,6 @@ const props = defineProps<{
     /** Open the card (and bring it into view) — e.g. right after it was created. */
     expand?: boolean;
     guildNames: ReadonlyMap<string, string>;
-    /** Audience Groups in use, sorted, and how many triggers use each. */
-    groupNames: readonly string[];
-    groupUse: ReadonlyMap<string, number>;
     /** Every command on the page: a conversion may add this trigger to one with subcommands. */
     commands: readonly CommandView[];
 }>();
@@ -71,13 +68,9 @@ const { t } = useI18n();
 const { confirm } = useConfirm();
 const toast = useToastStore();
 
-/** The card edits everything: any location, nothing fixed. */
-const LAYOUT: TriggerFormLayout = {
-    kinds: ['bot_dm', 'guild_all', 'guild', 'channel'],
-    lockGuild: false,
-    lockChannel: false,
-    description: true,
-};
+/** The card edits everything, the admin note included. */
+const LAYOUT: TriggerFormLayout = { description: true };
+const directory = useTargetDirectory();
 
 const open = ref(props.expand ?? false);
 const root = ref<HTMLElement | null>(null);
@@ -135,7 +128,7 @@ async function save() {
             errors.value = NO_ERRORS;
             emit('reload');
         } else {
-            errors.value = errorsFromRefusal(t, err, fieldsWithErrorLine(draft.value, LAYOUT));
+            errors.value = errorsFromRefusal(t, err, fieldsWithErrorLine(LAYOUT), triggerFormField);
         }
     } finally {
         saving.value = false;
@@ -198,25 +191,17 @@ const patternSummary = computed(() =>
     t(`behaviors.card.pattern.${props.trigger.patternKind}`, { value: props.trigger.patternValue })
 );
 
-/** Where saving would move the trigger, once the location is complete. */
+/** Which target saving would move the trigger to, when it is another one. */
 const moved = computed(() => {
-    const target = draftLocation(draft.value);
-    if (!target || locationKey(target) === props.trigger.section) return null;
+    const key = draftTarget(draft.value);
+    if (!key || key === props.trigger.target) return null;
+    const target = directory.targets.value.find((candidate) => candidate.key === key);
     return {
-        section: sectionLabel(t, locationKey(target), props.guildNames),
+        section: target ? targetLabel(t, target, directory.names.value) : key,
         // leaving bot DMs: replies land in a channel, in front of everyone
-        public: props.trigger.surface === 'bot_dm' && target.kind !== 'bot_dm',
+        public: props.trigger.surface === 'bot_dm' && draft.value.locationKind !== 'bot_dm',
     };
 });
-
-/** The members panel is for the saved group (only a group in use takes members). */
-const savedGroup = computed(() =>
-    base.value.audienceKind === 'group' &&
-    draft.value.audienceKind === 'group' &&
-    draft.value.audienceGroupName.trim() === base.value.audienceGroupName
-        ? base.value.audienceGroupName
-        : null
-);
 </script>
 
 <template>
@@ -291,21 +276,10 @@ const savedGroup = computed(() =>
 
                     <MessageTriggerFields
                         :draft="draft"
-                        :kinds="LAYOUT.kinds"
                         :errors="errors.fields"
-                        :group-names="groupNames"
                         :moved="moved"
                         @patch="applyPatch"
-                    >
-                        <template #group-members>
-                            <GroupMembersPanel
-                                v-if="savedGroup"
-                                :group-name="savedGroup"
-                                :used-by="groupUse.get(savedGroup) ?? 1"
-                            />
-                            <p v-else class="hint">{{ t('behaviors.group.saveFirst') }}</p>
-                        </template>
-                    </MessageTriggerFields>
+                    />
 
                     <WebhookActionFields
                         :draft="draft"

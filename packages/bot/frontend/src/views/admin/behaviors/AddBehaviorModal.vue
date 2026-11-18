@@ -22,9 +22,10 @@ import { emptyLeafDraft } from './leaf-draft';
 import {
     checkMessageTriggerDraft,
     fieldsWithErrorLine,
+    triggerFormField,
     type TriggerFormLayout,
 } from './message-trigger-check';
-import { emptyDraft, toCreateBody, type MessageTriggerDraft } from './message-trigger-draft';
+import { emptyDraft, toCreateBody, withTarget, type MessageTriggerDraft } from './message-trigger-draft';
 import { newBehaviorOptions } from './new-behavior-options';
 import {
     isRegistrationRefusal,
@@ -40,8 +41,8 @@ import { ACTION_ERROR_FIELDS, actionBody } from './webhook-draft';
  * "New behavior" in a Behavior Target (board 2, ADR 0004): only what the
  * target can hold is offered, and a disabled choice says why.
  *
- * A message trigger is created for the target: where it is, and — for a
- * user or a group — for whom. A command is created as a single command
+ * A message trigger starts on the target the dialog was opened in; its
+ * target select may send it elsewhere. A command is created as a single command
  * (its root leaf) with the visibility that keeps it in the target
  * (newCommandVisibility); the card changes it afterwards. The
  * name is checked against the namespace on the server (`name_conflict`
@@ -56,8 +57,6 @@ const props = defineProps<{
     /** The target's name, as the page shows it. */
     targetLabel: string;
     guildNames: ReadonlyMap<string, string>;
-    /** Audience Groups some trigger already uses. */
-    groupNames?: readonly string[];
 }>();
 
 const emit = defineEmits<{
@@ -92,18 +91,9 @@ interface Created {
 const created = ref<Created | null>(null);
 
 function reset() {
-    const message = options.value.message;
     kind.value = (['message', 'command'] as const).find((k) => choices.value[k].possible) ?? null;
-    draft.value = {
-        ...emptyDraft({
-            kind: message.locations[0] ?? 'bot_dm',
-            guildId: message.guildId,
-            channelId: message.channelId,
-        }),
-        audienceKind: message.audience.kind,
-        audienceUserId: message.audience.userId,
-        audienceGroupName: message.audience.groupName,
-    };
+    const blank = emptyDraft({ kind: 'bot_dm' });
+    draft.value = { ...blank, ...withTarget(blank, props.target) };
     command.value = { name: '', description: '' };
     errors.value = NO_ERRORS;
     refused.value = null;
@@ -126,13 +116,8 @@ watch(kind, () => {
     refused.value = null;
 });
 
-/** What the dialog shows: the target fixes what it fixes; no description field. */
-const layout = computed<TriggerFormLayout>(() => ({
-    kinds: options.value.message.locations,
-    lockGuild: options.value.message.lockGuild,
-    lockChannel: options.value.message.lockChannel,
-    description: false,
-}));
+/** What the dialog shows: no description field. */
+const layout: TriggerFormLayout = { description: false };
 
 const denied = computed(() =>
     (['command', 'message'] as const)
@@ -223,7 +208,7 @@ async function createCommand() {
 // ── a new message trigger ───────────────────────────────────────────────────
 
 async function createTrigger() {
-    const found = await checkMessageTriggerDraft(t, draft.value, layout.value);
+    const found = await checkMessageTriggerDraft(t, draft.value, layout);
     errors.value = found;
     if (hasErrors(found)) return;
     try {
@@ -234,7 +219,7 @@ async function createTrigger() {
             created.value = { title: body.title, registration: null, secrets: [{ label: '', secret: result.secret }] };
         } else emit('close');
     } catch (err) {
-        errors.value = errorsFromRefusal(t, err, fieldsWithErrorLine(draft.value, layout.value));
+        errors.value = errorsFromRefusal(t, err, fieldsWithErrorLine(layout), triggerFormField);
     }
 }
 
@@ -333,11 +318,7 @@ async function create() {
                 <MessageTriggerFields
                     v-if="kind === 'message'"
                     :draft="draft"
-                    :kinds="layout.kinds"
-                    :lock-guild="layout.lockGuild"
-                    :lock-channel="layout.lockChannel"
                     :errors="errors.fields"
-                    :group-names="groupNames ?? []"
                     @patch="applyPatch"
                 />
                 <WebhookActionFields

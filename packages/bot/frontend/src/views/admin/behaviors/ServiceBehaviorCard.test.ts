@@ -84,12 +84,9 @@ beforeEach(() => {
     api.getGroupMembers.mockResolvedValue({ groupName: 'g', members: [] });
 });
 
-async function mountOpen(
-    behavior = onMessage(),
-    groupUse: ReadonlyMap<string, number> = new Map(),
-): Promise<VueWrapper> {
+async function mountOpen(behavior = onMessage()): Promise<VueWrapper> {
     const wrapper = mount(ServiceBehaviorCard, {
-        props: { behavior, guildNames: new Map(), groupNames: [...groupUse.keys()], groupUse },
+        props: { behavior, guildNames: new Map() },
         global: { plugins: [i18n], stubs: { RouterLink: RouterLinkStub } },
         attachTo: document.body,
     });
@@ -201,8 +198,7 @@ describe('ServiceBehaviorCard', () => {
         signInAs(false);
         api.getGroupMembers.mockResolvedValue({ groupName: 'family', members: ['1'] });
         const wrapper = await mountOpen(
-            onMessage({ audienceKind: 'group', audienceGroupName: 'family' }),
-            new Map([['family', 1]]),
+            onMessage({ audienceKind: 'group', audienceGroupName: 'family', target: 'group:family' }),
         );
         expect(wrapper.findAll('.chip')).toHaveLength(1);
         expect(wrapper.find('.chip-remove').exists()).toBe(false);

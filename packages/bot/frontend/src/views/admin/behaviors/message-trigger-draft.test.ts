@@ -1,15 +1,24 @@
 import { describe, expect, it } from 'vitest';
 import type { MessageTriggerView } from '../../../api/behavior';
+import { builtinTarget, createdTarget } from './behavior-test-support';
 import {
     draftFromTrigger,
     draftLocation,
+    draftTarget,
     emptyDraft,
     previewCaptures,
     previewMatch,
     toCreateBody,
     toPatchBody,
-    withLocationKind,
+    withTarget,
+    type MessageTriggerDraft,
 } from './message-trigger-draft';
+
+/** The draft, moved to `target` — what choosing it in the form's target select does. */
+const moved = (draft: MessageTriggerDraft, target: Parameters<typeof withTarget>[1]): MessageTriggerDraft => ({
+    ...draft,
+    ...withTarget(draft, target),
+});
 
 const GUILD = '123456789012345678';
 const CHANNEL = '223456789012345678';
@@ -69,7 +78,7 @@ describe('draft ↔ request body', () => {
     it('sends the reply default for a guild trigger, never for a bot DM one', () => {
         const guild = { ...emptyDraft({ kind: 'guild_all' }), replyVisibility: 'private' as const };
         expect(toCreateBody(guild).replyVisibility).toBe('private');
-        expect(toCreateBody(withLocationKind(guild, 'bot_dm')).replyVisibility).toBeNull();
+        expect(toCreateBody(moved(guild, builtinTarget('bot_dm'))).replyVisibility).toBeNull();
     });
 
     it('a new trigger in a channel starts there, for everyone, ignoring bots', () => {
@@ -110,7 +119,7 @@ describe('toPatchBody', () => {
     });
 
     it('moving a user-audience DM trigger to a guild drops the audience with it', () => {
-        const draft = { ...withLocationKind(draftFromTrigger(trigger()), 'guild'), guildId: GUILD };
+        const draft = moved(draftFromTrigger(trigger()), createdTarget(`guild:${GUILD}`));
         expect(toPatchBody(trigger(), draft)).toEqual({
             surface: 'guild',
             guildId: GUILD,
@@ -142,20 +151,77 @@ describe('draftLocation', () => {
     });
 });
 
-describe('withLocationKind', () => {
-    it('a guild location has no audience; a bot DM has no guild and always ignores bots', () => {
-        const dm = { ...draftFromTrigger(trigger()), audienceKind: 'group' as const, audienceGroupName: 'ops' };
-        const guild = withLocationKind(dm, 'channel');
-        expect(guild).toMatchObject({ audienceKind: 'all', audienceUserId: '', audienceGroupName: '' });
+describe('draftTarget — the target a draft’s fields add up to', () => {
+    const dm = emptyDraft({ kind: 'bot_dm' });
 
-        const back = withLocationKind({ ...guild, guildId: GUILD, channelId: CHANNEL, ignoreBots: false }, 'bot_dm');
-        expect(back).toMatchObject({ guildId: '', channelId: '', ignoreBots: true });
+    it('a bot DM trigger is everyone’s, one user’s or one group’s', () => {
+        expect(draftTarget(dm)).toBe('bot_dm');
+        expect(draftTarget({ ...dm, audienceKind: 'user', audienceUserId: USER })).toBe(`user:${USER}`);
+        expect(draftTarget({ ...dm, audienceKind: 'group', audienceGroupName: ' ops ' })).toBe('group:ops');
+        // an audience kind without its id or name is still everyone's
+        expect(draftTarget({ ...dm, audienceKind: 'user' })).toBe('bot_dm');
     });
 
-    it('narrowing a channel to its guild keeps the guild', () => {
-        const draft = { ...emptyDraft({ kind: 'channel', guildId: GUILD, channelId: CHANNEL }) };
-        expect(withLocationKind(draft, 'guild')).toMatchObject({ guildId: GUILD, channelId: '' });
-        expect(withLocationKind(draft, 'guild_all')).toMatchObject({ guildId: '', channelId: '' });
+    it('a server trigger is at its location, and has none until its ids are filled in', () => {
+        expect(draftTarget(emptyDraft({ kind: 'guild_all' }))).toBe('guild:all');
+        expect(draftTarget(emptyDraft({ kind: 'guild', guildId: GUILD }))).toBe(`guild:${GUILD}`);
+        expect(draftTarget(emptyDraft({ kind: 'channel', guildId: GUILD, channelId: CHANNEL }))).toBe(
+            `channel:${GUILD}:${CHANNEL}`
+        );
+        expect(draftTarget(emptyDraft({ kind: 'guild' }))).toBeNull();
+        expect(draftTarget(emptyDraft({ kind: 'channel', guildId: GUILD }))).toBeNull();
+    });
+});
+
+describe('withTarget — choosing a target sets where and for whom', () => {
+    const dm = { ...draftFromTrigger(trigger()), audienceKind: 'group' as const, audienceGroupName: 'ops' };
+
+    it('a server target is for everyone; back in bot DMs there is no guild and bots are always ignored', () => {
+        const channel = moved(dm, createdTarget(`channel:${GUILD}:${CHANNEL}`));
+        expect(channel).toMatchObject({
+            locationKind: 'channel',
+            guildId: GUILD,
+            channelId: CHANNEL,
+            audienceKind: 'all',
+            audienceUserId: '',
+            audienceGroupName: '',
+        });
+
+        const back = moved({ ...channel, ignoreBots: false }, builtinTarget('bot_dm'));
+        expect(back).toMatchObject({ locationKind: 'bot_dm', guildId: '', channelId: '', ignoreBots: true });
+    });
+
+    it('a user’s and a group’s targets are bot DMs for that user or group only', () => {
+        expect(moved(dm, createdTarget(`user:${USER}`))).toMatchObject({
+            locationKind: 'bot_dm',
+            audienceKind: 'user',
+            audienceUserId: USER,
+            audienceGroupName: '',
+        });
+        const guild = emptyDraft({ kind: 'guild', guildId: GUILD });
+        expect(moved(guild, createdTarget('group:vip'))).toMatchObject({
+            locationKind: 'bot_dm',
+            guildId: '',
+            audienceKind: 'group',
+            audienceUserId: '',
+            audienceGroupName: 'vip',
+        });
+    });
+
+    it('every target it sets is the target the draft then adds up to', () => {
+        const targets = [
+            builtinTarget('bot_dm'),
+            builtinTarget('guild:all'),
+            createdTarget(`guild:${GUILD}`),
+            createdTarget(`channel:${GUILD}:${CHANNEL}`),
+            createdTarget(`user:${USER}`),
+            createdTarget('group:vip'),
+        ];
+        for (const target of targets) expect(draftTarget(moved(dm, target))).toBe(target.key);
+    });
+
+    it('App 指令 holds no message trigger: choosing it changes nothing', () => {
+        expect(withTarget(dm, builtinTarget('app'))).toEqual({});
     });
 });
 

@@ -8,17 +8,15 @@ import { useUserSummaries } from '../../../composables/use-user-summaries';
 import { describeBehaviorError } from './behavior-errors';
 
 /**
- * Members of an Audience Group. The list belongs to the group name and is
- * shared by every bot DM trigger using it; it can only be set while some
- * trigger uses the group (#137), so this panel is shown for the saved
- * group of a saved trigger. Adding or removing saves right away.
+ * Members of an Audience Group — a Behavior Target of its own (ADR 0004):
+ * the list is the group's, set from the moment the group exists and
+ * shared by every bot DM trigger for it. Adding or removing saves right
+ * away.
  * `readonly` shows the list only (a group a Service Behavior uses: only an
  * owner sets who may log in to the service, #126).
  */
 const props = defineProps<{
     groupName: string;
-    /** How many message triggers use this group. */
-    usedBy: number;
     readonly?: boolean;
 }>();
 
@@ -86,7 +84,6 @@ async function add() {
             <span class="title">{{ t('behaviors.group.membersTitle', { group: groupName }) }}</span>
             <span class="count">{{ t('behaviors.group.count', { count: members.length }) }}</span>
         </header>
-        <p v-if="usedBy > 1" class="hint">{{ t('behaviors.group.shared', { count: usedBy }) }}</p>
 
         <p v-if="loading" class="hint">{{ t('common.loading') }}</p>
         <ul v-else-if="members.length > 0" class="chips">

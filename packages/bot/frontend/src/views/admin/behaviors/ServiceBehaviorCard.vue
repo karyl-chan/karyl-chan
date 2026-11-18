@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { RouterLink } from 'vue-router';
 import { Icon } from '@iconify/vue';
 import { AppBadge, AppButton, AppItemCard, AppTextField, AppToggle, Stack } from '@karyl-chan/ui';
-import { switchServiceTrigger, type ServiceBehaviorView } from '../../../api/behavior';
+import { switchServiceTrigger, type BehaviorTargetView, type ServiceBehaviorView } from '../../../api/behavior';
 import { useCurrentUserStore } from '../../../stores/currentUserStore';
 import CommandRegistrationResult from './CommandRegistrationResult.vue';
 import CommandVisibilityFields from './CommandVisibilityFields.vue';
@@ -13,8 +13,12 @@ import MessageTriggerFields from './MessageTriggerFields.vue';
 import TriggerKindMenu from './TriggerKindMenu.vue';
 import { NO_ERRORS, errorsFromRefusal, hasErrors, isStale, type FormErrors } from './behavior-errors';
 import type { CommandDraft } from './command-draft';
+import { triggerFormField } from './message-trigger-check';
+import { draftTarget } from './message-trigger-draft';
 import { isRegistrationRefusal, registrationFailure, registrationResult } from './registration-result';
 import { sectionLabel } from './section-labels';
+import { useTargetDirectory } from './target-directory';
+import { targetLabel } from './target-labels';
 import {
     serviceCommandDraftOf,
     serviceDraftSection,
@@ -30,8 +34,9 @@ import { useRegistrationResult } from './use-registration-results';
  * A Service Behavior (#126): the row a service on the services page owns.
  * Locked like the System Behavior — no toggle, no delete, no other action:
  * its action logs the triggerer in to the service. Its trigger is the one
- * thing the owner changes, as for the login: a bot DM pattern with an
- * audience (who may log in) or a global command, the kind switched from
+ * thing the owner changes, as for the login: a bot DM pattern for a
+ * target (everyone, one user or one group — who may log in) or a global
+ * command, the kind switched from
  * the title row's tag and saved through the login's switch (the new
  * trigger first, PUT /api/services/:id/trigger). A command moves the card
  * to the section its visibility puts it in, still under 服務. Only a bot
@@ -42,9 +47,6 @@ const props = defineProps<{
     behavior: ServiceBehaviorView;
     expand?: boolean;
     guildNames: ReadonlyMap<string, string>;
-    /** Audience Groups in use, sorted, and how many triggers use each. */
-    groupNames: readonly string[];
-    groupUse: ReadonlyMap<string, number>;
 }>();
 
 const emit = defineEmits<{
@@ -103,7 +105,7 @@ async function save() {
             errors.value = NO_ERRORS;
             registration.value = registrationFailure(t, err, props.guildNames);
         } else {
-            errors.value = errorsFromRefusal(t, err, serviceTriggerFields(draft.value));
+            errors.value = errorsFromRefusal(t, err, serviceTriggerFields(draft.value), triggerFormField);
         }
     } finally {
         saving.value = false;
@@ -117,14 +119,22 @@ function switchKind(kind: 'message' | 'command') {
     applyPatch({ kind });
 }
 
-// ── the message half's audience group ───────────────────────────────────────
+// ── the message half's target ────────────────────────────────────────────────
 
-const savedGroup = computed(() =>
-    base.value.kind === 'message' &&
-    base.value.audienceKind === 'group' &&
-    draft.value.audienceKind === 'group' &&
-    draft.value.audienceGroupName.trim() === base.value.audienceGroupName
-        ? base.value.audienceGroupName
+const directory = useTargetDirectory();
+
+/** A service's login answers in bot DMs: everyone's, one user's or one group's. */
+const inBotDms = (target: BehaviorTargetView) =>
+    target.kind === 'bot_dm' || target.kind === 'user' || target.kind === 'group';
+
+/**
+ * The group the draft is for: its members are who may log in to the
+ * service, so they are on screen while the owner chooses (ADR 0004 — a
+ * group's list no longer empties itself when nothing uses it).
+ */
+const draftGroup = computed(() =>
+    draft.value.kind === 'message' && draft.value.audienceKind === 'group'
+        ? draft.value.audienceGroupName.trim() || null
         : null
 );
 
@@ -148,10 +158,17 @@ const summary = computed(() =>
         ? `/${props.behavior.name}`
         : t(`behaviors.card.pattern.${props.behavior.patternKind}`, { value: props.behavior.patternValue })
 );
-/** Where saving would move the card, when that is another section. */
+/** Which target saving would move the card to, when it is another one. */
 const moved = computed(() => {
-    const target = serviceDraftSection(draft.value);
-    return dirty.value && target !== props.behavior.section ? sectionLabel(t, target, props.guildNames) : null;
+    if (!dirty.value) return null;
+    if (draft.value.kind === 'command') {
+        const section = serviceDraftSection(draft.value);
+        return section !== props.behavior.target ? sectionLabel(t, section, props.guildNames) : null;
+    }
+    const key = draftTarget(draft.value);
+    if (!key || key === props.behavior.target) return null;
+    const target = directory.targets.value.find((candidate) => candidate.key === key);
+    return target ? targetLabel(t, target, directory.names.value) : key;
 });
 const kindBlocked = computed(() => (isOwner.value ? null : t('behaviors.service.ownerOnly')));
 </script>
@@ -195,25 +212,21 @@ const kindBlocked = computed(() => (isOwner.value ? null : t('behaviors.service.
                 <CommandRegistrationResult v-if="registration" :result="registration" @dismiss="registration = null" />
 
                 <fieldset class="trigger" :disabled="!isOwner">
-                    <MessageTriggerFields
-                        v-if="draft.kind === 'message'"
-                        :draft="draft"
-                        :kinds="['bot_dm']"
-                        :errors="errors.fields"
-                        :group-names="groupNames"
-                        fixed-placement
-                        @patch="applyPatch"
-                    >
-                        <template #group-members>
-                            <GroupMembersPanel
-                                v-if="savedGroup"
-                                :group-name="savedGroup"
-                                :used-by="groupUse.get(savedGroup) ?? 1"
-                                :readonly="!isOwner"
-                            />
-                            <p v-else class="hint">{{ t('behaviors.group.saveFirst') }}</p>
-                        </template>
-                    </MessageTriggerFields>
+                    <template v-if="draft.kind === 'message'">
+                        <MessageTriggerFields
+                            :draft="draft"
+                            :errors="errors.fields"
+                            :allow-target="inBotDms"
+                            fixed-placement
+                            @patch="applyPatch"
+                        />
+                        <GroupMembersPanel
+                            v-if="draftGroup"
+                            :key="draftGroup"
+                            :group-name="draftGroup"
+                            :readonly="!isOwner"
+                        />
+                    </template>
 
                     <Stack v-else gap="3">
                         <h4 class="part">{{ t('behaviors.trigger.title') }}</h4>

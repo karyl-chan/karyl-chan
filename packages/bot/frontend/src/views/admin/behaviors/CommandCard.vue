@@ -60,8 +60,6 @@ const props = defineProps<{
     /** Open the card (and bring it into view) — e.g. right after it moved or was created. */
     expand?: boolean;
     guildNames: ReadonlyMap<string, string>;
-    /** Audience Groups some trigger already uses (a leaf converted to a message trigger may take one). */
-    groupNames: readonly string[];
 }>();
 
 const emit = defineEmits<{
@@ -404,7 +402,6 @@ const unhealthy = computed(() =>
             :visible="toMessage"
             :command="command"
             :guild-names="guildNames"
-            :group-names="groupNames"
             @close="toMessage = false"
             @converted="onConvertedToMessage"
             @reload="emit('reload')"
