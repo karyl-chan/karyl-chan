@@ -377,7 +377,12 @@ function proposedTargetCommand(
   replyVisibility: ReplyVisibility | null,
 ): CatalogCommand {
   const id = target.existing?.id ?? 0;
-  const leaf: CatalogBehavior = { ...behavior, ...targetLeafColumnsOf(id, target, replyVisibility) };
+  // a command leaf belongs to no message trigger target
+  const leaf: CatalogBehavior = {
+    ...behavior,
+    ...targetLeafColumnsOf(id, target, replyVisibility),
+    target: null,
+  };
   return target.existing
     ? { ...target.existing, leaves: [...target.existing.leaves, leaf] }
     : proposedCommand(id, target.settings, false, [leaf]);

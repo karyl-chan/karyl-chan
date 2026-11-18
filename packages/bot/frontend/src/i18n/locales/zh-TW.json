@@ -1231,7 +1231,7 @@
             "subcommandCount": "{count} 個子指令",
             "tagSystem": "系統行為",
             "tagSystemShort": "系統",
-            "tagStop": "命中後停止後續比對",
+            "tagStop": "命中後停止這個對象後面的比對",
             "tagStopShort": "停止",
             "unhealthy": "連續失敗",
             "toggleProtected": "系統行為不可停用",
@@ -1335,7 +1335,7 @@
                 "groupSeparator": "、"
             },
             "ignoreBots": "略過其他 bot 與 webhook 的訊息",
-            "stopOnMatch": "比對到之後停止，不再檢查後面的行為",
+            "stopOnMatch": "比對到之後停止，不再檢查這個對象後面的行為",
             "movedPublic": "回覆會貼在頻道裡，所有人都看得到。"
         },
         "audience": {

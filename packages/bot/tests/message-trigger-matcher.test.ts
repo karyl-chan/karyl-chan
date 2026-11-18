@@ -6,8 +6,10 @@
  *   - guild triggers fire in guild channels: all guilds, one guild, or one
  *     channel; ignoreBots skips bot authors; the bot's own messages never
  *     fire anything
- *   - triggers are walked in sortOrder; stopOnMatch stops the walk; the
- *     system login answers with its built-in action and always stops
+ *   - triggers are walked in sortOrder; stopOnMatch stops the rest of its
+ *     own Behavior Target (ADR 0004), the other targets still fire; the
+ *     system login answers with its built-in action and always stops the
+ *     whole walk
  *   - a trigger without a webhook action is skipped with a warning; the
  *     walk goes on
  *   - triggers come from an in-memory snapshot that a write invalidates
@@ -380,7 +382,7 @@ describe("bot DM rate limit", () => {
 });
 
 describe("matching order", () => {
-  it("every match fires unless one stops the walk", async () => {
+  it("every match fires unless one stops its target", async () => {
     const first = await seedMessageTrigger({ sortOrder: 0 });
     const second = await seedMessageTrigger({ sortOrder: 1 });
     const forwarder = makeForwarder();
@@ -400,6 +402,91 @@ describe("matching order", () => {
     const forwarder = makeForwarder();
     await matcherWith(forwarder).onMessage(dmMsg("U1", "!go").message);
     expect(forwardedIds(forwarder)).toEqual([second]);
+  });
+});
+
+describe("stop after a match is scoped to the Behavior Target (ADR 0004)", () => {
+  const stop = { stopOnMatch: true };
+
+  it("in a bot DM: everyone, the user and the user's group each stop on their own", async () => {
+    await BehaviorGroupMember.create({ groupName: "vip", userId: "U1" });
+    const everyone = await seedMessageTrigger({ sortOrder: 0, ...stop });
+    const everyoneLater = await seedMessageTrigger({ sortOrder: 1 });
+    const user = await seedMessageTrigger({ sortOrder: 2, audienceKind: "user", audienceUserId: "U1", ...stop });
+    const userLater = await seedMessageTrigger({ sortOrder: 3, audienceKind: "user", audienceUserId: "U1" });
+    const group = await seedMessageTrigger({ sortOrder: 4, audienceKind: "group", audienceGroupName: "vip", ...stop });
+    const groupLater = await seedMessageTrigger({ sortOrder: 5, audienceKind: "group", audienceGroupName: "vip" });
+    const forwarder = makeForwarder();
+    const m = matcherWith(forwarder);
+
+    await m.onMessage(dmMsg("U1", "!go").message);
+    // one per target: the trigger that stopped it; nothing after it in the same target
+    expect(forwardedIds(forwarder)).toEqual([everyone, user, group]);
+    expect(forwardedIds(forwarder)).not.toContain(everyoneLater);
+    expect(forwardedIds(forwarder)).not.toContain(userLater);
+    expect(forwardedIds(forwarder)).not.toContain(groupLater);
+
+    // someone else only matches "everyone"
+    forwarder.forward.mockClear();
+    await m.onMessage(dmMsg("U2", "!go").message);
+    expect(forwardedIds(forwarder)).toEqual([everyone]);
+  });
+
+  it("a stop for one user does not keep the trigger for everyone from firing", async () => {
+    const user = await seedMessageTrigger({ sortOrder: 0, audienceKind: "user", audienceUserId: "U1", ...stop });
+    const everyone = await seedMessageTrigger({ sortOrder: 1 });
+    const forwarder = makeForwarder();
+    await matcherWith(forwarder).onMessage(dmMsg("U1", "!go").message);
+    expect(forwardedIds(forwarder)).toEqual([user, everyone]);
+  });
+
+  it("two users' targets are separate", async () => {
+    await seedMessageTrigger({ sortOrder: 0, audienceKind: "user", audienceUserId: "U2", ...stop });
+    const mine = await seedMessageTrigger({ sortOrder: 1, audienceKind: "user", audienceUserId: "U1" });
+    const forwarder = makeForwarder();
+    await matcherWith(forwarder).onMessage(dmMsg("U1", "!go").message);
+    expect(forwardedIds(forwarder)).toEqual([mine]);
+  });
+
+  it("in a server: all servers, the server and the channel each stop on their own", async () => {
+    const guild = { surface: "guild" };
+    const all = await seedMessageTrigger({ sortOrder: 0, ...guild, ...stop });
+    const allLater = await seedMessageTrigger({ sortOrder: 1, ...guild });
+    const server = await seedMessageTrigger({ sortOrder: 2, ...guild, guildId: "G1", ...stop });
+    const serverLater = await seedMessageTrigger({ sortOrder: 3, ...guild, guildId: "G1" });
+    const channel = await seedMessageTrigger({ sortOrder: 4, ...guild, guildId: "G1", channelId: "C1", ...stop });
+    const channelLater = await seedMessageTrigger({ sortOrder: 5, ...guild, guildId: "G1", channelId: "C1" });
+    const otherChannel = await seedMessageTrigger({ sortOrder: 6, ...guild, guildId: "G1", channelId: "C2" });
+    const forwarder = makeForwarder();
+    const m = matcherWith(forwarder);
+
+    await m.onMessage(guildMsg({ content: "!go", guildId: "G1", channelId: "C1" }).message);
+    expect(forwardedIds(forwarder)).toEqual([all, server, channel]);
+    for (const id of [allLater, serverLater, channelLater, otherChannel]) {
+      expect(forwardedIds(forwarder)).not.toContain(id);
+    }
+  });
+
+  it("the system login still ends the whole walk, whatever stopped before it", async () => {
+    await seedSystemLogin();
+    await seedMessageTrigger({ sortOrder: 0, patternValue: "!login", audienceKind: "user", audienceUserId: "U1" });
+    const forwarder = makeForwarder();
+    const outcome = await matcherWith(forwarder).onMessage(dmMsg("U1", "!login").message);
+    expect(outcome.handled).toBe(true);
+    expect(mintLoginLink).toHaveBeenCalledTimes(1);
+    // the login sorts first and closes the walk: the user's own "!login" never runs
+    expect(forwarder.forward).not.toHaveBeenCalled();
+  });
+
+  it("a stop in one target does not keep the system login from answering", async () => {
+    const login = await seedSystemLogin({ sortOrder: 5 });
+    const greedy = await seedMessageTrigger({ sortOrder: 0, patternValue: "!", audienceKind: "user", audienceUserId: "U1", ...stop });
+    const forwarder = makeForwarder();
+    const outcome = await matcherWith(forwarder).onMessage(dmMsg("U1", "!login").message);
+    expect(forwardedIds(forwarder)).toEqual([greedy]);
+    expect(mintLoginLink).toHaveBeenCalledTimes(1);
+    expect(outcome).toMatchObject({ handled: true });
+    expect(login).toBeGreaterThan(0);
   });
 });
 

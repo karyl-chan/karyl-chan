@@ -7,7 +7,8 @@
  *   2. 在哪：與 bot 的私訊 → surface='bot_dm'；伺服器頻道 → surface='guild'
  *      （全部 / 指定伺服器 / 指定頻道），再依 ignoreBots 過濾 bot 作者
  *   3. 對誰：audience（所有人 / 使用者 / 群組）只在與 bot 的私訊
- *   4. matchTrigger（startswith/endswith/regex），依 sortOrder 走訪
+ *   4. matchTrigger（startswith/endswith/regex），依 sortOrder 走訪；
+ *      stopOnMatch 只停掉同一個 Behavior Target 後面的觸發（ADR 0004）
  *   5. 內建動作（系統登入）→ 內建 handler；服務（Service Behavior，#126）→
  *      service-login-action；webhook → WebhookForwarder；plugin action →
  *      Plugin Dispatch（#203）
@@ -356,8 +357,13 @@ interface TriggersToRun {
 
 /**
  * 依 sortOrder 走訪（BH-0.3 multi-match），以訊息到達時的快照為準。停止規則：
- *   系統登入、Service Behavior → 必停（登入連結是收尾動作）
- *   其他                       → stopOnMatch=true 停；false 繼續比對下一條
+ *   系統登入、Service Behavior → 必停，結束整個走訪（登入連結是收尾動作）
+ *   其他                       → stopOnMatch=true 只停掉同一個 Behavior
+ *                                Target 後面的觸發（ADR 0004）：一則訊息
+ *                                可以同時符合好幾個對象（某人的私訊符合
+ *                                所有人、他自己與他的群組；伺服器訊息符合
+ *                                全部伺服器、該伺服器與該頻道），每個對象
+ *                                是各自獨立的清單。false 繼續比對下一條
  */
 function triggersToRun(
   triggers: readonly CatalogBehavior[],
@@ -368,9 +374,12 @@ function triggersToRun(
 ): TriggersToRun {
   const content = djsMessage.content ?? "";
   const webhooks: MatchedTrigger[] = [];
+  /** 已有 stopOnMatch 觸發命中的對象；多數訊息沒有，所以用到才建 */
+  let stopped: Set<string> | null = null;
   for (const trigger of triggers) {
     if (!trigger.enabled) continue;
     if (!trigger.patternKind || trigger.patternValue === null) continue;
+    if (stopped !== null && trigger.target !== null && stopped.has(trigger.target)) continue;
     if (!appliesTo(trigger, djsMessage, userId, isDm, groupMembers)) continue;
     const match = matchTrigger(trigger.patternKind, trigger.patternValue, content);
     if (!match) continue;
@@ -378,7 +387,7 @@ function triggersToRun(
       return { webhooks, closing: trigger };
     }
     webhooks.push({ trigger, match });
-    if (trigger.stopOnMatch) break;
+    if (trigger.stopOnMatch && trigger.target !== null) (stopped ??= new Set()).add(trigger.target);
   }
   return { webhooks, closing: null };
 }

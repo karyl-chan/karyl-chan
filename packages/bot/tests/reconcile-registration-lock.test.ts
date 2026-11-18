@@ -111,6 +111,7 @@ function loginCommand(name = "login"): CatalogCommand {
         updatedAt: now,
         action: null,
         service: null,
+        target: null,
       },
     ],
   };
