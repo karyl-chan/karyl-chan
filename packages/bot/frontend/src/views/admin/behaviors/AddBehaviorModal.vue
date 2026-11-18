@@ -6,7 +6,7 @@ import { AppButton, AppModal, AppTextField, Stack } from '@karyl-chan/ui';
 import {
     createBehaviorCommand,
     createMessageTrigger,
-    type BehaviorSection,
+    type BehaviorTargetView,
     type CommandView,
     type MessageTriggerView,
 } from '../../../api/behavior';
@@ -32,17 +32,18 @@ import {
     registrationResult,
     type RegistrationResult,
 } from './registration-result';
-import { sectionLabel } from './section-labels';
+import { sectionOfTarget } from './behavior-targets';
 import { draftPatcher } from './use-draft-form';
 import { ACTION_ERROR_FIELDS, actionBody } from './webhook-draft';
 
 /**
- * "New behavior" in a section (board 2): only what the section can hold is
- * offered, and a disabled choice says why.
+ * "New behavior" in a Behavior Target (board 2, ADR 0004): only what the
+ * target can hold is offered, and a disabled choice says why.
  *
- * A message trigger is created where the section is. A command is created
- * as a single command (its root leaf) with the visibility that keeps it in
- * the section (newCommandVisibility); the card changes it afterwards. The
+ * A message trigger is created for the target: where it is, and — for a
+ * user or a group — for whom. A command is created as a single command
+ * (its root leaf) with the visibility that keeps it in the target
+ * (newCommandVisibility); the card changes it afterwards. The
  * name is checked against the namespace on the server (`name_conflict`
  * lands on the name field) and `login` is refused before sending.
  *
@@ -51,7 +52,9 @@ import { ACTION_ERROR_FIELDS, actionBody } from './webhook-draft';
  */
 const props = defineProps<{
     visible: boolean;
-    section: BehaviorSection;
+    target: BehaviorTargetView;
+    /** The target's name, as the page shows it. */
+    targetLabel: string;
     guildNames: ReadonlyMap<string, string>;
     /** Audience Groups some trigger already uses. */
     groupNames?: readonly string[];
@@ -68,7 +71,7 @@ const { t } = useI18n();
 
 type Kind = 'command' | 'message';
 
-const options = computed(() => newBehaviorOptions(props.section));
+const options = computed(() => newBehaviorOptions(props.target));
 const choices = computed(() => ({ command: options.value.command, message: options.value.message }));
 
 const kind = ref<Kind | null>(null);
@@ -91,11 +94,16 @@ const created = ref<Created | null>(null);
 function reset() {
     const message = options.value.message;
     kind.value = (['message', 'command'] as const).find((k) => choices.value[k].possible) ?? null;
-    draft.value = emptyDraft({
-        kind: message.locations[0] ?? 'bot_dm',
-        guildId: message.guildId,
-        channelId: message.channelId,
-    });
+    draft.value = {
+        ...emptyDraft({
+            kind: message.locations[0] ?? 'bot_dm',
+            guildId: message.guildId,
+            channelId: message.channelId,
+        }),
+        audienceKind: message.audience.kind,
+        audienceUserId: message.audience.userId,
+        audienceGroupName: message.audience.groupName,
+    };
     command.value = { name: '', description: '' };
     errors.value = NO_ERRORS;
     refused.value = null;
@@ -103,7 +111,7 @@ function reset() {
 }
 
 // Start fresh each time the dialog opens — only then: after a create the
-// page follows the new item to its section while the one-time secret
+// page follows the new item to its target while the one-time secret
 // is still on screen, and that must not wipe it.
 watch(
     () => props.visible,
@@ -118,7 +126,7 @@ watch(kind, () => {
     refused.value = null;
 });
 
-/** What the dialog shows: the section fixes what it fixes; no description field. */
+/** What the dialog shows: the target fixes what it fixes; no description field. */
 const layout = computed<TriggerFormLayout>(() => ({
     kinds: options.value.message.locations,
     lockGuild: options.value.message.lockGuild,
@@ -135,9 +143,12 @@ const denied = computed(() =>
 
 // ── a new command ───────────────────────────────────────────────────────────
 
-const preset = computed(() => newCommandVisibility(props.section));
+const preset = computed(() => {
+    const section = sectionOfTarget(props.target);
+    return section ? newCommandVisibility(section) : null;
+});
 
-/** The visibility the section gives a new command, in words (board 2). */
+/** The visibility the target gives a new command, in words (board 2). */
 const presetSummary = computed(() => {
     const p = preset.value;
     if (!p) return '';
@@ -262,7 +273,7 @@ async function create() {
 
         <form v-else @submit.prevent="create">
             <Stack gap="3">
-                <p class="intro">{{ t('behaviors.add.intro', { section: sectionLabel(t, section, guildNames) }) }}</p>
+                <p class="intro">{{ t('behaviors.add.intro', { section: targetLabel }) }}</p>
 
                 <AppTextField
                     v-model="draft.title"

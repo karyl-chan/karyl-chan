@@ -1,11 +1,10 @@
-import type { BehaviorSection, MessageTriggerLocation, MessageTriggerView } from '../../../api/behavior';
-import { parseSection } from './behavior-sections';
+import type { MessageTriggerLocation, MessageTriggerView } from '../../../api/behavior';
 
 /**
  * Message Trigger Locations (GLOSSARY.md) as the UI handles them: a kind
  * plus its ids, never a string to take apart. The key form
  * (`bot_dm`, `guild:all`, `guild:<id>`, `channel:<g>:<c>`) is only built
- * for the reorder API and to compare with a trigger's section.
+ * for a trigger conversion and to compare with a trigger's section.
  */
 
 export type LocationKind = 'bot_dm' | 'guild_all' | 'guild' | 'channel';
@@ -28,23 +27,6 @@ export function kindHasGuild(kind: LocationKind): boolean {
     return kind === 'guild' || kind === 'channel';
 }
 
-/**
- * The location a section's message triggers are at — null for App 指令,
- * which holds commands only. A section is presentation; this is the one
- * place it turns into a location (GLOSSARY.md: sections are not write units).
- */
-export function locationOfSection(section: BehaviorSection): TriggerLocation | null {
-    const s = parseSection(section);
-    switch (s.kind) {
-        case 'app':
-            return null;
-        case 'guild_all':
-            return { kind: 'guild_all' };
-        default:
-            return s;
-    }
-}
-
 export function locationKey(loc: TriggerLocation): MessageTriggerLocation {
     switch (loc.kind) {
         case 'bot_dm':
@@ -56,10 +38,4 @@ export function locationKey(loc: TriggerLocation): MessageTriggerLocation {
         case 'channel':
             return `channel:${loc.guildId}:${loc.channelId}`;
     }
-}
-
-/** The Message Trigger Location to reorder in a section; null for App 指令. */
-export function messageTriggerLocationOf(section: BehaviorSection): MessageTriggerLocation | null {
-    const loc = locationOfSection(section);
-    return loc ? locationKey(loc) : null;
 }

@@ -19,6 +19,8 @@ const props = defineProps<{
     /** The guild / channel is fixed by the section the trigger is created in. */
     lockGuild?: boolean;
     lockChannel?: boolean;
+    /** Show only the server / channel pickers: the caller already says which kind this is. */
+    hideKind?: boolean;
     errors: Record<string, string>;
 }>();
 
@@ -87,7 +89,8 @@ const channelOptions = computed<SelectOption<string>[]>(() => {
 
 <template>
     <div class="location">
-        <label v-if="kinds.length > 1" class="field">
+        <template v-if="hideKind" />
+        <label v-else-if="kinds.length > 1" class="field">
             <span class="field-label">{{ t('behaviors.location.label') }}</span>
             <AppSelectField v-model="kind" :options="kindOptions" :drawer-title="t('behaviors.location.label')" />
             <p v-if="errors.surface" class="field-error">{{ errors.surface }}</p>

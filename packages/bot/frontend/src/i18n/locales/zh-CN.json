@@ -1192,19 +1192,50 @@
             "appHint": "跨多处可用或开放用户安装的指令",
             "botDm": "与 bot 的私信",
             "botDmHint": "bot 私信里的消息触发与指令",
-            "guildSection": "服务器",
             "guildAll": "全部服务器",
             "guildAllHint": "bot 所在的每个服务器",
-            "behaviorCount": "{count} 个行为"
+            "groupSub": "群组 · {count} 人"
         },
-        "workspace": {
+        "target": {
+            "app": "App 指令",
+            "botDm": "所有人与 bot 的私信",
+            "guildAll": "全部服务器",
+            "channelIn": "{guild} › #{channel}",
             "kind": {
                 "app": "App 指令",
                 "bot_dm": "bot 私信",
                 "guild_all": "全部服务器",
-                "guild": "指定服务器",
-                "channel": "指定频道"
+                "guild": "服务器",
+                "channel": "频道",
+                "user": "用户",
+                "group": "群组"
             },
+            "allowlistRefs": "有 {count} 个行为的回复可以私信这个群组的成员",
+            "create": {
+                "open": "新增对象",
+                "title": "新增对象",
+                "kind": "种类",
+                "kinds": {
+                    "guild": "服务器",
+                    "channel": "频道",
+                    "user": "用户",
+                    "group": "群组"
+                },
+                "userId": "用户",
+                "groupName": "群组名称",
+                "submit": "创建"
+            },
+            "delete": {
+                "open": "删除对象",
+                "title": "删除对象",
+                "message": "要删除“{name}”吗？",
+                "messageGroup": "要删除群组“{name}”吗？它的成员名单会一起删除。",
+                "confirm": "删除",
+                "hasBehaviors": "还有 {count} 个行为属于它，请先移走或删除",
+                "inAllowlists": "有 {count} 个行为的回复可以私信这个群组，请先从那些行为移除"
+            }
+        },
+        "workspace": {
             "loadError": "无法加载行为：{error}",
             "empty": "这里还没有行为。",
             "services": "服务",
@@ -1420,7 +1451,8 @@
             "system_immutable": "系统行为不能这样修改",
             "registration_failed": "Discord 注册失败",
             "not_found": "找不到这个项目",
-            "invalid_tree": "指令结构不正确"
+            "invalid_tree": "指令结构不正确",
+            "target_in_use": "对象还在使用中"
         },
         "add": {
             "open": "新增行为",
@@ -1435,7 +1467,8 @@
             },
             "reason": {
                 "messageInApp": "App 指令区只能创建指令：bot 收不到用户之间的私信，也收不到它没加入的服务器里的消息。",
-                "commandInChannel": "Discord 无法把指令限定在单一频道。请到上层的服务器新增，再到 Discord 的“服务器设置 → 整合”限制频道。"
+                "commandInChannel": "Discord 无法把指令限定在单一频道。请到这个服务器新增，再到 Discord 的“服务器设置 → 整合”限制频道。",
+                "commandNeedsEveryone": "指令不能限定用户或群组：看得到指令的人都能执行。"
             },
             "create": "创建",
             "created": "已创建“{title}”。",

@@ -9,6 +9,7 @@ const KNOWN_CODES = new Set([
     'registration_failed',
     'not_found',
     'invalid_tree',
+    'target_in_use',
 ]);
 
 /** A refusal in words: the code's meaning in the UI language, then the server's detail. */

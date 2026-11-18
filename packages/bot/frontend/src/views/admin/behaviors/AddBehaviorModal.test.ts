@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
-import type { BehaviorSection, MessageTriggerView } from '../../../api/behavior';
+import type { BehaviorTargetKey, MessageTriggerView } from '../../../api/behavior';
 import { ApiError } from '../../../api/client';
 
 const api = vi.hoisted(() => ({
@@ -14,7 +14,15 @@ vi.mock('../../../api/behavior', () => api);
 vi.mock('../../../api/guilds', () => ({ listGuilds: vi.fn(async () => []), listGuildTextChannels: vi.fn(async () => []) }));
 
 import AddBehaviorModal from './AddBehaviorModal.vue';
-import { COMMAND_LEAF_SCHEMA, COMMAND_SCHEMA, keyI18n, savedCommand, stubMatchMedia } from './behavior-test-support';
+import {
+    COMMAND_LEAF_SCHEMA,
+    COMMAND_SCHEMA,
+    builtinTarget,
+    createdTarget,
+    keyI18n,
+    savedCommand,
+    stubMatchMedia,
+} from './behavior-test-support';
 
 const i18n = keyI18n();
 const GUILD = '123456789012345678';
@@ -34,9 +42,15 @@ beforeEach(() => {
         .mockResolvedValue({ messageTrigger: { type: 'object' }, command: COMMAND_SCHEMA, commandLeaf: COMMAND_LEAF_SCHEMA });
 });
 
-function open(section: BehaviorSection) {
+const USER = '323456789012345678';
+
+function targetOf(key: BehaviorTargetKey) {
+    return key === 'app' || key === 'bot_dm' || key === 'guild:all' ? builtinTarget(key) : createdTarget(key);
+}
+
+function open(key: BehaviorTargetKey) {
     const wrapper = mount(AddBehaviorModal, {
-        props: { visible: true, section, guildNames: new Map() },
+        props: { visible: true, target: targetOf(key), targetLabel: key, guildNames: new Map(), groupNames: ['vip'] },
         global: { plugins: [i18n] },
         attachTo: document.body,
     });
@@ -60,7 +74,7 @@ async function type(label: string, value: string) {
     await flushPromises();
 }
 
-describe('AddBehaviorModal — only what the section can hold (board 2)', () => {
+describe('AddBehaviorModal — only what the target can hold (board 2)', () => {
     it('in a channel, commands are disabled with the reason shown', async () => {
         open(`channel:${GUILD}:${CHANNEL}`);
         await flushPromises();
@@ -76,10 +90,48 @@ describe('AddBehaviorModal — only what the section can hold (board 2)', () => 
         expect($$('[data-test="denied"]').map((p) => p.textContent)).toEqual(['behaviors.add.reason.messageInApp']);
         expect(radio('command').getAttribute('aria-checked')).toBe('true');
     });
+
+    it('for a user or a group, commands are disabled: a command has no audience', async () => {
+        open(`user:${USER}`);
+        await flushPromises();
+        expect(radio('command').disabled).toBe(true);
+        expect(radio('message').getAttribute('aria-checked')).toBe('true');
+        expect($$('[data-test="denied"]').map((p) => p.textContent)).toEqual([
+            'behaviors.add.reason.commandNeedsEveryone',
+        ]);
+    });
 });
 
 describe('AddBehaviorModal — creating a message trigger', () => {
-    it('creates it where the section is, then shows the generated secret once', async () => {
+    async function createWith(title: string) {
+        await type('behaviors.add.name', title);
+        await type('behaviors.trigger.patternValue', '!w');
+        await type('behaviors.action.url', 'https://hook.example/w');
+        $('[data-test="create"]')!.click();
+        await flushPromises();
+    }
+
+    it('in a user’s target, creates a bot DM trigger for that user', async () => {
+        api.createMessageTrigger.mockResolvedValue({ behavior: { id: 9, target: `user:${USER}` } });
+        open(`user:${USER}`);
+        await flushPromises();
+        await createWith('just them');
+        expect(api.createMessageTrigger).toHaveBeenCalledWith(
+            expect.objectContaining({ surface: 'bot_dm', audienceKind: 'user', audienceUserId: USER })
+        );
+    });
+
+    it('in a group’s target, creates a bot DM trigger for that group', async () => {
+        api.createMessageTrigger.mockResolvedValue({ behavior: { id: 9, target: 'group:vip' } });
+        open('group:vip');
+        await flushPromises();
+        await createWith('vip only');
+        expect(api.createMessageTrigger).toHaveBeenCalledWith(
+            expect.objectContaining({ surface: 'bot_dm', audienceKind: 'group', audienceGroupName: 'vip' })
+        );
+    });
+
+    it('creates it where the target is, then shows the generated secret once', async () => {
         const created = { id: 9, section: 'bot_dm' } as MessageTriggerView;
         api.createMessageTrigger.mockResolvedValue({ behavior: created, secret: 's3cret' });
         const wrapper = open('bot_dm');
@@ -122,7 +174,7 @@ describe('AddBehaviorModal — creating a message trigger', () => {
         $('[data-test="create"]')!.click();
         await flushPromises();
 
-        await wrapper.setProps({ section: `guild:${GUILD}` });
+        await wrapper.setProps({ target: targetOf(`guild:${GUILD}`) });
         expect($('[data-test="secret-value"]')!.textContent).toBe('s3cret');
     });
 
@@ -154,7 +206,7 @@ describe('AddBehaviorModal — creating a message trigger', () => {
         expect(wrapper.emitted('created')).toBeUndefined();
     });
 
-    it('a refusal on a field the section fixes is shown as a general error', async () => {
+    it('a refusal on a field the target fixes is shown as a general error', async () => {
         api.createMessageTrigger.mockRejectedValue(
             new ApiError(400, 'guildId must be a Discord id', 'validation_failed', 'guildId')
         );
@@ -169,7 +221,7 @@ describe('AddBehaviorModal — creating a message trigger', () => {
         expect(wrapper.emitted('created')).toBeUndefined();
     });
 
-    it('in a channel section the channel is fixed, not an input', async () => {
+    it('in a channel target the channel is fixed, not an input', async () => {
         open(`channel:${GUILD}:${CHANNEL}`);
         await flushPromises();
         const labels = $$('.app-field__label').map((l) => l.textContent);
@@ -191,7 +243,7 @@ describe('AddBehaviorModal — creating a command (board 2)', () => {
         return field.querySelector('.app-field__error')?.textContent;
     }
 
-    it('creates a root command with the visibility of its section, then shows the registration and the secret once', async () => {
+    it('creates a root command with the visibility of its target, then shows the registration and the secret once', async () => {
         const created = savedCommand({ id: 9 });
         api.createBehaviorCommand.mockResolvedValue({
             command: created,

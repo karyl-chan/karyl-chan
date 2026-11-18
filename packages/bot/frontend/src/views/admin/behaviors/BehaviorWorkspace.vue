@@ -3,32 +3,35 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@iconify/vue';
 import Sortable from 'sortablejs';
-import { AppButton, Spacer } from '@karyl-chan/ui';
+import { AppButton } from '@karyl-chan/ui';
 import MessageTriggerCard from './MessageTriggerCard.vue';
 import CommandCard from './CommandCard.vue';
 import SystemLoginCard from './SystemLoginCard.vue';
 import ServiceBehaviorCard from './ServiceBehaviorCard.vue';
+import TargetHeader from './TargetHeader.vue';
 import type {
     BehaviorItemView,
-    BehaviorSection,
+    BehaviorTargetView,
     CommandView,
     MessageTriggerView,
     ServiceBehaviorView,
 } from '../../../api/behavior';
-import { itemKey, type SectionItems } from './behavior-sections';
-import { locationOfSection } from './message-trigger-location';
-import { sectionKind, sectionLabel } from './section-labels';
+import { itemKey } from './behavior-sections';
+import { countInTargetItems, type TargetItems } from './behavior-targets';
 
 const { t } = useI18n();
 
 const props = defineProps<{
-    section: BehaviorSection;
-    items: SectionItems | null;
+    /** The Behavior Target on show (ADR 0004). */
+    target: BehaviorTargetView;
+    /** Its name, as the sidebar shows it. */
+    label: string;
+    items: TargetItems | null;
     guildNames: ReadonlyMap<string, string>;
     /** Audience Groups in use, sorted, and how many triggers use each. */
     groupNames: readonly string[];
     groupUse: ReadonlyMap<string, number>;
-    /** Every command on the page, whatever its section: a trigger conversion may join one. */
+    /** Every command on the page, whatever its target: a trigger conversion may join one. */
     commands: readonly CommandView[];
     /** The card to open (an item that just moved here or was created), by itemKey. */
     expandKey: string | null;
@@ -49,8 +52,12 @@ const emit = defineEmits<{
     /** A behavior changed its kind of trigger (#172): it is listed elsewhere now. */
     (e: 'converted', item: BehaviorItemView): void;
     (e: 'add'): void;
-    /** A new order for this section's message triggers (its Message Trigger Location). */
+    /** A new order for this target's message triggers. */
     (e: 'reorder', ids: number[]): void;
+    /** The target was deleted. */
+    (e: 'targetDeleted', target: BehaviorTargetView): void;
+    /** The target is a group and its member count changed. */
+    (e: 'members', count: number): void;
 }>();
 
 const isEmpty = computed(
@@ -63,7 +70,7 @@ const isEmpty = computed(
 );
 
 // ── reorder (#121): drag the handle, or Alt+↑/↓ on it ──────────────────────
-// Only this location's custom triggers move; the system row is pinned
+// Only this target's custom triggers move; the system row is pinned
 // above them, outside the sortable list.
 
 function move(from: number, to: number) {
@@ -99,25 +106,26 @@ watch(
 );
 onBeforeUnmount(() => sortable?.destroy());
 
-/** What this section can and cannot hold, in Discord's terms (board 1). */
+/** What this target can and cannot hold, in Discord's terms (board 1). */
 const note = computed(() => {
-    const kind = locationOfSection(props.section)?.kind;
-    if (kind === 'guild') return t('behaviors.workspace.note.guild');
-    if (kind === 'channel') return t('behaviors.workspace.note.channel');
+    if (props.target.kind === 'guild') return t('behaviors.workspace.note.guild');
+    if (props.target.kind === 'channel') return t('behaviors.workspace.note.channel');
     return '';
 });
+
+const count = computed(() => (props.items ? countInTargetItems(props.items) : 0));
 </script>
 
 <template>
     <section class="workspace">
-        <header class="ws-head">
-            <h2 class="title">{{ sectionLabel(t, section, guildNames) }}</h2>
-            <span class="kind-badge">{{ sectionKind(t, section) }}</span>
-            <Spacer />
-            <AppButton size="sm" icon="material-symbols:add-rounded" data-test="add-behavior" @click="emit('add')">
-                {{ t('behaviors.add.open') }}
-            </AppButton>
-        </header>
+        <TargetHeader
+            :target="target"
+            :label="label"
+            :count="count"
+            @add="emit('add')"
+            @deleted="emit('targetDeleted', $event)"
+            @members="emit('members', $event)"
+        />
 
         <div v-if="error" class="error" role="alert">
             <span>{{ t('behaviors.workspace.loadError', { error }) }}</span>
@@ -128,7 +136,7 @@ const note = computed(() => {
         <p v-else-if="isEmpty && !error" class="muted center">{{ t('behaviors.workspace.empty') }}</p>
 
         <template v-if="items">
-            <!-- 系統列釘在所屬分區最上方（ADR 0003） -->
+            <!-- 系統列釘在所屬對象最上方（ADR 0003） -->
             <div v-if="items.system" class="card-list">
                 <SystemLoginCard
                     :system="items.system"
@@ -222,22 +230,6 @@ const note = computed(() => {
     gap: 0.75rem;
     padding: 0.75rem;
     overflow-y: auto;
-}
-.ws-head {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-shrink: 0;
-    flex-wrap: wrap;
-}
-.title { margin: 0; font-size: 1.05rem; color: var(--text-strong); }
-.kind-badge {
-    font-size: 0.72rem;
-    padding: 0.12rem 0.45rem;
-    border-radius: 999px;
-    background: var(--bg-page);
-    border: 1px solid var(--border);
-    color: var(--text-muted);
 }
 .group-title {
     margin: 0.25rem 0 0;

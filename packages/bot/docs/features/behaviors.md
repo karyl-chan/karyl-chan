@@ -209,8 +209,8 @@ Every message is checked against the message triggers in one order:
 the trigger's position (`sortOrder`), then its id. The order spans every
 location, because a server message is checked against "all servers", its
 server and its channel together. The admin orders the triggers of one
-location at a time; this keeps the slots that location's triggers hold in
-the overall order.
+[target](#behavior-targets) at a time; this keeps the slots that target's
+triggers hold in the overall order.
 
 For one message, several triggers can fire, one after another:
 
@@ -246,24 +246,22 @@ Other limits:
 
 ## Behavior Sections
 
-The admin UI groups behaviors into three **sections**, derived from each
-trigger's settings. A section is not stored and changes nothing about how
-a behavior runs.
+A **section** is where a trigger can be used, derived from its settings.
+It is not stored and changes nothing about how a behavior runs. For a
+command it is its [target](#behavior-targets); for a message trigger it is
+its location (a trigger for one user or one group belongs to that user's
+or group's target, in the DMs-with-the-bot section).
 
 | Section | Holds |
 |---------|-------|
 | **App commands** | Global commands usable in more than one context, or installable by users. |
 | **DMs with the bot** | Message triggers in DMs with the bot, and global commands usable only there (`BotDM`, `guild_install` only). |
-| **Servers** → All servers | Message triggers in all servers, and global commands usable only in servers (`Guild`, `guild_install` only). |
-| **Servers** → one server | That server's message triggers and one-server commands. |
-| **Servers** → one channel | That channel's message triggers. Discord cannot limit a command to one channel. |
+| **All servers** | Message triggers in all servers, and global commands usable only in servers (`Guild`, `guild_install` only). |
+| **One server** | That server's message triggers and one-server commands. |
+| **One channel** | That channel's message triggers. Discord cannot limit a command to one channel. |
 
-Adding a behavior in a section offers only what the section can hold, and
-explains why the rest is not offered. A new command starts with the
-visibility of its section (App commands: both install types and every
-context; DMs with the bot: `BotDM`; All servers: `Guild`; one server: a
-command registered to that server). Changing a command's settings can
-move it to another section.
+Changing a command's settings can move it to another section, and so to
+another target.
 
 ## Behavior Targets
 
@@ -300,6 +298,18 @@ The created targets are kept in a directory (`behavior_targets`):
   while a behavior belongs to the target or, for a group, a DM allowlist
   names it. Deleting a group deletes its member list.
 - A target cannot be renamed or moved: delete it and create another.
+
+Adding a behavior in a target offers only what the target can hold, and
+explains why the rest is not offered:
+
+| Target | New behavior |
+|--------|--------------|
+| App commands | A command (both install types, every context). |
+| Everyone's DMs with the bot | A command (`BotDM`), or a message trigger for everyone. |
+| All servers | A command (`Guild`), or a message trigger. |
+| One server | A command registered to that server, or a message trigger. |
+| One channel | A message trigger only. |
+| A group, a user | A message trigger for that group or user only — a command has no audience. |
 
 ## Converting a trigger
 
@@ -669,17 +679,26 @@ Path: `/admin/behaviors`. Requires the `behavior.manage` capability (or
 `admin`); see [`../permissions.md`](../permissions.md). There is no finer
 grant: per-section or per-behavior capabilities do not exist.
 
-- The sidebar lists the [sections](#behavior-sections) with their behavior
-  counts. **New behavior** adds a command or a message trigger to the
-  selected section.
-- The system login is pinned to the top of its section. Commands and
+- The sidebar is one flat list of [targets](#behavior-targets) with their
+  behavior counts: the built-in ones, then each server followed by its
+  channels, the groups, the users. Its **＋** creates a server, a channel,
+  a user or a group; a created target is listed with no behavior yet.
+- Selecting a target shows the behaviors that belong to it, and nothing
+  else: everyone's DMs do not list the triggers for one user or one
+  group. **New behavior** adds a command or a message trigger to the
+  selected target.
+- A created target's header deletes it — only when nothing uses it; the
+  button says why otherwise. A group's members are edited in its header,
+  from the moment it exists; a group named in DM allowlists says how many.
+- The system login is pinned to the top of its target. Commands and
   message triggers are listed separately.
 - Each card edits a draft. Saving sends only what changed, and refuses
   when the behavior changed on the server since the page loaded; the card
   then shows the conflict. The page warns before leaving with unsaved
   edits.
 - Message triggers are reordered by dragging, or with Alt+↑ / Alt+↓, one
-  location at a time.
+  target at a time. The order across targets only decides which reply
+  comes first ([matching order](#matching-order)).
 - The kind tag in a card's title row (「訊息」 / 「指令」) is a menu with
   both kinds, the current one disabled. Choosing the other kind opens a
   dialog for the [conversion](#converting-a-trigger): a message trigger

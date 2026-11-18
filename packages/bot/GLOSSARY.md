@@ -104,8 +104,8 @@ _Avoid_: scope、範圍；用「對象」單指「誰」（那是 Message Trigge
 _Avoid_: 用群組指稱 Discord 身分組或群組私訊
 
 **Behavior Section（分區）**:
-Admin UI 依觸發的可用情境推導出的分組：App 指令、與 bot 的私訊、伺服器。只是呈現，不儲存、不影響行為。
-_Avoid_: scope tab、範圍分頁（已移除）
+由觸發的可用情境推導出的位置：App 指令、與 bot 的私訊、全部伺服器、指定伺服器、指定頻道。不儲存、不影響行為。指令的 Behavior Target 就是它的分區；admin UI 以 Behavior Target 分組，不再以分區分組（ADR 0004）。
+_Avoid_: scope tab、範圍分頁（已移除）；用分區指稱 admin UI 側邊欄的項目（那是 Behavior Target）
 
 **App 指令**:
 可用情境跨越多處，或開放使用者安裝的指令觸發所屬的分區。
