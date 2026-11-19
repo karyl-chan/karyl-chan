@@ -1,5 +1,36 @@
 # Changelog
 
+## [2.2.0](https://github.com/karyl-chan/karyl-chan/compare/bot-v2.1.0...bot-v2.2.0) (2026-11-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* **bot:** a trigger with "stop after a match" no longer keeps the triggers of other targets from firing. A trigger for one user or one group cannot override the trigger for everyone any more: both answer. Migration 017 logs how many message triggers have the setting.
+
+### Features
+
+* **bot:** behavior target directory ([2ba96f8](https://github.com/karyl-chan/karyl-chan/commit/2ba96f8b3e59a219f978cd7205ebebe38c7fc6c4))
+* **bot:** behavior target directory ([8b6c832](https://github.com/karyl-chan/karyl-chan/commit/8b6c8323ff921f189d3ac35d10e4047165c52147))
+* **bot:** single target field ([f90899b](https://github.com/karyl-chan/karyl-chan/commit/f90899b412d5033fefc47ec1090f63ff93d288bc))
+* **bot:** single target field ([07cb5f5](https://github.com/karyl-chan/karyl-chan/commit/07cb5f524ea74e070e7d9ba74506160e57323fac))
+* **bot:** stop-on-match is scoped to the behavior target ([0b4bd4d](https://github.com/karyl-chan/karyl-chan/commit/0b4bd4dd6505aa719502f8345461c9d551a9e620))
+* **bot:** target sidebar ([bd6150d](https://github.com/karyl-chan/karyl-chan/commit/bd6150d075080227128b4da31ccbb59f2c5e70fa))
+* **bot:** target sidebar ([f128bed](https://github.com/karyl-chan/karyl-chan/commit/f128bed4899616e6a0c53fa506382449b5d0b50b))
+* **bot:** user picker ([40bc32f](https://github.com/karyl-chan/karyl-chan/commit/40bc32f779927aa892fd4ceede11c20cd4af4edf))
+* **bot:** user picker ([7e759ba](https://github.com/karyl-chan/karyl-chan/commit/7e759ba7bd73c8657d73833d90c2557e3493af5b)), closes [#276](https://github.com/karyl-chan/karyl-chan/issues/276)
+
+
+### Bug Fixes
+
+* **bot:** a failed name lookup in the user picker is not an error ([13a340b](https://github.com/karyl-chan/karyl-chan/commit/13a340b573ef27c7f852362c98e2406c9c673a1c))
+* **bot:** a refused command write leaves no behavior target behind ([b1036ab](https://github.com/karyl-chan/karyl-chan/commit/b1036abfb6f8a8798fbf65f17090f4dbe40ecfa4))
+* **bot:** a refused command write leaves no behavior target behind ([a04e485](https://github.com/karyl-chan/karyl-chan/commit/a04e485e2f0f5d9b6941af582bf294041ebdf8ba))
+
+
+### Miscellaneous Chores
+
+* **bot:** release the behavior targets work as 2.2.0 ([3bb49c0](https://github.com/karyl-chan/karyl-chan/commit/3bb49c0e1537e763988b4e76f6324f7c0197eee8))
+
 ## [2.1.0](https://github.com/karyl-chan/karyl-chan/compare/bot-v2.0.2...bot-v2.1.0) (2026-11-18)
 
 
