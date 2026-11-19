@@ -1,11 +1,12 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { computed } from 'vue';
+import { computed, defineComponent, h } from 'vue';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import type { BehaviorDmLogEntry } from '../../../api/behavior';
 import { BUILTIN_TARGETS, createdTarget, keyI18n, stubMatchMedia } from './behavior-test-support';
 import { TARGET_DIRECTORY, type TargetDirectory } from './target-directory';
 import { NO_NAMES } from './target-labels';
+import { useDmAllowlistDraft, type DmAllowlistDraft } from './use-dm-allowlist-draft';
 
 const api = vi.hoisted(() => ({
     getBehaviorDmAllowlist: vi.fn(),
@@ -41,9 +42,19 @@ const directory: TargetDirectory = {
     open: openTarget,
 };
 
+/** The draft the surrounding form owns: what its save and cancel act on. */
+let allowlist: DmAllowlistDraft;
+
+/** The section inside a form that owns its allowlist draft, as a card does. */
+const Host = defineComponent({
+    setup() {
+        allowlist = useDmAllowlistDraft(7);
+        return () => h(BehaviorDirectMessages, { allowlist });
+    },
+});
+
 function mountSection() {
-    const wrapper = mount(BehaviorDirectMessages, {
-        props: { behaviorId: 7 },
+    const wrapper = mount(Host, {
         global: { plugins: [keyI18n()], provide: { [TARGET_DIRECTORY as symbol]: directory } },
         attachTo: document.body,
     });
@@ -97,18 +108,88 @@ describe('BehaviorDirectMessages', () => {
         expect(api.getGroupMembers).toHaveBeenCalledWith('ops');
     });
 
-    it('adding a user saves the whole list', async () => {
+    it('adding a user only edits the draft: the form’s save writes the whole list', async () => {
         api.replaceBehaviorDmAllowlist.mockResolvedValue({ userIds: [B], groupNames: [] });
         const wrapper = mountSection();
         await expand(wrapper);
+        expect(wrapper.find('[data-test="dm-unsaved"]').exists()).toBe(false);
 
         await wrapper.get('[data-test="dm-user-input"] input').setValue(B);
         await wrapper.get('[data-test="dm-add-user"]').trigger('click');
         await flushPromises();
 
-        expect(api.replaceBehaviorDmAllowlist).toHaveBeenCalledWith(7, { userIds: [B], groupNames: [] });
+        expect(api.replaceBehaviorDmAllowlist).not.toHaveBeenCalled();
         expect(wrapper.findAll('[data-test="dm-user"]')).toHaveLength(1);
         expect((wrapper.get('[data-test="dm-user-input"] input').element as HTMLInputElement).value).toBe('');
+        expect(allowlist.dirty).toBe(true);
+        expect(wrapper.find('[data-test="dm-unsaved"]').exists()).toBe(true);
+
+        expect(await allowlist.save()).toBe(true);
+        await flushPromises();
+
+        expect(api.replaceBehaviorDmAllowlist).toHaveBeenCalledWith(7, { userIds: [B], groupNames: [] });
+        expect(allowlist.dirty).toBe(false);
+        expect(wrapper.findAll('[data-test="dm-user"]')).toHaveLength(1);
+        expect(wrapper.find('[data-test="dm-unsaved"]').exists()).toBe(false);
+    });
+
+    it('the form’s cancel puts the saved list back, without writing', async () => {
+        api.getBehaviorDmAllowlist.mockResolvedValue({ userIds: [A], groupNames: [] });
+        const wrapper = mountSection();
+        await expand(wrapper);
+
+        await wrapper.get('[data-test="dm-user"] button').trigger('click');
+        expect(wrapper.find('[data-test="dm-user"]').exists()).toBe(false);
+        expect(allowlist.dirty).toBe(true);
+
+        allowlist.discard();
+        await flushPromises();
+
+        expect(wrapper.findAll('[data-test="dm-user"]')).toHaveLength(1);
+        expect(allowlist.dirty).toBe(false);
+        expect(api.replaceBehaviorDmAllowlist).not.toHaveBeenCalled();
+    });
+
+    it('removing and adding the same entry back is not a change', async () => {
+        api.getBehaviorDmAllowlist.mockResolvedValue({ userIds: [A, B], groupNames: [] });
+        const wrapper = mountSection();
+        await expand(wrapper);
+
+        await wrapper.get('[data-test="dm-user"] button').trigger('click');
+        await wrapper.get('[data-test="dm-user-input"] input').setValue(A);
+        await wrapper.get('[data-test="dm-add-user"]').trigger('click');
+
+        expect(allowlist.dirty).toBe(false);
+        expect(await allowlist.save()).toBe(true);
+        expect(api.replaceBehaviorDmAllowlist).not.toHaveBeenCalled();
+    });
+
+    it('a refused save says why and keeps the edits', async () => {
+        api.replaceBehaviorDmAllowlist.mockRejectedValue(new Error('nope'));
+        const wrapper = mountSection();
+        await expand(wrapper);
+
+        await wrapper.get('[data-test="dm-user-input"] input').setValue(B);
+        await wrapper.get('[data-test="dm-add-user"]').trigger('click');
+        expect(await allowlist.save()).toBe(false);
+        await flushPromises();
+
+        expect(wrapper.find('[role="alert"]').exists()).toBe(true);
+        expect(wrapper.findAll('[data-test="dm-user"]')).toHaveLength(1);
+        expect(allowlist.dirty).toBe(true);
+    });
+
+    it('a refresh keeps edits in progress', async () => {
+        const wrapper = mountSection();
+        await expand(wrapper);
+
+        await wrapper.get('[data-test="dm-user-input"] input').setValue(B);
+        await wrapper.get('[data-test="dm-add-user"]').trigger('click');
+        await wrapper.get('[data-test="dm-refresh"]').trigger('click');
+        await flushPromises();
+
+        expect(wrapper.findAll('[data-test="dm-user"]')).toHaveLength(1);
+        expect(allowlist.dirty).toBe(true);
     });
 
     it('refuses a user id that is not a snowflake, without saving', async () => {
@@ -123,7 +204,7 @@ describe('BehaviorDirectMessages', () => {
         expect(wrapper.get('[role="alert"]').text()).toBe('behaviors.directMessages.badUserId');
     });
 
-    it('adding and removing a group saves the list', async () => {
+    it('adding and removing a group edits the draft', async () => {
         api.getBehaviorDmAllowlist.mockResolvedValue({ userIds: [A], groupNames: [] });
         api.replaceBehaviorDmAllowlist.mockResolvedValueOnce({ userIds: [A], groupNames: ['ops'] });
         const wrapper = mountSection();
@@ -132,13 +213,17 @@ describe('BehaviorDirectMessages', () => {
         await chooseGroup(wrapper, 'ops');
         await wrapper.get('[data-test="dm-add-group"]').trigger('click');
         await flushPromises();
+        expect(wrapper.findAll('[data-test="dm-group"]').map((c) => c.text())).toEqual(['ops']);
+        expect(api.replaceBehaviorDmAllowlist).not.toHaveBeenCalled();
+
+        await allowlist.save();
         expect(api.replaceBehaviorDmAllowlist).toHaveBeenLastCalledWith(7, { userIds: [A], groupNames: ['ops'] });
 
-        api.replaceBehaviorDmAllowlist.mockResolvedValueOnce({ userIds: [A], groupNames: [] });
         await wrapper.get('[data-test="dm-group"] button').trigger('click');
         await flushPromises();
-        expect(api.replaceBehaviorDmAllowlist).toHaveBeenLastCalledWith(7, { userIds: [A], groupNames: [] });
         expect(wrapper.find('[data-test="dm-group"]').exists()).toBe(false);
+        expect(api.replaceBehaviorDmAllowlist).toHaveBeenCalledTimes(1);
+        expect(allowlist.dirty).toBe(true);
     });
 
     it('offers the group targets not on the list yet', async () => {

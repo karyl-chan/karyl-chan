@@ -6,7 +6,6 @@ import { AppBadge, AppButton, AppSelectField, Cluster, Spacer, Stack, type Selec
 import {
     getBehaviorDmAllowlist,
     getBehaviorDmLog,
-    replaceBehaviorDmAllowlist,
     type BehaviorDmAllowlist,
     type BehaviorDmLogEntry,
     type BehaviorDmOutcome,
@@ -17,16 +16,20 @@ import { useUserSummaries } from '../../../composables/use-user-summaries';
 import { describeBehaviorError } from './behavior-errors';
 import GroupMembersPanel from './GroupMembersPanel.vue';
 import { useTargetDirectory } from './target-directory';
+import type { DmAllowlistDraft } from './use-dm-allowlist-draft';
 
 /**
  * A behavior's direct messages to other users (#157): its DM allowlist —
- * users and Audience Groups, saved on every add or remove — and its DM
- * log (the last 50, 30 days). Loaded when the section is opened, not
- * before. A user is found with UserPicker; a group is picked from the
- * group targets (ADR 0004). A group on the list shows its members here,
- * read-only: they are edited on the group's own page.
+ * users and Audience Groups — and its DM log (the last 50, 30 days).
+ * Loaded when the section is opened, not before. A user is found with
+ * UserPicker; a group is picked from the group targets (ADR 0004). A group
+ * on the list shows its members here, read-only: they are edited on the
+ * group's own page.
+ *
+ * Adding or removing only edits `allowlist`, the draft the surrounding
+ * form owns: the form's save writes it, its cancel drops it.
  */
-const props = defineProps<{ behaviorId: number }>();
+const props = defineProps<{ allowlist: DmAllowlistDraft }>();
 
 const { t } = useI18n();
 const { relativeTime } = useRelativeTime();
@@ -34,11 +37,14 @@ const directory = useTargetDirectory();
 
 const SNOWFLAKE = /^[0-9]{17,20}$/;
 
-const open = ref(false);
+// unsaved edits are shown again when the form is reopened
+const open = ref(props.allowlist.dirty);
 const loading = ref(false);
-const saving = ref(false);
-const error = ref<string | null>(null);
-const list = ref<BehaviorDmAllowlist | null>(null);
+const loadError = ref<string | null>(null);
+const inputError = ref<string | null>(null);
+const list = computed(() => props.allowlist.list);
+const saving = computed(() => props.allowlist.saving);
+const error = computed(() => inputError.value ?? props.allowlist.error ?? loadError.value);
 const entries = ref<BehaviorDmLogEntry[] | null>(null);
 const newUserId = ref('');
 const newGroup = ref('');
@@ -75,16 +81,14 @@ const OUTCOME_TONE: Record<BehaviorDmOutcome, 'success' | 'danger' | 'warn'> = {
 
 async function load(): Promise<void> {
     loading.value = true;
-    error.value = null;
+    loadError.value = null;
     try {
-        const [allowlist, log] = await Promise.all([
-            getBehaviorDmAllowlist(props.behaviorId),
-            getBehaviorDmLog(props.behaviorId),
-        ]);
-        list.value = allowlist;
+        const id = props.allowlist.behaviorId;
+        const [allowlist, log] = await Promise.all([getBehaviorDmAllowlist(id), getBehaviorDmLog(id)]);
+        props.allowlist.loaded(allowlist);
         entries.value = log.entries;
     } catch (err) {
-        error.value = describeBehaviorError(t, err);
+        loadError.value = describeBehaviorError(t, err);
     } finally {
         loading.value = false;
     }
@@ -95,47 +99,40 @@ async function toggle(): Promise<void> {
     if (open.value) await load();
 }
 
-async function save(next: BehaviorDmAllowlist): Promise<boolean> {
-    saving.value = true;
-    error.value = null;
-    try {
-        list.value = await replaceBehaviorDmAllowlist(props.behaviorId, next);
-        return true;
-    } catch (err) {
-        error.value = describeBehaviorError(t, err);
-        return false;
-    } finally {
-        saving.value = false;
-    }
-}
-
 const current = (): BehaviorDmAllowlist => list.value ?? { userIds: [], groupNames: [] };
 
-async function addUser(): Promise<void> {
+function edit(next: BehaviorDmAllowlist): void {
+    inputError.value = null;
+    props.allowlist.edit(next);
+}
+
+function addUser(): void {
     const id = newUserId.value.trim();
     if (!SNOWFLAKE.test(id)) {
-        error.value = t('behaviors.directMessages.badUserId');
+        inputError.value = t('behaviors.directMessages.badUserId');
         return;
     }
     const now = current();
-    if (now.userIds.includes(id) || (await save({ ...now, userIds: [...now.userIds, id] }))) newUserId.value = '';
+    if (!now.userIds.includes(id)) edit({ ...now, userIds: [...now.userIds, id] });
+    newUserId.value = '';
 }
 
-async function addGroup(): Promise<void> {
+function addGroup(): void {
     const name = newGroup.value.trim();
     if (!name) return;
     const now = current();
-    if (now.groupNames.includes(name) || (await save({ ...now, groupNames: [...now.groupNames, name] }))) newGroup.value = '';
+    if (!now.groupNames.includes(name)) edit({ ...now, groupNames: [...now.groupNames, name] });
+    newGroup.value = '';
 }
 
 function removeUser(id: string): void {
     const now = current();
-    void save({ ...now, userIds: now.userIds.filter((u) => u !== id) });
+    edit({ ...now, userIds: now.userIds.filter((u) => u !== id) });
 }
 
 function removeGroup(name: string): void {
     const now = current();
-    void save({ ...now, groupNames: now.groupNames.filter((g) => g !== name) });
+    edit({ ...now, groupNames: now.groupNames.filter((g) => g !== name) });
 }
 
 function absolute(iso: string): string {
@@ -229,6 +226,9 @@ function absolute(iso: string): string {
                             {{ t('behaviors.directMessages.addGroup') }}
                         </AppButton>
                     </div>
+                    <p v-if="allowlist.dirty" class="muted note" role="status" data-test="dm-unsaved">
+                        {{ t('behaviors.directMessages.unsaved') }}
+                    </p>
 
                     <div v-for="g in list.groupNames" :key="`m${g}`" class="listed-group">
                         <GroupMembersPanel :group-name="g" readonly />
@@ -243,8 +243,6 @@ function absolute(iso: string): string {
                         </button>
                     </div>
                 </template>
-                <p v-if="error" class="error" role="alert">{{ error }}</p>
-
                 <template v-if="entries">
                     <h4 class="sub">{{ t('behaviors.directMessages.logTitle') }}</h4>
                     <p v-if="entries.length === 0" class="muted" data-test="dm-log-empty">{{ t('behaviors.directMessages.logEmpty') }}</p>
@@ -262,6 +260,7 @@ function absolute(iso: string): string {
                     <p class="muted note">{{ t('behaviors.directMessages.retention') }}</p>
                 </template>
             </template>
+            <p v-if="error" class="error" role="alert">{{ error }}</p>
         </Stack>
     </section>
 </template>

@@ -13,6 +13,9 @@ const api = vi.hoisted(() => ({
     rotateWebhookSecret: vi.fn(),
     getGroupMembers: vi.fn(),
     replaceGroupMembers: vi.fn(),
+    getBehaviorDmAllowlist: vi.fn(),
+    replaceBehaviorDmAllowlist: vi.fn(),
+    getBehaviorDmLog: vi.fn(),
 }));
 const confirmMock = vi.hoisted(() => vi.fn());
 vi.mock('../../../api/behavior', () => api);
@@ -324,5 +327,49 @@ describe('MessageTriggerCard — header actions', () => {
         const wrapper = await mountOpen();
         await testFire(wrapper);
         expect(wrapper.find('[data-test="test-hint"]').text()).toBe('behaviors.testReply.refusedHint');
+    });
+});
+
+describe('MessageTriggerCard — who replies may DM (#157)', () => {
+    const USER = '222222222222222222';
+
+    async function addDmUser(wrapper: VueWrapper) {
+        api.getBehaviorDmAllowlist.mockResolvedValue({ userIds: [], groupNames: [] });
+        api.getBehaviorDmLog.mockResolvedValue({ entries: [] });
+        await wrapper.get('[data-test="dm-toggle"]').trigger('click');
+        await flushPromises();
+        await wrapper.get('[data-test="dm-user-input"] input').setValue(USER);
+        await wrapper.get('[data-test="dm-add-user"]').trigger('click');
+        await flushPromises();
+    }
+
+    it('a change to the list waits for the card’s save, and is all it sends', async () => {
+        api.replaceBehaviorDmAllowlist.mockResolvedValue({ userIds: [USER], groupNames: [] });
+        const wrapper = await mountOpen();
+        expect(wrapper.get('[data-test="save"]').attributes('disabled')).toBeDefined();
+
+        await addDmUser(wrapper);
+        expect(api.replaceBehaviorDmAllowlist).not.toHaveBeenCalled();
+        expect(wrapper.get('[data-test="save"]').attributes('disabled')).toBeUndefined();
+
+        await wrapper.get('form.editor').trigger('submit');
+        await flushPromises();
+
+        expect(api.replaceBehaviorDmAllowlist).toHaveBeenCalledWith(savedTrigger().id, { userIds: [USER], groupNames: [] });
+        expect(api.updateBehavior).not.toHaveBeenCalled();
+        expect(wrapper.get('[data-test="save"]').attributes('disabled')).toBeDefined();
+        expect(wrapper.findAll('[data-test="dm-user"]')).toHaveLength(1);
+    });
+
+    it('the card’s cancel drops the change', async () => {
+        const wrapper = await mountOpen();
+        await addDmUser(wrapper);
+
+        await wrapper.findAll('.footer button')[0].trigger('click');
+        await flushPromises();
+
+        expect(wrapper.find('[data-test="dm-user"]').exists()).toBe(false);
+        expect(api.replaceBehaviorDmAllowlist).not.toHaveBeenCalled();
+        expect(wrapper.get('[data-test="save"]').attributes('disabled')).toBeDefined();
     });
 });

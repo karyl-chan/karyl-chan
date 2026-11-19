@@ -1690,6 +1690,7 @@
             "editGroup": "編輯成員",
             "remove": "移除 {name}",
             "badUserId": "使用者 ID 是 17–20 位數字。",
+            "unsaved": "名單的變更尚未儲存，按下方的「儲存」才會生效。",
             "logTitle": "最近的私訊",
             "logEmpty": "還沒有私訊。",
             "logLine": "給 {to}，由 {by} 觸發",

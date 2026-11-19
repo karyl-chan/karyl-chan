@@ -18,6 +18,7 @@ import { checkLeafDraft, leafFieldsWithErrorLine, type LeafFormKind } from './le
 import { commandPath } from './command-draft';
 import { leafDraftModel } from './leaf-draft';
 import { isRegistrationRefusal } from './registration-result';
+import { useDmAllowlistDraft } from './use-dm-allowlist-draft';
 import { useDraftForm } from './use-draft-form';
 
 /**
@@ -54,10 +55,14 @@ const path = computed(() => commandPath(props.command.name, props.leaf.subcomman
 // ── saved leaf vs. edit draft ───────────────────────────────────────────────
 
 const form = useDraftForm(leafDraftModel, () => props.leaf, `behavior:${props.leaf.id}`);
-const { base, draft, conflict, stale, dirty, applyPatch, keepMine } = form;
+const { base, draft, conflict, stale, applyPatch, keepMine } = form;
+/** Who replies may DM (#157): edited in the form, written by its save. */
+const dmAllowlist = useDmAllowlistDraft(props.leaf.id);
+const dirty = computed(() => form.dirty.value || dmAllowlist.dirty);
 
 function discard() {
     form.discard();
+    dmAllowlist.discard();
     errors.value = NO_ERRORS;
 }
 
@@ -70,18 +75,23 @@ const canSave = computed(() => dirty.value && !saving.value && !conflict.value);
 
 async function save() {
     const patch = form.pendingPatch();
-    if (!patch || !canSave.value) return;
+    if (!canSave.value) return;
     saving.value = true;
     stale.value = false;
     try {
-        const found = await checkLeafDraft(t, draft.value, kind.value);
-        errors.value = found;
-        if (hasErrors(found)) return;
-        const result = await updateBehavior(props.leaf.id, patch);
-        const saved = result.behavior as CommandLeafView;
-        issuedSecret.value = result.secret ?? null;
-        form.adopt(saved);
-        if (result.command) emit('wrote', { command: result.command, registration: result.registration });
+        let wrote: { command: CommandView; registration?: RegistrationReport } | null = null;
+        if (patch) {
+            const found = await checkLeafDraft(t, draft.value, kind.value);
+            errors.value = found;
+            if (hasErrors(found)) return;
+            const result = await updateBehavior(props.leaf.id, patch);
+            issuedSecret.value = result.secret ?? null;
+            form.adopt(result.behavior as CommandLeafView);
+            if (result.command) wrote = { command: result.command, registration: result.registration };
+        }
+        // its own request; a refusal shows in the section and keeps the list's edits
+        await dmAllowlist.save();
+        if (wrote) emit('wrote', wrote);
     } catch (err) {
         if (isStale(err)) {
             form.refusedAsStale();
@@ -173,7 +183,7 @@ async function testFire() {
                 />
 
                 <BehaviorDeliveries :behavior-id="leaf.id" />
-                <BehaviorDirectMessages :behavior-id="leaf.id" />
+                <BehaviorDirectMessages :allowlist="dmAllowlist" />
 
                 <div v-if="conflict" class="conflict" role="alert" data-test="leaf-conflict">
                     <span>{{ t('behaviors.card.conflict') }}</span>
