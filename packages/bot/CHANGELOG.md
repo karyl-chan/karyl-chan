@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.3.0](https://github.com/karyl-chan/karyl-chan/compare/bot-v2.2.0...bot-v2.3.0) (2026-11-19)
+
+
+### Features
+
+* **bot:** the DM allowlist is saved with its behavior form ([8f07ca6](https://github.com/karyl-chan/karyl-chan/commit/8f07ca69d653de31a383d5ea11c4d6ae0a512041))
+* **bot:** the DM allowlist is saved with its behavior form ([ea4f6a0](https://github.com/karyl-chan/karyl-chan/commit/ea4f6a0221e29d3b46d1f89ed9f488c4e78b0153))
+
 ## [2.2.0](https://github.com/karyl-chan/karyl-chan/compare/bot-v2.1.0...bot-v2.2.0) (2026-11-19)
 
 
