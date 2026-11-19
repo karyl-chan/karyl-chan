@@ -125,8 +125,8 @@ migrations are tracked in the `SequelizeMeta` table:
   boot in filename-lexical order. See `src/migrations/README.md`.
 - **Upgrading to 2.0.0** runs behavior migrations that cannot be
   undone: see [Upgrading to 2.0.0](#upgrading-to-200-behaviors-phase-1).
-- **Upgrading to 3.0.0** changes what "stop after a match" stops: see
-  [Upgrading to 3.0.0](#upgrading-to-300-behavior-targets).
+- **Upgrading to 2.2.0** changes what "stop after a match" stops: see
+  [Upgrading to 2.2.0](#upgrading-to-220-behavior-targets).
 - **Pre-v2 DB compatibility.** The one-time encryption-v2 uplift
   migration is gone; this build can only decrypt v2 ciphertexts.
   Restoring a pre-v2 backup will throw when reading an encrypted
@@ -210,9 +210,9 @@ Migration 011 in detail:
   behavior commands appear where expected, and that no `/manual` or
   `/break` command is left.
 
-### Upgrading to 3.0.0 (behavior targets)
+### Upgrading to 2.2.0 (behavior targets)
 
-Bot 3.0.0 groups behaviors by what they apply to
+Bot 2.2.0 groups behaviors by what they apply to
 ([ADR 0004](adr/0004-behavior-targets.md),
 [behavior targets](features/behaviors.md#behavior-targets)). The
 database change is additive; one behavior of the matcher changes.
@@ -246,10 +246,10 @@ triggers. It deletes nothing. Its `down` drops the table.
   another target.
 - Check that the login still works (by default, DM the bot `!login`).
 
-**Going back to 2.x:** restore the database backup taken before the
+**Going back to 2.1:** restore the database backup taken before the
 upgrade. Without it the older build still starts, but on its next
 behavior write it deletes the member list of every group no trigger
-uses — lists 3.0.0 had kept.
+uses — lists 2.2.0 had kept.
 
 ### Dependency audit
 
