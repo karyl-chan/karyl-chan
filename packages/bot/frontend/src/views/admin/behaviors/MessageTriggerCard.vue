@@ -32,6 +32,7 @@ import {
 import { draftTarget, messageTriggerDraftModel } from './message-trigger-draft';
 import { useTargetDirectory } from './target-directory';
 import { targetLabel } from './target-labels';
+import { useDmAllowlistDraft } from './use-dm-allowlist-draft';
 import { useDraftForm } from './use-draft-form';
 
 /**
@@ -92,10 +93,14 @@ onMounted(() => {
 // ── saved state vs. edit draft ──────────────────────────────────────────────
 
 const form = useDraftForm(messageTriggerDraftModel, () => props.trigger, `behavior:${props.trigger.id}`);
-const { base, draft, conflict, stale, dirty, applyPatch, keepMine } = form;
+const { base, draft, conflict, stale, applyPatch, keepMine } = form;
+/** Who replies may DM (#157): edited in the form, written by its save. */
+const dmAllowlist = useDmAllowlistDraft(props.trigger.id);
+const dirty = computed(() => form.dirty.value || dmAllowlist.dirty);
 
 function discard() {
     form.discard();
+    dmAllowlist.discard();
     errors.value = NO_ERRORS;
 }
 
@@ -110,18 +115,23 @@ const canSave = computed(() => dirty.value && !saving.value && !conflict.value);
 
 async function save() {
     const patch = form.pendingPatch();
-    if (!patch || !canSave.value) return;
+    if (!canSave.value) return;
     saving.value = true;
     stale.value = false;
     try {
-        const found = await checkMessageTriggerDraft(t, draft.value, LAYOUT);
-        errors.value = found;
-        if (hasErrors(found)) return;
-        const result = await updateBehavior(props.trigger.id, patch);
-        const saved = result.behavior as MessageTriggerView;
-        issuedSecret.value = result.secret ?? null;
-        form.adopt(saved);
-        emit('updated', saved);
+        let saved: MessageTriggerView | null = null;
+        if (patch) {
+            const found = await checkMessageTriggerDraft(t, draft.value, LAYOUT);
+            errors.value = found;
+            if (hasErrors(found)) return;
+            const result = await updateBehavior(props.trigger.id, patch);
+            saved = result.behavior as MessageTriggerView;
+            issuedSecret.value = result.secret ?? null;
+            form.adopt(saved);
+        }
+        // its own request; a refusal shows in the section and keeps the list's edits
+        await dmAllowlist.save();
+        if (saved) emit('updated', saved);
     } catch (err) {
         if (isStale(err)) {
             form.refusedAsStale();
@@ -294,7 +304,7 @@ const moved = computed(() => {
                     />
 
                     <BehaviorDeliveries :behavior-id="trigger.id" />
-                    <BehaviorDirectMessages :behavior-id="trigger.id" />
+                    <BehaviorDirectMessages :allowlist="dmAllowlist" />
 
                     <div v-if="conflict" class="conflict" role="alert" data-test="conflict">
                         <span>{{ t('behaviors.card.conflict') }}</span>

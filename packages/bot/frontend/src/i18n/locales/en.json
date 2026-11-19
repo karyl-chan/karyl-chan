@@ -1690,6 +1690,7 @@
             "editGroup": "Edit members",
             "remove": "Remove {name}",
             "badUserId": "A user ID is 17–20 digits.",
+            "unsaved": "The list has unsaved changes: they take effect when you save below.",
             "logTitle": "Recent direct messages",
             "logEmpty": "No direct messages yet.",
             "logLine": "to {to}, triggered by {by}",

@@ -1690,6 +1690,7 @@
             "editGroup": "编辑成员",
             "remove": "移除 {name}",
             "badUserId": "用户 ID 是 17–20 位数字。",
+            "unsaved": "名单的变更尚未保存，点击下方的“保存”才会生效。",
             "logTitle": "最近的私信",
             "logEmpty": "还没有私信。",
             "logLine": "给 {to}，由 {by} 触发",
